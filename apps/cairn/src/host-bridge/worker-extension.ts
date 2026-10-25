@@ -17,6 +17,7 @@ interface ScopePolicyEnvelope {
   workspace: string;
   sessionDir: string;
   targets: string[];
+  artifactDir?: string;
 }
 
 export function createHostBridgeExtensionFromEnv(): (pi: PiApiLike) => void {
@@ -27,6 +28,7 @@ export function createHostBridgeExtensionFromEnv(): (pi: PiApiLike) => void {
     workspace: policy.workspace,
     sessionDir: policy.sessionDir,
     scopeTargets: policy.targets,
+    ...(policy.artifactDir === undefined ? {} : { artifactDir: policy.artifactDir }),
     ...(process.env["CAIRN_OBSERVER_BOARD_DIR"]?.trim()
       ? { protectedWriteRoots: [process.env["CAIRN_OBSERVER_BOARD_DIR"]!.trim()] }
       : {}),
@@ -56,7 +58,31 @@ function parsePolicy(raw: string | undefined): ScopePolicyEnvelope {
   if (!Array.isArray(targets) || targets.some((target) => typeof target !== "string")) {
     throw new Error("CAIRN_SCOPE_POLICY.targets must be an array of strings");
   }
-  return { projectId, taskId, workspace, sessionDir, targets: targets as string[] };
+  const artifactDir = record["artifactDir"];
+  if (artifactDir !== undefined) {
+    if (typeof artifactDir !== "string" || artifactDir.trim() === "") {
+      throw new Error("CAIRN_SCOPE_POLICY.artifactDir must be a non-empty string");
+    }
+    const segments = artifactDir.split("/");
+    if (
+      artifactDir.includes("\\") ||
+      artifactDir.startsWith("/") ||
+      /^[A-Za-z]:/.test(artifactDir) ||
+      segments.some((segment) => segment === "" || segment === "." || segment === "..") ||
+      segments[0] !== "artifacts" ||
+      segments.length < 2
+    ) {
+      throw new Error('CAIRN_SCOPE_POLICY.artifactDir must be a relative path under "artifacts/"');
+    }
+  }
+  return {
+    projectId,
+    taskId,
+    workspace,
+    sessionDir,
+    targets: targets as string[],
+    ...(artifactDir === undefined ? {} : { artifactDir }),
+  };
 }
 
 function requireString(record: Record<string, unknown>, key: string): string {

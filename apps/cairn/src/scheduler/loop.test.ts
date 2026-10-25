@@ -133,6 +133,21 @@ function auditScheduler(): Scheduler {
   });
 }
 
+function concurrentScheduler(): Scheduler {
+  const fixture = join(import.meta.dir, "testdata", "concurrent-worker.ts");
+  return new Scheduler({
+    db,
+    config: parseDispatchConfig({
+      ...CONFIG,
+      runtime: { ...CONFIG.runtime, max_project_workers: 2 },
+    }),
+    workspaceRoot: join(directory, "workspace"),
+    log: (message) => logs.push(message),
+    leaseIntervalMs: 500,
+    workerArgv: (taskPath) => [process.execPath, fixture, taskPath],
+  });
+}
+
 function slicedScheduler(): Scheduler {
   return new Scheduler({
     db,
@@ -302,6 +317,85 @@ describe("scheduler with the fake solver", () => {
       expect(reasonRuns.every((run) => run.evidence_count === 0)).toBe(true);
     },
     30_000,
+  );
+
+  test(
+    "runs two same-project tasks concurrently with scoped artifacts",
+    async () => {
+      const project = createProjectRow(false);
+      const first = db.withConn((conn) =>
+        createIntent(conn, project.project.id, {
+          from: ["origin"],
+          description: "concurrent direction one",
+          creator: "tester",
+          worker: null,
+        }),
+      );
+      const second = db.withConn((conn) =>
+        createIntent(conn, project.project.id, {
+          from: ["origin"],
+          description: "concurrent direction two",
+          creator: "tester",
+          worker: null,
+        }),
+      );
+
+      const loop = concurrentScheduler();
+      await loop.runUntilIdle();
+
+      const detail = load(project.project.id);
+      expect(detail.project.status).toBe("completed");
+      for (const intentId of [first.id, second.id]) {
+        const intent = detail.intents.find((entry) => entry.id === intentId);
+        expect(intent?.to).not.toBeNull();
+      }
+
+      // The fixture only reports this prefix when both explore workers met at the
+      // in-workspace barrier, so it also proves the scheduler let them overlap.
+      const facts = detail.facts.filter(
+        (fact) => fact.id !== "origin" && fact.id !== "goal",
+      );
+      expect(facts).toHaveLength(2);
+      expect(
+        facts.every((fact) => fact.description.startsWith("concurrent fact from explore-")),
+      ).toBe(true);
+
+      const runs = db.withConn((conn) => listProjectRuns(conn, project.project.id));
+      const exploreRuns = runs.filter((run) => run.kind === "explore");
+      expect(exploreRuns).toHaveLength(2);
+      expect(exploreRuns.every((run) => run.outcome === "success")).toBe(true);
+      expect(new Set(exploreRuns.map((run) => run.task_id)).size).toBe(2);
+
+      const artifacts = db.withConn((conn) =>
+        listProjectArtifacts(conn, project.project.id),
+      );
+      const workspace = join(
+        directory,
+        "workspace",
+        project.project.id.replaceAll("/", "-"),
+      );
+      for (const run of exploreRuns) {
+        // Indexed paths are relative to the `artifacts/` root, not the workspace.
+        const artifact = artifacts.find(
+          (entry) => entry.path === `${run.task_id}/out.txt`,
+        );
+        expect(artifact).toBeDefined();
+        // Provenance comes from the path namespace even though every finishing task
+        // rescans the whole tree.
+        expect(artifact!.task_id).toBe(run.task_id);
+
+        const taskFile = JSON.parse(
+          readFileSync(
+            join(workspace, ...(run.session ?? "").split("/"), "task.json"),
+            "utf8",
+          ),
+        ) as { artifactDir?: string; prompt: string };
+        expect(taskFile.artifactDir).toBe(`artifacts/${run.task_id}`);
+        expect(taskFile.prompt).toContain(`\`artifacts/${run.task_id}/\``);
+      }
+    },
+    // Two workers plus a barrier timeout on failure; Windows process startup is slow.
+    60_000,
   );
 
   test(

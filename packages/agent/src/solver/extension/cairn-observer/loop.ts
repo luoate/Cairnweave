@@ -11,6 +11,7 @@ import {
     type ObserverRuntimeState,
 } from "../challenge-observer/observer-store"
 import { formatCairnObserverContext, loadCairnObserverContext } from "./context"
+import { acquireReviewLock, type ReviewLock } from "./review-lock"
 import { runCairnObserverReview } from "./review"
 import type {
     CairnObserverHandle,
@@ -22,6 +23,11 @@ import type {
 const TOOL_ARGS_PREVIEW_CHARS = 160
 const TOOL_RESULT_PREVIEW_CHARS = 160
 const ASSISTANT_SUMMARY_PREVIEW_CHARS = 220
+const REVIEW_LOCK_WAIT_MS = 5_000
+
+function reviewLockStaleMs(options: CairnObserverOptions): number {
+    return Math.max(options.timeoutSeconds * 1000 + 30_000, 60_000)
+}
 
 export interface CairnObserverLoopDeps {
     /** Test hook; defaults to the real sidecar model session. */
@@ -164,31 +170,61 @@ export function attachCairnObserverLoop(
 
     async function executeReview(payload: CairnReviewPayload): Promise<void> {
         const startedAt = Date.now()
-        await writeAudit(options.stateDir, {
-            event: "review_started",
-            reason: payload.reason,
-            rounds: payload.rounds.length,
-        })
+        let lease: ReviewLock | null
         try {
-            const contextText = await contextReady
-            const result = await review(options, payload, contextText)
-            await writeAudit(options.stateDir, {
-                event: "review_finished",
-                reason: payload.reason,
-                applied: result.applied,
-                summary_chars: result.summary?.length ?? 0,
-                duration_ms: Date.now() - startedAt,
+            lease = await acquireReviewLock({
+                boardDir: options.boardDir,
+                staleMs: reviewLockStaleMs(options),
+                waitMs: Math.min(REVIEW_LOCK_WAIT_MS, options.timeoutSeconds * 1000),
+                owner: options.stateDir,
             })
         } catch (error) {
             await writeAudit(options.stateDir, {
-                event: "review_failed",
-                reason: payload.reason,
-                duration_ms: Date.now() - startedAt,
+                event: "review_skipped",
+                reason: "board_lock_error",
                 error: error instanceof Error ? error.message : String(error),
             })
-            console.error(
-                `[observer] review failed: ${error instanceof Error ? error.message : String(error)}`,
-            )
+            return
+        }
+        if (lease === null) {
+            await writeAudit(options.stateDir, {
+                event: "review_skipped",
+                reason: "board_lock_busy",
+            })
+            return
+        }
+
+        try {
+            await writeAudit(options.stateDir, {
+                event: "review_started",
+                reason: payload.reason,
+                rounds: payload.rounds.length,
+            })
+            try {
+                const contextText = await contextReady
+                const result = await review(options, payload, contextText)
+                await writeAudit(options.stateDir, {
+                    event: "review_finished",
+                    reason: payload.reason,
+                    applied: result.applied,
+                    summary_chars: result.summary?.length ?? 0,
+                    duration_ms: Date.now() - startedAt,
+                })
+            } catch (error) {
+                await writeAudit(options.stateDir, {
+                    event: "review_failed",
+                    reason: payload.reason,
+                    duration_ms: Date.now() - startedAt,
+                    error: error instanceof Error ? error.message : String(error),
+                })
+                console.error(
+                    `[observer] review failed: ${error instanceof Error ? error.message : String(error)}`,
+                )
+            }
+        } finally {
+            await lease.release().catch(() => {
+                // A failed release is recovered by the stale-lease rule.
+            })
         }
     }
 

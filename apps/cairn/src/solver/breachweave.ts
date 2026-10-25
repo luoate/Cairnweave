@@ -62,6 +62,7 @@ export class BreachWeaveSolver implements Solver {
         workspace: task.workspace,
         sessionDir: task.sessionDir,
         targets: task.scope.targets,
+        ...(task.artifactDir === undefined ? {} : { artifactDir: task.artifactDir }),
       });
       process.env["CAIRN_HOST_BRIDGE_MODULE"] = join(
         import.meta.dir,

@@ -1,4 +1,4 @@
-# 架构（M7 更新）
+# 架构（M8 更新）
 
 本文固定合并后的角色边界、数据所有权和失败语义。实现以本文为准；需要改动时先改本文并
 记录原因。
@@ -73,8 +73,10 @@ scheduler 与 HTTP API 共用 `packages/graph/src/commands.ts` 的命令，不�
 
 - 在**项目沙箱**内运行：本地模式是项目工作区，容器模式是每项目一个长驻容器的
   `docker exec`。两种模式走同一个 `RuntimeBackend` 接口（`runtime/types.ts`）。
-- 一个任务一个 worker 进程；同一项目同一时刻最多一个
-  （`runtime.max_project_workers` 默认 1，可调）。容器模式下同一项目共用一个容器，
+- 一个任务一个 worker 进程；同一项目默认串行（`runtime.max_project_workers` 默认 1）。
+  提高上限后同一项目可并发多个任务，由 M8 协调共享工作区：每个任务拿到
+  `artifactDir: artifacts/<task-id>`，Host Bridge 的文件写工具只允许写本任务目录
+  （读不限）；Observer 复核通过项目级租约串行。容器模式下同一项目共用一个容器，
   结束单个任务用任务文件路径做 `pkill`，不会杀掉同项目的其它进程。
 - 不访问数据库，不调用控制面 API；只读 `task.json` 与引用的图快照，只写 `result.json`
   和 `sessionDir` 内文件。
@@ -85,6 +87,8 @@ scheduler 与 HTTP API 共用 `packages/graph/src/commands.ts` 的命令，不�
   Bridge 通过环境变量注入 Solver 与 subagent 会话，子代理不能绕过。
 - 可选 Observer（默认关闭）在 Solver 会话旁运行一个独立 review 会话。主 Solver 只拿到
   只读看板工具；sidecar 只维护项目级看板，不执行验证、不写图，也不影响 `result.json`。
+  同项目并发时，review 先获取 `<board>/locks/review.lock` 项目级租约（心跳 + 过期接管
+  + 有界等待），拿不到就跳过本轮并记 `review_skipped`。
 
 隔离单位是项目（容器/工作区），不是进程常驻。这样既保留崩溃隔离，又不需要额外的
 常驻 daemon 协议。
@@ -315,13 +319,18 @@ stderr 归档到 `sessionDir/{stdout,stderr}.log`。需要 UI 实时进度时再
 
 - **写入约定**：worker 把扫描结果、导出文件等放到 `<workspace>/artifacts/**`；其它位置
   不算 artifact。artifact 是**不可信数据**，控制面只索引，不执行、不解析内容。
+- **任务命名空间（M8）**：`runtime.max_project_workers > 1` 时 `worker.scoped_artifacts`
+  默认为 `true`，每个任务在 `task.json` 中得到 `artifactDir: artifacts/<task-id>` 并在
+  prompt 追加 Artifact Policy。Host Bridge 的 `write` / `edit` 拒绝写其他任务的目录和
+  `artifacts/` 根；读取仍可跨任务。可显式 `false` 关闭，但那会重新引入并发覆盖风险。
 - **索引时机**：每个任务结束时（成功、失败、拒绝都算）由 `finish` 扫描一次；整个项目的
   索引按本次扫描重建。`artifacts/` 不存在时保留旧索引；单次扫描最多 2000 个文件、递归
   深度 20，跳过符号链接和非普通文件。开启 `retention.refresh_artifacts` 后，每次
-  housekeeping sweep 也会重建索引：已存在的路径保留最初记录它的 `task_id`，新路径记为
-  `retention-sweep`。
-- **记录内容**：相对路径（`/` 分隔）、字节数、流式 SHA-256、最后写入的 `taskId`、
-  `created_at`。不保存文件内容，也不提供下载路由。
+  housekeeping sweep 也会重建索引。
+- **记录内容**：相对 `artifacts/` 根的路径（`/` 分隔）、字节数、流式 SHA-256、
+  `task_id`、`created_at`。`task_id` 表示**最初产生该路径的任务**：后续任务重扫全树时
+  保留已有行；新路径若位于 `artifacts/<task-id>/` 下则按目录名归属，否则归本次扫描者；
+  retention sweep 的新路径记为 `retention-sweep`。不保存文件内容，也不提供下载路由。
 - **HTTP**：`GET /projects/{id}/artifacts` 返回
   `[{path,size,sha256,task_id,created_at}]`，按路径排序；未知项目 404。响应与既有 API
   一样由控制面从 SQLite 读取。
@@ -488,7 +497,9 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
 - 应用配置：移植 Cairn 的 `server` / `runtime` / `tasks` / `container` / `local` /
   `common_env` 段；删除 `workers` 和 `WORKER_ENV_KEYS`。并发仍由 `runtime.max_workers`
   与 `runtime.max_project_workers` 控制（保持旧配置兼容），新增单一的 `worker` 段：
-  `soft_deadline_ratio`、`retain_task_files`、`result_grace_seconds`。
+  `soft_deadline_ratio`、`retain_task_files`、`result_grace_seconds`、`scoped_artifacts`
+  （布尔；缺省时等于 `runtime.max_project_workers > 1`，显式 `false` 可以关闭任务级
+  artifacts 命名空间）。
 - `tasks.graph_slice` 是新增的可选段：`enabled`（布尔，默认 `false`）、`max_facts`
   （整数 ≥ 2，默认 80）、`max_intents`（正整数，默认 60）。缺省即保持全图行为；非法值
   在启动时以 `ConfigError` 拒绝。
@@ -620,8 +631,10 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
   覆盖范围内。
 - Observer 看板是**建议性数据**，不是图事实：主 Solver 只读，真正结论仍必须写进
   `result.json` 并经控制面校验。看板的写保护只覆盖结构化文件工具与白名单；`bash` 可在
-  工作区内改写它。看板不得存 flag、凭据、完整工具输出或与授权范围无关的数据。默认
-  `max_project_workers: 1` 时同项目任务串行，避免并发写；提高该上限时没有跨任务锁。
+  工作区内改写它。看板不得存 flag、凭据、完整工具输出或与授权范围无关的数据。同项目
+  并发（M8）时 review 通过 `<board>/locks/review.lock` 项目级租约串行，拿不到租约就
+  跳过本轮；该租约只覆盖 Observer review，不覆盖 `bash` 直写看板，也不是进程退出后
+  自动回收的强锁（靠心跳过期接管）。artifacts 命名空间同样只约束结构化文件工具。
 - 凭据只读挂载；日志脱敏；任务与结果文件按项目隔离。exec 环境只传白名单，容器不暴露
   Docker socket。
 - 容器是主要的爆炸半径边界；本地模式仅用于受控开发/靶场。
@@ -633,10 +646,11 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
    `worker.retain_task_files: false` 可整目录删除。M6 已提供按项目/时间/数量的
    `retention` sweep（默认两条规则均为 `0`，即行为不变）；默认值是否需要收紧、以及
    审计要求下是否允许自动删除仍需按部署决定。
-2. 同一项目并发 worker：`runtime.max_project_workers` 默认 1。容器模式已支持同项目多次
-   `docker exec`，但共享工作区（包括 Observer 项目看板）的写冲突没有协调；提高并发前
-   需要评估，或为看板增加跨任务锁/分片。M6 的保护集合只覆盖本进程 `running` 表与
-   pending 行；若同一工作区被多个控制面共用，retention 没有跨进程协调。
+2. ~~同一项目并发 worker~~：M8 已提供任务级 artifacts 命名空间、索引溯源和项目级
+   Observer review 租约，并有一个真实重叠的并发集成测试。剩余边界：`bash` 写路径不
+   受命名空间约束；review 租约靠心跳过期接管，进程被冻结超过 stale 窗口时仍可能短暂
+   双持有；M6 的 retention 保护集合只覆盖本进程 `running` 表与 pending 行，若同一
+   工作区被多个控制面共用仍没有跨进程协调。
 3. ~~conclude 的会话恢复~~：M4a 已定为复用失败任务的 `sessionDir`，由
    `SessionManager.open` 恢复最新 JSONL；M5c 已将 pending 队列持久化到
    `pending_concludes`，重启后按行优先派发（不再依赖内存或租约过期重派）。M6 在

@@ -33,7 +33,11 @@ afterEach(() => {
 
 function bridge(
   targets: string[] = ["127.0.0.1:8080", "*.example.test", "example.test"],
-  overrides: { auditPath?: string; protectedWriteRoots?: string[] } = {},
+  overrides: {
+    auditPath?: string;
+    protectedWriteRoots?: string[];
+    artifactDir?: string;
+  } = {},
 ): HostBridge {
   return new HostBridge({
     projectId: "proj-1",
@@ -44,6 +48,9 @@ function bridge(
     ...(overrides.protectedWriteRoots === undefined
       ? {}
       : { protectedWriteRoots: overrides.protectedWriteRoots }),
+    ...(overrides.artifactDir === undefined
+      ? {}
+      : { artifactDir: overrides.artifactDir }),
     auditPath: overrides.auditPath ?? auditPath,
     now: () => new Date("2026-01-01T00:00:00.000Z"),
   });
@@ -135,6 +142,48 @@ describe("host bridge file policy", () => {
     expect(gate.checkToolCall("read", { path: "notes.txt" }).allowed).toBe(true);
     expect(gate.checkToolCall("write", { path: "out.txt", content: "x" }).allowed).toBe(true);
     expect(gate.checkToolCall("grep", { pattern: "hello" }).allowed).toBe(true);
+  });
+
+  test("confines artifact writes to this task when scoped", () => {
+    const gate = bridge(["127.0.0.1:8080"], {
+      artifactDir: "artifacts/explore-0123456789ab",
+    });
+
+    expect(
+      gate.checkToolCall("write", {
+        path: "artifacts/explore-0123456789ab/scan.log",
+        content: "ok",
+      }).allowed,
+    ).toBe(true);
+    expect(
+      gate.checkToolCall("edit", {
+        path: "artifacts/explore-0123456789ab/nested/out.txt",
+      }).allowed,
+    ).toBe(true);
+    expect(gate.checkToolCall("write", { path: "notes.txt", content: "x" }).allowed).toBe(
+      true,
+    );
+
+    const otherTask = gate.checkToolCall("write", {
+      path: "artifacts/explore-bbbbbbbbbbbb/out.txt",
+      content: "x",
+    });
+    expect(otherTask.allowed).toBe(false);
+    expect(otherTask.reason).toContain("outside this task's artifact directory");
+
+    const root = gate.checkToolCall("write", { path: "artifacts/out.txt", content: "x" });
+    expect(root.allowed).toBe(false);
+
+    // Reads remain workspace-wide so tasks can reuse earlier artifacts.
+    mkdirSync(join(workspace, "artifacts", "explore-bbbbbbbbbbbb"), { recursive: true });
+    writeFileSync(
+      join(workspace, "artifacts", "explore-bbbbbbbbbbbb", "out.txt"),
+      "old",
+      "utf8",
+    );
+    expect(
+      gate.checkToolCall("read", { path: "artifacts/explore-bbbbbbbbbbbb/out.txt" }).allowed,
+    ).toBe(true);
   });
 
   test("blocks reads outside the workspace and file scope", () => {
@@ -332,8 +381,21 @@ describe("environment-driven bridge", () => {
       workspace,
       sessionDir,
       targets: ["127.0.0.1:8080"],
+      artifactDir: "artifacts/explore-0123456789ab",
     });
     expect(() => createHostBridgeExtensionFromEnv()).not.toThrow();
+  });
+
+  test("rejects an unsafe artifact namespace", () => {
+    process.env[key] = JSON.stringify({
+      projectId: "proj-1",
+      taskId: "task-1",
+      workspace,
+      sessionDir,
+      targets: ["127.0.0.1:8080"],
+      artifactDir: "artifacts/../escape",
+    });
+    expect(() => createHostBridgeExtensionFromEnv()).toThrow("artifactDir");
   });
 
   test("refuses to build without a policy", () => {

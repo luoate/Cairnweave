@@ -97,6 +97,26 @@ describe("worker task contract", () => {
     );
   });
 
+  test("validates the optional task artifact namespace", () => {
+    expect(
+      taskErrors({
+        ...validTask(),
+        artifactDir: "artifacts/explore-0123456789ab",
+      }),
+    ).toEqual([]);
+    for (const artifactDir of [
+      "artifacts",
+      "artifacts/",
+      "artifacts/../escape",
+      "/artifacts/explore-0123456789ab",
+      "artifacts\\explore-0123456789ab",
+    ]) {
+      expect(messages({ ...validTask(), artifactDir })).toContain(
+        'artifactDir must be a relative path under "artifacts/"',
+      );
+    }
+  });
+
   test("requires a positive hard deadline and an earlier soft deadline", () => {
     expect(messages({ ...validTask(), hardDeadlineSeconds: 0 })).toContain(
       "hardDeadlineSeconds must be a positive integer",

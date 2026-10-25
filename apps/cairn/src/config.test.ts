@@ -52,6 +52,7 @@ describe("dispatcher config", () => {
       softDeadlineRatio: 0.8,
       retainTaskFiles: true,
       resultGraceSeconds: 15,
+      scopedArtifacts: false,
     });
     expect(config.retention).toEqual({
       sessionMaxAgeDays: 0,
@@ -207,11 +208,29 @@ common_env:
       softDeadlineRatio: 0.5,
       retainTaskFiles: false,
       resultGraceSeconds: 0,
+      scopedArtifacts: false,
     });
     expect(config.commonEnv).toEqual({
       HTTPS_PROXY: "http://127.0.0.1:7897",
       NO_COLOR: "",
     });
+  });
+
+  test("scopes artifacts by default only for concurrent project workers", () => {
+    expect(parse(BASE).worker.scopedArtifacts).toBe(false);
+    expect(
+      parse(BASE.replace("max_project_workers: 1", "max_project_workers: 2")).worker
+        .scopedArtifacts,
+    ).toBe(true);
+    expect(
+      parse(
+        BASE.replace("max_project_workers: 1", "max_project_workers: 2") +
+          "worker: {scoped_artifacts: false}\n",
+      ).worker.scopedArtifacts,
+    ).toBe(false);
+    expect(
+      parse(BASE + "worker: {scoped_artifacts: true}\n").worker.scopedArtifacts,
+    ).toBe(true);
   });
 
   test("parses container mode and its config", () => {
@@ -311,6 +330,9 @@ describe("config validation", () => {
     );
     expect(() => parse(BASE + "worker: {result_grace_seconds: -1}\n")).toThrow(
       "worker.result_grace_seconds must be a non-negative integer",
+    );
+    expect(() => parse(BASE + "worker: {scoped_artifacts: yes}\n")).toThrow(
+      "worker.scoped_artifacts must be a boolean",
     );
   });
 

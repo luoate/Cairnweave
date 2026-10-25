@@ -4,7 +4,7 @@
 skills / Observer）合并成**一个 Bun/TypeScript 代码库**，不再维护 Python ↔ TypeScript
 之间的进程桥、JSONL RPC 和 worker 适配器。
 
-状态：**M7（控制面审计账本已落地）**；M0–M4、M5a–M5c、M6 的计划项全部完成。
+状态：**M8（同项目并发协调已落地）**；M0–M4、M5a–M5c、M6、M7 的计划项全部完成。
 `cairn serve` 是可运行的 Cairn 兼容服务：SQLite schema、领域服务、全部五个路由、
 YAML/timeline 导出、静态 Web UI 均已就位，并用 Python Cairn 生成的 golden 做了逐字
 对照。进程内 scheduler、任务/结果文件 worker 协议、BreachWeave Solver 接入已在 M2
@@ -113,13 +113,34 @@ M7 增加：
   能发现账本行被改写或链接断裂，但不是签名：能重写数据库的人也能重算整条链，
   且控制面崩溃前未 finish 的事件不会进入账本。
 
+M8 增加：
+
+- **任务级 artifacts 命名空间**：`runtime.max_project_workers > 1` 时默认开启
+  `worker.scoped_artifacts`（可显式 `false` 关闭）。scheduler 为每个任务写入
+  `artifactDir: "artifacts/<task-id>"`，prompt 追加 Artifact Policy；Host Bridge 的
+  `write` / `edit` 只允许写本任务目录，读仍可跨任务。`evidence_refs` 使用该命名空间。
+- **索引溯源**：artifacts 索引的 `task_id` 表示“最初产生该路径的任务”。后续任务重扫
+  全树时不会改写已有行；新出现的 `artifacts/<task-id>/...` 直接按目录名归属。
+- **项目级 Observer 复核租约**：review 开始前获取 `<board>/locks/review.lock` 跨进程
+  租约，带心跳、过期接管和有界等待。拿不到租约时本轮 review 跳过（审计
+  `review_skipped`，reason `board_lock_busy` / `board_lock_error`），不阻塞 solver
+  收尾，也不改变 `result.json`。
+- **并发集成测试**：两个同项目 explore 任务在 `max_project_workers: 2` 下通过工作区内
+  的 rendezvous barrier 真正重叠执行，验证两个 Fact、两条成功 run、各自的 artifacts
+  索引与 provenance，以及 task.json 中的命名空间和 prompt 注入。
+
+边界：命名空间与 locks 都是**策略级**协调，不是内核隔离。`bash` 仍可直接写共享工作区
+或另一个任务的 artifacts 目录（审计会记录命令，但不解析路径）；写看板仍受同样的
+`bash` 限制。需要强隔离时使用容器/只读挂载。
+
 默认仍是确定性 fake solver，测试与离线运行不需要模型凭据。Observer 只接在
 `CAIRN_SOLVER=breachweave` 的真实 Solver 路径上，fake solver 会忽略它。
 
 ## 三个已定决策
 
 1. **控制面 + 每项目 worker 进程**：`cairn serve` 是唯一写图者；worker 跑在项目沙箱里，
-   按任务拉起（同一项目同时最多一个），不是常驻守护进程。
+   按任务拉起，不是常驻守护进程。同一项目默认串行（`max_project_workers: 1`）；提高
+   上限时由 M8 的 artifacts 命名空间与 Observer 复核租约协调共享工作区。
 2. **保留 Cairn 语义**：projects / facts / intents / hints 模型、SQLite schema、HTTP API、
    JSON 结果契约都不重新设计，以便用现有 Python 版做对照测试。
 3. **整体 AGPL-3.0**：合并作品按 AGPL-3.0 分发；BreachWeave 的 Apache-2.0 代码在并入时
@@ -408,8 +429,9 @@ observer:
 - 每 `every_rounds` 轮、`agent_end` 和 `solve()` 返回前的 `flush()` 触发串行 review。
   `flush()` 最多等待 `timeout_seconds`，任何失败只写
   `<session>/observer/audit.jsonl`，绝不影响 `result.json`。
-- 已知边界：看板写保护只覆盖结构化文件工具；`bash` 仍可在工作区内写看板。默认
-  `max_project_workers: 1` 避免同项目并发写。详见 `docs/OBSERVER.md`。
+- 已知边界：看板写保护只覆盖结构化文件工具；`bash` 仍可在工作区内写看板。同项目并发
+  时由 M8 的项目级 review 租约串行化复核（拿不到租约就跳过本轮），但看板写入本身仍是
+  策略级保护。详见 `docs/OBSERVER.md`。
 
 ## 真实 Solver 与模型配置（M2c）
 
@@ -498,7 +520,7 @@ M6 的跨进程恢复 gate 不调用模型：它先写下一台崩溃控制面�
 bun run tools/gate/m6-restart-gate.ts
 ```
 
-## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7，2026-10-25，Bun 1.4.4）
+## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8，2026-10-25，Bun 1.4.4）
 
 - `bun test`：**258 passed**（33 个文件），0 failed。
 - `bun run typecheck`：`tsc --noEmit` 通过。
@@ -608,6 +630,13 @@ bun run tools/gate/m6-restart-gate.ts
   符号链接拒绝、10,000 条上限与空文件；scheduler 集成测试用 `audit-worker` fixture
   断言任务结束后账本可查且 `chain_ok`。HTTP 测试覆盖汇总、明细、篡改后的
   `chain_ok:false`、未知 task 空链与未知项目 404。
+- **同项目并发（M8）**：契约测试覆盖 `artifactDir` 的合法命名空间与越界拒绝；配置测试
+  覆盖 `scoped_artifacts` 在 `max_project_workers` 为 1/2 时的默认值与显式覆盖；Host
+  Bridge 测试断言只能写本任务目录、可跨任务读；Observer 租约测试覆盖互斥、心跳过期
+  接管、缺元数据回收、释放不误删已接管锁，以及另一任务持锁时 review 被跳过。scheduler
+  集成测试用 `concurrent-worker` fixture 让两个同项目 explore 任务在屏障处真正重叠，
+  断言两个 Fact、两条成功 run、各自的 `artifacts/<task-id>/out.txt` 索引与 provenance，
+  以及 `task.json` 的 `artifactDir` 与 prompt 注入。
 
 golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定时钟、`TZ=UTC`）。
 重新生成方法与约束见 `docs/PORTING.md`。
@@ -644,6 +673,7 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M5c ✅ | 证据最小字节策略 + 跨重启持久化 conclude 队列 | 230 passed / 28 files（2026-10-25） |
 | M6 ✅ | session 保留策略、启动/周期 sweep、pending 对账、artifacts 刷新 | 242 passed / 30 files；跨进程恢复 gate 9/9（2026-10-25） |
 | M7 ✅ | 控制面审计账本：任务结束导入、逐任务哈希链、只读查询 | 258 passed / 33 files（2026-10-25） |
+| M8 ✅ | 同项目并发协调：任务级 artifacts 命名空间、索引溯源、Observer 复核租约 | 270 passed / 34 files（2026-10-25） |
 
 ## 与 Phase 0 的关系
 

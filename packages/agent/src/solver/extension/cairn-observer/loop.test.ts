@@ -4,6 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent"
 import { attachCairnObserverLoop } from "./loop"
+import { acquireReviewLock } from "./review-lock"
 import type { CairnObserverOptions, CairnReviewPayload } from "./types"
 
 type Handler = (event: any, ctx?: any) => Promise<void>
@@ -157,6 +158,39 @@ describe("cairn observer loop", () => {
         const auditPath = join(stateDir, "audit.jsonl")
         expect(existsSync(auditPath)).toBe(true)
         expect(readFileSync(auditPath, "utf8")).toContain("flush_timeout")
+    })
+
+    test("skips a review while another task holds the project lease", async () => {
+        const lease = await acquireReviewLock({
+            boardDir: options().boardDir,
+            staleMs: 60_000,
+            waitMs: 0,
+        })
+        expect(lease).not.toBeNull()
+
+        try {
+            const { pi, handlers } = fakePi()
+            let calls = 0
+            const handle = attachCairnObserverLoop(
+                pi,
+                options({ everyRounds: 99, timeoutSeconds: 1 }),
+                {
+                    async review() {
+                        calls += 1
+                        return { applied: false }
+                    },
+                },
+            )
+
+            await handlers.get("message_end")!(messageEnd("round one"))
+            await handle.flush(3_000)
+
+            expect(calls).toBe(0)
+            const audit = readFileSync(join(stateDir, "audit.jsonl"), "utf8")
+            expect(audit).toContain("board_lock_busy")
+        } finally {
+            await lease!.release()
+        }
     })
 
     test("flush never throws when the observer state directory is unusable", async () => {

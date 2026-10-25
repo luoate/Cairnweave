@@ -103,6 +103,8 @@ export function prepareTask(input: PrepareTaskInput): PreparedTask {
     project.project.id,
   );
   const taskId = `${kind}-${randomUUID().replaceAll("-", "").slice(0, 12)}`;
+  const artifactDir =
+    config.worker.scopedArtifacts ? `artifacts/${taskId}` : undefined;
   const hostSessionDir = join(hostWorkspace, ".cairn", "sessions", taskId);
   const hostGraphSnapshotPath = join(hostSessionDir, "graph.yaml");
   const hostResultPath = join(hostSessionDir, "result.json");
@@ -132,7 +134,7 @@ export function prepareTask(input: PrepareTaskInput): PreparedTask {
   mkdirSync(hostSessionDir, { recursive: true });
   writeFileSync(hostGraphSnapshotPath, input.exportYaml.trim(), "utf8");
 
-  const prompt = renderTaskPrompt(config, project, kind, input.intent, {
+  const basePrompt = renderTaskPrompt(config, project, kind, input.intent, {
     graphSnapshotPath: workerGraphSnapshotPath,
     openIntents: openIntents.map((intent) => ({
       id: intent.id,
@@ -141,6 +143,10 @@ export function prepareTask(input: PrepareTaskInput): PreparedTask {
       worker: intent.worker,
     })),
   }, concludeOf);
+  const prompt =
+    artifactDir === undefined
+      ? basePrompt
+      : withArtifactPolicy(basePrompt, artifactDir);
 
   const mapScopePath = (hostPath: string): string | null => {
     try {
@@ -176,6 +182,7 @@ export function prepareTask(input: PrepareTaskInput): PreparedTask {
     ...(resumeSessionDir === undefined ? {} : { resumeSessionDir }),
     ...(concludeOf === undefined ? {} : { concludeOf }),
     resultPath: workerResultPath,
+    ...(artifactDir === undefined ? {} : { artifactDir }),
     scope,
     ...(softDeadlineSeconds === undefined ? {} : { softDeadlineSeconds }),
     hardDeadlineSeconds,
@@ -370,6 +377,14 @@ function softDeadline(config: DispatchConfig, hard: number): number | undefined 
 interface PromptContext {
   graphSnapshotPath: string;
   openIntents: Record<string, unknown>[];
+}
+
+function withArtifactPolicy(prompt: string, artifactDir: string): string {
+  return `${prompt.trimEnd()}
+
+# Artifact Policy
+This project may run multiple tasks at the same time. Write every durable artifact (logs, scripts, payloads, captured output) under \`${artifactDir}/\` relative to the workspace. Do not write to the \`artifacts/\` root or another task's directory; reads elsewhere in the workspace remain allowed. Reference these files in \`evidence_refs\` as \`${artifactDir}/...\`.
+`;
 }
 
 function renderTaskPrompt(

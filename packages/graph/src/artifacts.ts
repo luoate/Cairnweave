@@ -5,6 +5,10 @@
  * task the control plane records relative path, size and SHA-256. The index is a scan of
  * the directory, not a trust boundary: symlinks are skipped so the scan cannot follow a
  * link out of the workspace.
+ *
+ * A finishing task rescans the whole project tree, so `task_id` must mean "who first
+ * produced this path", not "who happened to scan last". Existing rows keep their producer,
+ * and new paths under `artifacts/<task-id>/` inherit that task id.
  */
 
 import { lstatSync, readdirSync } from "node:fs";
@@ -16,6 +20,15 @@ import { hashFileSha256 } from "./hashing";
 
 const MAX_FILES = 2_000;
 const MAX_DEPTH = 20;
+const TASK_ID_PATTERN = /^(?:bootstrap|reason|explore|conclude)-[0-9a-f]{12}$/;
+
+/** `artifacts/<task-id>/...` for a reserved task directory, otherwise null. */
+function taskIdFromPath(relativePath: string): string | null {
+  const separator = relativePath.indexOf("/");
+  if (separator <= 0) return null;
+  const head = relativePath.slice(0, separator);
+  return TASK_ID_PATTERN.test(head) ? head : null;
+}
 
 export interface ProjectArtifact {
   path: string;
@@ -52,6 +65,13 @@ export function recordProjectArtifacts(
     return listProjectArtifacts(conn, options.projectId);
   }
 
+  const previous = new Map(
+    all<{ path: string; task_id: string }>(
+      conn,
+      "SELECT path, task_id FROM project_artifacts WHERE project_id = ?",
+      options.projectId,
+    ).map((row) => [row.path, row.task_id]),
+  );
   const createdAt = new Date().toISOString();
   run(conn, "DELETE FROM project_artifacts WHERE project_id = ?", options.projectId);
   for (const file of files) {
@@ -61,7 +81,9 @@ export function recordProjectArtifacts(
        VALUES (?, ?, ?, ?, ?, ?)`,
       options.projectId,
       file.relativePath,
-      options.taskId,
+      previous.get(file.relativePath) ??
+        taskIdFromPath(file.relativePath) ??
+        options.taskId,
       file.size,
       hashFileSha256(file.absolutePath),
       createdAt,
@@ -106,7 +128,9 @@ export function refreshProjectArtifacts(
        VALUES (?, ?, ?, ?, ?, ?)`,
       options.projectId,
       file.relativePath,
-      previous.get(file.relativePath) ?? "retention-sweep",
+      previous.get(file.relativePath) ??
+        taskIdFromPath(file.relativePath) ??
+        "retention-sweep",
       file.size,
       hashFileSha256(file.absolutePath),
       createdAt,

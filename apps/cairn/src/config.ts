@@ -182,6 +182,12 @@ export interface WorkerRunnerConfig {
   retainTaskFiles: boolean;
   /** How long the control plane waits for result.json after the worker exits. */
   resultGraceSeconds: number;
+  /**
+   * Give every task its own `artifacts/<task-id>/` write namespace. Defaults to on when
+   * `runtime.max_project_workers > 1`, because concurrent tasks otherwise overwrite each
+   * other's evidence; explicit `false` opts out.
+   */
+  scopedArtifacts: boolean;
 }
 
 export interface DispatchConfig {
@@ -510,7 +516,7 @@ function parseRetention(value: unknown): RetentionConfig {
   };
 }
 
-function parseWorker(value: unknown): WorkerRunnerConfig {
+function parseWorker(value: unknown, scopedArtifactsDefault: boolean): WorkerRunnerConfig {
   const worker = recordAt(value, "worker");
   let softDeadlineRatio = 0.8;
   if (has(worker, "soft_deadline_ratio")) {
@@ -528,6 +534,9 @@ function parseWorker(value: unknown): WorkerRunnerConfig {
     resultGraceSeconds: has(worker, "result_grace_seconds")
       ? nonNegativeInt(worker["result_grace_seconds"], "worker.result_grace_seconds")
       : 15,
+    scopedArtifacts: has(worker, "scoped_artifacts")
+      ? booleanAt(worker["scoped_artifacts"], "worker.scoped_artifacts")
+      : scopedArtifactsDefault,
   };
 }
 
@@ -567,9 +576,15 @@ export function parseDispatchConfig(value: unknown, options: ConfigOptions = {})
     ? stringMap(root["common_env"], "common_env")
     : {};
 
+  const scopedArtifactsDefault = runtime.maxProjectWorkers > 1;
   const worker = has(root, "worker")
-    ? parseWorker(root["worker"])
-    : { softDeadlineRatio: 0.8, retainTaskFiles: true, resultGraceSeconds: 15 };
+    ? parseWorker(root["worker"], scopedArtifactsDefault)
+    : {
+        softDeadlineRatio: 0.8,
+        retainTaskFiles: true,
+        resultGraceSeconds: 15,
+        scopedArtifacts: scopedArtifactsDefault,
+      };
 
   const observer = has(root, "observer")
     ? parseObserver(root["observer"])

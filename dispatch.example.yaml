@@ -27,7 +27,8 @@ runtime:
   max_workers: 3
   # Projects that may be scheduled at once.
   max_running_projects: 2
-  # Per-project cap. Keep at 1: the sandbox/workspace is shared per project.
+  # Per-project cap. Above 1, concurrent tasks share the project workspace and are
+  # coordinated by task-scoped artifact namespaces and an Observer review lease.
   max_project_workers: 1
   # Timeout for the startup model/credential probe.
   healthcheck_timeout: 15
@@ -70,6 +71,9 @@ worker:
   retain_task_files: true
   # How long to wait for result.json after the worker exits.
   result_grace_seconds: 15
+  # Give each task its own artifacts/<task-id>/ namespace. Defaults to true when
+  # runtime.max_project_workers > 1; set false to opt out.
+  scoped_artifacts: true
 
 local:
   # Project workspaces live under <workspace_root>/<project_id>/. Omit to use the

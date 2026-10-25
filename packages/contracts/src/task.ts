@@ -44,6 +44,12 @@ export interface WorkerTask {
   readonly concludeOf?: "bootstrap" | "explore";
   /** The worker writes exactly one TaskResult here (atomic write). */
   readonly resultPath: string;
+  /**
+   * Task-scoped artifact namespace relative to the workspace (`artifacts/<task-id>`).
+   * Present when same-project concurrency is enabled; the Host Bridge then rejects writes
+   * to another task's artifacts. Evidence refs stay relative to the workspace.
+   */
+  readonly artifactDir?: string;
   readonly scope: ScopePolicy;
   /** Ask the solver to wrap up and emit its result before the hard kill. */
   readonly softDeadlineSeconds?: number;
@@ -118,6 +124,27 @@ export function taskErrors(value: unknown): string[] {
     }
   } else if (kind === "conclude") {
     errors.push("conclude tasks require concludeOf");
+  }
+
+  const artifactDir = value["artifactDir"];
+  if (artifactDir !== undefined) {
+    if (!isNonEmptyString(artifactDir)) {
+      errors.push("artifactDir must be a non-empty string when present");
+    } else {
+      const segments = artifactDir.split("/");
+      if (
+        artifactDir.includes("\\") ||
+        artifactDir.startsWith("/") ||
+        /^[A-Za-z]:/.test(artifactDir) ||
+        segments.some(
+          (segment) => segment === "" || segment === "." || segment === "..",
+        ) ||
+        segments[0] !== "artifacts" ||
+        segments.length < 2
+      ) {
+        errors.push('artifactDir must be a relative path under "artifacts/"');
+      }
+    }
   }
 
   const scope = value["scope"];

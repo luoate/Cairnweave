@@ -147,6 +147,11 @@ return answer;
   `review_failed`、`review_skipped`、`flush_finished`、`flush_timeout`、
   `flush_failed`；记录触发原因、轮数、耗时、applied、错误文本，不记录完整 prompt 或
   工具输出。
+- 同项目并发时，每次 review 前获取 `<board>/locks/review.lock` 项目级租约：原子
+  `mkdir`、写入持有者/时间元数据、周期心跳；等待上限取 `min(5s, timeout_seconds)`。
+  拿不到租约时跳过本轮，审计 `review_skipped` 且 reason 为 `board_lock_busy`（等待
+  超时）或 `board_lock_error`（锁目录不可用）。释放前校验持有者 id，避免删除他人
+  （已过期接管）的租约。跳过不阻塞 solver 收尾，也不改变结果。
 
 ## 7. 权限与 Host Bridge
 
@@ -160,8 +165,8 @@ return answer;
 - **边界**：`protectedWriteRoots` 只覆盖结构化文件工具，不解析 `bash` 命令的文件写入。
   主 solver 若用 `bash` 直接写 `.cairn/board`，当前闸门不会拦截（`audit.jsonl` 仍会记录
   该命令）。看板完整性因此是“策略级”，不是内核级；需要严格隔离时应把看板放到不挂载
-  给 worker 的目录，或只给 worker 只读挂载。默认 `max_project_workers: 1` 也避免同项目
-  多个任务并发写同一看板。
+  给 worker 的目录，或只给 worker 只读挂载。同项目并发时 review 之间的写入由项目级
+  租约串行（见 §6），但该租约不拦截 `bash`，也不保护主 Solver 绕过只读工具的情况。
 
 ## 8. 测试覆盖
 
@@ -177,6 +182,8 @@ return answer;
   closed；
 - loop：周期 + flush、`max_reviews_per_task`、review 挂起时 flush 超时不抛、
   state 目录不可用时 flush 仍不抛、并行工具调用的事件写入串行化后不丢日志；
+- review 租约：同一时刻只有一个持有者、心跳过期后可接管、缺元数据时按目录 mtime
+  回收、释放不会删除已被接管的租约；另一任务持有租约时本轮 review 被跳过；
 - 队列：损坏 JSON 被跳过并删除，后续 review 仍能消费；
 - Host Bridge：只读看板工具 allow、写工具 block、看板文件写路径 block；
 - runtime：`extraEnv` 合并与覆盖顺序。
@@ -208,8 +215,10 @@ return answer;
    `packages/agent` 多了一个 Cairn 专用目录（已在上面的文件列表中说明）。
 2. `observer.model: null` 表示复用主 prompt 模型；设计稿里写的是固定短 ID。这样默认
    行为最省配置，但长任务上 review 成本可能偏高，建议显式配置便宜模型。
-3. 看板没有跨任务锁。默认 `max_project_workers: 1` 下同项目串行，安全；若显式提高该
-   上限，两个任务的 sidecar 可能同时改写看板。当前按“最后写入者获胜”处理，未加锁。
+3. 看板已有项目级 review 租约（M8），但它是**建议性协调**：租约只覆盖 Observer review
+   的整个生命周期，不覆盖主 Solver 的 `bash` 写入；持有进程被冻结超过 stale 窗口时，
+   另一个 review 会接管，两个 review 可能短暂同时运行。`board-store` 本身对
+   ideas/memory 的跨进程目录锁仍保留，单条写入是原子的。
 4. `bash` 对看板目录的写入不被 Host Bridge 拦截，见 §7。
 5. `agent_end` review 与最终 `flush` 都会把“窗口内所有轮次”作为输入；Review prompt
    不内联看板内容，sidecar 需要自己调用 `memory_list` / `idea_list`。

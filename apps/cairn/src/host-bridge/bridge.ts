@@ -44,6 +44,12 @@ export interface HostBridgeOptions {
    * project-level Observer board, which is owned by the sidecar.
    */
   protectedWriteRoots?: readonly string[];
+  /**
+   * Task-scoped artifact namespace relative to the workspace. When set, file writes under
+   * `<workspace>/artifacts/` must stay inside this directory. Absent means the workspace
+   * is shared (single-worker projects).
+   */
+  artifactDir?: string;
   /** Test hook. */
   auditPath?: string;
   /** Test hook. */
@@ -113,6 +119,9 @@ export class HostBridge {
   private readonly deniedRoots: string[];
   private readonly protectedWriteRoots: string[];
   private readonly fileRoots: string[];
+  private readonly artifactDir: string | null;
+  private readonly artifactsRoot: string | null;
+  private readonly taskArtifactsRoot: string | null;
   private readonly targets: ParsedTarget[];
   private readonly invalidTargets: Array<{ raw: string; reason: string }>;
   private readonly now: () => Date;
@@ -132,6 +141,15 @@ export class HostBridge {
     this.protectedWriteRoots = (options.protectedWriteRoots ?? []).map((path) =>
       canonicalPath(resolve(path)),
     );
+    this.artifactDir = options.artifactDir ?? null;
+    this.artifactsRoot =
+      this.artifactDir === null
+        ? null
+        : canonicalPath(resolve(this.workspace, "artifacts"));
+    this.taskArtifactsRoot =
+      this.artifactDir === null
+        ? null
+        : canonicalPath(resolve(this.workspace, ...this.artifactDir.split("/")));
 
     const parsed = parseScopeTargets(options.scopeTargets);
     this.targets = parsed.targets;
@@ -240,6 +258,14 @@ export class HostBridge {
       }
       if (this.protectedWriteRoots.some((root) => isUnder(root, path))) {
         return `write path "${rawPath}" is the Observer board; the solver is read-only`;
+      }
+      if (
+        this.artifactsRoot !== null &&
+        this.taskArtifactsRoot !== null &&
+        isUnder(this.artifactsRoot, path) &&
+        !isUnder(this.taskArtifactsRoot, path)
+      ) {
+        return `write path "${rawPath}" is outside this task's artifact directory (${this.artifactDir}); concurrent tasks share the workspace`;
       }
       return null;
     }

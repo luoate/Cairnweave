@@ -84,6 +84,39 @@ describe("artifact indexing", () => {
     expect(refreshed[0]!.task_id).toBe("task-2");
   });
 
+  test("keeps the original producer when another task reindexes", () => {
+    mkdirSync(join(workspace, "artifacts"), { recursive: true });
+    writeFileSync(join(workspace, "artifacts", "first.txt"), "one", "utf8");
+    record("task-1");
+
+    writeFileSync(join(workspace, "artifacts", "second.txt"), "two", "utf8");
+    const artifacts = record("task-2");
+    const byPath = new Map(artifacts.map((artifact) => [artifact.path, artifact]));
+
+    expect(byPath.get("first.txt")?.task_id).toBe("task-1");
+    expect(byPath.get("second.txt")?.task_id).toBe("task-2");
+  });
+
+  test("derives provenance from a task artifact namespace", () => {
+    mkdirSync(join(workspace, "artifacts", "explore-0123456789ab"), {
+      recursive: true,
+    });
+    writeFileSync(
+      join(workspace, "artifacts", "explore-0123456789ab", "scan.log"),
+      "scoped",
+      "utf8",
+    );
+    writeFileSync(join(workspace, "artifacts", "shared.txt"), "root", "utf8");
+
+    const artifacts = record("reason-bbbbbbbbbbbb");
+    const byPath = new Map(artifacts.map((artifact) => [artifact.path, artifact]));
+
+    expect(byPath.get("explore-0123456789ab/scan.log")?.task_id).toBe(
+      "explore-0123456789ab",
+    );
+    expect(byPath.get("shared.txt")?.task_id).toBe("reason-bbbbbbbbbbbb");
+  });
+
   test("keeps the previous index when the artifacts directory is absent", () => {
     mkdirSync(join(workspace, "artifacts"), { recursive: true });
     writeFileSync(join(workspace, "artifacts", "keep.txt"), "keep", "utf8");
@@ -102,13 +135,28 @@ describe("artifact indexing", () => {
 
     writeFileSync(join(workspace, "artifacts", "old.txt"), "changed", "utf8");
     writeFileSync(join(workspace, "artifacts", "new.txt"), "new", "utf8");
+    mkdirSync(join(workspace, "artifacts", "conclude-cccccccccccc"), {
+      recursive: true,
+    });
+    writeFileSync(
+      join(workspace, "artifacts", "conclude-cccccccccccc", "late.txt"),
+      "late",
+      "utf8",
+    );
     const refreshed = db.withConn((conn) =>
       refreshProjectArtifacts(conn, { projectId, workspace }),
     );
-    expect(refreshed.map((artifact) => artifact.path)).toEqual(["new.txt", "old.txt"]);
+    expect(refreshed.map((artifact) => artifact.path)).toEqual([
+      "conclude-cccccccccccc/late.txt",
+      "new.txt",
+      "old.txt",
+    ]);
     const byPath = new Map(refreshed.map((artifact) => [artifact.path, artifact]));
     expect(byPath.get("old.txt")).toMatchObject({ task_id: "task-1", size: 7 });
     expect(byPath.get("new.txt")?.task_id).toBe("retention-sweep");
+    expect(byPath.get("conclude-cccccccccccc/late.txt")?.task_id).toBe(
+      "conclude-cccccccccccc",
+    );
   });
 
   test("skips symlinks so the scan cannot leave the workspace", () => {
