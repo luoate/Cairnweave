@@ -133,6 +133,7 @@ export {
   getPendingConclude,
   hasPendingConclude,
   isPendingConcludeSession,
+  listAllPendingConcludes,
   listPendingConcludes,
   recordPendingConclude,
   type PendingConcludePhase,
@@ -146,8 +147,10 @@ export {
   getProjectArtifact,
   listProjectArtifacts,
   recordProjectArtifacts,
+  refreshProjectArtifacts,
   type ProjectArtifact,
   type RecordArtifactsOptions,
+  type RefreshArtifactsOptions,
 } from "./artifacts";
 
 export {

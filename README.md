@@ -4,7 +4,7 @@
 skills / Observer）合并成**一个 Bun/TypeScript 代码库**，不再维护 Python ↔ TypeScript
 之间的进程桥、JSONL RPC 和 worker 适配器。
 
-状态：**M5c（证据最小大小 + conclude 队列持久化已落地）**；M0–M4、M5a、M5b 的计划项全部完成。
+状态：**M6（运维清理与重启恢复已落地）**；M0–M4、M5a–M5c 的计划项全部完成。
 `cairn serve` 是可运行的 Cairn 兼容服务：SQLite schema、领域服务、全部五个路由、
 YAML/timeline 导出、静态 Web UI 均已就位，并用 Python Cairn 生成的 golden 做了逐字
 对照。进程内 scheduler、任务/结果文件 worker 协议、BreachWeave Solver 接入已在 M2
@@ -81,6 +81,22 @@ M5c 增加：
   后仍优先派发，会话路径按当前 workspace root 重建；conclude 结束、意图失效或准备
   失败时删除行，项目删除级联清理。
 
+M6 增加：
+
+- **session 保留策略**：`retention.session_max_age_days` 与
+  `session_keep_per_project`（默认都为 `0`，即保留全部）。sweep 只扫描
+  `<workspace>/.cairn/sessions` 的直接子目录，跳过符号链接；正在运行的任务目录、
+  待恢复的 conclude 会话，以及所有 `pending_concludes` 指向的目录不会被删除（受保护
+  目录仍占 keep 名额）。保护信息查询失败时整轮跳过删除（fail closed）。
+- **启动与周期 sweep**：`cairn serve --config` 在首次派发前跑一次 sweep，之后按
+  `retention.sweep_interval_seconds`（默认 3600，`0` 关闭周期执行）重复；启动 sweep
+  先对账 `pending_concludes`，避免上一进程遗留的无效行占用队列。
+- **pending 对账**：项目不存在/非 active、intent 已结束或不存在、会话目录里已没有
+  `solver-session/*.jsonl` 时删除该行；会话缺失且 intent 仍开放时同时释放租约，
+  让 explore 正常重试。
+- **artifacts 刷新**：`retention.refresh_artifacts: true` 时每次 sweep 重建 artifacts
+  索引；已索引路径保留最初记录它的 `task_id`，新路径记为 `retention-sweep`。
+
 默认仍是确定性 fake solver，测试与离线运行不需要模型凭据。Observer 只接在
 `CAIRN_SOLVER=breachweave` 的真实 Solver 路径上，fake solver 会忽略它。
 
@@ -135,6 +151,7 @@ apps/cairn/src/
   scheduler/loop.ts      tick、派发、租约、超时、artifacts、切片选择、Observer env、runs
   scheduler/tasks.ts     prompt 渲染 + 路径映射 + task.json/context 落盘
   scheduler/evidence.ts  证据校验、哈希与实时比对（工作区包含、realpath、上限）
+  scheduler/retention.ts session 目录扫描、age/count 选择与受保护路径判定
   runtime/types.ts       scheduler ↔ 沙箱接口（local / container）
   runtime/local.ts       本地子进程 runtime
   runtime/docker.ts      每项目容器、docker exec、任务级终止、清理
@@ -173,6 +190,7 @@ tools/gate/m3-container-e2e.ts  真实容器 + fake solver 的调度端到端 ga
 tools/gate/m3-real-container-gate.ts  真实容器 + 真实模型 + Scope 硬拦截 gate（计费）
 tools/gate/m4-conclude-gate.ts  真实模型的会话恢复 conclude gate（计费）
 tools/gate/m4c-observer-gate.ts  真实模型的 Observer 看板 review gate（计费）
+tools/gate/m6-restart-gate.ts    fake solver 的跨进程 conclude 恢复 gate（不计费）
 tools/vendor/            vendor 资产生成器
 docs/ARCHITECTURE.md     角色、数据所有权、时序、沙箱、失败语义
 docs/OBSERVER.md         Observer 实现、配置、权限、flush 语义与已知限制（M4c）
@@ -454,9 +472,17 @@ bootstrap 任务，预置一条 pending idea，并检查主 solver 只使用只�
 CAIRN_GATE_KEEP=1 bun run tools/gate/m4c-observer-gate.ts
 ```
 
-## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c，2026-10-25，Bun 1.4.4）
+M6 的跨进程恢复 gate 不调用模型：它先写下一台崩溃控制面遗留的 `pending_concludes`
+行、已认领 intent 与 solver session，再启动一个全新的 `cairn serve`（fake solver，
+端口 `0`），要求新进程完成 conclude、写 Fact、清空队列：
 
-- `bun test`：**230 passed**（28 个文件），0 failed。
+```bash
+bun run tools/gate/m6-restart-gate.ts
+```
+
+## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6，2026-10-25，Bun 1.4.4）
+
+- `bun test`：**242 passed**（30 个文件），0 failed。
 - `bun run typecheck`：`tsc --noEmit` 通过。
 - **HTTP 对照**：`api.golden.json` 的 60 步请求（成功路径、400/403/404/405/409、租约过期、
   删除级联、导出、路由错误）由 Python FastAPI + 固定时钟生成；TS 重放后状态码、content-type
@@ -469,7 +495,8 @@ CAIRN_GATE_KEEP=1 bun run tools/gate/m4c-observer-gate.ts
 - **配置校验**：`dispatch.example.yaml` 可加载；未知顶层键、旧 `workers` 段、并发上限、
   容器模式缺少 `container`、prompt 组/占位符缺失均报错；`tasks.graph_slice` 的默认值
   （关闭，80/60）与非法 caps 均有断言；`tasks.evidence.min_bytes` 的默认值、`0` 关闭
-  与负值/非整数拒绝也有覆盖。
+  与负值/非整数拒绝也有覆盖；`retention` 四个字段的默认值、合法覆盖与
+  负值/非整数/非布尔拒绝同样有断言。
 - **契约解析**：宽容 JSON 提取（整段、fence、前后散文、字符串内大括号、嵌套对象、
   先坏后好）与四个 payload 校验器覆盖 Cairn 的接受范围和错误文本。
 - **scheduler 端到端**：真实拉起 `cairn worker` 子进程（fake solver）。非 bootstrap 项目
@@ -550,6 +577,13 @@ CAIRN_GATE_KEEP=1 bun run tools/gate/m4c-observer-gate.ts
 - **最小证据与持久化队列（M5c）**：默认拒绝 0 字节文件，`min_bytes` 的边界（等于阈值
   接受、小于阈值拒绝）与 `0` 关闭均有断言；`pending_concludes` 覆盖去重、排序、删除、
   会话查找、未知项目 404 与项目级联删除。
+- **保留与重启恢复（M6）**：`retention.ts` 覆盖扫描顺序、忽略文件/符号链接、age 规则、
+  keep count（受保护目录仍占名额）与双规则关闭。sweep 集成测试覆盖：无效 pending 行
+  （会话缺失、intent 已结束/不存在、项目已完成）在对账时删除并释放租约，有效行保留；
+  过旧目录按 age 删除、超出 keep 的目录按 count 删除，而受保护的排队会话与工作区内
+  其它文件不受影响；`refresh_artifacts` 重建索引并保留原有 `task_id`。跨进程 gate
+  `tools/gate/m6-restart-gate.ts` 为 **9/9 PASS**（2026-10-25）：新启动的
+  `cairn serve` 从持久化状态直接派发 conclude，随后队列清空、Fact 与 run 证据落库。
 
 golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定时钟、`TZ=UTC`）。
 重新生成方法与约束见 `docs/PORTING.md`。
@@ -584,6 +618,7 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M5a ✅ | 证据门控 + `runs` / `fact_meta` 旁路表 + 两个只读路由 | 210 passed / 26 files；图/YAML/golden 响应不变（2026-10-25） |
 | M5b ✅ | 证据 size/SHA-256 固化 + 实时校验路由 | 221 passed / 27 files（2026-10-25） |
 | M5c ✅ | 证据最小字节策略 + 跨重启持久化 conclude 队列 | 230 passed / 28 files（2026-10-25） |
+| M6 ✅ | session 保留策略、启动/周期 sweep、pending 对账、artifacts 刷新 | 242 passed / 30 files；跨进程恢复 gate 9/9（2026-10-25） |
 
 ## 与 Phase 0 的关系
 

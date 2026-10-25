@@ -53,6 +53,12 @@ describe("dispatcher config", () => {
       retainTaskFiles: true,
       resultGraceSeconds: 15,
     });
+    expect(config.retention).toEqual({
+      sessionMaxAgeDays: 0,
+      sessionKeepPerProject: 0,
+      sweepIntervalSeconds: 3600,
+      refreshArtifacts: false,
+    });
   });
 
   test("defaults graph slicing off and parses overrides", () => {
@@ -100,6 +106,33 @@ describe("dispatcher config", () => {
     );
     expect(() => parse(BASE + '  evidence: {min_bytes: "1"}\n')).toThrow(
       "tasks.evidence.min_bytes must be a non-negative integer",
+    );
+  });
+
+  test("parses and validates retention", () => {
+    const config = parse(
+      BASE +
+        `retention:
+  session_max_age_days: 14
+  session_keep_per_project: 5
+  sweep_interval_seconds: 60
+  refresh_artifacts: true
+`,
+    );
+    expect(config.retention).toEqual({
+      sessionMaxAgeDays: 14,
+      sessionKeepPerProject: 5,
+      sweepIntervalSeconds: 60,
+      refreshArtifacts: true,
+    });
+    expect(() => parse(BASE + "retention: {session_max_age_days: -1}\n")).toThrow(
+      "retention.session_max_age_days must be a non-negative integer",
+    );
+    expect(() => parse(BASE + "retention: {session_keep_per_project: 1.5}\n")).toThrow(
+      "retention.session_keep_per_project must be a non-negative integer",
+    );
+    expect(() => parse(BASE + 'retention: {refresh_artifacts: "yes"}\n')).toThrow(
+      "retention.refresh_artifacts must be a boolean",
     );
   });
 

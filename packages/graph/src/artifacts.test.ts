@@ -16,6 +16,7 @@ import {
   getProjectArtifact,
   listProjectArtifacts,
   recordProjectArtifacts,
+  refreshProjectArtifacts,
   type CairnDatabase,
 } from "./index";
 
@@ -92,6 +93,22 @@ describe("artifact indexing", () => {
     const artifacts = record("task-2");
     expect(artifacts.map((artifact) => artifact.path)).toEqual(["keep.txt"]);
     expect(artifacts[0]!.task_id).toBe("task-1");
+  });
+
+  test("keeps provenance when a sweep refreshes the index", () => {
+    mkdirSync(join(workspace, "artifacts"), { recursive: true });
+    writeFileSync(join(workspace, "artifacts", "old.txt"), "old", "utf8");
+    record("task-1");
+
+    writeFileSync(join(workspace, "artifacts", "old.txt"), "changed", "utf8");
+    writeFileSync(join(workspace, "artifacts", "new.txt"), "new", "utf8");
+    const refreshed = db.withConn((conn) =>
+      refreshProjectArtifacts(conn, { projectId, workspace }),
+    );
+    expect(refreshed.map((artifact) => artifact.path)).toEqual(["new.txt", "old.txt"]);
+    const byPath = new Map(refreshed.map((artifact) => [artifact.path, artifact]));
+    expect(byPath.get("old.txt")).toMatchObject({ task_id: "task-1", size: 7 });
+    expect(byPath.get("new.txt")?.task_id).toBe("retention-sweep");
   });
 
   test("skips symlinks so the scan cannot leave the workspace", () => {

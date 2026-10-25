@@ -1,4 +1,4 @@
-# 架构（M5c 更新）
+# 架构（M6 更新）
 
 本文固定合并后的角色边界、数据所有权和失败语义。实现以本文为准；需要改动时先改本文并
 记录原因。
@@ -32,6 +32,11 @@ sidecar（`packages/agent/src/solver/extension/cairn-observer/`）；主 solver 
 `unverified`）。摘要只代表写入时的内容快照，不是签名。M5c 已落地：默认拒绝 0 字节
 证据（`tasks.evidence.min_bytes`），并把失败任务的 conclude 队列写入
 `pending_concludes`，使控制面重启后仍能优先派发；会话路径以工作区相对路径存储。
+M6 已落地：scheduler 在首次派发前跑一次 housekeeping sweep，之后按配置周期执行；
+`scheduler/retention.ts` 按 age/count 选择可删除的 session 目录，并保护运行中任务、
+待恢复 conclude 与所有 pending 行指向的目录；启动 sweep 同时对账
+`pending_concludes`，丢弃指向已完成项目、已结束 intent 或缺失会话的行。可选
+`retention.refresh_artifacts` 在同一轮重建 artifacts 索引并保留原 `task_id`。
 
 ## 1. 范围
 
@@ -52,6 +57,10 @@ M0–M3 的非目标：多用户认证、分布式存储、Web UI 重设计、�
 - 为每个任务生成 `task.json`，拉起并监督 worker，读取并校验 `result.json`。
 - 任务结束后扫描 `<workspace>/artifacts/**` 并写入 `project_artifacts` 索引；Host Bridge
   的 `audit.jsonl` 由 worker 进程写入 `sessionDir`。
+- `--config` 时还运行 housekeeping sweep：启动时（首次派发前）执行一次，之后按
+  `retention.sweep_interval_seconds` 周期执行。sweep 对账 `pending_concludes`、清理
+  过期/超额 session 目录，并可选刷新 artifacts 索引。保护信息读取失败时跳过本轮的
+  删除，而不是在不确定状态下继续清理。
 
 scheduler 与 HTTP API 共用 `packages/graph/src/commands.ts` 的命令，不经过 HTTP 自调用。
 两者语义一致；API 的逐字行为由 golden 锁定，scheduler 的语义由集成测试锁定。
@@ -304,7 +313,9 @@ stderr 归档到 `sessionDir/{stdout,stderr}.log`。需要 UI 实时进度时再
   不算 artifact。artifact 是**不可信数据**，控制面只索引，不执行、不解析内容。
 - **索引时机**：每个任务结束时（成功、失败、拒绝都算）由 `finish` 扫描一次；整个项目的
   索引按本次扫描重建。`artifacts/` 不存在时保留旧索引；单次扫描最多 2000 个文件、递归
-  深度 20，跳过符号链接和非普通文件。
+  深度 20，跳过符号链接和非普通文件。开启 `retention.refresh_artifacts` 后，每次
+  housekeeping sweep 也会重建索引：已存在的路径保留最初记录它的 `task_id`，新路径记为
+  `retention-sweep`。
 - **记录内容**：相对路径（`/` 分隔）、字节数、流式 SHA-256、最后写入的 `taskId`、
   `created_at`。不保存文件内容，也不提供下载路由。
 - **HTTP**：`GET /projects/{id}/artifacts` 返回
@@ -341,6 +352,27 @@ HTTP（只读，均在控制面进程内直接查库）：
   `current_sha256`。`serve --config` 时用配置的 workspace root 校验；纯 HTTP 模式返回
   `unverified`。未知 Fact 或项目 404，无证据 Fact 返回 `[]`。校验是同步流式哈希，耗时
   与文件大小成正比；证据数量上限 20，响应不缓存结果。
+
+### 5.7 session 保留与启动对账（M6）
+
+scheduler 的 housekeeping sweep 由 `scheduler/retention.ts` 与 `loop.ts` 共同实现：
+
+- **运行时机**：`start()` 在第一次 tick 前同步跑一次；`retention.sweep_interval_seconds`
+  非 0 时再用独立定时器周期执行。sweep 与 tick 解耦，失败只记日志，不影响派发。
+- **扫描范围**：只枚举 `<workspace>/.cairn/sessions` 的直接子目录（`lstat`，跳过符号
+  链接与非目录）。Observer 看板、artifacts 和项目根目录下的其它文件不在清理范围内。
+- **保护集合**：当前 `running` 任务的 `sessionDir` / `resumeSessionDir`，以及所有
+  `pending_concludes` 行按当前 workspace root 重建的目录。受保护目录不会删除，但仍然
+  占用 keep-count 名额。保护集合查询失败时本轮直接跳过删除（fail closed）。
+- **选择规则**：`session_max_age_days > 0` 且目录 mtime 早于阈值 → 按 age 删除；
+  `session_keep_per_project > 0` 时按 mtime 从新到旧保留前 N 个，其余按 count 删除。
+  两条规则都为 0 时整个清理阶段不运行。
+- **pending 对账**：对每一行检查项目是否存在且 active、intent 是否存在且仍开放、
+  会话目录中是否仍有 `solver-session/*.jsonl`。任一不满足就删除该行；若仅会话缺失而
+  intent 仍开放，还会释放该 intent 的租约，让 explore 正常重试。正在本进程运行的任务
+  不参与对账。
+- **效果**：上一控制面崩溃遗留的无效队列项不会阻塞新工作；有效项在首次 tick 前保留，
+  由正常派发分支优先执行。清理与对账都不要求图可写，也不修改 Fact / intent 历史。
 
 ## 6. 沙箱与 Scope Policy
 
@@ -439,6 +471,10 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
   在启动时以 `ConfigError` 拒绝。
 - `tasks.evidence.min_bytes` 控制接受证据的最小字节数（非负整数，默认 `1`，`0` 关闭）。
   缺省拒绝 0 字节文件；非法值在启动时以 `ConfigError` 拒绝。
+- `retention` 是新增的可选段（M6）：`session_max_age_days`（非负整数，默认 `0` 关闭）、
+  `session_keep_per_project`（非负整数，默认 `0` 关闭）、`sweep_interval_seconds`
+  （非负整数，默认 `3600`，`0` 只保留启动 sweep）、`refresh_artifacts`（布尔，默认
+  `false`）。四个字段都可省略；负值、非整数或非布尔值以 `ConfigError` 拒绝。
 - `observer` 是新增的可选段（M4c，默认关闭）：`enabled`（布尔）、`model`
   （model-prefs 条目或 `null`）、`every_rounds` / `window_rounds` / `timeout_seconds`
   （正整数）、`max_reviews_per_task`（非负整数）、`kernel_tasks`（
@@ -551,6 +587,9 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
 - 证据摘要（M5b）在任务结束后计算，只能发现**之后**的替换/删除；它不能证明文件由该
   任务生成，也不是签名。worker 在工作区内始终有写权限，因此强完整性仍需容器/文件系统
   层配合（只写挂载、外部日志或签名）。校验路由只读取工作区，不跟随符号链接。
+- session 保留（M6）只删除 `<workspace>/.cairn/sessions` 的直接子目录，跳过符号链接；
+  运行中任务与 pending 会话受保护。保护集合读取失败时整轮不删除（fail closed）。删除
+  不可恢复，默认关闭两条规则；若要保留审计证据，应先备份或把 session 移出可清理范围。
 - Observer 看板是**建议性数据**，不是图事实：主 Solver 只读，真正结论仍必须写进
   `result.json` 并经控制面校验。看板的写保护只覆盖结构化文件工具与白名单；`bash` 可在
   工作区内改写它。看板不得存 flag、凭据、完整工具输出或与授权范围无关的数据。默认
@@ -563,13 +602,18 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
 ## 13. 待定问题
 
 1. 任务文件保留多久：M3 默认保留全部 `sessionDir` 供审计，
-   `worker.retain_task_files: false` 可整目录删除；长期保留策略（按项目/时间清理）待定。
+   `worker.retain_task_files: false` 可整目录删除。M6 已提供按项目/时间/数量的
+   `retention` sweep（默认两条规则均为 `0`，即行为不变）；默认值是否需要收紧、以及
+   审计要求下是否允许自动删除仍需按部署决定。
 2. 同一项目并发 worker：`runtime.max_project_workers` 默认 1。容器模式已支持同项目多次
    `docker exec`，但共享工作区（包括 Observer 项目看板）的写冲突没有协调；提高并发前
-   需要评估，或为看板增加跨任务锁/分片。
+   需要评估，或为看板增加跨任务锁/分片。M6 的保护集合只覆盖本进程 `running` 表与
+   pending 行；若同一工作区被多个控制面共用，retention 没有跨进程协调。
 3. ~~conclude 的会话恢复~~：M4a 已定为复用失败任务的 `sessionDir`，由
    `SessionManager.open` 恢复最新 JSONL；M5c 已将 pending 队列持久化到
-   `pending_concludes`，重启后按行优先派发（不再依赖内存或租约过期重派）。
+   `pending_concludes`，重启后按行优先派发（不再依赖内存或租约过期重派）。M6 在
+   启动 sweep 中删除指向已完成项目、已结束/不存在 intent 或缺失会话的行，并为后者
+   释放租约。
 4. Prompt group 是否在 M3 后彻底移除，还是保留给 fake/mock 集成测试。
 5. 本地模式的 `bash` 依赖：容器镜像自带 POSIX shell 与 `procps`；本地模式仍要求用户在
    Windows 安装 Git Bash/MSYS2/Cygwin/WSL 之一，是否注入跨平台 shell 替身待定。

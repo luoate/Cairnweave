@@ -70,11 +70,55 @@ export function recordProjectArtifacts(
   return listProjectArtifacts(conn, options.projectId);
 }
 
+export interface RefreshArtifactsOptions {
+  projectId: string;
+  /** Host path of the project workspace. */
+  workspace: string;
+}
+
+/**
+ * Re-scans `artifacts/` during a retention sweep. Paths that were already indexed keep
+ * the task id that first recorded them; new paths are attributed to the sweep itself.
+ */
+export function refreshProjectArtifacts(
+  conn: Database,
+  options: RefreshArtifactsOptions,
+): ProjectArtifact[] {
+  const root = join(options.workspace, "artifacts");
+  const files = scanArtifacts(root);
+  if (files === null) {
+    return listProjectArtifacts(conn, options.projectId);
+  }
+
+  const previous = new Map(
+    all<{ path: string; task_id: string }>(
+      conn,
+      "SELECT path, task_id FROM project_artifacts WHERE project_id = ?",
+      options.projectId,
+    ).map((row) => [row.path, row.task_id]),
+  );
+  const createdAt = new Date().toISOString();
+  run(conn, "DELETE FROM project_artifacts WHERE project_id = ?", options.projectId);
+  for (const file of files) {
+    run(
+      conn,
+      `INSERT INTO project_artifacts (project_id, path, task_id, size, sha256, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      options.projectId,
+      file.relativePath,
+      previous.get(file.relativePath) ?? "retention-sweep",
+      file.size,
+      hashFileSha256(file.absolutePath),
+      createdAt,
+    );
+  }
+  return listProjectArtifacts(conn, options.projectId);
+}
+
 export function listProjectArtifacts(
   conn: Database,
   projectId: string,
-): ProjectArtifact[] {
-  return all<ProjectArtifact>(
+): ProjectArtifact[] {  return all<ProjectArtifact>(
     conn,
     `SELECT path, size, sha256, task_id, created_at
      FROM project_artifacts WHERE project_id = ? ORDER BY path`,

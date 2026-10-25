@@ -97,6 +97,16 @@ export function listPendingConcludes(
   );
 }
 
+/** Cross-project view used by the startup reconciliation sweep. */
+export function listAllPendingConcludes(conn: Database): PendingConcludeRow[] {
+  return all<PendingConcludeRow>(
+    conn,
+    `SELECT project_id, intent_id, phase, session, created_at
+     FROM pending_concludes
+     ORDER BY project_id, created_at, intent_id`,
+  );
+}
+
 export function deletePendingConclude(
   conn: Database,
   projectId: string,

@@ -79,6 +79,21 @@ local:
   # "keep" is the safe default for audit.
   completed_action: keep
 
+# Optional housekeeping (M6). Sweeps run once at startup (before the first dispatch)
+# and then every sweep_interval_seconds. Running tasks and queued concludes are never
+# removed. Both session rules default to 0 (keep everything).
+retention:
+  # Delete finished session directories older than this. 0 disables the age rule.
+  session_max_age_days: 0
+  # Keep at most this many session directories per project (oldest removed first).
+  # Protected directories still count toward this limit. 0 disables the count rule.
+  session_keep_per_project: 0
+  # Seconds between background sweeps; 0 disables periodic sweeps (startup still runs).
+  sweep_interval_seconds: 3600
+  # Re-scan <workspace>/artifacts during every sweep. Existing paths keep the task id
+  # that first indexed them.
+  refresh_artifacts: false
+
 # Optional Observer sidecar (M4c). It maintains a project-level ideas/memory board
 # and runs a separate review model; the main solver only gets read-only board tools.
 # The solver answer is never changed by Observer failures, and flush is bounded by

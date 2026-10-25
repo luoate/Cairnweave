@@ -31,12 +31,14 @@ import {
   hasPendingConclude,
   heartbeatIntent,
   isPendingConcludeSession,
+  listAllPendingConcludes,
   listProjects,
   nextRunId,
   recordPendingConclude,
   releaseIntent,
   releaseReason,
   recordProjectArtifacts,
+  refreshProjectArtifacts,
   renewIntentLease,
   renewReasonLease,
   startRun,
@@ -58,6 +60,7 @@ import { createRuntime, type RuntimeBackend, type WorkerProcess } from "../runti
 import { environmentSnapshot } from "../runtime/types";
 import { latestSolverSessionFile } from "../solver/session-file";
 import { collectEvidence, type EvidenceCollection } from "./evidence";
+import { scanSessionDirs, selectSessionsForRemoval } from "./retention";
 import {
   observerEnvironment,
   prepareTask,
@@ -153,6 +156,7 @@ export class Scheduler {
   private readonly loggedSkips = new Set<string>();
   private readonly processes = new Map<string, WorkerProcess>();
   private timer: ReturnType<typeof setInterval> | null = null;
+  private sweepTimer: ReturnType<typeof setInterval> | null = null;
   private projectCursor = 0;
 
   constructor(options: SchedulerOptions) {
@@ -178,6 +182,23 @@ export class Scheduler {
   /** Background mode used by `cairn serve --config`. */
   start(): void {
     if (this.timer !== null) return;
+    // Reconcile persisted state before the first dispatch: rows left by a previous process
+    // may point at concluded intents or deleted sessions.
+    try {
+      this.sweepNow();
+    } catch (error) {
+      this.log(`startup sweep failed: ${describe(error)}`);
+    }
+    const sweepSeconds = this.config.retention.sweepIntervalSeconds;
+    if (sweepSeconds > 0) {
+      this.sweepTimer = setInterval(() => {
+        try {
+          this.sweepNow();
+        } catch (error) {
+          this.log(`retention sweep failed: ${describe(error)}`);
+        }
+      }, sweepSeconds * 1000);
+    }
     this.timer = setInterval(() => {
       try {
         this.tick();
@@ -192,6 +213,10 @@ export class Scheduler {
     if (this.timer !== null) {
       clearInterval(this.timer);
       this.timer = null;
+    }
+    if (this.sweepTimer !== null) {
+      clearInterval(this.sweepTimer);
+      this.sweepTimer = null;
     }
     for (const task of this.running.values()) {
       this.cancel(task, "shutdown");
@@ -221,6 +246,194 @@ export class Scheduler {
     while (this.running.size > 0) {
       await Promise.all([...this.running.values()].map((task) => task.promise));
     }
+  }
+
+  // --- housekeeping -----------------------------------------------------------------
+
+  /**
+   * One reconciliation/retention pass. Called at startup and on the configured interval;
+   * tests call it directly. All steps are best-effort and never abort dispatch.
+   */
+  sweepNow(): void {
+    let summaries: ProjectSummary[];
+    try {
+      summaries = this.db.withConn((conn) => listProjects(conn));
+    } catch (error) {
+      this.log(`sweep project list failed: ${describe(error)}`);
+      return;
+    }
+    this.reconcilePendingConcludes();
+    this.pruneSessions(summaries);
+    if (this.config.retention.refreshArtifacts) {
+      this.refreshArtifacts(summaries);
+    }
+  }
+
+  /** Drops queued concludes that can no longer run, releasing a still-open intent. */
+  private reconcilePendingConcludes(): void {
+    let rows: PendingConcludeRow[];
+    try {
+      rows = this.db.withConn((conn) => listAllPendingConcludes(conn));
+    } catch (error) {
+      this.log(`pending reconcile load failed: ${describe(error)}`);
+      return;
+    }
+    if (rows.length === 0) return;
+
+    const details = new Map<string, ProjectDetail | null>();
+    const unreadable = new Set<string>();
+    for (const row of rows) {
+      if (this.isIntentRunning(row.project_id, row.intent_id)) continue;
+      if (unreadable.has(row.project_id)) continue;
+
+      let detail: ProjectDetail | null;
+      if (details.has(row.project_id)) {
+        detail = details.get(row.project_id)!;
+      } else {
+        try {
+          detail = this.db.withConn((conn) =>
+            getProjectDetail(conn, row.project_id),
+          );
+        } catch (error) {
+          if (error instanceof HttpError && error.status === 404) {
+            detail = null;
+          } else {
+            // A transient read failure must not be mistaken for a missing project.
+            this.log(
+              `pending reconcile project load failed project=${row.project_id}: ${describe(error)}`,
+            );
+            unreadable.add(row.project_id);
+            continue;
+          }
+        }
+        details.set(row.project_id, detail);
+      }
+
+      let reason: string | null = null;
+      let releaseOpenIntent = false;
+      if (detail === null) {
+        reason = "project missing";
+      } else if (detail.project.status !== "active") {
+        reason = `project ${detail.project.status}`;
+      } else {
+        const intent = detail.intents.find((entry) => entry.id === row.intent_id);
+        if (intent === undefined) {
+          reason = "intent missing";
+        } else if (intent.to !== null) {
+          reason = "intent concluded";
+        } else if (
+          latestSolverSessionFile(this.pendingHostSession(row)) === null
+        ) {
+          reason = "session missing";
+          releaseOpenIntent = true;
+        }
+      }
+      if (reason === null) continue;
+
+      try {
+        this.db.withConn((conn) =>
+          deletePendingConclude(conn, row.project_id, row.intent_id),
+        );
+      } catch (error) {
+        this.log(
+          `pending reconcile delete failed project=${row.project_id} ` +
+            `intent=${row.intent_id}: ${describe(error)}`,
+        );
+        continue;
+      }
+      this.log(
+        `pending conclude dropped project=${row.project_id} intent=${row.intent_id}: ${reason}`,
+      );
+      // Without the retained session there is nothing to resume; let a normal explore
+      // retry instead of leaving the intent claimed by this worker.
+      if (releaseOpenIntent) {
+        this.releaseBestEffort({
+          projectId: row.project_id,
+          kind: "conclude",
+          intentId: row.intent_id,
+        });
+      }
+    }
+  }
+
+  private pruneSessions(summaries: readonly ProjectSummary[]): void {
+    const retention = this.config.retention;
+    if (
+      retention.sessionMaxAgeDays === 0 &&
+      retention.sessionKeepPerProject === 0
+    ) {
+      return;
+    }
+    const protectedPaths = this.protectedSessionPaths();
+    if (protectedPaths === null) return;
+    let removed = 0;
+    for (const summary of summaries) {
+      const workspace = projectWorkspace(this.workspaceRoot, summary.id);
+      const dirs = scanSessionDirs(workspace);
+      if (dirs.length === 0) continue;
+      for (const decision of selectSessionsForRemoval(
+        dirs,
+        retention,
+        protectedPaths,
+      )) {
+        try {
+          rmSync(decision.path, { recursive: true, force: true });
+          removed += 1;
+          this.log(
+            `retention removed project=${summary.id} dir=${decision.name} reason=${decision.reason}`,
+          );
+        } catch (error) {
+          this.log(
+            `retention delete failed project=${summary.id} dir=${decision.name}: ${describe(error)}`,
+          );
+        }
+      }
+    }
+    if (removed > 0) this.log(`retention sweep removed ${removed} session dir(s)`);
+  }
+
+  /** Null means the lookup failed: fail closed and skip pruning for this pass. */
+  private protectedSessionPaths(): Set<string> | null {
+    const paths = new Set<string>();
+    for (const task of this.running.values()) {
+      paths.add(task.sessionDir);
+      if (task.resumeSessionDir !== undefined) {
+        paths.add(task.resumeSessionDir);
+      }
+    }
+    try {
+      const rows = this.db.withConn((conn) => listAllPendingConcludes(conn));
+      for (const row of rows) paths.add(this.pendingHostSession(row));
+    } catch (error) {
+      this.log(`retention protection lookup failed: ${describe(error)}`);
+      return null;
+    }
+    return paths;
+  }
+
+  private refreshArtifacts(summaries: readonly ProjectSummary[]): void {
+    for (const summary of summaries) {
+      const workspace = projectWorkspace(this.workspaceRoot, summary.id);
+      try {
+        const artifacts = this.db.withConn((conn) =>
+          refreshProjectArtifacts(conn, { projectId: summary.id, workspace }),
+        );
+        if (artifacts.length > 0) {
+          this.log(
+            `artifacts refreshed project=${summary.id} count=${artifacts.length}`,
+          );
+        }
+      } catch (error) {
+        this.log(
+          `artifact refresh failed project=${summary.id}: ${describe(error)}`,
+        );
+      }
+    }
+  }
+
+  private pendingHostSession(row: PendingConcludeRow): string {
+    const workspace = projectWorkspace(this.workspaceRoot, row.project_id);
+    return join(workspace, ...row.session.split("/"));
   }
 
   // --- dispatch ---------------------------------------------------------------------
@@ -1201,11 +1414,10 @@ export class Scheduler {
     if (row === null) return undefined;
     // Rebuild from the current workspace root: the stored path is relative, so the queue
     // keeps working if the control plane restarts with a different root.
-    const workspace = projectWorkspace(this.workspaceRoot, projectId);
     return {
       intentId: row.intent_id,
       of: row.phase,
-      hostSessionDir: join(workspace, ...row.session.split("/")),
+      hostSessionDir: this.pendingHostSession(row),
     };
   }
 

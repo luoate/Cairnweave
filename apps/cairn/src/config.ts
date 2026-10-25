@@ -111,6 +111,29 @@ export const DEFAULT_OBSERVER: ObserverConfig = {
   kernelTasks: ["explore"],
 };
 
+/**
+ * Control-plane housekeeping. Zero/disabled values keep the historical behavior; the
+ * startup reconciliation of `pending_concludes` always runs because it only removes
+ * entries that can no longer be dispatched.
+ */
+export interface RetentionConfig {
+  /** Delete finished session directories older than this; 0 disables the age rule. */
+  sessionMaxAgeDays: number;
+  /** Keep at most this many session directories per project; 0 disables the count rule. */
+  sessionKeepPerProject: number;
+  /** Seconds between background sweeps; 0 disables periodic sweeps. */
+  sweepIntervalSeconds: number;
+  /** Re-scan `<workspace>/artifacts` during every sweep. */
+  refreshArtifacts: boolean;
+}
+
+export const DEFAULT_RETENTION: RetentionConfig = {
+  sessionMaxAgeDays: 0,
+  sessionKeepPerProject: 0,
+  sweepIntervalSeconds: 3600,
+  refreshArtifacts: false,
+};
+
 export const OBSERVER_TASK_KINDS: readonly ObserverTaskKind[] = [
   "bootstrap",
   "reason",
@@ -171,6 +194,7 @@ export interface DispatchConfig {
   local: LocalConfig | null;
   worker: WorkerRunnerConfig;
   observer: ObserverConfig;
+  retention: RetentionConfig;
 }
 
 export interface ConfigOptions {
@@ -194,6 +218,7 @@ const TOP_LEVEL_KEYS = new Set([
   "local",
   "worker",
   "observer",
+  "retention",
 ]);
 
 type Mapping = Record<string, unknown>;
@@ -461,6 +486,30 @@ function parseObserver(value: unknown): ObserverConfig {
   };
 }
 
+function parseRetention(value: unknown): RetentionConfig {
+  const retention = recordAt(value, "retention");
+  return {
+    sessionMaxAgeDays: has(retention, "session_max_age_days")
+      ? nonNegativeInt(retention["session_max_age_days"], "retention.session_max_age_days")
+      : DEFAULT_RETENTION.sessionMaxAgeDays,
+    sessionKeepPerProject: has(retention, "session_keep_per_project")
+      ? nonNegativeInt(
+          retention["session_keep_per_project"],
+          "retention.session_keep_per_project",
+        )
+      : DEFAULT_RETENTION.sessionKeepPerProject,
+    sweepIntervalSeconds: has(retention, "sweep_interval_seconds")
+      ? nonNegativeInt(
+          retention["sweep_interval_seconds"],
+          "retention.sweep_interval_seconds",
+        )
+      : DEFAULT_RETENTION.sweepIntervalSeconds,
+    refreshArtifacts: has(retention, "refresh_artifacts")
+      ? booleanAt(retention["refresh_artifacts"], "retention.refresh_artifacts")
+      : DEFAULT_RETENTION.refreshArtifacts,
+  };
+}
+
 function parseWorker(value: unknown): WorkerRunnerConfig {
   const worker = recordAt(value, "worker");
   let softDeadlineRatio = 0.8;
@@ -526,6 +575,10 @@ export function parseDispatchConfig(value: unknown, options: ConfigOptions = {})
     ? parseObserver(root["observer"])
     : { ...DEFAULT_OBSERVER, kernelTasks: [...DEFAULT_OBSERVER.kernelTasks] };
 
+  const retention = has(root, "retention")
+    ? parseRetention(root["retention"])
+    : { ...DEFAULT_RETENTION };
+
   try {
     validatePromptResources(runtime.promptGroup, options.promptsRoot);
   } catch (error) {
@@ -541,6 +594,7 @@ export function parseDispatchConfig(value: unknown, options: ConfigOptions = {})
     local,
     worker,
     observer,
+    retention,
   };
 }
 
