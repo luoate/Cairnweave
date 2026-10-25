@@ -1,0 +1,701 @@
+{
+  "timezone": "UTC",
+  "clock_start": "2026-01-02T03:04:05Z",
+  "clock_step_seconds": 60,
+  "steps": [
+    {
+      "method": "PUT",
+      "path": "/settings",
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"intent_timeout\":500,\"reason_timeout\":500}",
+      "compare": "full",
+      "json": {
+        "intent_timeout": 500,
+        "reason_timeout": 500
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/settings",
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"intent_timeout\":500,\"reason_timeout\":500}",
+      "compare": "full"
+    },
+    {
+      "method": "PUT",
+      "path": "/settings",
+      "status": 422,
+      "content_type": "application/json",
+      "body": "{\"detail\":[{\"type\":\"greater_than_equal\",\"loc\":[\"body\",\"intent_timeout\"],\"msg\":\"Input should be greater than or equal to 5\",\"input\":4,\"ctx\":{\"ge\":5}}]}",
+      "compare": "status",
+      "json": {
+        "intent_timeout": 4,
+        "reason_timeout": 500
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/settings",
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"intent_timeout\":500,\"reason_timeout\":500}",
+      "compare": "full",
+      "json": {
+        "intent_timeout": 500,
+        "reason_timeout": 500
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/projects",
+      "status": 201,
+      "content_type": "application/json",
+      "body": "{\"project\":{\"id\":\"proj_001\",\"title\":\"test\",\"status\":\"active\",\"bootstrap_enabled\":true,\"created_at\":\"2026-01-02T03:04:05Z\",\"reason\":null},\"facts\":[{\"id\":\"origin\",\"description\":\"starting point\"},{\"id\":\"goal\",\"description\":\"finish\"}],\"intents\":[],\"hints\":[{\"id\":\"h001\",\"content\":\"initial clue\",\"creator\":\"human\",\"created_at\":\"2026-01-02T03:04:05Z\"}]}",
+      "compare": "full",
+      "json": {
+        "title": "test",
+        "origin": "starting point",
+        "goal": "finish",
+        "hints": [
+          {
+            "content": "initial clue",
+            "creator": "human"
+          }
+        ]
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/projects",
+      "status": 201,
+      "content_type": "application/json",
+      "body": "{\"project\":{\"id\":\"proj_002\",\"title\":\"no bootstrap\",\"status\":\"active\",\"bootstrap_enabled\":false,\"created_at\":\"2026-01-02T03:05:05Z\",\"reason\":null},\"facts\":[{\"id\":\"origin\",\"description\":\"start\"},{\"id\":\"goal\",\"description\":\"finish\"}],\"intents\":[],\"hints\":[]}",
+      "compare": "full",
+      "json": {
+        "title": "no bootstrap",
+        "origin": "start",
+        "goal": "finish",
+        "bootstrap_enabled": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/projects",
+      "status": 422,
+      "content_type": "application/json",
+      "body": "{\"detail\":[{\"type\":\"bool_parsing\",\"loc\":[\"body\",\"bootstrap_enabled\"],\"msg\":\"Input should be a valid boolean, unable to interpret input\",\"input\":\"sometimes\"}]}",
+      "compare": "status",
+      "json": {
+        "title": "invalid bootstrap",
+        "origin": "start",
+        "goal": "finish",
+        "bootstrap_enabled": "sometimes"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/projects",
+      "status": 201,
+      "content_type": "application/json",
+      "body": "{\"project\":{\"id\":\"proj_003\",\"title\":\"extra field\",\"status\":\"active\",\"bootstrap_enabled\":true,\"created_at\":\"2026-01-02T03:06:05Z\",\"reason\":null},\"facts\":[{\"id\":\"origin\",\"description\":\"start\"},{\"id\":\"goal\",\"description\":\"finish\"}],\"intents\":[],\"hints\":[]}",
+      "compare": "full",
+      "json": {
+        "title": "extra field",
+        "origin": "start",
+        "goal": "finish",
+        "unknown": "ignored by pydantic"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/projects",
+      "status": 200,
+      "content_type": "application/json",
+      "body": "[{\"id\":\"proj_001\",\"title\":\"test\",\"status\":\"active\",\"bootstrap_enabled\":true,\"created_at\":\"2026-01-02T03:04:05Z\",\"reason\":null,\"fact_count\":2,\"intent_count\":0,\"working_intent_count\":0,\"unclaimed_intent_count\":0,\"hint_count\":1},{\"id\":\"proj_002\",\"title\":\"no bootstrap\",\"status\":\"active\",\"bootstrap_enabled\":false,\"created_at\":\"2026-01-02T03:05:05Z\",\"reason\":null,\"fact_count\":2,\"intent_count\":0,\"working_intent_count\":0,\"unclaimed_intent_count\":0,\"hint_count\":0},{\"id\":\"proj_003\",\"title\":\"extra field\",\"status\":\"active\",\"bootstrap_enabled\":true,\"created_at\":\"2026-01-02T03:06:05Z\",\"reason\":null,\"fact_count\":2,\"intent_count\":0,\"working_intent_count\":0,\"unclaimed_intent_count\":0,\"hint_count\":0}]",
+      "compare": "full"
+    },
+    {
+      "method": "GET",
+      "path": "/projects/proj_001",
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"project\":{\"id\":\"proj_001\",\"title\":\"test\",\"status\":\"active\",\"bootstrap_enabled\":true,\"created_at\":\"2026-01-02T03:04:05Z\",\"reason\":null},\"facts\":[{\"id\":\"origin\",\"description\":\"starting point\"},{\"id\":\"goal\",\"description\":\"finish\"}],\"intents\":[],\"hints\":[{\"id\":\"h001\",\"content\":\"initial clue\",\"creator\":\"human\",\"created_at\":\"2026-01-02T03:04:05Z\"}]}",
+      "compare": "full"
+    },
+    {
+      "method": "GET",
+      "path": "/projects/proj_999",
+      "status": 404,
+      "content_type": "application/json",
+      "body": "{\"detail\":\"Project not found\"}",
+      "compare": "full"
+    },
+    {
+      "method": "PUT",
+      "path": "/projects/proj_001/title",
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"id\":\"proj_001\",\"title\":\"renamed\",\"status\":\"active\",\"bootstrap_enabled\":true,\"created_at\":\"2026-01-02T03:04:05Z\",\"reason\":null}",
+      "compare": "full",
+      "json": {
+        "title": "renamed"
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/projects/proj_001/title",
+      "status": 422,
+      "content_type": "application/json",
+      "body": "{\"detail\":[{\"type\":\"value_error\",\"loc\":[\"body\",\"title\"],\"msg\":\"Value error, must not be empty\",\"input\":\"   \",\"ctx\":{\"error\":{}}}]}",
+      "compare": "status",
+      "json": {
+        "title": "   "
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/projects/proj_001/status",
+      "status": 422,
+      "content_type": "application/json",
+      "body": "{\"detail\":[{\"type\":\"literal_error\",\"loc\":[\"body\",\"status\"],\"msg\":\"Input should be 'active' or 'stopped'\",\"input\":\"paused\",\"ctx\":{\"expected\":\"'active' or 'stopped'\"}}]}",
+      "compare": "status",
+      "json": {
+        "status": "paused"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/projects/proj_001/intents",
+      "status": 201,
+      "content_type": "application/json",
+      "body": "{\"id\":\"i001\",\"from\":[\"origin\"],\"to\":null,\"description\":\"investigate\",\"creator\":\"reasoner\",\"worker\":null,\"last_heartbeat_at\":null,\"created_at\":\"2026-01-02T03:13:05Z\",\"concluded_at\":null}",
+      "compare": "full",
+      "json": {
+        "from": [
+          "origin"
+        ],
+        "description": "investigate",
+        "creator": "reasoner",
+        "worker": null
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/projects/proj_001/intents",
+      "status": 400,
+      "content_type": "application/json",
+      "body": "{\"detail\":\"goal cannot be used in from\"}",
+      "compare": "full",
+      "json": {
+        "from": [
+          "goal"
+        ],
+        "description": "invalid",
+        "creator": "reasoner",
+        "worker": null
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/projects/proj_001/intents",
+      "status": 400,
+      "content_type": "application/json",
+      "body": "{\"detail\":\"worker must be null or equal to creator\"}",
+      "compare": "full",
+      "json": {
+        "from": [
+          "origin"
+        ],
+        "description": "invalid worker",
+        "creator": "reasoner",
+        "worker": "explorer"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/projects/proj_001/intents/i001/heartbeat",
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"id\":\"i001\",\"from\":[\"origin\"],\"to\":null,\"description\":\"investigate\",\"creator\":\"reasoner\",\"worker\":\"explorer\",\"last_heartbeat_at\":\"2026-01-02T03:15:05Z\",\"created_at\":\"2026-01-02T03:13:05Z\",\"concluded_at\":null}",
+      "compare": "full",
+      "json": {
+        "worker": "explorer"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/projects/proj_001/intents/i001/conclude",
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"fact\":{\"id\":\"f001\",\"description\":\"new fact\"},\"intent\":{\"id\":\"i001\",\"from\":[\"origin\"],\"to\":\"f001\",\"description\":\"investigate\",\"creator\":\"reasoner\",\"worker\":\"explorer\",\"last_heartbeat_at\":\"2026-01-02T03:17:05Z\",\"created_at\":\"2026-01-02T03:13:05Z\",\"concluded_at\":\"2026-01-02T03:17:05Z\"}}",
+      "compare": "full",
+      "json": {
+        "worker": "explorer",
+        "description": "new fact"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/projects/proj_001/intents/i001/heartbeat",
+      "status": 409,
+      "content_type": "application/json",
+      "body": "{\"detail\":\"Intent already concluded\"}",
+      "compare": "full",
+      "json": {
+        "worker": "explorer"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/projects/proj_001/complete",
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"id\":\"i002\",\"from\":[\"f001\"],\"to\":\"goal\",\"description\":\"solved\",\"creator\":\"reasoner\",\"worker\":\"reasoner\",\"last_heartbeat_at\":\"2026-01-02T03:20:05Z\",\"created_at\":\"2026-01-02T03:20:05Z\",\"concluded_at\":\"2026-01-02T03:20:05Z\"}",
+      "compare": "full",
+      "json": {
+        "from": [
+          "f001"
+        ],
+        "description": "solved",
+        "worker": "reasoner"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/projects/proj_001/complete",
+      "status": 403,
+      "content_type": "application/json",
+      "body": "{\"detail\":\"Project is completed\"}",
+      "compare": "full",
+      "json": {
+        "from": [
+          "f001"
+        ],
+        "description": "again",
+        "worker": "reasoner"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/projects/proj_001/reopen",
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"project\":{\"id\":\"proj_001\",\"title\":\"renamed\",\"status\":\"active\",\"bootstrap_enabled\":true,\"created_at\":\"2026-01-02T03:04:05Z\",\"reason\":null},\"fact\":{\"id\":\"f002\",\"description\":\"human correction\"},\"intent\":{\"id\":\"i003\",\"from\":[\"f001\"],\"to\":\"f002\",\"description\":\"external_feedback\",\"creator\":\"human\",\"worker\":\"human\",\"last_heartbeat_at\":\"2026-01-02T03:22:05Z\",\"created_at\":\"2026-01-02T03:22:05Z\",\"concluded_at\":\"2026-01-02T03:22:05Z\"}}",
+      "compare": "full",
+      "json": {
+        "description": "human correction",
+        "creator": "human"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/projects/proj_001",
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"project\":{\"id\":\"proj_001\",\"title\":\"renamed\",\"status\":\"active\",\"bootstrap_enabled\":true,\"created_at\":\"2026-01-02T03:04:05Z\",\"reason\":null},\"facts\":[{\"id\":\"origin\",\"description\":\"starting point\"},{\"id\":\"goal\",\"description\":\"finish\"},{\"id\":\"f001\",\"description\":\"new fact\"},{\"id\":\"f002\",\"description\":\"human correction\"}],\"intents\":[{\"id\":\"i001\",\"from\":[\"origin\"],\"to\":\"f001\",\"description\":\"investigate\",\"creator\":\"reasoner\",\"worker\":\"explorer\",\"last_heartbeat_at\":\"2026-01-02T03:17:05Z\",\"created_at\":\"2026-01-02T03:13:05Z\",\"concluded_at\":\"2026-01-02T03:17:05Z\"},{\"id\":\"i003\",\"from\":[\"f001\"],\"to\":\"f002\",\"description\":\"external_feedback\",\"creator\":\"human\",\"worker\":\"human\",\"last_heartbeat_at\":\"2026-01-02T03:22:05Z\",\"created_at\":\"2026-01-02T03:22:05Z\",\"concluded_at\":\"2026-01-02T03:22:05Z\"}],\"hints\":[{\"id\":\"h001\",\"content\":\"initial clue\",\"creator\":\"human\",\"created_at\":\"2026-01-02T03:04:05Z\"}]}",
+      "compare": "full"
+    },
+    {
+      "method": "GET",
+      "path": "/projects/proj_001/export?format=yaml",
+      "status": 200,
+      "content_type": "text/plain; charset=utf-8",
+      "body": "project:\n  title: renamed\n  origin: starting point\n  goal: finish\n  bootstrap_enabled: true\nhints:\n- content: initial clue\n  creator: human\n  created_at: '2026-01-02 03:04:05'\nfacts:\n- id: origin\n  description: starting point\n- id: goal\n  description: finish\n- id: f001\n  description: new fact\n- id: f002\n  description: human correction\nintents:\n- from:\n  - origin\n  to: f001\n  description: investigate\n  creator: reasoner\n  worker: explorer\n  created_at: '2026-01-02 03:13:05'\n  concluded_at: '2026-01-02 03:17:05'\n- from:\n  - f001\n  to: f002\n  description: external_feedback\n  creator: human\n  worker: human\n  created_at: '2026-01-02 03:22:05'\n  concluded_at: '2026-01-02 03:22:05'\n",
+      "compare": "full"
+    },
+    {
+      "method": "GET",
+      "path": "/projects/proj_001/export",
+      "status": 200,
+      "content_type": "text/plain; charset=utf-8",
+      "body": "project:\n  title: renamed\n  origin: starting point\n  goal: finish\n  bootstrap_enabled: true\nhints:\n- content: initial clue\n  creator: human\n  created_at: '2026-01-02 03:04:05'\nfacts:\n- id: origin\n  description: starting point\n- id: goal\n  description: finish\n- id: f001\n  description: new fact\n- id: f002\n  description: human correction\nintents:\n- from:\n  - origin\n  to: f001\n  description: investigate\n  creator: reasoner\n  worker: explorer\n  created_at: '2026-01-02 03:13:05'\n  concluded_at: '2026-01-02 03:17:05'\n- from:\n  - f001\n  to: f002\n  description: external_feedback\n  creator: human\n  worker: human\n  created_at: '2026-01-02 03:22:05'\n  concluded_at: '2026-01-02 03:22:05'\n",
+      "compare": "full"
+    },
+    {
+      "method": "GET",
+      "path": "/projects/proj_001/export?format=timeline",
+      "status": 200,
+      "content_type": "text/plain; charset=utf-8",
+      "body": "[2026-01-02 03:04:05] PROJECT CREATED\n  origin: starting point\n  goal: finish\n\n[2026-01-02 03:04:05] HINT by human\n  initial clue\n\n[2026-01-02 03:13:05] INTENT DECLARED i001 by reasoner\n  from: origin\n  investigate\n\n[2026-01-02 03:17:05] INTENT CONCLUDED i001 by explorer\n  from: origin\n  produced: f001\n  new fact\n\n[2026-01-02 03:22:05] INTENT DECLARED i003 by human\n  from: f001\n  external_feedback\n\n[2026-01-02 03:22:05] INTENT CONCLUDED i003 by human\n  from: f001\n  produced: f002\n  human correction\n",
+      "compare": "full"
+    },
+    {
+      "method": "GET",
+      "path": "/projects/proj_001/export?format=invalid",
+      "status": 400,
+      "content_type": "application/json",
+      "body": "{\"detail\":\"Supported formats: yaml, timeline\"}",
+      "compare": "full"
+    },
+    {
+      "method": "POST",
+      "path": "/projects/proj_002/reopen",
+      "status": 403,
+      "content_type": "application/json",
+      "body": "{\"detail\":\"Project is active\"}",
+      "compare": "full",
+      "json": {
+        "description": "no",
+        "creator": "h"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/projects/proj_001/export?format=timeline",
+      "status": 200,
+      "content_type": "text/plain; charset=utf-8",
+      "body": "[2026-01-02 03:04:05] PROJECT CREATED\n  origin: starting point\n  goal: finish\n\n[2026-01-02 03:04:05] HINT by human\n  initial clue\n\n[2026-01-02 03:13:05] INTENT DECLARED i001 by reasoner\n  from: origin\n  investigate\n\n[2026-01-02 03:17:05] INTENT CONCLUDED i001 by explorer\n  from: origin\n  produced: f001\n  new fact\n\n[2026-01-02 03:22:05] INTENT DECLARED i003 by human\n  from: f001\n  external_feedback\n\n[2026-01-02 03:22:05] INTENT CONCLUDED i003 by human\n  from: f001\n  produced: f002\n  human correction\n",
+      "compare": "full"
+    },
+    {
+      "method": "PUT",
+      "path": "/projects/proj_001/status",
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"id\":\"proj_001\",\"title\":\"renamed\",\"status\":\"stopped\",\"bootstrap_enabled\":true,\"created_at\":\"2026-01-02T03:04:05Z\",\"reason\":null}",
+      "compare": "full",
+      "json": {
+        "status": "stopped"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/projects/proj_001/hints",
+      "status": 201,
+      "content_type": "application/json",
+      "body": "{\"id\":\"h002\",\"content\":\"manual note\",\"creator\":\"human\",\"created_at\":\"2026-01-02T03:35:05Z\"}",
+      "compare": "full",
+      "json": {
+        "content": "manual note",
+        "creator": "human"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/projects/proj_001/intents",
+      "status": 403,
+      "content_type": "application/json",
+      "body": "{\"detail\":\"Project is stopped\"}",
+      "compare": "full",
+      "json": {
+        "from": [
+          "origin"
+        ],
+        "description": "blocked",
+        "creator": "reasoner",
+        "worker": null
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/projects/proj_001/status",
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"id\":\"proj_001\",\"title\":\"renamed\",\"status\":\"active\",\"bootstrap_enabled\":true,\"created_at\":\"2026-01-02T03:04:05Z\",\"reason\":null}",
+      "compare": "full",
+      "json": {
+        "status": "active"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/projects/proj_001/reason/claim",
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"id\":\"proj_001\",\"title\":\"renamed\",\"status\":\"active\",\"bootstrap_enabled\":true,\"created_at\":\"2026-01-02T03:04:05Z\",\"reason\":{\"worker\":\"worker-a\",\"trigger\":\"bootstrap\",\"started_at\":\"2026-01-02T03:38:05Z\",\"last_heartbeat_at\":\"2026-01-02T03:38:05Z\"}}",
+      "compare": "full",
+      "json": {
+        "worker": "worker-a",
+        "trigger": "bootstrap"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/projects/proj_001/reason/claim",
+      "status": 409,
+      "content_type": "application/json",
+      "body": "{\"detail\":\"Project reason is currently claimed by worker-a\"}",
+      "compare": "full",
+      "json": {
+        "worker": "worker-b",
+        "trigger": "facts:2->3"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/projects/proj_001/reason/heartbeat",
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"id\":\"proj_001\",\"title\":\"renamed\",\"status\":\"active\",\"bootstrap_enabled\":true,\"created_at\":\"2026-01-02T03:04:05Z\",\"reason\":{\"worker\":\"worker-a\",\"trigger\":\"bootstrap\",\"started_at\":\"2026-01-02T03:38:05Z\",\"last_heartbeat_at\":\"2026-01-02T03:41:05Z\"}}",
+      "compare": "full",
+      "json": {
+        "worker": "worker-a"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/projects/proj_001/reason/release",
+      "status": 409,
+      "content_type": "application/json",
+      "body": "{\"detail\":\"Project reason is currently claimed by worker-a\"}",
+      "compare": "full",
+      "json": {
+        "worker": "worker-b"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/projects/proj_001/reason/release",
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"id\":\"proj_001\",\"title\":\"renamed\",\"status\":\"active\",\"bootstrap_enabled\":true,\"created_at\":\"2026-01-02T03:04:05Z\",\"reason\":null}",
+      "compare": "full",
+      "json": {
+        "worker": "worker-a"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/projects/proj_001/reason/heartbeat",
+      "status": 409,
+      "content_type": "application/json",
+      "body": "{\"detail\":\"Project reason is not currently claimed\"}",
+      "compare": "full",
+      "json": {
+        "worker": "worker-a"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/projects/proj_002/complete",
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"id\":\"i001\",\"from\":[\"origin\"],\"to\":\"goal\",\"description\":\"done\",\"creator\":\"reasoner\",\"worker\":\"reasoner\",\"last_heartbeat_at\":\"2026-01-02T03:46:05Z\",\"created_at\":\"2026-01-02T03:46:05Z\",\"concluded_at\":\"2026-01-02T03:46:05Z\"}",
+      "compare": "full",
+      "json": {
+        "from": [
+          "origin"
+        ],
+        "description": "done",
+        "worker": "reasoner"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/projects/proj_002/complete",
+      "status": 403,
+      "content_type": "application/json",
+      "body": "{\"detail\":\"Project is completed\"}",
+      "compare": "full",
+      "json": {
+        "from": [
+          "origin"
+        ],
+        "description": "again",
+        "worker": "reasoner"
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/projects/proj_002",
+      "status": 204,
+      "content_type": "application/json",
+      "body": "",
+      "compare": "full"
+    },
+    {
+      "method": "GET",
+      "path": "/projects/proj_002",
+      "status": 404,
+      "content_type": "application/json",
+      "body": "{\"detail\":\"Project not found\"}",
+      "compare": "full"
+    },
+    {
+      "method": "POST",
+      "path": "/projects/proj_999/intents",
+      "status": 404,
+      "content_type": "application/json",
+      "body": "{\"detail\":\"Project not found\"}",
+      "compare": "full",
+      "json": {
+        "from": [
+          "origin"
+        ],
+        "description": "x",
+        "creator": "r",
+        "worker": null
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/projects",
+      "status": 201,
+      "content_type": "application/json",
+      "body": "{\"project\":{\"id\":\"proj_004\",\"title\":\"lease\",\"status\":\"active\",\"bootstrap_enabled\":true,\"created_at\":\"2026-01-02T03:49:05Z\",\"reason\":null},\"facts\":[{\"id\":\"origin\",\"description\":\"o\"},{\"id\":\"goal\",\"description\":\"g\"}],\"intents\":[],\"hints\":[]}",
+      "compare": "full",
+      "json": {
+        "title": "lease",
+        "origin": "o",
+        "goal": "g"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/projects/proj_004/intents",
+      "status": 201,
+      "content_type": "application/json",
+      "body": "{\"id\":\"i001\",\"from\":[\"origin\"],\"to\":null,\"description\":\"work\",\"creator\":\"worker-a\",\"worker\":\"worker-a\",\"last_heartbeat_at\":\"2026-01-02T03:50:05Z\",\"created_at\":\"2026-01-02T03:50:05Z\",\"concluded_at\":null}",
+      "compare": "full",
+      "json": {
+        "from": [
+          "origin"
+        ],
+        "description": "work",
+        "creator": "worker-a",
+        "worker": "worker-a"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/projects/proj_004/reason/claim",
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"id\":\"proj_004\",\"title\":\"lease\",\"status\":\"active\",\"bootstrap_enabled\":true,\"created_at\":\"2026-01-02T03:49:05Z\",\"reason\":{\"worker\":\"worker-a\",\"trigger\":\"bootstrap\",\"started_at\":\"2026-01-02T03:52:05Z\",\"last_heartbeat_at\":\"2026-01-02T03:52:05Z\"}}",
+      "compare": "full",
+      "json": {
+        "worker": "worker-a",
+        "trigger": "bootstrap"
+      }
+    },
+    {
+      "sql": "UPDATE intents SET last_heartbeat_at = '2000-01-01T00:00:00Z' WHERE project_id = ?",
+      "params": [
+        "proj_004"
+      ]
+    },
+    {
+      "sql": "UPDATE projects SET reason_last_heartbeat_at = '2000-01-01T00:00:00Z' WHERE id = ?",
+      "params": [
+        "proj_004"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/projects/proj_004/intents/i001/heartbeat",
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"id\":\"i001\",\"from\":[\"origin\"],\"to\":null,\"description\":\"work\",\"creator\":\"worker-a\",\"worker\":\"worker-b\",\"last_heartbeat_at\":\"2026-01-02T03:54:05Z\",\"created_at\":\"2026-01-02T03:50:05Z\",\"concluded_at\":null}",
+      "compare": "full",
+      "json": {
+        "worker": "worker-b"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/projects/proj_004/reason/claim",
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"id\":\"proj_004\",\"title\":\"lease\",\"status\":\"active\",\"bootstrap_enabled\":true,\"created_at\":\"2026-01-02T03:49:05Z\",\"reason\":{\"worker\":\"worker-b\",\"trigger\":\"facts:2->3\",\"started_at\":\"2026-01-02T03:56:05Z\",\"last_heartbeat_at\":\"2026-01-02T03:56:05Z\"}}",
+      "compare": "full",
+      "json": {
+        "worker": "worker-b",
+        "trigger": "facts:2->3"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/projects/proj_004/intents/i001/release",
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"id\":\"i001\",\"from\":[\"origin\"],\"to\":null,\"description\":\"work\",\"creator\":\"worker-a\",\"worker\":null,\"last_heartbeat_at\":\"2026-01-02T03:54:05Z\",\"created_at\":\"2026-01-02T03:50:05Z\",\"concluded_at\":null}",
+      "compare": "full",
+      "json": {
+        "worker": "worker-b"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/projects/proj_004/intents/i001/conclude",
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"fact\":{\"id\":\"f001\",\"description\":\"claimed after expiry\"},\"intent\":{\"id\":\"i001\",\"from\":[\"origin\"],\"to\":\"f001\",\"description\":\"work\",\"creator\":\"worker-a\",\"worker\":\"worker-b\",\"last_heartbeat_at\":\"2026-01-02T03:59:05Z\",\"created_at\":\"2026-01-02T03:50:05Z\",\"concluded_at\":\"2026-01-02T03:59:05Z\"}}",
+      "compare": "full",
+      "json": {
+        "worker": "worker-b",
+        "description": "claimed after expiry"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/projects/proj_004/complete",
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{\"id\":\"i002\",\"from\":[\"f001\"],\"to\":\"goal\",\"description\":\"done\",\"creator\":\"worker-b\",\"worker\":\"worker-b\",\"last_heartbeat_at\":\"2026-01-02T04:01:05Z\",\"created_at\":\"2026-01-02T04:01:05Z\",\"concluded_at\":\"2026-01-02T04:01:05Z\"}",
+      "compare": "full",
+      "json": {
+        "from": [
+          "f001"
+        ],
+        "description": "done",
+        "worker": "worker-b"
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/projects/proj_004/status",
+      "status": 409,
+      "content_type": "application/json",
+      "body": "{\"detail\":\"Completed projects cannot change status\"}",
+      "compare": "full",
+      "json": {
+        "status": "active"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/projects",
+      "status": 200,
+      "content_type": "application/json",
+      "body": "[{\"id\":\"proj_001\",\"title\":\"renamed\",\"status\":\"active\",\"bootstrap_enabled\":true,\"created_at\":\"2026-01-02T03:04:05Z\",\"reason\":null,\"fact_count\":4,\"intent_count\":2,\"working_intent_count\":0,\"unclaimed_intent_count\":0,\"hint_count\":2},{\"id\":\"proj_003\",\"title\":\"extra field\",\"status\":\"active\",\"bootstrap_enabled\":true,\"created_at\":\"2026-01-02T03:06:05Z\",\"reason\":null,\"fact_count\":2,\"intent_count\":0,\"working_intent_count\":0,\"unclaimed_intent_count\":0,\"hint_count\":0},{\"id\":\"proj_004\",\"title\":\"lease\",\"status\":\"completed\",\"bootstrap_enabled\":true,\"created_at\":\"2026-01-02T03:49:05Z\",\"reason\":null,\"fact_count\":3,\"intent_count\":2,\"working_intent_count\":0,\"unclaimed_intent_count\":0,\"hint_count\":0}]",
+      "compare": "full"
+    },
+    {
+      "method": "GET",
+      "path": "/does-not-exist",
+      "status": 404,
+      "content_type": "application/json",
+      "body": "{\"detail\":\"Not Found\"}",
+      "compare": "full"
+    },
+    {
+      "method": "PATCH",
+      "path": "/projects/proj_001",
+      "status": 405,
+      "content_type": "application/json",
+      "body": "{\"detail\":\"Method Not Allowed\"}",
+      "compare": "full"
+    },
+    {
+      "method": "POST",
+      "path": "/projects",
+      "status": 422,
+      "content_type": "application/json",
+      "body": "{\"detail\":[{\"type\":\"value_error\",\"loc\":[\"body\",\"hints\",0,\"content\"],\"msg\":\"Value error, must not be empty\",\"input\":\"   \",\"ctx\":{\"error\":{}}}]}",
+      "compare": "status",
+      "json": {
+        "title": "bad hint",
+        "origin": "o",
+        "goal": "g",
+        "hints": [
+          {
+            "content": "   ",
+            "creator": "human"
+          }
+        ]
+      }
+    }
+  ]
+}

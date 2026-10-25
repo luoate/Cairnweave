@@ -1,0 +1,246 @@
+[
+  {
+    "value": "plain",
+    "yaml": "v: plain\n"
+  },
+  {
+    "value": "a: b",
+    "yaml": "v: 'a: b'\n"
+  },
+  {
+    "value": "a # b",
+    "yaml": "v: 'a # b'\n"
+  },
+  {
+    "value": "- item",
+    "yaml": "v: '- item'\n"
+  },
+  {
+    "value": "-foo",
+    "yaml": "v: -foo\n"
+  },
+  {
+    "value": "it's fine",
+    "yaml": "v: it's fine\n"
+  },
+  {
+    "value": "say \"hi\"",
+    "yaml": "v: say \"hi\"\n"
+  },
+  {
+    "value": "123",
+    "yaml": "v: '123'\n"
+  },
+  {
+    "value": "1.5",
+    "yaml": "v: '1.5'\n"
+  },
+  {
+    "value": "0x1f",
+    "yaml": "v: '0x1f'\n"
+  },
+  {
+    "value": "0123",
+    "yaml": "v: '0123'\n"
+  },
+  {
+    "value": "1:20",
+    "yaml": "v: '1:20'\n"
+  },
+  {
+    "value": "true",
+    "yaml": "v: 'true'\n"
+  },
+  {
+    "value": "Yes",
+    "yaml": "v: 'Yes'\n"
+  },
+  {
+    "value": "~",
+    "yaml": "v: '~'\n"
+  },
+  {
+    "value": "null",
+    "yaml": "v: 'null'\n"
+  },
+  {
+    "value": "",
+    "yaml": "v: ''\n"
+  },
+  {
+    "value": " a ",
+    "yaml": "v: ' a '\n"
+  },
+  {
+    "value": "  leading and trailing  ",
+    "yaml": "v: '  leading and trailing  '\n"
+  },
+  {
+    "value": "word word word word word word word word word word word word word word word word word word word word word word word word word ",
+    "yaml": "v: 'word word word word word word word word word word word word word word word word\n  word word word word word word word word word '\n"
+  },
+  {
+    "value": "a: b a: b a: b a: b a: b a: b a: b a: b a: b a: b a: b a: b a: b a: b a: b a: b a: b a: b a: b a: b",
+    "yaml": "v: 'a: b a: b a: b a: b a: b a: b a: b a: b a: b a: b a: b a: b a: b a: b a: b a:\n  b a: b a: b a: b a: b'\n"
+  },
+  {
+    "value": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "yaml": "v: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n"
+  },
+  {
+    "value": "line1\nline2",
+    "yaml": "v: 'line1\n\n  line2'\n"
+  },
+  {
+    "value": "line1\n\nline2",
+    "yaml": "v: 'line1\n\n\n  line2'\n"
+  },
+  {
+    "value": "line1\n",
+    "yaml": "v: 'line1\n\n  '\n"
+  },
+  {
+    "value": "\nfoo",
+    "yaml": "v: '\n\n  foo'\n"
+  },
+  {
+    "value": "\nfoo\n",
+    "yaml": "v: '\n\n  foo\n\n  '\n"
+  },
+  {
+    "value": "中文测试",
+    "yaml": "v: 中文测试\n"
+  },
+  {
+    "value": "中文事实 with emoji 🚩",
+    "yaml": "v: 中文事实 with emoji 🚩\n"
+  },
+  {
+    "value": "中文 中文 中文 中文 中文 中文 中文 中文 中文 中文 中文 中文 中文 中文 中文 中文 中文 中文 中文 中文 中文 中文 中文 中文 中文 中文 中文 中文 中文 中文 ",
+    "yaml": "v: '中文 中文 中文 中文 中文 中文 中文 中文 中文 中文 中文 中文 中文 中文 中文 中文 中文 中文 中文 中文 中文 中文 中文 中文 中文 中文\n  中文 中文 中文 中文 '\n"
+  },
+  {
+    "value": "a\\b",
+    "yaml": "v: a\\b\n"
+  },
+  {
+    "value": "a\\nb",
+    "yaml": "v: a\\nb\n"
+  },
+  {
+    "value": "http://example.com/a?b=c",
+    "yaml": "v: http://example.com/a?b=c\n"
+  },
+  {
+    "value": "a,b",
+    "yaml": "v: a,b\n"
+  },
+  {
+    "value": "a#b",
+    "yaml": "v: a#b\n"
+  },
+  {
+    "value": "@foo",
+    "yaml": "v: '@foo'\n"
+  },
+  {
+    "value": "*foo",
+    "yaml": "v: '*foo'\n"
+  },
+  {
+    "value": "&foo",
+    "yaml": "v: '&foo'\n"
+  },
+  {
+    "value": "{a}",
+    "yaml": "v: '{a}'\n"
+  },
+  {
+    "value": "[a]",
+    "yaml": "v: '[a]'\n"
+  },
+  {
+    "value": "|",
+    "yaml": "v: '|'\n"
+  },
+  {
+    "value": ">",
+    "yaml": "v: '>'\n"
+  },
+  {
+    "value": "%foo",
+    "yaml": "v: '%foo'\n"
+  },
+  {
+    "value": "`foo",
+    "yaml": "v: '`foo'\n"
+  },
+  {
+    "value": "? foo",
+    "yaml": "v: '? foo'\n"
+  },
+  {
+    "value": "!foo",
+    "yaml": "v: '!foo'\n"
+  },
+  {
+    "value": "a-b",
+    "yaml": "v: a-b\n"
+  },
+  {
+    "value": "1.2.3",
+    "yaml": "v: 1.2.3\n"
+  },
+  {
+    "value": "a  b",
+    "yaml": "v: a  b\n"
+  },
+  {
+    "value": "it's a 'test'",
+    "yaml": "v: it's a 'test'\n"
+  },
+  {
+    "value": "a\tb",
+    "yaml": "v: \"a\\tb\"\n"
+  },
+  {
+    "value": "a\u0001b",
+    "yaml": "v: \"a\\x01b\"\n"
+  },
+  {
+    "value": "2026-10-25",
+    "yaml": "v: '2026-10-25'\n"
+  },
+  {
+    "value": "2026-10-25 12:34:56",
+    "yaml": "v: '2026-10-25 12:34:56'\n"
+  },
+  {
+    "value": "...",
+    "yaml": "v: '...'\n"
+  },
+  {
+    "value": "---",
+    "yaml": "v: '---'\n"
+  },
+  {
+    "value": "'foo",
+    "yaml": "v: '''foo'\n"
+  },
+  {
+    "value": "\"foo",
+    "yaml": "v: '\"foo'\n"
+  },
+  {
+    "value": "a:",
+    "yaml": "v: 'a:'\n"
+  },
+  {
+    "value": "a: ",
+    "yaml": "v: 'a: '\n"
+  },
+  {
+    "value": "#foo",
+    "yaml": "v: '#foo'\n"
+  }
+]

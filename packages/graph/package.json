@@ -1,0 +1,10 @@
+{
+  "name": "@cairn/graph",
+  "version": "0.3.0-m3",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts"
+}

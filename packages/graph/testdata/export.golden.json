@@ -1,0 +1,98 @@
+{
+  "timezone": "UTC",
+  "project": {
+    "id": "proj_005",
+    "title": "multi\nline title",
+    "created_at": "2026-01-02T03:04:05Z"
+  },
+  "facts": [
+    {
+      "id": "origin",
+      "description": "The engagement starts at the public web front end. Enumerate virtual hosts, collect TLS certificate names and record every reachable HTTP service before attempting any exploitation."
+    },
+    {
+      "id": "goal",
+      "description": "line one\nline two"
+    },
+    {
+      "id": "f001",
+      "description": "2026-01-02 03:04:05"
+    },
+    {
+      "id": "f002",
+      "description": "say \"hi\" and it's fine"
+    },
+    {
+      "id": "f003",
+      "description": "中文事实 with emoji 🚩"
+    },
+    {
+      "id": "f004",
+      "description": "tab\there"
+    }
+  ],
+  "hints": [
+    {
+      "id": "h001",
+      "content": "  leading and trailing  ",
+      "creator": "true",
+      "created_at": "2026-01-02T03:04:05Z"
+    },
+    {
+      "id": "h002",
+      "content": "a: b # c",
+      "creator": "human",
+      "created_at": "2026-01-02T03:04:05+02:00"
+    },
+    {
+      "id": "h003",
+      "content": "not-a-date hint",
+      "creator": "human",
+      "created_at": "not-a-date"
+    }
+  ],
+  "intents": [
+    {
+      "id": "i001",
+      "from": [
+        "f001",
+        "f002"
+      ],
+      "to": "f003",
+      "description": "Investigate the staging host: collect headers # then ports",
+      "creator": "reasoner",
+      "worker": "explorer",
+      "last_heartbeat_at": "2026-01-02T03:10:00Z",
+      "created_at": "2026-01-02T03:05:00Z",
+      "concluded_at": "2026-01-02T03:20:00Z"
+    },
+    {
+      "id": "i002",
+      "from": [],
+      "to": null,
+      "description": "Open follow-up without sources",
+      "creator": "reasoner",
+      "worker": "explorer",
+      "last_heartbeat_at": "2026-01-02T03:12:00Z",
+      "created_at": "2026-01-02T03:06:00Z",
+      "concluded_at": null
+    },
+    {
+      "id": "i003",
+      "from": [
+        "f001"
+      ],
+      "to": "goal",
+      "description": "solved",
+      "creator": "reasoner",
+      "worker": "reasoner",
+      "last_heartbeat_at": "2026-01-02T03:30:00Z",
+      "created_at": "2026-01-02T03:25:00Z",
+      "concluded_at": "2026-01-02T03:30:00Z"
+    }
+  ],
+  "expected": {
+    "yaml": "project:\n  title: 'multi\n\n    line title'\n  origin: The engagement starts at the public web front end. Enumerate virtual hosts,\n    collect TLS certificate names and record every reachable HTTP service before attempting\n    any exploitation.\n  goal: 'line one\n\n    line two'\n  bootstrap_enabled: true\nhints:\n- content: 'a: b # c'\n  creator: human\n  created_at: '2026-01-02 01:04:05'\n- content: '  leading and trailing  '\n  creator: 'true'\n  created_at: '2026-01-02 03:04:05'\n- content: not-a-date hint\n  creator: human\n  created_at: not-a-date\nfacts:\n- id: origin\n  description: The engagement starts at the public web front end. Enumerate virtual\n    hosts, collect TLS certificate names and record every reachable HTTP service before\n    attempting any exploitation.\n- id: goal\n  description: 'line one\n\n    line two'\n- id: f001\n  description: '2026-01-02 03:04:05'\n- id: f002\n  description: say \"hi\" and it's fine\n- id: f003\n  description: 中文事实 with emoji 🚩\n- id: f004\n  description: \"tab\\there\"\nintents:\n- from:\n  - f001\n  - f002\n  to: f003\n  description: 'Investigate the staging host: collect headers # then ports'\n  creator: reasoner\n  worker: explorer\n  created_at: '2026-01-02 03:05:00'\n  concluded_at: '2026-01-02 03:20:00'\n- from: []\n  to: null\n  description: Open follow-up without sources\n  creator: reasoner\n  worker: null\n  created_at: '2026-01-02 03:06:00'\n  concluded_at: null\n- from:\n  - f001\n  to: goal\n  description: solved\n  creator: reasoner\n  worker: reasoner\n  created_at: '2026-01-02 03:25:00'\n  concluded_at: '2026-01-02 03:30:00'\n",
+    "timeline": "[2026-01-02 01:04:05] HINT by human\n  a: b # c\n\n[2026-01-02 03:04:05] PROJECT CREATED\n  origin: The engagement starts at the public web front end. Enumerate virtual hosts, collect TLS certificate names and record every reachable HTTP service before attempting any exploitation.\n  goal: line one\nline two\n\n[2026-01-02 03:04:05] HINT by true\n    leading and trailing  \n\n[2026-01-02 03:05:00] INTENT DECLARED i001 by reasoner\n  from: f001, f002\n  Investigate the staging host: collect headers # then ports\n\n[2026-01-02 03:06:00] INTENT DECLARED i002 by reasoner\n  from: \n  Open follow-up without sources\n\n[2026-01-02 03:20:00] INTENT CONCLUDED i001 by explorer\n  from: f001, f002\n  produced: f003\n  中文事实 with emoji 🚩\n\n[2026-01-02 03:25:00] INTENT DECLARED i003 by reasoner\n  from: f001\n  solved\n\n[2026-01-02 03:30:00] PROJECT COMPLETED by reasoner\n  via: i003 from f001\n\n[not-a-date] HINT by human\n  not-a-date hint\n"
+  }
+}

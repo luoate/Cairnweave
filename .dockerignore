@@ -1,0 +1,10 @@
+.git
+**/node_modules
+**/.venv
+**/__pycache__
+cairn.db
+cairn.db-shm
+cairn.db-wal
+.tch-agent
+**/auth.json
+.env

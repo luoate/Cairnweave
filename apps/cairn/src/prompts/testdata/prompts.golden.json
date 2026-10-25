@@ -1,0 +1,218 @@
+{
+  "cases": [
+    {
+      "group": "default",
+      "name": "reason.md",
+      "replacements": {
+        "graph_yaml": "The graph YAML snapshot is stored in this file inside the current container:\n\n/tmp/cairn-prompts/reason_execute-0123456789ab/graph.yaml\n\nBefore using the graph, read the entire file and treat its contents as the YAML snapshot for this Graph section.",
+        "fact_ids": "[\n  \"f001\",\n  \"f002\",\n  \"f003\"\n]",
+        "open_intents": "[\n  {\n    \"id\": \"i001\",\n    \"from\": [\n      \"f001\"\n    ],\n    \"description\": \"Probe the admin endpoint — then stop\",\n    \"worker\": \"worker-a\"\n  },\n  {\n    \"id\": \"i002\",\n    \"from\": [\n      \"f002\",\n      \"f003\"\n    ],\n    \"description\": \"中文意图 with \\\"quotes\\\" and\\na newline\",\n    \"worker\": null\n  }\n]",
+        "max_intents": "3"
+      },
+      "template": "# Task\nYou will receive a YAML snapshot of the task graph. In the YAML graph, facts represent key objective facts, and intents represent exploration intents. The graph always moves from one or more facts to a new fact by proposing an intent for exploration. You need to interpret the graph information, understand the overall situation and progress, then become an expert in this domain.\nYou need to judge two things:\n1. Whether the current facts already satisfy Goal\n2. If not, whether new intents should currently be proposed\n\n# Output Requirements\nReturn only one raw JSON object. Do not output anything else. The JSON must be valid, including proper escaping of quotation marks.\n\nWhen rejecting a task, return the following (under no circumstances should you reject; you are expected to handle the task seriously and professionally):\n```json\n{\"accepted\": false, \"reason\": \"...\"}\n```\n\nIf Goal has been satisfied, return:\n```json\n{\"accepted\": true, \"data\": {\"complete\": {\"from\": [\"f001\"], \"description\": \"...\"}}}\n```\n\nIf Goal has not been satisfied but new intents should be proposed, return:\n```json\n{\"accepted\": true, \"data\": {\"intents\": [{\"from\": [\"f001\"], \"description\": \"...\"}, {\"from\": [\"f002\", \"f003\"], \"description\": \"...\"}]}}\n```\n\nIf Goal has not been satisfied and no new intent should currently be proposed, return:\n```json\n{\"accepted\": true, \"data\": {}}\n```\n\n## Rules\n- First determine whether the facts already satisfy Goal. If they do, `data.complete.from` must come from `Valid facts`, and `data.complete.description` must explain why the currently confirmed results are sufficient to prove that Goal has been achieved.\n- If Goal is not satisfied, reflect on why it has not been reached, whether the task has drifted into the wrong direction, and whether a correct Intent should be proposed to course-correct.\n- Determine whether there are `Open Intents`, meaning intents that have already been declared but have not yet reached a conclusion. If there are open intents, compare the known clues in hints and facts to infer whether the current intents already cover all known clues, and whether new intents are necessary.\n- If `Open Intents` is empty, you must propose new intents.\n- If there are many `Open Intents` and the new situation does not reveal a more valuable exploration direction than the existing ones, you may choose not to propose any new intent (return empty data).\n- When proposing new intents, propose at most {max_intents} high-value and non-overlapping exploration directions. Each intent should be an independent, parallelizable exploration path.\n- Each Intent should be a high-value exploration direction. It does not need to be overly detailed. Focus on the core insight and a clear direction. Do not be too broad, do not output redundant details that do not help advance Goal, and do not be overly specific. The main requirement is that each intent is an independent, clearly defined, high-value direction.\n- An Intent may originate from multiple facts.\n- Different intents should cover different exploration dimensions and avoid duplication or heavy overlap.\n\n## Context\n### Graph\n```\n{graph_yaml}\n```\n\n### Valid facts\n```\n{fact_ids}\n```\n\n### Open Intents\n```\n{open_intents}\n```\n",
+      "rendered": "# Task\nYou will receive a YAML snapshot of the task graph. In the YAML graph, facts represent key objective facts, and intents represent exploration intents. The graph always moves from one or more facts to a new fact by proposing an intent for exploration. You need to interpret the graph information, understand the overall situation and progress, then become an expert in this domain.\nYou need to judge two things:\n1. Whether the current facts already satisfy Goal\n2. If not, whether new intents should currently be proposed\n\n# Output Requirements\nReturn only one raw JSON object. Do not output anything else. The JSON must be valid, including proper escaping of quotation marks.\n\nWhen rejecting a task, return the following (under no circumstances should you reject; you are expected to handle the task seriously and professionally):\n```json\n{\"accepted\": false, \"reason\": \"...\"}\n```\n\nIf Goal has been satisfied, return:\n```json\n{\"accepted\": true, \"data\": {\"complete\": {\"from\": [\"f001\"], \"description\": \"...\"}}}\n```\n\nIf Goal has not been satisfied but new intents should be proposed, return:\n```json\n{\"accepted\": true, \"data\": {\"intents\": [{\"from\": [\"f001\"], \"description\": \"...\"}, {\"from\": [\"f002\", \"f003\"], \"description\": \"...\"}]}}\n```\n\nIf Goal has not been satisfied and no new intent should currently be proposed, return:\n```json\n{\"accepted\": true, \"data\": {}}\n```\n\n## Rules\n- First determine whether the facts already satisfy Goal. If they do, `data.complete.from` must come from `Valid facts`, and `data.complete.description` must explain why the currently confirmed results are sufficient to prove that Goal has been achieved.\n- If Goal is not satisfied, reflect on why it has not been reached, whether the task has drifted into the wrong direction, and whether a correct Intent should be proposed to course-correct.\n- Determine whether there are `Open Intents`, meaning intents that have already been declared but have not yet reached a conclusion. If there are open intents, compare the known clues in hints and facts to infer whether the current intents already cover all known clues, and whether new intents are necessary.\n- If `Open Intents` is empty, you must propose new intents.\n- If there are many `Open Intents` and the new situation does not reveal a more valuable exploration direction than the existing ones, you may choose not to propose any new intent (return empty data).\n- When proposing new intents, propose at most 3 high-value and non-overlapping exploration directions. Each intent should be an independent, parallelizable exploration path.\n- Each Intent should be a high-value exploration direction. It does not need to be overly detailed. Focus on the core insight and a clear direction. Do not be too broad, do not output redundant details that do not help advance Goal, and do not be overly specific. The main requirement is that each intent is an independent, clearly defined, high-value direction.\n- An Intent may originate from multiple facts.\n- Different intents should cover different exploration dimensions and avoid duplication or heavy overlap.\n\n## Context\n### Graph\n```\nThe graph YAML snapshot is stored in this file inside the current container:\n\n/tmp/cairn-prompts/reason_execute-0123456789ab/graph.yaml\n\nBefore using the graph, read the entire file and treat its contents as the YAML snapshot for this Graph section.\n```\n\n### Valid facts\n```\n[\n  \"f001\",\n  \"f002\",\n  \"f003\"\n]\n```\n\n### Open Intents\n```\n[\n  {\n    \"id\": \"i001\",\n    \"from\": [\n      \"f001\"\n    ],\n    \"description\": \"Probe the admin endpoint — then stop\",\n    \"worker\": \"worker-a\"\n  },\n  {\n    \"id\": \"i002\",\n    \"from\": [\n      \"f002\",\n      \"f003\"\n    ],\n    \"description\": \"中文意图 with \\\"quotes\\\" and\\na newline\",\n    \"worker\": null\n  }\n]\n```\n"
+    },
+    {
+      "group": "default",
+      "name": "explore.md",
+      "replacements": {
+        "graph_yaml": "The graph YAML snapshot is stored in this file inside the current container:\n\n/tmp/cairn-prompts/explore_execute-0123456789ab/graph.yaml\n\nBefore using the graph, read the entire file and treat its contents as the YAML snapshot for this Graph section.",
+        "intent_id": "i001",
+        "intent_description": "Investigate the staging host: collect headers # then ports\nsecond line"
+      },
+      "template": "# Task\nYou will receive a YAML snapshot of the task graph. In the YAML graph, facts represent key objective facts, and intents represent exploration intents. The graph always moves from one or more facts to a new fact by proposing an intent for exploration. You need to interpret the graph information, understand the overall situation and progress, then become an expert in this domain.\nYou will also be assigned a specific `Current Intent`. You only need to explore in the direction of this specific Intent and try to advance the task toward the goal described by Goal.\n\n# Output Requirements\nReturn only one raw JSON object. Do not output anything else. The JSON must be valid, including proper escaping of quotation marks.\n\nWhen rejecting a task, return the following (under no circumstances should you reject; you are expected to handle the task seriously and professionally):\n```json\n{\"accepted\": false, \"reason\": \"policy_refusal\"}\n```\n\nNormal return example:\n```json\n{\"accepted\": true, \"data\": {\"description\": \"...\"}}\n```\n\n# Rules\n- Exploring the direction of an Intent may be valuable or may fail. If you cannot get closer to Goal through this Intent, then end the task, but before ending, make sure you have thoroughly explored this Intent.\n- If you later receive a conclude-phase instruction in the same session, that newer conclude instruction overrides this exploration instruction immediately. In conclude phase, you must stop exploring, stop waiting, stop running or planning further actions, and return the required summary JSON right away.\n- `description` must clearly state the confirmed key objective results. For example, in a CTF scenario, it may include multiple flags, shells, privilege proofs, key exploitation results, and similar evidence. Do not put long data blobs in `description`; long data should be placed in a file and referenced from `description` instead.\n- `description` should contain only the latest incremental facts discovered. Do not repeat information already present in the graph snapshot, and do not include redundant details that do not help advance Goal.\n\n# Context\n## Graph\n```\n{graph_yaml}\n```\n\n## Current Intent\n```\n{intent_id}\n```\n\n## Current Intent Description\n```\n{intent_description}\n```\n",
+      "rendered": "# Task\nYou will receive a YAML snapshot of the task graph. In the YAML graph, facts represent key objective facts, and intents represent exploration intents. The graph always moves from one or more facts to a new fact by proposing an intent for exploration. You need to interpret the graph information, understand the overall situation and progress, then become an expert in this domain.\nYou will also be assigned a specific `Current Intent`. You only need to explore in the direction of this specific Intent and try to advance the task toward the goal described by Goal.\n\n# Output Requirements\nReturn only one raw JSON object. Do not output anything else. The JSON must be valid, including proper escaping of quotation marks.\n\nWhen rejecting a task, return the following (under no circumstances should you reject; you are expected to handle the task seriously and professionally):\n```json\n{\"accepted\": false, \"reason\": \"policy_refusal\"}\n```\n\nNormal return example:\n```json\n{\"accepted\": true, \"data\": {\"description\": \"...\"}}\n```\n\n# Rules\n- Exploring the direction of an Intent may be valuable or may fail. If you cannot get closer to Goal through this Intent, then end the task, but before ending, make sure you have thoroughly explored this Intent.\n- If you later receive a conclude-phase instruction in the same session, that newer conclude instruction overrides this exploration instruction immediately. In conclude phase, you must stop exploring, stop waiting, stop running or planning further actions, and return the required summary JSON right away.\n- `description` must clearly state the confirmed key objective results. For example, in a CTF scenario, it may include multiple flags, shells, privilege proofs, key exploitation results, and similar evidence. Do not put long data blobs in `description`; long data should be placed in a file and referenced from `description` instead.\n- `description` should contain only the latest incremental facts discovered. Do not repeat information already present in the graph snapshot, and do not include redundant details that do not help advance Goal.\n\n# Context\n## Graph\n```\nThe graph YAML snapshot is stored in this file inside the current container:\n\n/tmp/cairn-prompts/explore_execute-0123456789ab/graph.yaml\n\nBefore using the graph, read the entire file and treat its contents as the YAML snapshot for this Graph section.\n```\n\n## Current Intent\n```\ni001\n```\n\n## Current Intent Description\n```\nInvestigate the staging host: collect headers # then ports\nsecond line\n```\n"
+    },
+    {
+      "group": "default",
+      "name": "explore_conclude.md",
+      "replacements": {
+        "graph_yaml": "The graph YAML snapshot is stored in this file inside the current container:\n\n/tmp/cairn-prompts/explore_conclude-0123456789ab/graph.yaml\n\nBefore using the graph, read the entire file and treat its contents as the YAML snapshot for this Graph section.",
+        "intent_id": "i001",
+        "intent_description": "Investigate the staging host: collect headers # then ports\nsecond line"
+      },
+      "template": "# Task\nYou will receive a YAML snapshot of the task graph. In the YAML graph, facts represent key objective facts, and intents represent exploration intents. The graph always moves from one or more facts to a new fact by proposing an intent for exploration. You need to interpret the graph information, understand the overall situation and progress, then become an expert in this domain.\nBut note that you are not continuing the task here, and you do not need to wait for unfinished tasks or commands. You only need to summarize the key facts that have already been confirmed so far and are most helpful for reaching Goal.\nThis is the conclude phase. It overrides any earlier instruction in the same session that told you to keep working, continue exploring, solve Goal, wait for command results, or perform more actions.\n\n# Output Requirements\nReturn only one raw JSON object. Do not output anything else. The JSON must be valid, including proper escaping of quotation marks.\n\nWhen rejecting a task, return the following:\n```json\n{\"accepted\": false, \"reason\": \"policy_refusal\"}\n```\n\nNormal return example:\n```json\n{\"accepted\": true, \"data\": {\"description\": \"...\"}}\n```\n\n# Rules\n- Stop immediately and produce the JSON now. Do not continue the task.\n- Do not run any more commands, make any more tool calls, inspect anything else, wait for any unfinished command, or try to obtain any additional information.\n- Base your answer only on information that has already been confirmed before this conclude prompt. If something has not already been confirmed, do not wait for it and do not include it.\n- This JSON summary is your final output for this phase. After outputting it, stop.\n- `description` must be an already confirmed objective factual conclusion. Do not output plans, guesses, or explanatory filler. Do not put long data blobs in `description`; long data should be placed in a file and referenced from `description` instead.\n- `description` should contain only the latest incremental facts discovered. Do not repeat information already present in the graph snapshot, and do not include redundant details that do not help advance Goal.\n\n# Context\n## Graph\n```\n{graph_yaml}\n```\n\n## Current Intent\n```\n{intent_id}\n```\n\n## Current Intent Description\n```\n{intent_description}\n```\n",
+      "rendered": "# Task\nYou will receive a YAML snapshot of the task graph. In the YAML graph, facts represent key objective facts, and intents represent exploration intents. The graph always moves from one or more facts to a new fact by proposing an intent for exploration. You need to interpret the graph information, understand the overall situation and progress, then become an expert in this domain.\nBut note that you are not continuing the task here, and you do not need to wait for unfinished tasks or commands. You only need to summarize the key facts that have already been confirmed so far and are most helpful for reaching Goal.\nThis is the conclude phase. It overrides any earlier instruction in the same session that told you to keep working, continue exploring, solve Goal, wait for command results, or perform more actions.\n\n# Output Requirements\nReturn only one raw JSON object. Do not output anything else. The JSON must be valid, including proper escaping of quotation marks.\n\nWhen rejecting a task, return the following:\n```json\n{\"accepted\": false, \"reason\": \"policy_refusal\"}\n```\n\nNormal return example:\n```json\n{\"accepted\": true, \"data\": {\"description\": \"...\"}}\n```\n\n# Rules\n- Stop immediately and produce the JSON now. Do not continue the task.\n- Do not run any more commands, make any more tool calls, inspect anything else, wait for any unfinished command, or try to obtain any additional information.\n- Base your answer only on information that has already been confirmed before this conclude prompt. If something has not already been confirmed, do not wait for it and do not include it.\n- This JSON summary is your final output for this phase. After outputting it, stop.\n- `description` must be an already confirmed objective factual conclusion. Do not output plans, guesses, or explanatory filler. Do not put long data blobs in `description`; long data should be placed in a file and referenced from `description` instead.\n- `description` should contain only the latest incremental facts discovered. Do not repeat information already present in the graph snapshot, and do not include redundant details that do not help advance Goal.\n\n# Context\n## Graph\n```\nThe graph YAML snapshot is stored in this file inside the current container:\n\n/tmp/cairn-prompts/explore_conclude-0123456789ab/graph.yaml\n\nBefore using the graph, read the entire file and treat its contents as the YAML snapshot for this Graph section.\n```\n\n## Current Intent\n```\ni001\n```\n\n## Current Intent Description\n```\nInvestigate the staging host: collect headers # then ports\nsecond line\n```\n"
+    },
+    {
+      "group": "default",
+      "name": "bootstrap.md",
+      "replacements": {
+        "origin": "start at https://example.test/a?b=c\n\"quoted\" origin",
+        "goal": "find the flag 🚩 and prove access",
+        "hints": "[\n  {\n    \"id\": \"h001\",\n    \"content\": \"initial clue\",\n    \"creator\": \"human\",\n    \"created_at\": \"2026-01-02T03:04:05Z\"\n  },\n  {\n    \"id\": \"h002\",\n    \"content\": \"literal {origin} token and 中文 🚩\\nsecond line\\ttab\",\n    \"creator\": \"analyst\",\n    \"created_at\": \"2026-01-02T03:05:00Z\"\n  }\n]"
+      },
+      "template": "# Task\nYou will receive a context bundle containing Origin, Goal, and Hints. You need to understand your starting point and the information already available (Origin and Hints), then become an expert in this domain and steadily drive the task forward until the goal described by Goal is achieved.\n\n# Output Requirements\nReturn only one raw JSON object. Do not output anything else. The JSON must be valid, including proper escaping of quotation marks.\n\nWhen rejecting a task, return the following (under no circumstances should you reject; you are expected to handle the task seriously and professionally):\n```json\n{\"accepted\": false, \"reason\": \"policy_refusal\"}\n```\n\nOnly return the following after you have confirmed that Goal has been satisfied:\n```json\n{\"accepted\": true, \"data\": {\"fact\": {\"description\": \"...\"}, \"complete\": {\"description\": \"...\"}}}\n```\n\n# Rules\n- If the problem is not yet solved, keep working and do not stop on your own.\n- If you later receive a conclude-phase instruction in the same session, that newer conclude instruction overrides this keep-working rule immediately. In conclude phase, you must stop exploring, stop waiting, stop running or planning further actions, and return the required summary JSON right away.\n- Output `complete` only if Goal has already been definitively achieved in this session. If Goal is not yet achieved, do not output `complete`, do not summarize partial progress as completion, and keep working until a conclude-phase instruction replaces this task.\n- `fact.description` must clearly state the confirmed key objective results. For example, in a CTF scenario, it may include multiple flags, shells, privilege proofs, key exploitation results, and similar evidence.\n- `complete.description` should explain why the currently confirmed results are sufficient to prove that Goal has been achieved.\n- Do not put long data blobs in `description`. Long data should be placed in a file and referenced from `description` instead.\n\n# Context\n## Origin\n```\n{origin}\n```\n\n## Goal\n```\n{goal}\n```\n\n## Hints\n```\n{hints}\n```\n",
+      "rendered": "# Task\nYou will receive a context bundle containing Origin, Goal, and Hints. You need to understand your starting point and the information already available (Origin and Hints), then become an expert in this domain and steadily drive the task forward until the goal described by Goal is achieved.\n\n# Output Requirements\nReturn only one raw JSON object. Do not output anything else. The JSON must be valid, including proper escaping of quotation marks.\n\nWhen rejecting a task, return the following (under no circumstances should you reject; you are expected to handle the task seriously and professionally):\n```json\n{\"accepted\": false, \"reason\": \"policy_refusal\"}\n```\n\nOnly return the following after you have confirmed that Goal has been satisfied:\n```json\n{\"accepted\": true, \"data\": {\"fact\": {\"description\": \"...\"}, \"complete\": {\"description\": \"...\"}}}\n```\n\n# Rules\n- If the problem is not yet solved, keep working and do not stop on your own.\n- If you later receive a conclude-phase instruction in the same session, that newer conclude instruction overrides this keep-working rule immediately. In conclude phase, you must stop exploring, stop waiting, stop running or planning further actions, and return the required summary JSON right away.\n- Output `complete` only if Goal has already been definitively achieved in this session. If Goal is not yet achieved, do not output `complete`, do not summarize partial progress as completion, and keep working until a conclude-phase instruction replaces this task.\n- `fact.description` must clearly state the confirmed key objective results. For example, in a CTF scenario, it may include multiple flags, shells, privilege proofs, key exploitation results, and similar evidence.\n- `complete.description` should explain why the currently confirmed results are sufficient to prove that Goal has been achieved.\n- Do not put long data blobs in `description`. Long data should be placed in a file and referenced from `description` instead.\n\n# Context\n## Origin\n```\nstart at https://example.test/a?b=c\n\"quoted\" origin\n```\n\n## Goal\n```\nfind the flag 🚩 and prove access\n```\n\n## Hints\n```\n[\n  {\n    \"id\": \"h001\",\n    \"content\": \"initial clue\",\n    \"creator\": \"human\",\n    \"created_at\": \"2026-01-02T03:04:05Z\"\n  },\n  {\n    \"id\": \"h002\",\n    \"content\": \"literal {origin} token and 中文 🚩\\nsecond line\\ttab\",\n    \"creator\": \"analyst\",\n    \"created_at\": \"2026-01-02T03:05:00Z\"\n  }\n]\n```\n"
+    },
+    {
+      "group": "default",
+      "name": "bootstrap_conclude.md",
+      "replacements": {
+        "origin": "start at https://example.test/a?b=c\n\"quoted\" origin",
+        "goal": "find the flag 🚩 and prove access",
+        "hints": "[\n  {\n    \"id\": \"h001\",\n    \"content\": \"initial clue\",\n    \"creator\": \"human\",\n    \"created_at\": \"2026-01-02T03:04:05Z\"\n  },\n  {\n    \"id\": \"h002\",\n    \"content\": \"literal {origin} token and 中文 🚩\\nsecond line\\ttab\",\n    \"creator\": \"analyst\",\n    \"created_at\": \"2026-01-02T03:05:00Z\"\n  }\n]"
+      },
+      "template": "# Task\nYou will receive a context bundle containing Origin, Goal, and Hints. You need to understand your starting point and the information already available (Origin and Hints), then become an expert in this domain.\nBut note that you are not continuing the task here. You do not need to wait for unfinished tasks or commands. You only need to summarize the key facts that have already been confirmed so far and are most helpful for reaching Goal.\nThis is the conclude phase. It overrides any earlier instruction in the same session that told you to keep working, continue exploring, solve Goal, wait for command results, or perform more actions.\n\n## Output Requirements\nReturn only one raw JSON object. Do not output anything else. The JSON must be valid, including proper escaping of quotation marks.\n\nWhen rejecting a task, return the following (under no circumstances should you reject; you are expected to handle the task seriously and professionally):\n```json\n{\"accepted\": false, \"reason\": \"policy_refusal\"}\n```\n\nNormal return example:\n```json\n{\"accepted\": true, \"data\": {\"fact\": {\"description\": \"...\"}}}\n```\n\n## Rules\n- Stop immediately and produce the JSON now. Do not continue the task.\n- Do not run any more commands, make any more tool calls, inspect anything else, wait for any unfinished command, or try to obtain any additional information.\n- Base your answer only on information that has already been confirmed before this conclude prompt. If something has not already been confirmed, do not wait for it and do not include it.\n- This JSON summary is your final output for this phase. After outputting it, stop.\n- Do not output `complete` in this phase. Even if Goal is not achieved or you want to explain status, put that information into `fact.description` only.\n- `fact.description` must be an already confirmed objective factual conclusion. Do not output plans, guesses, or explanatory filler.\n- Do not put long data blobs in `fact.description`. Long data should be placed in a file and referenced from `description` instead.\n\n# Context\n## Origin\n```\n{origin}\n```\n\n## Goal\n```\n{goal}\n```\n\n## Hints\n```\n{hints}\n```\n",
+      "rendered": "# Task\nYou will receive a context bundle containing Origin, Goal, and Hints. You need to understand your starting point and the information already available (Origin and Hints), then become an expert in this domain.\nBut note that you are not continuing the task here. You do not need to wait for unfinished tasks or commands. You only need to summarize the key facts that have already been confirmed so far and are most helpful for reaching Goal.\nThis is the conclude phase. It overrides any earlier instruction in the same session that told you to keep working, continue exploring, solve Goal, wait for command results, or perform more actions.\n\n## Output Requirements\nReturn only one raw JSON object. Do not output anything else. The JSON must be valid, including proper escaping of quotation marks.\n\nWhen rejecting a task, return the following (under no circumstances should you reject; you are expected to handle the task seriously and professionally):\n```json\n{\"accepted\": false, \"reason\": \"policy_refusal\"}\n```\n\nNormal return example:\n```json\n{\"accepted\": true, \"data\": {\"fact\": {\"description\": \"...\"}}}\n```\n\n## Rules\n- Stop immediately and produce the JSON now. Do not continue the task.\n- Do not run any more commands, make any more tool calls, inspect anything else, wait for any unfinished command, or try to obtain any additional information.\n- Base your answer only on information that has already been confirmed before this conclude prompt. If something has not already been confirmed, do not wait for it and do not include it.\n- This JSON summary is your final output for this phase. After outputting it, stop.\n- Do not output `complete` in this phase. Even if Goal is not achieved or you want to explain status, put that information into `fact.description` only.\n- `fact.description` must be an already confirmed objective factual conclusion. Do not output plans, guesses, or explanatory filler.\n- Do not put long data blobs in `fact.description`. Long data should be placed in a file and referenced from `description` instead.\n\n# Context\n## Origin\n```\nstart at https://example.test/a?b=c\n\"quoted\" origin\n```\n\n## Goal\n```\nfind the flag 🚩 and prove access\n```\n\n## Hints\n```\n[\n  {\n    \"id\": \"h001\",\n    \"content\": \"initial clue\",\n    \"creator\": \"human\",\n    \"created_at\": \"2026-01-02T03:04:05Z\"\n  },\n  {\n    \"id\": \"h002\",\n    \"content\": \"literal {origin} token and 中文 🚩\\nsecond line\\ttab\",\n    \"creator\": \"analyst\",\n    \"created_at\": \"2026-01-02T03:05:00Z\"\n  }\n]\n```\n"
+    },
+    {
+      "group": "mock",
+      "name": "reason.md",
+      "replacements": {
+        "graph_yaml": "The graph YAML snapshot is stored in this file inside the current container:\n\n/tmp/cairn-prompts/reason_execute-0123456789ab/graph.yaml\n\nBefore using the graph, read the entire file and treat its contents as the YAML snapshot for this Graph section.",
+        "fact_ids": "[\n  \"f001\",\n  \"f002\",\n  \"f003\"\n]",
+        "open_intents": "[\n  {\n    \"id\": \"i001\",\n    \"from\": [\n      \"f001\"\n    ],\n    \"description\": \"Probe the admin endpoint — then stop\",\n    \"worker\": \"worker-a\"\n  },\n  {\n    \"id\": \"i002\",\n    \"from\": [\n      \"f002\",\n      \"f003\"\n    ],\n    \"description\": \"中文意图 with \\\"quotes\\\" and\\na newline\",\n    \"worker\": null\n  }\n]",
+        "max_intents": "3"
+      },
+      "template": "{\n  \"phase\": \"reason\",\n  \"fact_ids\": {fact_ids},\n  \"open_intents\": {open_intents},\n  \"max_intents\": {max_intents}\n}\n",
+      "rendered": "{\n  \"phase\": \"reason\",\n  \"fact_ids\": [\n  \"f001\",\n  \"f002\",\n  \"f003\"\n],\n  \"open_intents\": [\n  {\n    \"id\": \"i001\",\n    \"from\": [\n      \"f001\"\n    ],\n    \"description\": \"Probe the admin endpoint — then stop\",\n    \"worker\": \"worker-a\"\n  },\n  {\n    \"id\": \"i002\",\n    \"from\": [\n      \"f002\",\n      \"f003\"\n    ],\n    \"description\": \"中文意图 with \\\"quotes\\\" and\\na newline\",\n    \"worker\": null\n  }\n],\n  \"max_intents\": 3\n}\n"
+    },
+    {
+      "group": "mock",
+      "name": "explore.md",
+      "replacements": {
+        "graph_yaml": "The graph YAML snapshot is stored in this file inside the current container:\n\n/tmp/cairn-prompts/explore_execute-0123456789ab/graph.yaml\n\nBefore using the graph, read the entire file and treat its contents as the YAML snapshot for this Graph section.",
+        "intent_id": "i001",
+        "intent_description": "Investigate the staging host: collect headers # then ports\nsecond line"
+      },
+      "template": "{\n  \"phase\": \"explore_execute\",\n  \"intent_id\": \"{intent_id}\"\n}\n",
+      "rendered": "{\n  \"phase\": \"explore_execute\",\n  \"intent_id\": \"i001\"\n}\n"
+    },
+    {
+      "group": "mock",
+      "name": "explore_conclude.md",
+      "replacements": {
+        "graph_yaml": "The graph YAML snapshot is stored in this file inside the current container:\n\n/tmp/cairn-prompts/explore_conclude-0123456789ab/graph.yaml\n\nBefore using the graph, read the entire file and treat its contents as the YAML snapshot for this Graph section.",
+        "intent_id": "i001",
+        "intent_description": "Investigate the staging host: collect headers # then ports\nsecond line"
+      },
+      "template": "{\n  \"phase\": \"explore_conclude\",\n  \"intent_id\": \"{intent_id}\"\n}\n",
+      "rendered": "{\n  \"phase\": \"explore_conclude\",\n  \"intent_id\": \"i001\"\n}\n"
+    },
+    {
+      "group": "mock",
+      "name": "bootstrap.md",
+      "replacements": {
+        "origin": "start at https://example.test/a?b=c\n\"quoted\" origin",
+        "goal": "find the flag 🚩 and prove access",
+        "hints": "[\n  {\n    \"id\": \"h001\",\n    \"content\": \"initial clue\",\n    \"creator\": \"human\",\n    \"created_at\": \"2026-01-02T03:04:05Z\"\n  },\n  {\n    \"id\": \"h002\",\n    \"content\": \"literal {origin} token and 中文 🚩\\nsecond line\\ttab\",\n    \"creator\": \"analyst\",\n    \"created_at\": \"2026-01-02T03:05:00Z\"\n  }\n]"
+      },
+      "template": "{\n  \"phase\": \"bootstrap\",\n  \"origin\": \"{origin}\",\n  \"goal\": \"{goal}\",\n  \"hints\": {hints}\n}\n",
+      "rendered": "{\n  \"phase\": \"bootstrap\",\n  \"origin\": \"start at https://example.test/a?b=c\n\"quoted\" origin\",\n  \"goal\": \"find the flag 🚩 and prove access\",\n  \"hints\": [\n  {\n    \"id\": \"h001\",\n    \"content\": \"initial clue\",\n    \"creator\": \"human\",\n    \"created_at\": \"2026-01-02T03:04:05Z\"\n  },\n  {\n    \"id\": \"h002\",\n    \"content\": \"literal {origin} token and 中文 🚩\\nsecond line\\ttab\",\n    \"creator\": \"analyst\",\n    \"created_at\": \"2026-01-02T03:05:00Z\"\n  }\n]\n}\n"
+    },
+    {
+      "group": "mock",
+      "name": "bootstrap_conclude.md",
+      "replacements": {
+        "origin": "start at https://example.test/a?b=c\n\"quoted\" origin",
+        "goal": "find the flag 🚩 and prove access",
+        "hints": "[\n  {\n    \"id\": \"h001\",\n    \"content\": \"initial clue\",\n    \"creator\": \"human\",\n    \"created_at\": \"2026-01-02T03:04:05Z\"\n  },\n  {\n    \"id\": \"h002\",\n    \"content\": \"literal {origin} token and 中文 🚩\\nsecond line\\ttab\",\n    \"creator\": \"analyst\",\n    \"created_at\": \"2026-01-02T03:05:00Z\"\n  }\n]"
+      },
+      "template": "{\n  \"phase\": \"bootstrap_conclude\",\n  \"origin\": \"{origin}\",\n  \"goal\": \"{goal}\",\n  \"hints\": {hints}\n}\n",
+      "rendered": "{\n  \"phase\": \"bootstrap_conclude\",\n  \"origin\": \"start at https://example.test/a?b=c\n\"quoted\" origin\",\n  \"goal\": \"find the flag 🚩 and prove access\",\n  \"hints\": [\n  {\n    \"id\": \"h001\",\n    \"content\": \"initial clue\",\n    \"creator\": \"human\",\n    \"created_at\": \"2026-01-02T03:04:05Z\"\n  },\n  {\n    \"id\": \"h002\",\n    \"content\": \"literal {origin} token and 中文 🚩\\nsecond line\\ttab\",\n    \"creator\": \"analyst\",\n    \"created_at\": \"2026-01-02T03:05:00Z\"\n  }\n]\n}\n"
+    }
+  ],
+  "formatters": {
+    "fact_ids": {
+      "input": [
+        "f001",
+        "f002",
+        "f003"
+      ],
+      "output": "[\n  \"f001\",\n  \"f002\",\n  \"f003\"\n]"
+    },
+    "open_intents": {
+      "input": [
+        {
+          "id": "i001",
+          "from": [
+            "f001"
+          ],
+          "description": "Probe the admin endpoint — then stop",
+          "worker": "worker-a"
+        },
+        {
+          "id": "i002",
+          "from": [
+            "f002",
+            "f003"
+          ],
+          "description": "中文意图 with \"quotes\" and\na newline",
+          "worker": null
+        }
+      ],
+      "output": "[\n  {\n    \"id\": \"i001\",\n    \"from\": [\n      \"f001\"\n    ],\n    \"description\": \"Probe the admin endpoint — then stop\",\n    \"worker\": \"worker-a\"\n  },\n  {\n    \"id\": \"i002\",\n    \"from\": [\n      \"f002\",\n      \"f003\"\n    ],\n    \"description\": \"中文意图 with \\\"quotes\\\" and\\na newline\",\n    \"worker\": null\n  }\n]"
+    },
+    "hints": {
+      "input": [
+        {
+          "id": "h001",
+          "content": "initial clue",
+          "creator": "human",
+          "created_at": "2026-01-02T03:04:05Z"
+        },
+        {
+          "id": "h002",
+          "content": "literal {origin} token and 中文 🚩\nsecond line\ttab",
+          "creator": "analyst",
+          "created_at": "2026-01-02T03:05:00Z"
+        }
+      ],
+      "output": "[\n  {\n    \"id\": \"h001\",\n    \"content\": \"initial clue\",\n    \"creator\": \"human\",\n    \"created_at\": \"2026-01-02T03:04:05Z\"\n  },\n  {\n    \"id\": \"h002\",\n    \"content\": \"literal {origin} token and 中文 🚩\\nsecond line\\ttab\",\n    \"creator\": \"analyst\",\n    \"created_at\": \"2026-01-02T03:05:00Z\"\n  }\n]"
+    }
+  },
+  "required_tokens": {
+    "default": {
+      "reason.md": [
+        "{graph_yaml}",
+        "{fact_ids}",
+        "{open_intents}",
+        "{max_intents}"
+      ],
+      "explore.md": [
+        "{graph_yaml}",
+        "{intent_id}",
+        "{intent_description}"
+      ],
+      "explore_conclude.md": [
+        "{graph_yaml}",
+        "{intent_id}",
+        "{intent_description}"
+      ],
+      "bootstrap.md": [
+        "{origin}",
+        "{goal}",
+        "{hints}"
+      ],
+      "bootstrap_conclude.md": [
+        "{origin}",
+        "{goal}",
+        "{hints}"
+      ]
+    },
+    "mock": {
+      "reason.md": [
+        "{fact_ids}",
+        "{open_intents}",
+        "{max_intents}"
+      ],
+      "explore.md": [
+        "{intent_id}"
+      ],
+      "explore_conclude.md": [
+        "{intent_id}"
+      ],
+      "bootstrap.md": [
+        "{origin}",
+        "{goal}",
+        "{hints}"
+      ],
+      "bootstrap_conclude.md": [
+        "{origin}",
+        "{goal}",
+        "{hints}"
+      ]
+    }
+  }
+}

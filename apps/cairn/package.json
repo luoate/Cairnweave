@@ -1,0 +1,14 @@
+{
+  "name": "@cairn/app",
+  "version": "0.3.0-m3",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "cairn": "./src/cli.ts"
+  },
+  "dependencies": {
+    "@cairn/agent": "workspace:*",
+    "@cairn/contracts": "workspace:*",
+    "@cairn/graph": "workspace:*"
+  }
+}

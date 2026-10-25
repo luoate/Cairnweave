@@ -1,0 +1,34 @@
+# Worker image for `runtime.execution: container`.
+#
+# One container per project runs `sleep infinity`; every task is a separate
+# `docker exec bun /app/apps/cairn/src/cli.ts worker --task <task.json>`.
+#
+# The image deliberately does not contain pentest tooling: extend it per engagement so
+# the toolset is reviewable. `procps` is required for task-level termination (pkill).
+#
+#   docker build -f Dockerfile.worker -t cairn-worker:latest .
+#
+# The agent config directory is mounted read-only at /cairn/agent-config by the control
+# plane; credentials never enter the image or the workspace.
+
+# Override for air-gapped or mirrored registries:
+#   docker build --build-arg BUN_IMAGE=<mirror>/oven/bun:1.4 -f Dockerfile.worker .
+ARG BUN_IMAGE=oven/bun:1.4
+FROM ${BUN_IMAGE}
+
+WORKDIR /app
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends procps ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY . .
+RUN bun install --frozen-lockfile
+
+RUN mkdir -p /cairn/workspace /cairn/agent-config
+
+WORKDIR /cairn/workspace
+ENV CAIRN_AGENT_CONFIG_DIR=/cairn/agent-config
+ENV CAIRN_AGENT_CONFIG_READONLY=1
+
+CMD ["sleep", "infinity"]

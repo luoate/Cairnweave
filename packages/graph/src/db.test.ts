@@ -1,0 +1,199 @@
+import { afterEach, describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { configureDatabase, get, run, type CairnDatabase } from "./db";
+
+const directories: string[] = [];
+
+function temporaryDatabase(): { database: CairnDatabase; directory: string } {
+  const directory = mkdtempSync(join(tmpdir(), "cairn-db-"));
+  directories.push(directory);
+  return { database: configureDatabase(join(directory, "cairn.db")), directory };
+}
+
+afterEach(() => {
+  for (const directory of directories.splice(0)) {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+describe("schema", () => {
+  test("creates the default settings and project counter", () => {
+    const { database } = temporaryDatabase();
+    const state = database.withConn((conn) => ({
+      settings: get<{ intent_timeout: number; reason_timeout: number }>(
+        conn,
+        "SELECT intent_timeout, reason_timeout FROM settings WHERE rowid = 1",
+      ),
+      counter: get<{ value: number }>(
+        conn,
+        "SELECT value FROM counters WHERE name = 'project'",
+      ),
+      journal: get<{ journal_mode: string }>(conn, "PRAGMA journal_mode"),
+    }));
+    expect(state.settings).toEqual({ intent_timeout: 15, reason_timeout: 15 });
+    expect(state.counter).toEqual({ value: 0 });
+    expect(state.journal).toEqual({ journal_mode: "wal" });
+  });
+
+  test("is idempotent and keeps existing data", () => {
+    const { database, directory } = temporaryDatabase();
+    database.withConn((conn) => {
+      run(
+        conn,
+        "INSERT INTO projects (id, title, created_at) VALUES ('proj_001', 'kept', '2026-01-01T00:00:00Z')",
+      );
+    });
+    const reopened = configureDatabase(join(directory, "cairn.db"));
+    const row = reopened.withConn((conn) =>
+      get<{ title: string }>(conn, "SELECT title FROM projects WHERE id = 'proj_001'"),
+    );
+    expect(row).toEqual({ title: "kept" });
+  });
+});
+
+describe("legacy migrations", () => {
+  test("adds bootstrap_enabled to a legacy projects table", () => {
+    const directory = mkdtempSync(join(tmpdir(), "cairn-legacy-"));
+    directories.push(directory);
+    const path = join(directory, "legacy.db");
+    const legacy = new Database(path, { create: true });
+    legacy.exec(`
+      CREATE TABLE projects (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'active',
+          created_at TEXT NOT NULL,
+          reason_worker TEXT,
+          reason_trigger TEXT,
+          reason_started_at TEXT,
+          reason_last_heartbeat_at TEXT
+      )
+    `);
+    legacy
+      .query("INSERT INTO projects (id, title, created_at) VALUES (?, ?, ?)")
+      .run("proj_001", "legacy", "2026-01-01T00:00:00Z");
+    legacy.close();
+
+    const database = configureDatabase(path);
+    const row = database.withConn((conn) =>
+      get<{ bootstrap_enabled: number }>(
+        conn,
+        "SELECT bootstrap_enabled FROM projects WHERE id = 'proj_001'",
+      ),
+    );
+    expect(row).toEqual({ bootstrap_enabled: 1 });
+  });
+
+  test("maps the intermediate bootstrap_mode column to bootstrap_enabled", () => {
+    const directory = mkdtempSync(join(tmpdir(), "cairn-legacy-"));
+    directories.push(directory);
+    const path = join(directory, "intermediate.db");
+    const legacy = new Database(path, { create: true });
+    legacy.exec(`
+      CREATE TABLE projects (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'active',
+          bootstrap_mode TEXT NOT NULL DEFAULT 'auto',
+          created_at TEXT NOT NULL,
+          reason_worker TEXT,
+          reason_trigger TEXT,
+          reason_started_at TEXT,
+          reason_last_heartbeat_at TEXT
+      )
+    `);
+    const insert = legacy.query(
+      "INSERT INTO projects (id, title, bootstrap_mode, created_at) VALUES (?, ?, ?, ?)",
+    );
+    insert.run("proj_001", "disabled", "disabled", "2026-01-01T00:00:00Z");
+    insert.run("proj_002", "enabled", "enabled", "2026-01-01T00:00:00Z");
+    legacy.close();
+
+    const database = configureDatabase(path);
+    const rows = database.withConn((conn) =>
+      conn
+        .query("SELECT id, bootstrap_enabled FROM projects ORDER BY id")
+        .all() as Array<{ id: string; bootstrap_enabled: number }>,
+    );
+    expect(rows).toEqual([
+      { id: "proj_001", bootstrap_enabled: 0 },
+      { id: "proj_002", bootstrap_enabled: 1 },
+    ]);
+  });
+});
+
+describe("connections", () => {
+  test("rolls the whole callback back when it throws", () => {
+    const { database } = temporaryDatabase();
+    expect(() =>
+      database.withConn((conn) => {
+        run(
+          conn,
+          "INSERT INTO projects (id, title, created_at) VALUES ('proj_001', 'rolled back', '2026-01-01T00:00:00Z')",
+        );
+        throw new Error("boom");
+      }),
+    ).toThrow("boom");
+
+    const count = database.withConn((conn) =>
+      get<{ count: number }>(conn, "SELECT COUNT(*) AS count FROM projects"),
+    );
+    expect(count).toEqual({ count: 0 });
+  });
+
+  test("deletes dependent rows through foreign-key cascades", () => {
+    const { database } = temporaryDatabase();
+    database.withConn((conn) => {
+      run(
+        conn,
+        "INSERT INTO projects (id, title, created_at) VALUES ('proj_001', 'cascade', '2026-01-01T00:00:00Z')",
+      );
+      run(
+        conn,
+        "INSERT INTO facts (id, project_id, description) VALUES ('origin', 'proj_001', 'start')",
+      );
+      run(
+        conn,
+        "INSERT INTO intents (id, project_id, description, creator, created_at) VALUES ('i001', 'proj_001', 'work', 'reasoner', '2026-01-01T00:00:00Z')",
+      );
+      run(
+        conn,
+        "INSERT INTO intent_sources (intent_id, project_id, fact_id) VALUES ('i001', 'proj_001', 'origin')",
+      );
+      run(
+        conn,
+        "INSERT INTO hints (id, project_id, content, creator, created_at) VALUES ('h001', 'proj_001', 'hint', 'human', '2026-01-01T00:00:00Z')",
+      );
+      run(
+        conn,
+        "INSERT INTO scoped_counters (project_id, kind, value) VALUES ('proj_001', 'fact', 1)",
+      );
+      run(conn, "DELETE FROM projects WHERE id = 'proj_001'");
+    });
+
+    const counts = database.withConn((conn) => ({
+      facts: get<{ count: number }>(conn, "SELECT COUNT(*) AS count FROM facts"),
+      intents: get<{ count: number }>(conn, "SELECT COUNT(*) AS count FROM intents"),
+      sources: get<{ count: number }>(
+        conn,
+        "SELECT COUNT(*) AS count FROM intent_sources",
+      ),
+      hints: get<{ count: number }>(conn, "SELECT COUNT(*) AS count FROM hints"),
+      counters: get<{ count: number }>(
+        conn,
+        "SELECT COUNT(*) AS count FROM scoped_counters",
+      ),
+    }));
+    expect(counts).toEqual({
+      facts: { count: 0 },
+      intents: { count: 0 },
+      sources: { count: 0 },
+      hints: { count: 0 },
+      counters: { count: 0 },
+    });
+  });
+});

@@ -1,0 +1,120 @@
+# Merged Cairn dispatcher configuration (M3).
+#
+# One worker implementation runs per task. In local mode the control plane spawns
+# `cairn worker --task <file>` on this host. In container mode it keeps one
+# long-lived container per project and runs `docker exec ... worker --task <file>`
+# for each task. Both modes communicate only through task.json, result.json and
+# the session directory under <workspace>/.cairn/sessions/<task-id>/.
+#
+# Projects without an authorized scope are never dispatched, and the worker's
+# Host Bridge re-checks every tool call against the same scope (fail closed).
+#
+#   bun run cairn serve --config dispatch.yaml
+#
+# This file contains no credentials. Model/credential configuration lives in
+# BreachWeave's ~/.tch-agent config (auth.json); never commit secrets here.
+
+# Kept for compatibility with Cairn's config; the in-process scheduler does not
+# call this HTTP endpoint.
+server: "http://127.0.0.1:8000"
+
+runtime:
+  # "local" or "container" (the schema default is "container").
+  execution: local
+  # Scheduler tick interval in seconds.
+  interval: 3
+  # Global cap on concurrently running tasks.
+  max_workers: 3
+  # Projects that may be scheduled at once.
+  max_running_projects: 2
+  # Per-project cap. Keep at 1: the sandbox/workspace is shared per project.
+  max_project_workers: 1
+  # Timeout for the startup model/credential probe.
+  healthcheck_timeout: 15
+  # Retained for config compatibility; only one worker implementation exists.
+  worker_healthcheck: disabled
+  # Prompt set under apps/cairn/src/prompts/.
+  prompt_group: "default"
+
+tasks:
+  bootstrap:
+    # Initial direct solve attempt.
+    timeout: 300
+    # Budget to summarize confirmed findings when the main phase is unusable.
+    conclude_timeout: 90
+  reason:
+    timeout: 300
+    # Hard cap on new intents created by one reason step.
+    max_intents: 2
+  explore:
+    timeout: 600
+    conclude_timeout: 120
+  # Opt-in graph slicing for explore (and explore conclude) tasks. Reason and bootstrap
+  # always receive the full graph. Open intents and the focus intent's sources are never
+  # dropped; the caps only limit provenance/recent context.
+  graph_slice:
+    enabled: false
+    max_facts: 80
+    max_intents: 60
+
+worker:
+  # Fraction of the hard deadline written as softDeadlineSeconds in task.json.
+  # The control plane logs the soft deadline; a real Solver session also receives
+  # one wrap-up steer. Failures still fall back to a separate conclude task.
+  soft_deadline_ratio: 0.8
+  # Keep graph.yaml/task.json/result.json/audit.jsonl/logs after a task for audit.
+  retain_task_files: true
+  # How long to wait for result.json after the worker exits.
+  result_grace_seconds: 15
+
+local:
+  # Project workspaces live under <workspace_root>/<project_id>/. Omit to use the
+  # directory cairn serve was started from.
+  # workspace_root: "C:/cairn-runs"
+  # "remove" deletes a project workspace when the project is no longer active;
+  # "keep" is the safe default for audit.
+  completed_action: keep
+
+# Optional Observer sidecar (M4c). It maintains a project-level ideas/memory board
+# and runs a separate review model; the main solver only gets read-only board tools.
+# The solver answer is never changed by Observer failures, and flush is bounded by
+# timeout_seconds. Leave disabled unless a real solver is configured.
+# observer:
+#   enabled: false
+#   model: null                 # model-prefs.json entry; null reuses the main model
+#   every_rounds: 4
+#   window_rounds: 8
+#   timeout_seconds: 60
+#   max_reviews_per_task: 8
+#   kernel_tasks: ["explore"]
+
+# Environment variables passed to every worker process. They are not written
+# into task.json. Prefer ~/.tch-agent/config/auth.json for model credentials;
+# do not put secrets in this file.
+# Selects the real solver; omit or set "fake" for deterministic/offline runs.
+# common_env:
+#   CAIRN_SOLVER: "breachweave"
+#   # Local mode only. Container mode sets CAIRN_AGENT_CONFIG_DIR itself and
+#   # mounts the config read-only at /cairn/agent-config.
+#   CAIRN_AGENT_CONFIG_DIR: "C:/Users/me/.tch-agent/config"
+#   https_proxy: "http://127.0.0.1:7897"
+
+# Container mode. One container per project; the project workspace is
+# bind-mounted at /cairn/workspace and the agent config read-only at
+# /cairn/agent-config. The Docker socket is never mounted into the container.
+#
+# runtime:
+#   execution: container
+# container:
+#   image: "cairn-worker:latest"   # build: docker build -f Dockerfile.worker -t cairn-worker .
+#   # Pick the least connectivity the lab needs; the Host Bridge still checks
+#   # every tool call against the project scope. "none" is offline-only.
+#   network_mode: "bridge"
+#   # "remove" deletes the container when the project is no longer active.
+#   completed_action: "remove"
+#   cap_add: []
+#   # Host directory that contains project workspaces. This is a control-plane
+#   # path, not a container path. Defaults to local.workspace_root, then cwd.
+#   workspace_root: "C:/cairn-runs"
+#   # Optional override; this is the default and should match the image layout.
+#   worker_argv: ["bun", "/app/apps/cairn/src/cli.ts", "worker", "--task"]

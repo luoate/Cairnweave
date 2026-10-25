@@ -1,0 +1,15 @@
+node_modules/
+runs/
+dist/
+*.log
+.DS_Store
+tools/golden/.venv/
+__pycache__/
+*.pyc
+# Model credentials must never enter the repository.
+.tch-agent/
+**/auth.json
+.env
+# Local control-plane database.
+cairn.db
+cairn.db-*

@@ -1,0 +1,352 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import {
+  configureDatabase,
+  createProject,
+  getProjectDetail,
+  listProjectArtifacts,
+  type CairnDatabase,
+  type ProjectDetail,
+} from "@cairn/graph";
+
+import { parseDispatchConfig, type DispatchConfig } from "../config";
+import { Scheduler } from "./loop";
+
+const CONFIG = {
+  server: "http://127.0.0.1:8000",
+  runtime: {
+    execution: "local",
+    max_workers: 2,
+    max_running_projects: 2,
+    max_project_workers: 1,
+    interval: 1,
+    healthcheck_timeout: 15,
+    worker_healthcheck: "disabled",
+    prompt_group: "default",
+  },
+  tasks: {
+    bootstrap: { timeout: 30, conclude_timeout: 10 },
+    reason: { timeout: 30, max_intents: 3 },
+    explore: { timeout: 30, conclude_timeout: 10 },
+  },
+  local: { completed_action: "keep" },
+  worker: {
+    soft_deadline_ratio: 0.8,
+    retain_task_files: true,
+    result_grace_seconds: 2,
+  },
+};
+
+const SCOPE = { targets: ["127.0.0.1:8080"] };
+
+let directory: string;
+let db: CairnDatabase;
+let config: DispatchConfig;
+let logs: string[];
+
+beforeEach(() => {
+  directory = mkdtempSync(join(tmpdir(), "cairn-scheduler-"));
+  db = configureDatabase(join(directory, "cairn.db"));
+  config = parseDispatchConfig(CONFIG);
+  logs = [];
+});
+
+afterEach(() => {
+  rmSync(directory, { recursive: true, force: true });
+});
+
+function createProjectRow(bootstrapEnabled: boolean, scope = SCOPE): ProjectDetail {
+  return db.withConn((conn) =>
+    createProject(conn, {
+      title: `scheduler-${bootstrapEnabled}`,
+      origin: "start here",
+      goal: "reach the end",
+      bootstrap_enabled: bootstrapEnabled,
+      hints: null,
+      scope,
+    }),
+  );
+}
+
+function load(projectId: string): ProjectDetail {
+  return db.withConn((conn) => getProjectDetail(conn, projectId));
+}
+
+function scheduler(): Scheduler {
+  return new Scheduler({
+    db,
+    config,
+    workspaceRoot: join(directory, "workspace"),
+    log: (message) => logs.push(message),
+    leaseIntervalMs: 500,
+  });
+}
+
+function flakyScheduler(retainTaskFiles = true): Scheduler {
+  const fixture = join(import.meta.dir, "testdata", "flaky-worker.ts");
+  const flakyConfig =
+    retainTaskFiles === true
+      ? config
+      : parseDispatchConfig({
+          ...CONFIG,
+          worker: { ...CONFIG.worker, retain_task_files: false },
+        });
+  return new Scheduler({
+    db,
+    config: flakyConfig,
+    workspaceRoot: join(directory, "workspace"),
+    log: (message) => logs.push(message),
+    leaseIntervalMs: 500,
+    workerArgv: (taskPath) => [process.execPath, fixture, taskPath],
+  });
+}
+
+function slicedScheduler(): Scheduler {
+  return new Scheduler({
+    db,
+    config: parseDispatchConfig({
+      ...CONFIG,
+      tasks: {
+        ...CONFIG.tasks,
+        graph_slice: { enabled: true, max_facts: 80, max_intents: 60 },
+      },
+    }),
+    workspaceRoot: join(directory, "workspace"),
+    log: (message) => logs.push(message),
+    leaseIntervalMs: 500,
+  });
+}
+
+describe("scheduler with the fake solver", () => {
+  test(
+    "drives a non-bootstrap project to completion with two facts",
+    async () => {
+      const project = createProjectRow(false);
+      const loop = scheduler();
+      await loop.runUntilIdle();
+
+      const detail = load(project.project.id);
+      if (detail.project.status !== "completed") {
+        console.error(logs.join("\n"));
+        console.error(JSON.stringify(detail, null, 2));
+      }
+      expect(detail.project.status).toBe("completed");
+
+      const dynamicFacts = detail.facts.filter(
+        (fact) => fact.id !== "origin" && fact.id !== "goal",
+      );
+      expect(dynamicFacts).toHaveLength(2);
+      expect(dynamicFacts.every((fact) => fact.description.startsWith("fake fact"))).toBe(
+        true,
+      );
+
+      const completion = detail.intents.find((intent) => intent.to === "goal");
+      expect(completion).toBeDefined();
+      expect(completion!.from).toEqual(dynamicFacts.map((fact) => fact.id));
+      expect(completion!.worker).toBe("cairn-worker");
+
+      const exploreIntents = detail.intents.filter((intent) => intent.to !== "goal");
+      expect(exploreIntents).toHaveLength(2);
+      expect(exploreIntents.every((intent) => intent.concluded_at !== null)).toBe(true);
+      expect(loop.runningCount).toBe(0);
+    },
+    30_000,
+  );
+
+  test(
+    "bootstrap produces a fact and completes the project",
+    async () => {
+      const project = createProjectRow(true);
+      const loop = scheduler();
+      await loop.runUntilIdle();
+
+      const detail = load(project.project.id);
+      expect(detail.project.status).toBe("completed");
+
+      const bootstrapFact = detail.facts.find(
+        (fact) => fact.description === "fake bootstrap fact",
+      );
+      expect(bootstrapFact).toBeDefined();
+
+      const bootstrapIntent = detail.intents.find(
+        (intent) => intent.description === "bootstrap",
+      );
+      expect(bootstrapIntent?.to).toBe(bootstrapFact!.id);
+      expect(bootstrapIntent?.creator).toBe("dispatcher.bootstrap");
+
+      const completion = detail.intents.find((intent) => intent.to === "goal");
+      expect(completion?.from).toEqual([bootstrapFact!.id]);
+      expect(detail.facts).toHaveLength(3);
+    },
+    30_000,
+  );
+
+  test(
+    "indexes artifacts after a task finishes",
+    async () => {
+      const project = createProjectRow(false);
+      const artifactsDir = join(
+        directory,
+        "workspace",
+        project.project.id.replaceAll("/", "-"),
+        "artifacts",
+      );
+      mkdirSync(artifactsDir, { recursive: true });
+      writeFileSync(join(artifactsDir, "evidence.txt"), "captured", "utf8");
+
+      const loop = scheduler();
+      await loop.runUntilIdle();
+
+      const artifacts = db.withConn((conn) =>
+        listProjectArtifacts(conn, project.project.id),
+      );
+      expect(artifacts).toHaveLength(1);
+      expect(artifacts[0]).toMatchObject({ path: "evidence.txt", size: 8 });
+      expect(artifacts[0]!.sha256).toHaveLength(64);
+    },
+    30_000,
+  );
+
+  test(
+    "resumes a crashed explore session in a conclude turn",
+    async () => {
+      const project = createProjectRow(false);
+      const loop = flakyScheduler();
+      await loop.runUntilIdle();
+
+      const detail = load(project.project.id);
+      expect(detail.project.status).toBe("completed");
+
+      const dynamic = detail.facts.filter(
+        (fact) => fact.id !== "origin" && fact.id !== "goal",
+      );
+      expect(dynamic).toHaveLength(2);
+      expect(dynamic.every((fact) => fact.description.startsWith("fake fact from"))).toBe(
+        true,
+      );
+      expect(logs.some((line) => line.includes("conclude queued"))).toBe(true);
+      expect(logs.some((line) => line.includes("dispatched conclude"))).toBe(true);
+
+      const explored = detail.intents.filter(
+        (intent) => intent.to !== null && intent.to !== "goal",
+      );
+      expect(explored).toHaveLength(2);
+      expect(explored.every((intent) => intent.concluded_at !== null)).toBe(true);
+    },
+    // The flaky fixture delegates conclude to the real worker CLI. On Windows that takes
+    // near 30s on its own, so the old bound flaked whenever the full suite ran in parallel.
+    60_000,
+  );
+
+  test(
+    "bootstrap conclude writes a fact without claiming completion",
+    async () => {
+      const project = createProjectRow(true);
+      const loop = flakyScheduler();
+      await loop.runUntilIdle();
+
+      const detail = load(project.project.id);
+      expect(detail.project.status).toBe("completed");
+      expect(
+        detail.facts.some(
+          (fact) => fact.description === "fake conclude fact from i001",
+        ),
+      ).toBe(true);
+      expect(logs.some((line) => line.includes("phase=bootstrap"))).toBe(true);
+    },
+    60_000,
+  );
+
+  test(
+    "slices explore graph snapshots but not reason snapshots when enabled",
+    async () => {
+      const project = createProjectRow(false);
+      const loop = slicedScheduler();
+      await loop.runUntilIdle();
+
+      const sessions = join(
+        directory,
+        "workspace",
+        project.project.id,
+        ".cairn",
+        "sessions",
+      );
+      const dirs = readdirSync(sessions);
+      const exploreDirs = dirs.filter((name) => name.startsWith("explore-"));
+      const reasonDirs = dirs.filter((name) => name.startsWith("reason-"));
+      expect(exploreDirs.length).toBeGreaterThan(0);
+      expect(reasonDirs.length).toBeGreaterThan(0);
+
+      const exploreYaml = readFileSync(
+        join(sessions, exploreDirs[0]!, "graph.yaml"),
+        "utf8",
+      );
+      expect(exploreYaml).toContain("slice:");
+      expect(exploreYaml).toContain("focus_intent:");
+      expect(exploreYaml).toContain("truncated:");
+
+      for (const name of reasonDirs) {
+        const reasonYaml = readFileSync(join(sessions, name, "graph.yaml"), "utf8");
+        expect(reasonYaml).not.toContain("slice:");
+      }
+    },
+    30_000,
+  );
+
+  test(
+    "drops the failed and conclude session directories when retention is off",
+    async () => {
+      const project = createProjectRow(false);
+      const loop = flakyScheduler(false);
+      await loop.runUntilIdle();
+
+      const detail = load(project.project.id);
+      expect(detail.project.status).toBe("completed");
+
+      const sessions = join(
+        directory,
+        "workspace",
+        project.project.id,
+        ".cairn",
+        "sessions",
+      );
+      const remaining = existsSync(sessions) ? readdirSync(sessions) : [];
+      expect(remaining).toEqual([]);
+      expect(logs.some((line) => line.includes("conclude queued"))).toBe(true);
+    },
+    30_000,
+  );
+
+  test("refuses to dispatch a project without a scope", async () => {
+    const unscoped = db.withConn((conn) =>
+      createProject(conn, {
+        title: "no scope",
+        origin: "origin",
+        goal: "goal",
+        bootstrap_enabled: false,
+        hints: null,
+        scope: null,
+      }),
+    );
+
+    const loop = scheduler();
+    await loop.runUntilIdle();
+
+    const detail = load(unscoped.project.id);
+    expect(detail.project.status).toBe("active");
+    expect(detail.intents).toHaveLength(0);
+    expect(detail.facts).toHaveLength(2);
+    expect(logs.some((line) => line.includes("no authorized scope"))).toBe(true);
+  });
+});

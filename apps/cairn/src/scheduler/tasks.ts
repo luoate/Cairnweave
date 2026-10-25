@@ -1,0 +1,459 @@
+/**
+ * Turns a project snapshot into one worker task: renders the Cairn prompt, writes the
+ * graph snapshot and task.json into the project's session directory, and returns the
+ * contract the supervisor spawns.
+ */
+
+import {
+  TASK_PROTOCOL_VERSION,
+  type ScopePolicy,
+  type TaskKind,
+  type WorkerTask,
+} from "@cairn/contracts";
+import type { Intent, ProjectDetail, ProjectScope } from "@cairn/graph";
+import { randomUUID } from "node:crypto";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
+import type { DispatchConfig } from "../config";
+import { mapScopeTargetForWorker } from "../runtime/paths";
+import {
+  formatFactIds,
+  formatHints,
+  formatOpenIntents,
+  graphSnapshotReference,
+  loadPrompt,
+  renderPrompt,
+} from "../prompts/prompting";
+
+export type RunnableTaskKind = TaskKind;
+export type ConcludeOf = "bootstrap" | "explore";
+
+/** Worker-side coordinates for the opt-in Observer sidecar. */
+export interface PreparedObserver {
+  enabled: boolean;
+  /** Compact project/focus snapshot written for the reviewer. */
+  contextPath: string;
+  /** Durable, project-level ideas/memory board. */
+  boardDir: string;
+  /** Per-task review queue/state and sidecar session directory. */
+  stateDir: string;
+  model: string | null;
+  everyRounds: number;
+  windowRounds: number;
+  timeoutSeconds: number;
+  maxReviewsPerTask: number;
+}
+
+export interface PreparedTask {
+  task: WorkerTask;
+  /** Host-side task file (control plane reads/writes this path). */
+  taskPath: string;
+  /** Worker-view task file (container path in container mode). */
+  workerTaskPath: string;
+  /** Host-side project workspace. */
+  workspace: string;
+  hostWorkspace: string;
+  hostSessionDir: string;
+  hostGraphSnapshotPath: string;
+  hostResultPath: string;
+  hostTaskPath: string;
+  /** Reason needs to know whether the graph had open intents when it was dispatched. */
+  openIntentsEmpty: boolean;
+  observer: PreparedObserver;
+}
+
+export interface PrepareTaskInput {
+  config: DispatchConfig;
+  project: ProjectDetail;
+  exportYaml: string;
+  kind: RunnableTaskKind;
+  intent?: Intent;
+  scope: ProjectScope;
+  /** Conclude only: the failed phase whose session is being wrapped up. */
+  concludeOf?: ConcludeOf;
+  /** Conclude only: host-side session directory of that failed phase. */
+  resumeFromHostSessionDir?: string;
+  /** Test hook; otherwise resolved from config.local/container.workspace_root or cwd. */
+  workspaceRoot?: string;
+  /** Host -> worker path mapper. Identity in local mode. */
+  pathMapper?: (hostPath: string) => string;
+}
+
+export function resolveWorkspaceRoot(
+  config: DispatchConfig,
+  override?: string,
+): string {
+  return (
+    override ??
+    config.container?.workspaceRoot ??
+    config.local?.workspaceRoot ??
+    process.cwd()
+  );
+}
+
+export function projectWorkspace(root: string, projectId: string): string {
+  return join(root, projectId.replaceAll("/", "-"));
+}
+
+export function prepareTask(input: PrepareTaskInput): PreparedTask {
+  const { config, project, kind } = input;
+  const hostWorkspace = projectWorkspace(
+    resolveWorkspaceRoot(config, input.workspaceRoot),
+    project.project.id,
+  );
+  const taskId = `${kind}-${randomUUID().replaceAll("-", "").slice(0, 12)}`;
+  const hostSessionDir = join(hostWorkspace, ".cairn", "sessions", taskId);
+  const hostGraphSnapshotPath = join(hostSessionDir, "graph.yaml");
+  const hostResultPath = join(hostSessionDir, "result.json");
+  const hostTaskPath = join(hostSessionDir, "task.json");
+
+  const mapPath = input.pathMapper ?? ((hostPath: string) => hostPath);
+  const workerWorkspace = mapPath(hostWorkspace);
+  const workerSessionDir = mapPath(hostSessionDir);
+  const workerGraphSnapshotPath = mapPath(hostGraphSnapshotPath);
+  const workerResultPath = mapPath(hostResultPath);
+  const workerTaskPath = mapPath(hostTaskPath);
+
+  const concludeOf = kind === "conclude" ? input.concludeOf : undefined;
+  if (kind === "conclude" && concludeOf === undefined) {
+    throw new Error("conclude task requires concludeOf");
+  }
+  const resumeSessionDir =
+    kind === "conclude"
+      ? mapPath(requireResumeDir(input.resumeFromHostSessionDir))
+      : undefined;
+
+  const hardDeadlineSeconds = hardDeadline(config, kind, concludeOf);
+  const softDeadlineSeconds =
+    kind === "conclude" ? undefined : softDeadline(config, hardDeadlineSeconds);
+  const openIntents = project.intents.filter((intent) => intent.to === null);
+
+  mkdirSync(hostSessionDir, { recursive: true });
+  writeFileSync(hostGraphSnapshotPath, input.exportYaml.trim(), "utf8");
+
+  const prompt = renderTaskPrompt(config, project, kind, input.intent, {
+    graphSnapshotPath: workerGraphSnapshotPath,
+    openIntents: openIntents.map((intent) => ({
+      id: intent.id,
+      from: intent.from,
+      description: intent.description,
+      worker: intent.worker,
+    })),
+  }, concludeOf);
+
+  const mapScopePath = (hostPath: string): string | null => {
+    try {
+      return mapPath(hostPath);
+    } catch {
+      return null;
+    }
+  };
+  const scope: ScopePolicy =
+    input.scope.notes === undefined
+      ? {
+          targets: input.scope.targets.map((target) =>
+            mapScopeTargetForWorker(target, mapScopePath),
+          ),
+        }
+      : {
+          targets: input.scope.targets.map((target) =>
+            mapScopeTargetForWorker(target, mapScopePath),
+          ),
+          notes: input.scope.notes,
+        };
+
+  const task: WorkerTask = {
+    protocol: TASK_PROTOCOL_VERSION,
+    taskId,
+    kind,
+    projectId: project.project.id,
+    ...(input.intent === undefined ? {} : { intentId: input.intent.id }),
+    prompt,
+    graphSnapshotPath: workerGraphSnapshotPath,
+    workspace: workerWorkspace,
+    sessionDir: workerSessionDir,
+    ...(resumeSessionDir === undefined ? {} : { resumeSessionDir }),
+    ...(concludeOf === undefined ? {} : { concludeOf }),
+    resultPath: workerResultPath,
+    scope,
+    ...(softDeadlineSeconds === undefined ? {} : { softDeadlineSeconds }),
+    hardDeadlineSeconds,
+  };
+
+  const observer = prepareObserver(config, project, kind, task, scope, {
+    mapPath,
+    hostWorkspace,
+    hostSessionDir,
+  });
+
+  writeFileSync(hostTaskPath, `${JSON.stringify(task, null, 2)}\n`, "utf8");
+  return {
+    task,
+    taskPath: hostTaskPath,
+    workerTaskPath,
+    workspace: hostWorkspace,
+    hostWorkspace,
+    hostSessionDir,
+    hostGraphSnapshotPath,
+    hostResultPath,
+    hostTaskPath,
+    openIntentsEmpty: openIntents.length === 0,
+    observer,
+  };
+}
+
+interface ObserverPaths {
+  mapPath: (hostPath: string) => string;
+  hostWorkspace: string;
+  hostSessionDir: string;
+}
+
+interface ObserverContext {
+  version: 1;
+  project: { id: string; title: string };
+  focus: {
+    task_id: string;
+    kind: TaskKind;
+    intent_id: string | null;
+    intent_description: string | null;
+  };
+  scope: { targets: string[]; notes?: string };
+  open_intents: { id: string; description: string; from: string[] }[];
+  facts: { id: string; description: string }[];
+  hints: { content: string; creator: string; created_at: string }[];
+}
+
+const OBSERVER_FACT_LIMIT = 30;
+const OBSERVER_HINT_LIMIT = 10;
+const OBSERVER_OPEN_INTENT_LIMIT = 20;
+
+function prepareObserver(
+  config: DispatchConfig,
+  project: ProjectDetail,
+  kind: RunnableTaskKind,
+  task: WorkerTask,
+  scope: ScopePolicy,
+  paths: ObserverPaths,
+): PreparedObserver {
+  const enabled =
+    config.observer.enabled && config.observer.kernelTasks.includes(kind);
+
+  const hostBoardDir = join(paths.hostWorkspace, ".cairn", "board");
+  const hostStateDir = join(paths.hostSessionDir, "observer");
+  const hostContextPath = join(paths.hostSessionDir, "observer-context.json");
+
+  const observer: PreparedObserver = {
+    enabled,
+    contextPath: paths.mapPath(hostContextPath),
+    boardDir: paths.mapPath(hostBoardDir),
+    stateDir: paths.mapPath(hostStateDir),
+    model: config.observer.model,
+    everyRounds: config.observer.everyRounds,
+    windowRounds: config.observer.windowRounds,
+    timeoutSeconds: config.observer.timeoutSeconds,
+    maxReviewsPerTask: config.observer.maxReviewsPerTask,
+  };
+
+  if (!enabled) return observer;
+
+  // The board is project-level and must survive session cleanup; the review state is
+  // task-scoped and is removed together with the session directory.
+  mkdirSync(hostBoardDir, { recursive: true });
+  mkdirSync(hostStateDir, { recursive: true });
+
+  // Keep the focused intent first so the cap can never hide the intent this task is
+  // actually working on from its reviewer.
+  const allOpenIntents = project.intents.filter((intent) => intent.to === null);
+  const focusedIntent = allOpenIntents.find((intent) => intent.id === task.intentId);
+  const orderedOpenIntents =
+    focusedIntent === undefined
+      ? allOpenIntents
+      : [focusedIntent, ...allOpenIntents.filter((intent) => intent.id !== focusedIntent.id)];
+  const openIntents = orderedOpenIntents.slice(0, OBSERVER_OPEN_INTENT_LIMIT).map((intent) => ({
+    id: intent.id,
+    description: intent.description,
+    from: [...intent.from],
+  }));
+  const context: ObserverContext = {
+    version: 1,
+    project: { id: project.project.id, title: project.project.title },
+    focus: {
+      task_id: task.taskId,
+      kind,
+      intent_id: task.intentId ?? null,
+      intent_description:
+        project.intents.find((intent) => intent.id === task.intentId)?.description ?? null,
+    },
+    scope: {
+      targets: [...scope.targets],
+      ...(scope.notes === undefined ? {} : { notes: scope.notes }),
+    },
+    open_intents: openIntents,
+    facts: recentFacts(project).map((fact) => ({
+      id: fact.id,
+      description: fact.description,
+    })),
+    hints: project.hints
+      .slice(-OBSERVER_HINT_LIMIT)
+      .map((hint) => ({
+        content: hint.content,
+        creator: hint.creator,
+        created_at: hint.created_at,
+      })),
+  };
+  writeFileSync(hostContextPath, `${JSON.stringify(context, null, 2)}\n`, "utf8");
+  return observer;
+}
+
+/**
+ * Keeps origin/goal regardless of the cap, then the most recently inserted facts. Facts
+ * have no timestamps, so insertion order is the only recency signal the graph exposes.
+ */
+function recentFacts(project: ProjectDetail) {
+  const mandatory = new Set(["origin", "goal"]);
+  const rest = project.facts.filter((fact) => !mandatory.has(fact.id));
+  const room = Math.max(0, OBSERVER_FACT_LIMIT - mandatory.size);
+  const keep = new Set(rest.slice(Math.max(0, rest.length - room)).map((fact) => fact.id));
+  for (const id of mandatory) keep.add(id);
+  return project.facts.filter((fact) => keep.has(fact.id));
+}
+
+/** Environment contract between the scheduler and `BreachWeaveSolver`. */
+export function observerEnvironment(observer: PreparedObserver): Record<string, string> {
+  if (!observer.enabled) return { CAIRN_OBSERVER_ENABLED: "0" };
+  const env: Record<string, string> = {
+    CAIRN_OBSERVER_ENABLED: "1",
+    CAIRN_OBSERVER_CONTEXT_PATH: observer.contextPath,
+    CAIRN_OBSERVER_BOARD_DIR: observer.boardDir,
+    CAIRN_OBSERVER_STATE_DIR: observer.stateDir,
+    CAIRN_OBSERVER_EVERY_ROUNDS: String(observer.everyRounds),
+    CAIRN_OBSERVER_WINDOW_ROUNDS: String(observer.windowRounds),
+    CAIRN_OBSERVER_TIMEOUT_SECONDS: String(observer.timeoutSeconds),
+    CAIRN_OBSERVER_MAX_REVIEWS_PER_TASK: String(observer.maxReviewsPerTask),
+  };
+  if (observer.model !== null) env["CAIRN_OBSERVER_MODEL"] = observer.model;
+  return env;
+}
+
+function hardDeadline(
+  config: DispatchConfig,
+  kind: RunnableTaskKind,
+  concludeOf: ConcludeOf | undefined,
+): number {
+  switch (kind) {
+    case "bootstrap":
+      return config.tasks.bootstrap.timeout;
+    case "reason":
+      return config.tasks.reason.timeout;
+    case "explore":
+      return config.tasks.explore.timeout;
+    case "conclude":
+      return concludeOf === "bootstrap"
+        ? config.tasks.bootstrap.concludeTimeout
+        : config.tasks.explore.concludeTimeout;
+  }
+}
+
+function requireResumeDir(value: string | undefined): string {
+  if (value === undefined || value.trim() === "") {
+    throw new Error("conclude task requires the failed session directory");
+  }
+  return value;
+}
+
+function softDeadline(config: DispatchConfig, hard: number): number | undefined {
+  const soft = Math.floor(hard * config.worker.softDeadlineRatio);
+  return soft >= 1 && soft < hard ? soft : undefined;
+}
+
+interface PromptContext {
+  graphSnapshotPath: string;
+  openIntents: Record<string, unknown>[];
+}
+
+function renderTaskPrompt(
+  config: DispatchConfig,
+  project: ProjectDetail,
+  kind: RunnableTaskKind,
+  intent: Intent | undefined,
+  context: PromptContext,
+  concludeOf?: ConcludeOf,
+): string {
+  const group = config.runtime.promptGroup;
+  const location = config.runtime.execution === "local" ? "sandbox" : "container";
+  const graphYaml = graphSnapshotReference(context.graphSnapshotPath, location);
+
+  switch (kind) {
+    case "reason": {
+      const factIds = project.facts
+        .map((fact) => fact.id)
+        .filter((id) => id !== "goal");
+      return renderPrompt(loadPrompt(group, "reason.md"), {
+        graph_yaml: graphYaml,
+        fact_ids: formatFactIds(factIds),
+        open_intents: formatOpenIntents(context.openIntents),
+        max_intents: String(config.tasks.reason.maxIntents),
+      });
+    }
+    case "explore": {
+      if (intent === undefined) {
+        throw new Error("explore task requires an intent");
+      }
+      return renderPrompt(loadPrompt(group, "explore.md"), {
+        graph_yaml: graphYaml,
+        intent_id: intent.id,
+        intent_description: intent.description,
+      });
+    }
+    case "bootstrap": {
+      const { origin, goal } = bootstrapContext(project);
+      return renderPrompt(loadPrompt(group, "bootstrap.md"), {
+        origin,
+        goal,
+        hints: formatHints(
+          project.hints.map((hint) => ({
+            id: hint.id,
+            content: hint.content,
+            creator: hint.creator,
+            created_at: hint.created_at,
+          })),
+        ),
+      });
+    }
+    case "conclude": {
+      // Mirrors Cairn's fallback: an explore conclude still sees the graph and the
+      // intent, a bootstrap conclude summarizes Origin/Goal/Hints without a graph.
+      if (concludeOf === "bootstrap") {
+        const { origin, goal } = bootstrapContext(project);
+        return renderPrompt(loadPrompt(group, "bootstrap_conclude.md"), {
+          origin,
+          goal,
+          hints: formatHints(
+            project.hints.map((hint) => ({
+              id: hint.id,
+              content: hint.content,
+              creator: hint.creator,
+              created_at: hint.created_at,
+            })),
+          ),
+        });
+      }
+      if (intent === undefined) {
+        throw new Error("conclude task requires an intent");
+      }
+      return renderPrompt(loadPrompt(group, "explore_conclude.md"), {
+        graph_yaml: graphYaml,
+        intent_id: intent.id,
+        intent_description: intent.description,
+      });
+    }
+  }
+}
+
+function bootstrapContext(project: ProjectDetail): { origin: string; goal: string } {
+  return {
+    origin: project.facts.find((fact) => fact.id === "origin")?.description ?? "",
+    goal: project.facts.find((fact) => fact.id === "goal")?.description ?? "",
+  };
+}
