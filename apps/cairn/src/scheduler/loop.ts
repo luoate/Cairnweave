@@ -23,29 +23,35 @@ import {
   createIntent,
   exportProjectSliceYaml,
   exportProjectYaml,
+  finishRun,
   getProjectDetail,
   getProjectScope,
   heartbeatIntent,
   listProjects,
+  nextRunId,
   releaseIntent,
   releaseReason,
   recordProjectArtifacts,
   renewIntentLease,
   renewReasonLease,
+  startRun,
+  utcnow,
   type CairnDatabase,
   type Intent,
   type ProjectDetail,
   type ProjectScope,
   type ProjectSummary,
+  type RunOutcome,
 } from "@cairn/graph";
 import type { Database } from "bun:sqlite";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
 
 import type { DispatchConfig } from "../config";
 import { createRuntime, type RuntimeBackend, type WorkerProcess } from "../runtime";
 import { environmentSnapshot } from "../runtime/types";
 import { latestSolverSessionFile } from "../solver/session-file";
+import { collectEvidence, type EvidenceCollection } from "./evidence";
 import {
   observerEnvironment,
   prepareTask,
@@ -102,6 +108,8 @@ interface PendingConclude {
 
 interface RunningTask {
   taskId: string;
+  /** Control-plane generated id for the sidecar `runs` row. */
+  runId: string;
   projectId: string;
   kind: RunnableTaskKind;
   intentId?: string;
@@ -118,6 +126,11 @@ interface RunningTask {
   hostWorkspace: string;
   leaseLost: boolean;
   cancelled: boolean;
+  startedAtMs: number;
+  evidenceCount: number;
+  exitCode: number | null;
+  /** Why a failed task ended; recorded on the run row. */
+  detail?: string;
   promise: Promise<void>;
 }
 
@@ -441,9 +454,9 @@ export class Scheduler {
       return false;
     }
 
-    let prepared: PreparedTask;
+    let started: { prepared: PreparedTask; runId: string };
     try {
-      prepared = this.db.withConn((conn) => {
+      started = this.db.withConn((conn) => {
         if (kind === "reason") {
           claimReason(conn, projectId, WORKER_NAME, trigger ?? "initial");
         } else {
@@ -470,7 +483,7 @@ export class Scheduler {
                 maxFacts: slice.maxFacts,
                 maxIntents: slice.maxIntents,
               });
-        return prepareTask({
+        const prepared = prepareTask({
           config: this.config,
           project,
           exportYaml,
@@ -486,6 +499,21 @@ export class Scheduler {
           workspaceRoot: this.workspaceRoot,
           pathMapper: (hostPath) => this.runtime.mapPath(hostPath),
         });
+        // The run row exists before applyResult can attach fact metadata to it, and its
+        // id is never supplied by the worker.
+        const runId = nextRunId(conn, projectId);
+        startRun(conn, {
+          id: runId,
+          projectId,
+          taskId: prepared.task.taskId,
+          kind,
+          intentId: intent?.id ?? null,
+          worker: WORKER_NAME,
+          trigger: trigger ?? null,
+          startedAt: utcnow(),
+          session: workspaceReference(prepared.hostWorkspace, prepared.hostSessionDir),
+        });
+        return { prepared, runId };
       });
     } catch (error) {
       if (error instanceof HttpError && (error.status === 403 || error.status === 409)) {
@@ -509,7 +537,8 @@ export class Scheduler {
     };
     if (
       !this.startProcess(
-        prepared,
+        started.prepared,
+        started.runId,
         kind,
         intent?.id,
         checkpoint,
@@ -526,6 +555,7 @@ export class Scheduler {
 
   private startProcess(
     prepared: PreparedTask,
+    runId: string,
     kind: RunnableTaskKind,
     intentId: string | undefined,
     checkpoint: ReasonCheckpoint,
@@ -533,6 +563,7 @@ export class Scheduler {
     resumeSessionDir?: string,
   ): boolean {
     const task = prepared.task;
+    const startedAtMs = Date.now();
 
     let processHandle: WorkerProcess;
     try {
@@ -551,11 +582,20 @@ export class Scheduler {
       });
     } catch (error) {
       this.log(`worker spawn failed task=${task.taskId}: ${describe(error)}`);
+      this.recordRunFinish(
+        runId,
+        "failed",
+        `worker spawn failed: ${describe(error)}`,
+        null,
+        0,
+        startedAtMs,
+      );
       return false;
     }
 
     const running: RunningTask = {
       taskId: task.taskId,
+      runId,
       projectId: task.projectId,
       kind,
       ...(intentId === undefined ? {} : { intentId }),
@@ -568,6 +608,9 @@ export class Scheduler {
       hostWorkspace: prepared.hostWorkspace,
       leaseLost: false,
       cancelled: false,
+      startedAtMs,
+      evidenceCount: 0,
+      exitCode: null,
       promise: Promise.resolve(),
     };
     running.promise = this.supervise(running, prepared, processHandle);
@@ -622,6 +665,7 @@ export class Scheduler {
       if (softTimer !== null) clearTimeout(softTimer);
       clearInterval(leaseTimer);
     }
+    running.exitCode = exitCode;
 
     const [stdout, stderr] = await Promise.all([stdoutPromise, stderrPromise]);
     try {
@@ -635,12 +679,12 @@ export class Scheduler {
     try {
       if (running.cancelled) {
         this.releaseOwnedLease(running);
-        this.finish(running, "cancelled");
+        this.finish(running, "cancelled", "cancelled");
         return;
       }
       if (running.leaseLost) {
         this.releaseOwnedLease(running);
-        this.finish(running, "failed");
+        this.finish(running, "failed", "lease lost");
         return;
       }
       if (exitCode !== 0) {
@@ -648,7 +692,7 @@ export class Scheduler {
           `worker exited task=${task.taskId} code=${exitCode} stderr=${preview(stderr)}`,
         );
         this.failRunning(running, "worker exited");
-        this.finish(running, "failed");
+        this.finish(running, "failed", `worker exited with code ${exitCode}`);
         return;
       }
 
@@ -656,23 +700,23 @@ export class Scheduler {
       if (raw === null) {
         this.log(`result missing task=${task.taskId}`);
         this.failRunning(running, "result missing");
-        this.finish(running, "failed");
+        this.finish(running, "failed", "result missing");
         return;
       }
       const result = parseTaskResultJson(raw);
       if (result === null) {
         this.log(`result invalid task=${task.taskId} preview=${preview(raw)}`);
         this.failRunning(running, "result invalid");
-        this.finish(running, "failed");
+        this.finish(running, "failed", "result invalid");
         return;
       }
 
       const outcome = this.applyResult(running, result);
-      this.finish(running, outcome);
+      this.finish(running, outcome, running.detail);
     } catch (error) {
       this.log(`task supervision crashed task=${task.taskId}: ${describe(error)}`);
       this.releaseOwnedLease(running);
-      this.finish(running, "failed");
+      this.finish(running, "failed", `supervision crashed: ${describe(error)}`);
     }
   }
 
@@ -714,6 +758,24 @@ export class Scheduler {
       return "rejected";
     }
 
+    // Reason turns do not write facts; for every other kind, validate the worker's
+    // evidence claim before touching the graph. Missing evidence is recorded, invalid
+    // evidence fails the task (the filesystem is untrusted input).
+    const evidence: EvidenceCollection =
+      running.kind === "reason"
+        ? { status: "missing", refs: [], invalid: [] }
+        : collectEvidence(result.evidence_refs, running.hostWorkspace);
+    if (evidence.invalid.length > 0) {
+      const reasons = evidence.invalid
+        .map((issue) => `${issue.ref || "<ref>"}: ${issue.reason}`)
+        .join("; ");
+      running.detail = `invalid evidence: ${reasons}`;
+      this.log(`evidence rejected task=${running.taskId}: ${reasons}`);
+      this.failRunning(running, "evidence invalid");
+      return "failed";
+    }
+    running.evidenceCount = evidence.refs.length;
+
     try {
       return this.db.withConn((conn) => {
         switch (running.kind) {
@@ -721,13 +783,13 @@ export class Scheduler {
             return this.applyReason(conn, running, result.data);
           }
           case "explore": {
-            return this.applyExplore(conn, running, result.data);
+            return this.applyExplore(conn, running, result.data, evidence);
           }
           case "bootstrap": {
-            return this.applyBootstrap(conn, running, result.data);
+            return this.applyBootstrap(conn, running, result.data, evidence);
           }
           case "conclude": {
-            return this.applyConclude(conn, running, result.data);
+            return this.applyConclude(conn, running, result.data, evidence);
           }
         }
       });
@@ -798,6 +860,7 @@ export class Scheduler {
     conn: Database,
     running: RunningTask,
     data: Record<string, unknown>,
+    evidence: EvidenceCollection,
   ): TaskOutcome {
     if (running.intentId === undefined) return "failed";
     const validated = validateExplorePayload({ accepted: true, data });
@@ -811,6 +874,11 @@ export class Scheduler {
       running.intentId,
       WORKER_NAME,
       validated.data,
+      {
+        runId: running.runId,
+        evidenceRefs: evidence.refs,
+        evidenceStatus: evidence.status,
+      },
     );
     return "success";
   }
@@ -824,6 +892,7 @@ export class Scheduler {
     conn: Database,
     running: RunningTask,
     data: Record<string, unknown>,
+    evidence: EvidenceCollection,
   ): TaskOutcome {
     if (running.intentId === undefined || running.concludeOf === undefined) {
       return "failed";
@@ -842,6 +911,11 @@ export class Scheduler {
       running.intentId,
       WORKER_NAME,
       validated.data,
+      {
+        runId: running.runId,
+        evidenceRefs: evidence.refs,
+        evidenceStatus: evidence.status,
+      },
     );
     return "success";
   }
@@ -850,6 +924,7 @@ export class Scheduler {
     conn: Database,
     running: RunningTask,
     data: Record<string, unknown>,
+    evidence: EvidenceCollection,
   ): TaskOutcome {
     if (running.intentId === undefined) return "failed";
     const validated = validateBootstrapExecutePayload({ accepted: true, data });
@@ -864,6 +939,11 @@ export class Scheduler {
       running.intentId,
       WORKER_NAME,
       validated.data.factDescription,
+      {
+        runId: running.runId,
+        evidenceRefs: evidence.refs,
+        evidenceStatus: evidence.status,
+      },
     );
     try {
       completeProject(conn, running.projectId, {
@@ -883,7 +963,7 @@ export class Scheduler {
     return "success";
   }
 
-  private finish(running: RunningTask, outcome: TaskOutcome): void {
+  private finish(running: RunningTask, outcome: TaskOutcome, detail?: string | null): void {
     this.running.delete(running.taskId);
     this.processes.delete(running.taskId);
 
@@ -894,6 +974,14 @@ export class Scheduler {
     }
 
     this.recordArtifacts(running);
+    this.recordRunFinish(
+      running.runId,
+      outcome,
+      detail ?? running.detail ?? null,
+      running.exitCode,
+      running.evidenceCount,
+      running.startedAtMs,
+    );
 
     // Cairn always releases the reason lease in `finally`: success already created the
     // intents/completion, but the claim itself must not outlive the task.
@@ -966,6 +1054,31 @@ export class Scheduler {
       this.log(
         `artifact indexing failed project=${running.projectId} task=${running.taskId}: ${describe(error)}`,
       );
+    }
+  }
+
+  /** Sidecar run bookkeeping must never change the task outcome. */
+  private recordRunFinish(
+    runId: string,
+    outcome: RunOutcome,
+    detail: string | null,
+    exitCode: number | null,
+    evidenceCount: number,
+    startedAtMs: number,
+  ): void {
+    try {
+      this.db.withConn((conn) =>
+        finishRun(conn, runId, {
+          outcome,
+          finishedAt: utcnow(),
+          durationMs: Math.max(0, Date.now() - startedAtMs),
+          exitCode,
+          evidenceCount,
+          detail,
+        }),
+      );
+    } catch (error) {
+      this.log(`run record failed run=${runId} outcome=${outcome}: ${describe(error)}`);
     }
   }
 
@@ -1149,6 +1262,11 @@ export class Scheduler {
     this.loggedSkips.add(key);
     this.log(message);
   }
+}
+
+/** Workspace-relative, forward-slash session path for the runs API (no host paths). */
+function workspaceReference(workspace: string, target: string): string {
+  return relative(workspace, target).split(sep).join("/");
 }
 
 function pendingKey(projectId: string, intentId: string): string {

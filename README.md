@@ -4,7 +4,7 @@
 skills / Observer）合并成**一个 Bun/TypeScript 代码库**，不再维护 Python ↔ TypeScript
 之间的进程桥、JSONL RPC 和 worker 适配器。
 
-状态：**M4c（Observer 已落地，默认关闭）**；M0–M4 的计划项全部完成。
+状态：**M5a（证据门控 + runs 旁路表已落地）**；M0–M4 的计划项全部完成。
 `cairn serve` 是可运行的 Cairn 兼容服务：SQLite schema、领域服务、全部五个路由、
 YAML/timeline 导出、静态 Web UI 均已就位，并用 Python Cairn 生成的 golden 做了逐字
 对照。进程内 scheduler、任务/结果文件 worker 协议、BreachWeave Solver 接入已在 M2
@@ -45,6 +45,20 @@ M4c 增加：
 - 没有 challenge 门控、续跑、host-bridge RPC 或效率 steer；sidecar 只注册看板工具
   （含 `query_solver_history`），不加载 Host Bridge，也没有 shell/文件/网络工具。
 - 详见 `docs/OBSERVER.md`。
+
+M5a 增加：
+
+- **证据门控**：worker 可在 `result.json` 根级返回 `evidence_refs`（工作区相对路径）。
+  控制面在写图前逐条校验：拒绝绝对路径、`..`、目录、符号链接、不存在或越界；
+  最多 20 条、每条 ≤512 字符。省略/空数组记为 `evidence_status: "missing"`，不拒绝；
+  一旦声称却非法，任务失败（explore/bootstrap 仍走 conclude 回退）。
+- **`runs` 旁路表**：控制面在认领任务时生成 `run_id` 并记录启动，结束时补全
+  outcome/退出码/时长/证据数/detail；成功、失败、取消、lease 丢失都有一行。
+- **`fact_meta` 旁路表**：每个由任务产出的 Fact 记录对应 `run_id`、证据引用与状态；
+  M5a 之前或手工创建的 Fact 读取时合成 `legacy` 视图。
+- **只读查询**：`GET /projects/{id}/runs` 与
+  `GET /projects/{id}/facts/{fact_id}/meta`。图模型、YAML 导出和既有 HTTP golden
+  响应保持逐字不变。
 
 默认仍是确定性 fake solver，测试与离线运行不需要模型凭据。Observer 只接在
 `CAIRN_SOLVER=breachweave` 的真实 Solver 路径上，fake solver 会忽略它。
@@ -97,8 +111,9 @@ apps/cairn/src/
   prompts/prompting.ts   prompt 加载、渲染、JSON 格式化、占位符校验
   prompts/default/*.md   上游默认 prompt（逐字复制）
   prompts/mock/*.md      上游 mock prompt（逐字复制）
-  scheduler/loop.ts      tick、派发、租约、超时、artifacts、切片选择、Observer env
+  scheduler/loop.ts      tick、派发、租约、超时、artifacts、切片选择、Observer env、runs
   scheduler/tasks.ts     prompt 渲染 + 路径映射 + task.json/context 落盘
+  scheduler/evidence.ts  证据路径校验（工作区包含、realpath、数量/长度上限）
   runtime/types.ts       scheduler ↔ 沙箱接口（local / container）
   runtime/local.ts       本地子进程 runtime
   runtime/docker.ts      每项目容器、docker exec、任务级终止、清理
@@ -119,6 +134,7 @@ packages/graph/          schema、领域模型、服务、命令、导出、YAML
   src/services.ts        ID/租约/状态机
   src/commands.ts        HTTP API 与 scheduler 共用的图变更命令
   src/artifacts.ts       artifacts 扫描、SHA-256、索引查询
+  src/runs.ts            runs / fact_meta 旁路表读写
   src/export.ts          YAML、timeline 与图切片导出
   src/yaml.ts            PyYAML 兼容的 block-style 发射器
   testdata/              Python 生成的 golden
@@ -247,6 +263,32 @@ curl -s localhost:8000/projects/proj_001/artifacts
 ```
 
 索引是扫描结果而非信任边界；artifacts 目录不存在时保留上一版索引。
+
+### 证据与 runs（M5a）
+
+worker 可以在 `result.json` 根级返回工作区相对的 `evidence_refs`（不进入 Cairn
+payload，因此既有校验和 golden 响应不变）：
+
+```json
+{"accepted": true, "data": {"description": "..."},
+ "evidence_refs": ["artifacts/report.txt"]}
+```
+
+- 控制面在写图前校验每条路径：非空、≤512 字符、最多 20 条，拒绝绝对路径、盘符、
+  `..`、NUL、目录、符号链接、不存在与 realpath 越界；通过后统一为 `/` 并去重。
+- 省略或空数组 → `evidence_status: "missing"`，任务照常完成；声称了但有一条非法 →
+  任务失败。reason 任务不产出 Fact，不要求证据。
+- 每个任务一行 `runs`（成功/失败/取消/lease 丢失都记录），每个任务产出的 Fact 一行
+  `fact_meta`。M5a 之前或手工创建的 Fact 没有行，读取时显示 `legacy`。
+- 查询：
+
+```bash
+curl -s localhost:8000/projects/proj_001/runs
+curl -s localhost:8000/projects/proj_001/facts/<fact_id>/meta
+```
+
+fake solver 会为每个任务写 `artifacts/fake-<task_id>.txt` 并返回对应证据；真实 Solver
+的 prompt 增加了一段证据契约，但只在有文件证据时才应提供 `evidence_refs`。
 
 ### 图切片（M4b，可选）
 
@@ -379,9 +421,9 @@ bootstrap 任务，预置一条 pending idea，并检查主 solver 只使用只�
 CAIRN_GATE_KEEP=1 bun run tools/gate/m4c-observer-gate.ts
 ```
 
-## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c，2026-10-25，Bun 1.4.4）
+## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a，2026-10-25，Bun 1.4.4）
 
-- `bun test`：**187 passed**（23 个文件），0 failed。
+- `bun test`：**210 passed**（26 个文件），0 failed。
 - `bun run typecheck`：`tsc --noEmit` 通过。
 - **HTTP 对照**：`api.golden.json` 的 60 步请求（成功路径、400/403/404/405/409、租约过期、
   删除级联、导出、路由错误）由 Python FastAPI + 固定时钟生成；TS 重放后状态码、content-type
@@ -459,6 +501,12 @@ CAIRN_GATE_KEEP=1 bun run tools/gate/m4c-observer-gate.ts
   flaky-worker 测试覆盖。
 - **artifacts**：嵌套路径、大小、SHA-256、刷新、目录缺失保留旧索引、符号链接跳过，
   以及 `GET /projects/{id}/artifacts` 路由。
+- **证据与 runs（M5a）**：证据校验覆盖缺失、合法/去重/反斜杠、绝对路径与 `..`、
+  不存在/目录、符号链接（平台不支持时跳过）、20 条上限；契约测试覆盖
+  `evidence_refs` 的接受与拒绝。scheduler 断言每个任务一行 `runs`、每个动态 Fact 都有
+  `provided` 的 `fact_meta` 并链接到 run，reason 的 `evidence_count` 为 0。HTTP 测试
+  覆盖 runs 列表、run 的顺序、Fact meta 的 `provided`/`legacy`/未知 Fact 404；手动
+  conclude 产生的 Fact 记为 `missing`。项目删除会级联清理两张旁路表。
 
 golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定时钟、`TZ=UTC`）。
 重新生成方法与约束见 `docs/PORTING.md`。
@@ -490,6 +538,7 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M4b ✅ | 可选图切片：explore / explore-conclude 使用子图快照 | 切片导出 4 条单测 + scheduler/配置断言（2026-10-25） |
 | M4c ✅ | Observer：项目级看板、只读主 Solver、sidecar review、bounded flush | 187 passed / 23 files；真实模型 gate 14/14（2026-10-25） |
 | **M4** | Observer | 完成（M4c）；设计与已知限制见 `docs/OBSERVER.md` |
+| M5a ✅ | 证据门控 + `runs` / `fact_meta` 旁路表 + 两个只读路由 | 210 passed / 26 files；图/YAML/golden 响应不变（2026-10-25） |
 
 ## 与 Phase 0 的关系
 

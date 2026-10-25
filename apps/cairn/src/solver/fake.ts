@@ -10,6 +10,8 @@
  */
 
 import type { WorkerTask } from "@cairn/contracts";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 import type { Solver } from "./types";
 
@@ -42,7 +44,7 @@ export class FakeSolver implements Solver {
       case "reason":
         return JSON.stringify(reasonAnswer(await readGraph(task.graphSnapshotPath)));
       case "explore":
-        return JSON.stringify(exploreAnswer(task.intentId));
+        return JSON.stringify(exploreAnswer(task));
       case "conclude":
         // Bootstrap conclude returns the fact-only payload; claiming completion here
         // would bypass the control plane's graph checks.
@@ -53,8 +55,9 @@ export class FakeSolver implements Solver {
                 data: {
                   fact: { description: `fake conclude fact from ${task.intentId ?? "unknown"}` },
                 },
+                evidence_refs: writeEvidence(task, "fake bootstrap conclude"),
               }
-            : exploreAnswer(task.intentId),
+            : exploreAnswer(task),
         );
       case "bootstrap":
         return JSON.stringify({
@@ -63,6 +66,7 @@ export class FakeSolver implements Solver {
             fact: { description: "fake bootstrap fact" },
             complete: { description: "fake bootstrap completion" },
           },
+          evidence_refs: writeEvidence(task, "fake bootstrap"),
         });
     }
   }
@@ -135,9 +139,19 @@ function reasonAnswer(graph: GraphView): Record<string, unknown> {
   };
 }
 
-function exploreAnswer(intentId: string | undefined): Record<string, unknown> {
+function exploreAnswer(task: WorkerTask): Record<string, unknown> {
   return {
     accepted: true,
-    data: { description: `fake fact from ${intentId ?? "unknown"}` },
+    data: { description: `fake fact from ${task.intentId ?? "unknown"}` },
+    evidence_refs: writeEvidence(task, `fake fact from ${task.intentId ?? "unknown"}`),
   };
+}
+
+/** Fake evidence exercises the real validation path without a model. */
+function writeEvidence(task: WorkerTask, label: string): string[] {
+  const name = `fake-${task.taskId}.txt`;
+  const absolute = join(task.workspace, "artifacts", name);
+  mkdirSync(dirname(absolute), { recursive: true });
+  writeFileSync(absolute, `${label}\n`, "utf8");
+  return [`artifacts/${name}`];
 }

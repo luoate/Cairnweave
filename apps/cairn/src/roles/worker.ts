@@ -103,6 +103,7 @@ export async function runWorker(args: readonly string[]): Promise<number> {
  * ignored the wrapper. A refusal without a reason still has to produce a valid envelope.
  */
 function normalizeResult(payload: Record<string, unknown>): TaskResult {
+  const evidence = payload["evidence_refs"];
   let result: unknown;
   if (typeof payload["accepted"] === "boolean") {
     if (payload["accepted"] === false) {
@@ -115,10 +116,21 @@ function normalizeResult(payload: Record<string, unknown>): TaskResult {
             : "solver rejected the task",
       };
     } else {
-      result = { accepted: true, data: payload["data"] };
+      result = {
+        accepted: true,
+        data: payload["data"],
+        ...(evidence === undefined ? {} : { evidence_refs: evidence }),
+      };
     }
   } else {
-    result = { accepted: true, data: payload };
+    // A bare payload has no envelope, so `evidence_refs` is lifted out of the data object
+    // instead of being mistaken for a Cairn field.
+    const { evidence_refs: lifted, ...data } = payload;
+    result = {
+      accepted: true,
+      data,
+      ...(lifted === undefined ? {} : { evidence_refs: lifted }),
+    };
   }
 
   if (!isTaskResult(result)) {

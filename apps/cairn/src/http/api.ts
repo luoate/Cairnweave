@@ -14,12 +14,14 @@ import {
   exportProjectTimeline,
   exportProjectYaml,
   getCompletionIntentOr409,
+  getFactMeta,
   getProjectDetail,
   getProjectOr404,
   heartbeatIntent,
   heartbeatReason,
   intentToModel,
   listProjectArtifacts,
+  listProjectRuns,
   listProjects,
   nextFactId,
   nextHintId,
@@ -36,6 +38,7 @@ import {
   parseUpdateProjectStatusRequest,
   parseUpdateProjectTitleRequest,
   projectMetaFromRow,
+  recordFactMeta,
   releaseIntent,
   releaseReason,
   utcnow,
@@ -224,6 +227,20 @@ function buildRoutes(db: CairnDatabase): Route[] {
     }),
   );
 
+  route("GET", "/projects/{project_id}/runs", ({ params }) =>
+    db.withConn((conn) => json(listProjectRuns(conn, params["project_id"]!))),
+  );
+
+  route("GET", "/projects/{project_id}/facts/{fact_id}/meta", ({ params }) => {
+    const meta = db.withConn((conn) =>
+      getFactMeta(conn, params["project_id"]!, params["fact_id"]!),
+    );
+    if (meta === null) {
+      throw new HttpError(404, "Fact not found");
+    }
+    return json(meta);
+  });
+
   route("DELETE", "/projects/{project_id}", ({ params }) =>
     db.withConn((conn) => {
       const projectId = params["project_id"]!;
@@ -336,6 +353,12 @@ function buildRoutes(db: CairnDatabase): Route[] {
       conn
         .query("INSERT INTO facts (id, project_id, description) VALUES (?, ?, ?)")
         .run(factId, projectId, body.description);
+      recordFactMeta(conn, {
+        projectId,
+        factId,
+        evidenceStatus: "missing",
+        createdAt: now,
+      });
       conn
         .query(
           "INSERT INTO intents (id, project_id, to_fact_id, description, creator, worker, last_heartbeat_at, created_at, concluded_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",

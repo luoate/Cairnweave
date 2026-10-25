@@ -1,4 +1,4 @@
-# 架构（M4c 更新）
+# 架构（M5a 更新）
 
 本文固定合并后的角色边界、数据所有权和失败语义。实现以本文为准；需要改动时先改本文并
 记录原因。
@@ -22,7 +22,11 @@ conclude 使用切片，reason/bootstrap 始终拿全图，默认关闭。M4c �
 sidecar（`packages/agent/src/solver/extension/cairn-observer/`）；主 solver 只读项目级
 看板，独立 sidecar 会话每 N 轮/结束时 review，`BreachWeaveSolver` 在返回前做有界
 `flush()`。没有 challenge 续跑、host-bridge RPC 或效率 steer，失败不影响任务结果。
-实现、配置与已知限制见 `docs/OBSERVER.md`。
+实现、配置与已知限制见 `docs/OBSERVER.md`。M5a 已落地：证据门控与 `runs` 旁路表。
+控制面为每个任务生成 `run_id` 并记录启动/完成；worker 结果可在根级带
+`evidence_refs`，控制面按工作区做路径校验后才写图。证据缺失只降级记录（不拒绝）；
+声称存在但非法/越界/不存在的证据按失败处理。图模型、YAML 导出与既有 HTTP 响应保持
+不变，新数据只进旁路表。
 
 ## 1. 范围
 
@@ -72,6 +76,7 @@ scheduler 与 HTTP API 共用 `packages/graph/src/commands.ts` 的命令，不�
 | 数据 | 写入者 | 读取者 | 位置 |
 | --- | --- | --- | --- |
 | SQLite（projects/facts/intents/hints/settings/project_scopes/project_artifacts） | 控制面 | 控制面 | 控制面主机 |
+| SQLite 旁路表（`runs` / `fact_meta`） | 控制面（不进入图模型与 YAML） | 控制面 | 控制面主机 |
 | `graph.yaml` 快照 | 控制面 | worker | 项目工作区/容器内绝对路径 |
 | `task.json` | 控制面 | worker | `sessionDir` |
 | `result.json` | worker（临时文件 + rename 原子写） | 控制面 | `sessionDir` |
@@ -103,9 +108,12 @@ scheduler 与 HTTP API 共用 `packages/graph/src/commands.ts` 的命令，不�
 3. 认领前先调用 `runtime.ensureProject(projectId, hostWorkspace)`：本地模式创建工作区，
    容器模式在没有可用容器时创建它。返回 false（例如 Docker 不可用）时**跳过该项目的
    本次派发**，不降级到本地执行。随后在**一个事务**里认领租约（reason claim 或 intent
-   heartbeat）、导出图 YAML、渲染 prompt、生成 `task.json`。租约竞态（403/409）只算
-   跳过，不报错。图快照默认是全图；开启 `tasks.graph_slice` 后，explore 与
-   explore-conclude 使用以该 intent 为 focus 的子图（见 §7），其余任务仍导出全图。
+   heartbeat）、导出图 YAML、渲染 prompt、生成 `task.json`，并为该任务插入一行
+   `runs`（`id` 由控制面生成，格式 `run_<三位项目内序号>`，例如 `run_001`；同一事务内
+   完成）。
+   租约竞态（403/409）只算跳过，不报错。图快照默认是全图；开启
+   `tasks.graph_slice` 后，explore 与 explore-conclude 使用以该 intent 为 focus 的
+   子图（见 §7），其余任务仍导出全图。
 4. 文件布局：`<workspace_root>/<project_id>/.cairn/sessions/<kind>-<12 hex>/` 内含
    `graph.yaml`、`task.json`、`result.json`（worker 写）、`audit.jsonl`（worker 写），
    以及控制面事后写的 `stdout.log` / `stderr.log`。控制面始终用**宿主路径**写这些文件；
@@ -144,18 +152,23 @@ scheduler 与 HTTP API 共用 `packages/graph/src/commands.ts` 的命令，不�
    bootstrap conclude 与 reason 一样拿全图。pending 队列只在控制面进程内：控制面重启后
    条目丢失，失败任务的租约到期后由 scheduler 按正常流程重派 explore；不承诺跨重启的
    conclude。
-9. 应用结果（同一事务）：
+9. 应用结果（同一事务）。写图前先校验证据（见 §4.1）：reason 不要求证据；其余 kind 的
+   `evidence_refs` 只要有任一条非法，本任务按失败处理、不写图（explore/bootstrap 仍可走
+   conclude 回退）。校验通过后：
    - reason：`complete` → 关项目；intents → 以 `creator=cairn-worker` 创建意图；
      noop → 成功。payload 校验在控制面按实时图状态做；
-   - explore：`accepted:false` → 释放意图；否则 conclude 意图产生 Fact；
-   - bootstrap：conclude 意图产生 Fact，再用该 Fact 完成项目；
+   - explore：`accepted:false` → 释放意图；否则 conclude 意图产生 Fact，并写
+     `fact_meta`（`run_id`、证据引用与状态）；
+   - bootstrap：conclude 意图产生 Fact（同样写 `fact_meta`），再用该 Fact 完成项目；
    - conclude：bootstrap conclude 只接受 fact-only payload 并结束 bootstrap 意图，
      **不**完成项目（下一个 reason 再判断）；explore conclude 接受普通 description，
      写 Fact 并结束该意图；`accepted:false` → 释放意图。
 10. `finish` 阶段先把 `<hostWorkspace>/artifacts/**` 扫描进 `project_artifacts`（不跟随
-    符号链接；目录不存在时保留旧索引；失败只记日志），再**总是**释放 reason 租约（对应
-    Python 的 `finally`）。会话目录默认保留作审计，`worker.retain_task_files: false` 时
-    删除；但若该目录仍被 pending conclude 引用（失败任务的目录），则延迟到 conclude 结束。
+    符号链接；目录不存在时保留旧索引；失败只记日志），再把 `runs` 行的 outcome、退出码、
+    时长、证据数与 detail 补全（成功、失败、取消都记录；写失败只记日志），随后**总是**
+    释放 reason 租约（对应 Python 的 `finally`）。会话目录默认保留作审计，
+    `worker.retain_task_files: false` 时删除；但若该目录仍被 pending conclude 引用
+    （失败任务的目录），则延迟到 conclude 结束。
 
 软截止：控制面只记录日志；worker 在真实 Solver 模式下会于软截止时向会话发送一次
 “时间预算将尽，尽快收敛”的 steer（`solver/breachweave.ts`），这仍是第一道收敛手段。
@@ -184,6 +197,29 @@ scheduler 与 HTTP API 共用 `packages/graph/src/commands.ts` 的命令，不�
   写工具不在主 Solver 的 Host Bridge 白名单中，看板文件工具的 `write`/`edit` 也被
   `protectedWriteRoots` 拒绝。`bash` 不受文件路径分析约束，这是策略闸门的已知边界。
 
+### 证据门控与 runs（M5a）
+
+M5a 只增加旁路数据，不改图模型、YAML 导出和既有 HTTP 响应的字节。
+
+- **`run_id` 由控制面生成**：认领任务时在同一事务里插入 `runs` 行；worker 不生成 ID，
+  也不能改写已有 run。run 记录项目、任务、kind、intent、worker、trigger、会话路径、
+  开始/结束时间、outcome（`success | failed | rejected | cancelled | unhealthy |
+  inactive`）、退出码、证据数与 detail。取消与 lease 丢失分别记为 `cancelled` /
+  `failed`，并在 detail 中说明原因。
+- **证据引用在结果根级**：worker 可以在 `result.json` 顶层写
+  `evidence_refs: ["artifacts/report.txt", ...]`。它不进入 Cairn payload（`data`），
+  因此现有 payload 校验器和 golden 响应不受影响；宽容解析器也会把裸 payload 里的
+  `evidence_refs` 提升到根级。
+- **路径校验**（`scheduler/evidence.ts`）：逐条要求非空字符串、长度 ≤512、最多 20 条，
+  拒绝 NUL、绝对路径/盘符、`..`、目录、符号链接；先按工作区做词法包含检查，再用
+  realpath 复核，防止链接逃逸。通过后反斜杠统一为 `/` 并去重。
+- **软/硬语义**：没有 `evidence_refs`（或空数组）不算失败，记为
+  `evidence_status: "missing"`；只要声称了但有一条非法，任务失败（fail closed），
+  explore/bootstrap 的既有 conclude 回退仍适用。reason 任务不产出 Fact，不要求证据。
+- **`fact_meta`**：每个由任务产出的 Fact 写一行，记录 `run_id`、`evidence_refs` 与
+  `evidence_status`（`provided | missing | legacy`）。M5a 之前存在或经 HTTP 手工创建的
+  Fact 没有行，读取时合成 `legacy` 视图，不批量回填。
+
 ## 5. 内部契约
 
 ### 5.1 `task.json`
@@ -211,15 +247,20 @@ scheduler 与 HTTP API 共用 `packages/graph/src/commands.ts` 的命令，不�
 
 ### 5.2 `result.json`
 
-沿用 Cairn 现有契约，不加信封：
+沿用 Cairn 现有契约，不加信封；M5a 只在根级增加可选的 `evidence_refs`：
 
 ```json
 {"accepted": true, "data": {"description": "..."}}
+{"accepted": true, "data": {"description": "..."}, "evidence_refs": ["artifacts/report.txt"]}
 {"accepted": false, "reason": "..."}
 ```
 
-为什么写文件而不是 stdout：Solver、工具和依赖都可能往 stdout 打日志；结果文件是唯一
-权威输出，也便于容器模式和审计。stdout/stderr 只作诊断。
+- `evidence_refs` 必须是字符串数组，路径相对**项目工作区**、以 `/` 分隔；它不影响
+  `data` 的既有 payload 校验。`accepted:false` 时忽略。
+- 省略或空数组表示“本任务没有文件证据”，记为 `missing`，不拒绝任务；一旦提供了条目，
+  任一条非法（绝对路径、`..`、目录、符号链接、不存在、越界）就使任务失败。详见 §4.1。
+- 为什么写文件而不是 stdout：Solver、工具和依赖都可能往 stdout 打日志；结果文件是唯一
+  权威输出，也便于容器模式和审计。stdout/stderr 只作诊断。
 
 ### 5.3 退出码
 
@@ -254,6 +295,24 @@ stderr 归档到 `sessionDir/{stdout,stderr}.log`。需要 UI 实时进度时再
   `[{path,size,sha256,task_id,created_at}]`，按路径排序；未知项目 404。响应与既有 API
   一样由控制面从 SQLite 读取。
 - 索引失败只记日志，不影响任务结果；下一次扫描会重建。
+
+### 5.6 runs 与 fact_meta
+
+两张表都在 `packages/graph/src/db.ts` 中创建，既不属于图导出，也不参与任何既有命令：
+
+- `runs(id, project_id, task_id, kind, intent_id, worker, trigger, outcome, exit_code,
+  started_at, finished_at, duration_ms, session, evidence_count, detail)`，按
+  `(project_id, started_at)` 建索引；项目删除时级联删除。
+- `fact_meta(fact_id, project_id, run_id, evidence_refs, evidence_status, created_at)`，
+  主键 `(fact_id, project_id)`，外键指向 Fact 并级联删除。`evidence_refs` 以 JSON 数组
+  存储。`evidence_status` 为 `provided | missing | legacy`。
+
+HTTP（只读，均在控制面进程内直接查库）：
+
+- `GET /projects/{id}/runs` → run 数组，按 `started_at, id` 排序；未知项目 404。
+- `GET /projects/{id}/facts/{fact_id}/meta` → 单条 meta；Fact 存在但没有 sidecar 行时
+  返回合成的 `legacy` 记录，未知 Fact 404。响应形状与既有 API 一致，直接是 JSON 对象，
+  不加信封。
 
 ## 6. 沙箱与 Scope Policy
 
@@ -457,7 +516,8 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
   控制面看到的行为，但不是防篡改账本。需要强审计时把 `sessionDir` 放到控制面独占写入的
   位置（后续里程碑），或外加日志收集。
 - artifacts 只索引路径/大小/哈希，不作为可信内容；解压或读取下载文件时仍按不可信数据
-  处理。
+  处理。`evidence_refs` 来自 worker，同样不可信：控制面只做路径合法性与工作区包含校验，
+  不证明文件内容支持该 Fact；索引与证据都不构成密码学承诺。
 - Observer 看板是**建议性数据**，不是图事实：主 Solver 只读，真正结论仍必须写进
   `result.json` 并经控制面校验。看板的写保护只覆盖结构化文件工具与白名单；`bash` 可在
   工作区内改写它。看板不得存 flag、凭据、完整工具输出或与授权范围无关的数据。默认
@@ -488,3 +548,7 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
    看板；是否要对 bash 解析重定向/`tee`/脚本写入，或把看板移出 worker 可写挂载，待定。
    `tools/gate/m4c-observer-gate.ts` 已用真实模型跑通一次短 bootstrap（14/14），但长任务
    下的成本、延迟和看板质量仍需更多实测。
+9. 证据的强度：M5a 只校验路径与工作区包含，不绑定内容哈希，也不要求证据在 Fact 之后
+   仍存在；后续是否把 `project_artifacts` 的 SHA-256 写入 `fact_meta`、以及是否对
+   “声称有证据但为空文件”做内容门槛，待定。符号链接一律拒绝，在 Windows 上开发时会
+   跳过依赖 symlink 的测试。

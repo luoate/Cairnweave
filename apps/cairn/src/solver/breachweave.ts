@@ -165,7 +165,12 @@ function solverText(task: WorkerTask): string {
   const scope = `Authorized scope (hard limit): ${task.scope.targets.join(", ")}${notes}.
 Only interact with these targets. Anything outside this list is out of scope; do not
 attempt it.`;
-  return `${scope}\n\n${task.prompt}`;
+  const evidence = `Evidence contract: the final JSON envelope may carry "evidence_refs" at
+the top level, an array of paths relative to the workspace (for example
+"artifacts/scan.log") for files you created that support the reported fact. Use paths
+inside the workspace only; the control plane rejects absolute paths, parent traversal,
+symlinks and missing files. Omit the field when you have no file evidence.`;
+  return `${scope}\n\n${evidence}\n\n${task.prompt}`;
 }
 
 /** The newest persisted solver session under the failed task's directory. */

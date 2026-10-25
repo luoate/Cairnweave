@@ -127,6 +127,25 @@ describe("task result contract", () => {
     expect(resultErrors("done").join()).toContain("JSON object");
   });
 
+  test("accepts optional evidence refs and validates their shape", () => {
+    expect(
+      resultErrors({
+        accepted: true,
+        data: { description: "confirmed" },
+        evidence_refs: ["artifacts/nmap.xml", "logs/run.txt"],
+      }),
+    ).toEqual([]);
+    expect(
+      resultErrors({ accepted: true, data: {}, evidence_refs: "artifacts/nmap.xml" }).join(),
+    ).toContain("evidence_refs must be an array");
+    expect(
+      resultErrors({ accepted: true, data: {}, evidence_refs: [" "] }).join(),
+    ).toContain("evidence_refs[0] must be a non-empty string");
+    expect(
+      resultErrors({ accepted: true, data: {}, evidence_refs: [42] }).join(),
+    ).toContain("evidence_refs[0] must be a non-empty string");
+  });
+
   test("parses strict JSON only (tolerant extraction is a separate M1 port)", () => {
     expect(parseTaskResultJson('{"accepted":true,"data":{}}')).toEqual({
       accepted: true,

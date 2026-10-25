@@ -14,8 +14,10 @@ import { join } from "node:path";
 import {
   configureDatabase,
   createProject,
+  getFactMeta,
   getProjectDetail,
   listProjectArtifacts,
+  listProjectRuns,
   type CairnDatabase,
   type ProjectDetail,
 } from "@cairn/graph";
@@ -211,9 +213,59 @@ describe("scheduler with the fake solver", () => {
       const artifacts = db.withConn((conn) =>
         listProjectArtifacts(conn, project.project.id),
       );
-      expect(artifacts).toHaveLength(1);
-      expect(artifacts[0]).toMatchObject({ path: "evidence.txt", size: 8 });
-      expect(artifacts[0]!.sha256).toHaveLength(64);
+      // The fake solver also writes one evidence file per fact task; keep this test
+      // focused on the pre-existing file.
+      const evidence = artifacts.find((artifact) => artifact.path === "evidence.txt");
+      expect(evidence).toMatchObject({ path: "evidence.txt", size: 8 });
+      expect(evidence!.sha256).toHaveLength(64);
+    },
+    30_000,
+  );
+
+  test(
+    "records one run per task and evidence for every produced fact",
+    async () => {
+      const project = createProjectRow(false);
+      const loop = scheduler();
+      await loop.runUntilIdle();
+
+      const detail = load(project.project.id);
+      const dynamicFacts = detail.facts.filter(
+        (fact) => fact.id !== "origin" && fact.id !== "goal",
+      );
+      const runs = db.withConn((conn) => listProjectRuns(conn, project.project.id));
+
+      expect(runs.length).toBeGreaterThanOrEqual(4);
+      expect(runs.every((run) => run.outcome === "success")).toBe(true);
+      expect(runs.filter((run) => run.kind !== "reason")).toHaveLength(
+        dynamicFacts.length,
+      );
+      expect(
+        runs.every(
+          (run) =>
+            run.session !== null &&
+            !run.session.startsWith("/") &&
+            !run.session.includes("\\") &&
+            !run.session.includes(directory),
+        ),
+      ).toBe(true);
+
+      for (const fact of dynamicFacts) {
+        const meta = db.withConn((conn) =>
+          getFactMeta(conn, project.project.id, fact.id),
+        );
+        expect(meta).not.toBeNull();
+        expect(meta!.evidence_status).toBe("provided");
+        expect(meta!.run_id).not.toBeNull();
+        expect(meta!.evidence_refs).toHaveLength(1);
+        expect(meta!.evidence_refs[0]!.startsWith("artifacts/fake-")).toBe(true);
+        const run = runs.find((entry) => entry.id === meta!.run_id);
+        expect(run?.kind).toBe("explore");
+        expect(run?.evidence_count).toBe(1);
+      }
+
+      const reasonRuns = runs.filter((run) => run.kind === "reason");
+      expect(reasonRuns.every((run) => run.evidence_count === 0)).toBe(true);
     },
     30_000,
   );

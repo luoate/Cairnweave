@@ -125,6 +125,10 @@ export function nextHintId(conn: Database, projectId: string): string {
   return nextScopedId(conn, "hint", "h", projectId);
 }
 
+export function nextRunId(conn: Database, projectId: string): string {
+  return nextScopedId(conn, "run", "run_", projectId);
+}
+
 export function getProjectOr404(conn: Database, projectId: string): ProjectRow {
   const row = get<ProjectRow>(conn, "SELECT * FROM projects WHERE id = ?", projectId);
   if (row === null) {

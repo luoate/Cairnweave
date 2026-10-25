@@ -1,0 +1,210 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import {
+  HttpError,
+  concludeIntent,
+  configureDatabase,
+  createIntent,
+  createProject,
+  finishRun,
+  getFactMeta,
+  heartbeatIntent,
+  listProjectRuns,
+  recordFactMeta,
+  startRun,
+  type CairnDatabase,
+} from "./index";
+
+let directory: string;
+let db: CairnDatabase;
+let projectId: string;
+
+beforeEach(() => {
+  directory = mkdtempSync(join(tmpdir(), "cairn-runs-"));
+  db = configureDatabase(join(directory, "cairn.db"));
+  projectId = db.withConn(
+    (conn) =>
+      createProject(conn, {
+        title: "runs",
+        origin: "origin",
+        goal: "goal",
+        hints: null,
+        bootstrap_enabled: false,
+        scope: { targets: ["127.0.0.1:8080"] },
+      }).project.id,
+  );
+});
+
+afterEach(() => {
+  rmSync(directory, { recursive: true, force: true });
+});
+
+function start(overrides: Partial<Parameters<typeof startRun>[1]> = {}): string {
+  const id = overrides.id ?? "run_001";
+  db.withConn((conn) =>
+    startRun(conn, {
+      id,
+      projectId,
+      taskId: "task-1",
+      kind: "explore",
+      worker: "cairn-worker",
+      intentId: null,
+      trigger: null,
+      startedAt: "2026-01-02T03:00:00Z",
+      session: ".cairn/sessions/task-1",
+      ...overrides,
+    }),
+  );
+  return id;
+}
+
+function concludeWithEvidence(runId: string | null): string {
+  return db.withConn((conn) => {
+    const intent = createIntent(conn, projectId, {
+      from: ["origin"],
+      description: "probe",
+      creator: "tester",
+      worker: null,
+    });
+    heartbeatIntent(conn, projectId, intent.id, "cairn-worker");
+    const evidence =
+      runId === null
+        ? undefined
+        : {
+            runId,
+            evidenceRefs: ["artifacts/probe.txt"],
+            evidenceStatus: "provided" as const,
+          };
+    return concludeIntent(
+      conn,
+      projectId,
+      intent.id,
+      "cairn-worker",
+      "found a thing",
+      evidence,
+    ).fact.id;
+  });
+}
+
+describe("runs", () => {
+  test("records a running task and finishes it in place", () => {
+    start();
+    expect(db.withConn((conn) => listProjectRuns(conn, projectId))).toMatchObject([
+      {
+        id: "run_001",
+        project_id: projectId,
+        task_id: "task-1",
+        kind: "explore",
+        outcome: null,
+        session: ".cairn/sessions/task-1",
+      },
+    ]);
+
+    db.withConn((conn) =>
+      finishRun(conn, "run_001", {
+        outcome: "success",
+        finishedAt: "2026-01-02T03:00:07Z",
+        durationMs: 7000,
+        exitCode: 0,
+        evidenceCount: 1,
+        detail: null,
+      }),
+    );
+    const [run] = db.withConn((conn) => listProjectRuns(conn, projectId));
+    expect(run).toMatchObject({
+      outcome: "success",
+      exit_code: 0,
+      duration_ms: 7000,
+      evidence_count: 1,
+    });
+  });
+
+  test("orders runs by start time", () => {
+    start({ id: "run_001", taskId: "task-b", startedAt: "2026-01-02T03:00:02Z" });
+    start({ id: "run_002", taskId: "task-a", startedAt: "2026-01-02T03:00:01Z" });
+    const runs = db.withConn((conn) => listProjectRuns(conn, projectId));
+    expect(runs.map((run) => run.id)).toEqual(["run_002", "run_001"]);
+  });
+
+  test("404s runs for an unknown project", () => {
+    expect(() => db.withConn((conn) => listProjectRuns(conn, "proj_999"))).toThrow(
+      HttpError,
+    );
+  });
+});
+
+describe("fact metadata", () => {
+  test("links a fact to its run and evidence", () => {
+    start();
+    const factId = concludeWithEvidence("run_001");
+    const meta = db.withConn((conn) => getFactMeta(conn, projectId, factId));
+    expect(meta).toEqual({
+      fact_id: factId,
+      run_id: "run_001",
+      evidence_refs: ["artifacts/probe.txt"],
+      evidence_status: "provided",
+      created_at: expect.any(String),
+    });
+  });
+
+  test("marks manually concluded facts as missing evidence", () => {
+    const factId = concludeWithEvidence(null);
+    const meta = db.withConn((conn) => getFactMeta(conn, projectId, factId));
+    expect(meta).toMatchObject({
+      run_id: null,
+      evidence_refs: [],
+      evidence_status: "missing",
+    });
+  });
+
+  test("synthesizes legacy metadata for origin and goal", () => {
+    const meta = db.withConn((conn) => getFactMeta(conn, projectId, "origin"));
+    expect(meta).toEqual({
+      fact_id: "origin",
+      run_id: null,
+      evidence_refs: [],
+      evidence_status: "legacy",
+      created_at: null,
+    });
+  });
+
+  test("returns null for an unknown fact", () => {
+    expect(db.withConn((conn) => getFactMeta(conn, projectId, "f999"))).toBeNull();
+  });
+
+  test("recordFactMeta is idempotent", () => {
+    db.withConn((conn) =>
+      recordFactMeta(conn, {
+        projectId,
+        factId: "origin",
+        evidenceStatus: "missing",
+        createdAt: "2026-01-02T03:00:00Z",
+      }),
+    );
+    db.withConn((conn) =>
+      recordFactMeta(conn, {
+        projectId,
+        factId: "origin",
+        evidenceStatus: "missing",
+        createdAt: "2026-01-02T03:00:00Z",
+      }),
+    );
+    const meta = db.withConn((conn) => getFactMeta(conn, projectId, "origin"));
+    expect(meta?.evidence_status).toBe("missing");
+  });
+});
+
+test("deleting a project cascades runs and fact metadata", () => {
+  start();
+  const factId = concludeWithEvidence("run_001");
+  db.withConn((conn) => {
+    conn.query("DELETE FROM projects WHERE id = ?").run(projectId);
+    expect(conn.query("SELECT COUNT(*) AS n FROM runs").get()).toEqual({ n: 0 });
+    expect(
+      conn.query("SELECT COUNT(*) AS n FROM fact_meta WHERE fact_id = ?").get(factId),
+    ).toEqual({ n: 0 });
+  });
+});

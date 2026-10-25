@@ -12,6 +12,7 @@ import type { Database } from "bun:sqlite";
 
 import { all, get, run } from "./db";
 import { HttpError } from "./errors";
+import { recordFactMeta } from "./runs";
 import type {
   CompleteRequest,
   ConcludeResponse,
@@ -370,12 +371,19 @@ export function releaseIntent(
   return intentToModel(conn, row, projectId);
 }
 
+export interface FactEvidence {
+  runId?: string | null;
+  evidenceRefs?: readonly string[];
+  evidenceStatus?: "provided" | "missing";
+}
+
 export function concludeIntent(
   conn: Database,
   projectId: string,
   intentId: string,
   worker: string,
   description: string,
+  evidence?: FactEvidence,
 ): ConcludeResponse {
   checkProjectActive(conn, projectId);
   getClaimableOpenIntentOr404(conn, projectId, intentId, worker);
@@ -390,6 +398,14 @@ export function concludeIntent(
     projectId,
     description,
   );
+  recordFactMeta(conn, {
+    projectId,
+    factId,
+    runId: evidence?.runId ?? null,
+    evidenceRefs: evidence?.evidenceRefs ?? [],
+    evidenceStatus: evidence?.evidenceStatus ?? "missing",
+    createdAt: now,
+  });
   run(
     conn,
     "UPDATE intents SET to_fact_id = ?, worker = ?, last_heartbeat_at = ?, concluded_at = ? WHERE id = ? AND project_id = ?",

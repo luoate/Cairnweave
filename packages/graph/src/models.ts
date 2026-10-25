@@ -32,6 +32,47 @@ export interface Hint {
   created_at: string;
 }
 
+export type EvidenceStatus = "provided" | "missing" | "legacy";
+
+/**
+ * Sidecar metadata for a fact. The graph itself stays `{id, description}`; evidence and
+ * the producing run are joined by `project_id` + `fact_id` so exports stay Cairn-compatible.
+ */
+export interface FactMeta {
+  fact_id: string;
+  run_id: string | null;
+  evidence_refs: string[];
+  evidence_status: EvidenceStatus;
+  created_at: string | null;
+}
+
+export type RunOutcome =
+  | "success"
+  | "failed"
+  | "rejected"
+  | "cancelled"
+  | "unhealthy"
+  | "inactive";
+
+/** One worker task attempt. `outcome` stays null while the task is still running. */
+export interface Run {
+  id: string;
+  project_id: string;
+  task_id: string;
+  kind: string;
+  intent_id: string | null;
+  worker: string;
+  trigger: string | null;
+  outcome: RunOutcome | null;
+  exit_code: number | null;
+  started_at: string;
+  finished_at: string | null;
+  duration_ms: number | null;
+  session: string | null;
+  evidence_count: number;
+  detail: string | null;
+}
+
 export interface ProjectReason {
   worker: string;
   trigger: string;

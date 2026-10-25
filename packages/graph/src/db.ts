@@ -83,6 +83,37 @@ CREATE TABLE IF NOT EXISTS project_artifacts (
     PRIMARY KEY (project_id, path)
 );
 
+CREATE TABLE IF NOT EXISTS runs (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    task_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    intent_id TEXT,
+    worker TEXT NOT NULL,
+    trigger TEXT,
+    outcome TEXT,
+    exit_code INTEGER,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    duration_ms INTEGER,
+    session TEXT,
+    evidence_count INTEGER NOT NULL DEFAULT 0,
+    detail TEXT
+);
+
+CREATE INDEX IF NOT EXISTS runs_project_started ON runs(project_id, started_at);
+
+CREATE TABLE IF NOT EXISTS fact_meta (
+    fact_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    run_id TEXT,
+    evidence_refs TEXT NOT NULL DEFAULT '[]',
+    evidence_status TEXT NOT NULL DEFAULT 'missing',
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (fact_id, project_id),
+    FOREIGN KEY (fact_id, project_id) REFERENCES facts(id, project_id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS counters (
     name TEXT PRIMARY KEY,
     value INTEGER NOT NULL DEFAULT 0

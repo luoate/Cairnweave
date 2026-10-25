@@ -31,7 +31,9 @@ export {
   type CreateHintRequest,
   type CreateIntentRequest,
   type CreateProjectRequest,
+  type EvidenceStatus,
   type Fact,
+  type FactMeta,
   type ProjectScopeInput,
   type HeartbeatRequest,
   type Hint,
@@ -44,6 +46,8 @@ export {
   type ReasonClaimRequest,
   type ReopenRequest,
   type ReopenResponse,
+  type Run,
+  type RunOutcome,
   type Settings,
   type UpdateProjectStatusRequest,
   type UpdateProjectTitleRequest,
@@ -69,6 +73,7 @@ export {
   nextHintId,
   nextIntentId,
   nextProjectId,
+  nextRunId,
   projectMetaFromRow,
   projectReasonFromRow,
   setUtcNowSource,
@@ -98,8 +103,20 @@ export {
   renewIntentLease,
   renewReasonLease,
   setProjectScope,
+  type FactEvidence,
   type ProjectScope,
 } from "./commands";
+
+export {
+  finishRun,
+  getFactMeta,
+  listProjectRuns,
+  recordFactMeta,
+  startRun,
+  type FinishRunInput,
+  type RecordFactMetaInput,
+  type StartRunInput,
+} from "./runs";
 
 export {
   getProjectArtifact,

@@ -13,6 +13,11 @@
 export interface AcceptedResult {
   readonly accepted: true;
   readonly data: Record<string, unknown>;
+  /**
+   * Task-level evidence paths, relative to the worker workspace. Optional so older models
+   * and fake solvers stay compatible; the control plane marks facts without it as missing.
+   */
+  readonly evidence_refs?: readonly string[];
 }
 
 export interface RejectedResult {
@@ -42,6 +47,18 @@ export function resultErrors(value: unknown): string[] {
       errors.push("data must be an object when accepted is true");
     } else if (data["description"] !== undefined && typeof data["description"] !== "string") {
       errors.push("data.description must be a string when present");
+    }
+    const evidence = value["evidence_refs"];
+    if (evidence !== undefined) {
+      if (!Array.isArray(evidence)) {
+        errors.push("evidence_refs must be an array of strings");
+      } else {
+        evidence.forEach((ref, index) => {
+          if (typeof ref !== "string" || ref.trim() === "") {
+            errors.push(`evidence_refs[${index}] must be a non-empty string`);
+          }
+        });
+      }
     }
   } else if (typeof value["reason"] !== "string" || value["reason"].trim().length === 0) {
     errors.push("reason must be a non-empty string when accepted is false");

@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TASK_PROTOCOL_VERSION, type WorkerTask } from "@cairn/contracts";
@@ -51,7 +51,7 @@ describe("cairn CLI", () => {
   test("prints its version", () => {
     const { code, stdout } = run(["version"]);
     expect(code).toBe(0);
-    expect(stdout).toContain("cairn 0.3.0-m3");
+    expect(stdout).toContain("cairn 0.4.0-m5a");
   });
 
   test("prints usage for help and for no command", () => {
@@ -102,9 +102,12 @@ describe("cairn CLI", () => {
     const { code, stderr } = run(["worker", "--task", path]);
     expect(code).toBe(0);
     expect(stderr).toContain("task-1");
-    expect(JSON.parse(readFileSync(task.resultPath, "utf8"))).toEqual({
+    const result = JSON.parse(readFileSync(task.resultPath, "utf8"));
+    expect(result).toMatchObject({
       accepted: true,
       data: { description: "fake fact from intent-1" },
     });
+    expect(result.evidence_refs).toEqual(["artifacts/fake-task-1.txt"]);
+    expect(existsSync(join(task.workspace, "artifacts", "fake-task-1.txt"))).toBe(true);
   });
 });
