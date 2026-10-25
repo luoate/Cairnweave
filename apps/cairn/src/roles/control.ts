@@ -10,6 +10,7 @@ import { ConfigError, loadDispatchConfig, type DispatchConfig } from "../config"
 import { createApi } from "../http/api";
 import { checkDocker, resolveAgentConfigDir } from "../runtime";
 import { Scheduler } from "../scheduler/loop";
+import { resolveWorkspaceRoot } from "../scheduler/tasks";
 
 const USAGE = `usage: cairn serve [options]
 
@@ -105,7 +106,11 @@ export async function runControl(args: readonly string[]): Promise<number> {
     return 1;
   }
 
-  const api = createApi({ db, staticDir });
+  const api = createApi({
+    db,
+    staticDir,
+    ...(config === null ? {} : { workspaceRoot: resolveWorkspaceRoot(config) }),
+  });
   const scheduler = config === null ? null : new Scheduler({ db, config });
 
   try {

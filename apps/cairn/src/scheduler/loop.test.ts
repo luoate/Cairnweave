@@ -16,6 +16,8 @@ import {
   createProject,
   getFactMeta,
   getProjectDetail,
+  hashFileSha256,
+  listFactEvidence,
   listProjectArtifacts,
   listProjectRuns,
   type CairnDatabase,
@@ -259,6 +261,21 @@ describe("scheduler with the fake solver", () => {
         expect(meta!.run_id).not.toBeNull();
         expect(meta!.evidence_refs).toHaveLength(1);
         expect(meta!.evidence_refs[0]!.startsWith("artifacts/fake-")).toBe(true);
+
+        const files = db.withConn((conn) =>
+          listFactEvidence(conn, project.project.id, fact.id),
+        );
+        expect(files).toHaveLength(1);
+        expect(files![0]!.path).toBe(meta!.evidence_refs[0]!);
+        const evidencePath = join(
+          directory,
+          "workspace",
+          project.project.id.replaceAll("/", "-"),
+          files![0]!.path,
+        );
+        expect(files![0]!.size).toBe(readFileSync(evidencePath).byteLength);
+        expect(files![0]!.sha256).toBe(hashFileSha256(evidencePath));
+
         const run = runs.find((entry) => entry.id === meta!.run_id);
         expect(run?.kind).toBe("explore");
         expect(run?.evidence_count).toBe(1);

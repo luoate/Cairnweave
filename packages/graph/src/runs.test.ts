@@ -12,6 +12,7 @@ import {
   finishRun,
   getFactMeta,
   heartbeatIntent,
+  listFactEvidence,
   listProjectRuns,
   recordFactMeta,
   startRun,
@@ -77,6 +78,9 @@ function concludeWithEvidence(runId: string | null): string {
             runId,
             evidenceRefs: ["artifacts/probe.txt"],
             evidenceStatus: "provided" as const,
+            evidenceFiles: [
+              { path: "artifacts/probe.txt", size: 5, sha256: "a".repeat(64) },
+            ],
           };
     return concludeIntent(
       conn,
@@ -206,5 +210,66 @@ test("deleting a project cascades runs and fact metadata", () => {
     expect(
       conn.query("SELECT COUNT(*) AS n FROM fact_meta WHERE fact_id = ?").get(factId),
     ).toEqual({ n: 0 });
+    expect(
+      conn
+        .query("SELECT COUNT(*) AS n FROM fact_evidence WHERE fact_id = ?")
+        .get(factId),
+    ).toEqual({ n: 0 });
+  });
+});
+
+describe("fact evidence", () => {
+  test("stores and orders content digests for a concluded fact", () => {
+    const factId = db.withConn((conn) => {
+      const intent = createIntent(conn, projectId, {
+        from: ["origin"],
+        description: "probe",
+        creator: "tester",
+        worker: null,
+      });
+      heartbeatIntent(conn, projectId, intent.id, "cairn-worker");
+      return concludeIntent(conn, projectId, intent.id, "cairn-worker", "found", {
+        runId: "run_001",
+        evidenceRefs: ["artifacts/b.txt", "artifacts/a.txt"],
+        evidenceStatus: "provided",
+        evidenceFiles: [
+          { path: "artifacts/b.txt", size: 2, sha256: "b".repeat(64) },
+          { path: "artifacts/a.txt", size: 1, sha256: "a".repeat(64) },
+        ],
+      }).fact.id;
+    });
+
+    const files = db.withConn((conn) => listFactEvidence(conn, projectId, factId));
+    expect(files).toEqual([
+      {
+        path: "artifacts/a.txt",
+        size: 1,
+        sha256: "a".repeat(64),
+        created_at: expect.any(String),
+      },
+      {
+        path: "artifacts/b.txt",
+        size: 2,
+        sha256: "b".repeat(64),
+        created_at: expect.any(String),
+      },
+    ]);
+  });
+
+  test("returns [] without evidence and null for an unknown fact", () => {
+    const factId = concludeWithEvidence("run_001");
+    expect(db.withConn((conn) => listFactEvidence(conn, projectId, factId))).toHaveLength(1);
+    expect(
+      db.withConn((conn) => listFactEvidence(conn, projectId, "origin")),
+    ).toEqual([]);
+    expect(
+      db.withConn((conn) => listFactEvidence(conn, projectId, "f999")),
+    ).toBeNull();
+  });
+
+  test("404s evidence for an unknown project", () => {
+    expect(() =>
+      db.withConn((conn) => listFactEvidence(conn, "proj_999", "origin")),
+    ).toThrow(HttpError);
   });
 });

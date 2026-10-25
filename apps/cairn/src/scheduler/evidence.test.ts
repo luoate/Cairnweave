@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import {
   mkdirSync,
   mkdtempSync,
@@ -9,7 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { collectEvidence } from "./evidence";
+import { collectEvidence, verifyEvidenceFiles } from "./evidence";
 
 let directory: string;
 let workspace: string;
@@ -26,21 +27,27 @@ afterEach(() => {
   rmSync(directory, { recursive: true, force: true });
 });
 
+function sha(text: string): string {
+  return createHash("sha256").update(text).digest("hex");
+}
+
 describe("evidence collection", () => {
   test("treats absent and empty refs as missing", () => {
     expect(collectEvidence(undefined, workspace)).toEqual({
       status: "missing",
       refs: [],
+      files: [],
       invalid: [],
     });
     expect(collectEvidence([], workspace)).toEqual({
       status: "missing",
       refs: [],
+      files: [],
       invalid: [],
     });
   });
 
-  test("accepts regular files inside the workspace", () => {
+  test("accepts regular files inside the workspace and records their digests", () => {
     const collected = collectEvidence(
       ["artifacts/scan.log", "./artifacts/nested/dump.txt", "artifacts\\scan.log"],
       workspace,
@@ -48,6 +55,18 @@ describe("evidence collection", () => {
     expect(collected).toEqual({
       status: "provided",
       refs: ["artifacts/scan.log", "artifacts/nested/dump.txt"],
+      files: [
+        {
+          path: "artifacts/scan.log",
+          size: 15,
+          sha256: sha("open port 8080\n"),
+        },
+        {
+          path: "artifacts/nested/dump.txt",
+          size: 5,
+          sha256: sha("dump\n"),
+        },
+      ],
       invalid: [],
     });
   });
@@ -104,5 +123,56 @@ describe("evidence collection", () => {
     expect(collected.invalid).toEqual([
       { ref: "", reason: "too many evidence refs (max 20)" },
     ]);
+  });
+});
+
+describe("evidence verification", () => {
+  test("compares stored digests with the current files", () => {
+    const collected = collectEvidence(
+      ["artifacts/scan.log", "artifacts/nested/dump.txt"],
+      workspace,
+    );
+    const stored = collected.files.map((file) => ({
+      ...file,
+      created_at: "2026-01-01T00:00:00Z",
+    }));
+    expect(
+      verifyEvidenceFiles(stored, workspace).map((entry) => entry.status),
+    ).toEqual(["ok", "ok"]);
+
+    writeFileSync(join(workspace, "artifacts", "scan.log"), "tampered\n", "utf8");
+    rmSync(join(workspace, "artifacts", "nested", "dump.txt"));
+    const verified = verifyEvidenceFiles(stored, workspace);
+    expect(verified.map((entry) => entry.status)).toEqual(["modified", "missing"]);
+    expect(verified[0]).toMatchObject({
+      path: "artifacts/scan.log",
+      size: 15,
+      sha256: sha("open port 8080\n"),
+      current_size: 9,
+      current_sha256: sha("tampered\n"),
+    });
+    expect(verified[1]).toMatchObject({
+      status: "missing",
+      current_size: null,
+      current_sha256: null,
+    });
+  });
+
+  test("reports invalid paths and unreadable workspaces", () => {
+    const collected = collectEvidence(["artifacts/scan.log"], workspace);
+    const stored = collected.files.map((file) => ({
+      ...file,
+      created_at: "2026-01-01T00:00:00Z",
+    }));
+
+    rmSync(join(workspace, "artifacts", "scan.log"));
+    mkdirSync(join(workspace, "artifacts", "scan.log"));
+    expect(verifyEvidenceFiles(stored, workspace)[0]!.status).toBe("invalid");
+
+    expect(
+      verifyEvidenceFiles(stored, join(directory, "missing-workspace")).map(
+        (entry) => entry.status,
+      ),
+    ).toEqual(["unreadable"]);
   });
 });

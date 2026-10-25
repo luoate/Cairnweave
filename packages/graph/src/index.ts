@@ -31,8 +31,10 @@ export {
   type CreateHintRequest,
   type CreateIntentRequest,
   type CreateProjectRequest,
+  type EvidenceFileStatus,
   type EvidenceStatus,
   type Fact,
+  type FactEvidenceFile,
   type FactMeta,
   type ProjectScopeInput,
   type HeartbeatRequest,
@@ -49,6 +51,7 @@ export {
   type Run,
   type RunOutcome,
   type Settings,
+  type VerifiedFactEvidence,
   type UpdateProjectStatusRequest,
   type UpdateProjectTitleRequest,
 } from "./models";
@@ -117,6 +120,15 @@ export {
   type RecordFactMetaInput,
   type StartRunInput,
 } from "./runs";
+
+export {
+  listFactEvidence,
+  recordFactEvidence,
+  type FactEvidenceFileInput,
+  type RecordFactEvidenceInput,
+} from "./fact-evidence";
+
+export { hashFileSha256 } from "./hashing";
 
 export {
   getProjectArtifact,

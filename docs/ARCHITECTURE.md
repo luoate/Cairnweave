@@ -1,4 +1,4 @@
-# 架构（M5a 更新）
+# 架构（M5b 更新）
 
 本文固定合并后的角色边界、数据所有权和失败语义。实现以本文为准；需要改动时先改本文并
 记录原因。
@@ -26,7 +26,10 @@ sidecar（`packages/agent/src/solver/extension/cairn-observer/`）；主 solver 
 控制面为每个任务生成 `run_id` 并记录启动/完成；worker 结果可在根级带
 `evidence_refs`，控制面按工作区做路径校验后才写图。证据缺失只降级记录（不拒绝）；
 声称存在但非法/越界/不存在的证据按失败处理。图模型、YAML 导出与既有 HTTP 响应保持
-不变，新数据只进旁路表。
+不变，新数据只进旁路表。M5b 已落地：接受证据时流式计算 size/SHA-256 并写入
+`fact_evidence`；`GET /projects/{id}/facts/{fact_id}/evidence` 用当前工作区重算摘要，
+返回 `ok | modified | missing | unreadable | invalid`（无 workspace root 时为
+`unverified`）。摘要只代表写入时的内容快照，不是签名。
 
 ## 1. 范围
 
@@ -76,7 +79,7 @@ scheduler 与 HTTP API 共用 `packages/graph/src/commands.ts` 的命令，不�
 | 数据 | 写入者 | 读取者 | 位置 |
 | --- | --- | --- | --- |
 | SQLite（projects/facts/intents/hints/settings/project_scopes/project_artifacts） | 控制面 | 控制面 | 控制面主机 |
-| SQLite 旁路表（`runs` / `fact_meta`） | 控制面（不进入图模型与 YAML） | 控制面 | 控制面主机 |
+| SQLite 旁路表（`runs` / `fact_meta` / `fact_evidence`） | 控制面（不进入图模型与 YAML） | 控制面 | 控制面主机 |
 | `graph.yaml` 快照 | 控制面 | worker | 项目工作区/容器内绝对路径 |
 | `task.json` | 控制面 | worker | `sessionDir` |
 | `result.json` | worker（临时文件 + rename 原子写） | 控制面 | `sessionDir` |
@@ -197,9 +200,9 @@ scheduler 与 HTTP API 共用 `packages/graph/src/commands.ts` 的命令，不�
   写工具不在主 Solver 的 Host Bridge 白名单中，看板文件工具的 `write`/`edit` 也被
   `protectedWriteRoots` 拒绝。`bash` 不受文件路径分析约束，这是策略闸门的已知边界。
 
-### 证据门控与 runs（M5a）
+### 证据门控、哈希与 runs（M5a + M5b）
 
-M5a 只增加旁路数据，不改图模型、YAML 导出和既有 HTTP 响应的字节。
+M5a/M5b 只增加旁路数据，不改图模型、YAML 导出和既有 HTTP 响应的字节。
 
 - **`run_id` 由控制面生成**：认领任务时在同一事务里插入 `runs` 行；worker 不生成 ID，
   也不能改写已有 run。run 记录项目、任务、kind、intent、worker、trigger、会话路径、
@@ -216,6 +219,13 @@ M5a 只增加旁路数据，不改图模型、YAML 导出和既有 HTTP 响应�
 - **软/硬语义**：没有 `evidence_refs`（或空数组）不算失败，记为
   `evidence_status: "missing"`；只要声称了但有一条非法，任务失败（fail closed），
   explore/bootstrap 的既有 conclude 回退仍适用。reason 任务不产出 Fact，不要求证据。
+- **内容摘要（M5b）**：路径校验通过后，逐文件流式计算 `size` 与 SHA-256（`hashing.ts`
+  同时供 artifacts 使用），随 Fact 一起写入 `fact_evidence`。哈希发生在 worker 退出、
+  结论应用阶段，因此反映的是结论时的文件内容；不复制文件，也不证明作者。
+- **实时校验（M5b）**：读取 `/evidence` 时重新走同一套路径检查与哈希，逐条给出
+  `ok`（size+sha 一致）、`modified`（内容变化）、`missing`（不存在）、`unreadable`
+  （权限/工作区不可读）、`invalid`（符号链接、越界、目录等）。没有 workspace root 时
+  返回 `unverified`，只展示写入时摘要。校验是只读操作，不修改 CLI 或任务状态。
 - **`fact_meta`**：每个由任务产出的 Fact 写一行，记录 `run_id`、`evidence_refs` 与
   `evidence_status`（`provided | missing | legacy`）。M5a 之前存在或经 HTTP 手工创建的
   Fact 没有行，读取时合成 `legacy` 视图，不批量回填。
@@ -256,7 +266,8 @@ M5a 只增加旁路数据，不改图模型、YAML 导出和既有 HTTP 响应�
 ```
 
 - `evidence_refs` 必须是字符串数组，路径相对**项目工作区**、以 `/` 分隔；它不影响
-  `data` 的既有 payload 校验。`accepted:false` 时忽略。
+  `data` 的既有 payload 校验。`accepted:false` 时忽略。M5b 起每条被接受的文件都会在
+  `fact_evidence` 里留下 size/SHA-256 快照。
 - 省略或空数组表示“本任务没有文件证据”，记为 `missing`，不拒绝任务；一旦提供了条目，
   任一条非法（绝对路径、`..`、目录、符号链接、不存在、越界）就使任务失败。详见 §4.1。
 - 为什么写文件而不是 stdout：Solver、工具和依赖都可能往 stdout 打日志；结果文件是唯一
@@ -296,9 +307,9 @@ stderr 归档到 `sessionDir/{stdout,stderr}.log`。需要 UI 实时进度时再
   一样由控制面从 SQLite 读取。
 - 索引失败只记日志，不影响任务结果；下一次扫描会重建。
 
-### 5.6 runs 与 fact_meta
+### 5.6 runs、fact_meta 与 fact_evidence
 
-两张表都在 `packages/graph/src/db.ts` 中创建，既不属于图导出，也不参与任何既有命令：
+三张表都在 `packages/graph/src/db.ts` 中创建，既不属于图导出，也不参与任何既有命令：
 
 - `runs(id, project_id, task_id, kind, intent_id, worker, trigger, outcome, exit_code,
   started_at, finished_at, duration_ms, session, evidence_count, detail)`，按
@@ -306,6 +317,9 @@ stderr 归档到 `sessionDir/{stdout,stderr}.log`。需要 UI 实时进度时再
 - `fact_meta(fact_id, project_id, run_id, evidence_refs, evidence_status, created_at)`，
   主键 `(fact_id, project_id)`，外键指向 Fact 并级联删除。`evidence_refs` 以 JSON 数组
   存储。`evidence_status` 为 `provided | missing | legacy`。
+- `fact_evidence(project_id, fact_id, path, size, sha256, created_at)`，主键
+  `(project_id, fact_id, path)`，外键指向 Fact 并级联删除。路径是写入时规范化后的
+  工作区相对路径；只存摘要，不存内容。
 
 HTTP（只读，均在控制面进程内直接查库）：
 
@@ -313,6 +327,11 @@ HTTP（只读，均在控制面进程内直接查库）：
 - `GET /projects/{id}/facts/{fact_id}/meta` → 单条 meta；Fact 存在但没有 sidecar 行时
   返回合成的 `legacy` 记录，未知 Fact 404。响应形状与既有 API 一致，直接是 JSON 对象，
   不加信封。
+- `GET /projects/{id}/facts/{fact_id}/evidence` → 证据数组，按路径排序；每条包含
+  写入时的 `path/size/sha256/created_at`、实时 `status` 与 `current_size` /
+  `current_sha256`。`serve --config` 时用配置的 workspace root 校验；纯 HTTP 模式返回
+  `unverified`。未知 Fact 或项目 404，无证据 Fact 返回 `[]`。校验是同步流式哈希，耗时
+  与文件大小成正比；证据数量上限 20，响应不缓存结果。
 
 ## 6. 沙箱与 Scope Policy
 
@@ -518,6 +537,9 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
 - artifacts 只索引路径/大小/哈希，不作为可信内容；解压或读取下载文件时仍按不可信数据
   处理。`evidence_refs` 来自 worker，同样不可信：控制面只做路径合法性与工作区包含校验，
   不证明文件内容支持该 Fact；索引与证据都不构成密码学承诺。
+- 证据摘要（M5b）在任务结束后计算，只能发现**之后**的替换/删除；它不能证明文件由该
+  任务生成，也不是签名。worker 在工作区内始终有写权限，因此强完整性仍需容器/文件系统
+  层配合（只写挂载、外部日志或签名）。校验路由只读取工作区，不跟随符号链接。
 - Observer 看板是**建议性数据**，不是图事实：主 Solver 只读，真正结论仍必须写进
   `result.json` 并经控制面校验。看板的写保护只覆盖结构化文件工具与白名单；`bash` 可在
   工作区内改写它。看板不得存 flag、凭据、完整工具输出或与授权范围无关的数据。默认
@@ -548,7 +570,7 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
    看板；是否要对 bash 解析重定向/`tee`/脚本写入，或把看板移出 worker 可写挂载，待定。
    `tools/gate/m4c-observer-gate.ts` 已用真实模型跑通一次短 bootstrap（14/14），但长任务
    下的成本、延迟和看板质量仍需更多实测。
-9. 证据的强度：M5a 只校验路径与工作区包含，不绑定内容哈希，也不要求证据在 Fact 之后
-   仍存在；后续是否把 `project_artifacts` 的 SHA-256 写入 `fact_meta`、以及是否对
-   “声称有证据但为空文件”做内容门槛，待定。符号链接一律拒绝，在 Windows 上开发时会
-   跳过依赖 symlink 的测试。
+9. 证据的强度：M5b 已把 size/SHA-256 固化到 `fact_evidence` 并提供实时校验，但仍不
+   要求证据在 Fact 之后保持存在，也不对“声称有证据但为空文件”设内容门槛；是否为
+   空文件/极小文件增加策略、以及是否引入控制面签名，待定。符号链接一律拒绝，在
+   Windows 上开发时会跳过依赖 symlink 的测试。

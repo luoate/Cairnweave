@@ -20,6 +20,7 @@ import {
   heartbeatIntent,
   heartbeatReason,
   intentToModel,
+  listFactEvidence,
   listProjectArtifacts,
   listProjectRuns,
   listProjects,
@@ -48,10 +49,18 @@ import {
 } from "@cairn/graph";
 import { resolve, sep } from "node:path";
 
+import { verifyEvidenceFiles } from "../scheduler/evidence";
+import { projectWorkspace } from "../scheduler/tasks";
+
 export interface ApiOptions {
   db: CairnDatabase;
   /** Directory containing Cairn's static UI. When omitted only the JSON API is served. */
   staticDir?: string;
+  /**
+   * Host workspace root, present only when the scheduler is enabled. Evidence digests can
+   * still be read without it, but live verification reports `unverified`.
+   */
+  workspaceRoot?: string;
 }
 
 export interface Api {
@@ -104,8 +113,8 @@ async function readBody(request: Request): Promise<unknown> {
 }
 
 export function createApi(options: ApiOptions): Api {
-  const { db, staticDir } = options;
-  const routes = buildRoutes(db);
+  const { db, staticDir, workspaceRoot } = options;
+  const routes = buildRoutes(db, workspaceRoot);
 
   async function handle(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -172,7 +181,7 @@ async function serveStatic(staticDir: string, pathname: string): Promise<Respons
   return new Response(file);
 }
 
-function buildRoutes(db: CairnDatabase): Route[] {
+function buildRoutes(db: CairnDatabase, workspaceRoot?: string): Route[] {
   const routes: Route[] = [];
 
   function route(method: string, template: string, handler: RouteHandler): void {
@@ -239,6 +248,26 @@ function buildRoutes(db: CairnDatabase): Route[] {
       throw new HttpError(404, "Fact not found");
     }
     return json(meta);
+  });
+
+  route("GET", "/projects/{project_id}/facts/{fact_id}/evidence", ({ params }) => {
+    const projectId = params["project_id"]!;
+    const factId = params["fact_id"]!;
+    const files = db.withConn((conn) => listFactEvidence(conn, projectId, factId));
+    if (files === null) {
+      throw new HttpError(404, "Fact not found");
+    }
+    if (workspaceRoot === undefined) {
+      return json(
+        files.map((file) => ({
+          ...file,
+          status: "unverified" as const,
+          current_size: null,
+          current_sha256: null,
+        })),
+      );
+    }
+    return json(verifyEvidenceFiles(files, projectWorkspace(workspaceRoot, projectId)));
   });
 
   route("DELETE", "/projects/{project_id}", ({ params }) =>

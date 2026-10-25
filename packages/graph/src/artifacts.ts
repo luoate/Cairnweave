@@ -7,16 +7,15 @@
  * link out of the workspace.
  */
 
-import { createHash } from "node:crypto";
-import { closeSync, lstatSync, openSync, readSync, readdirSync } from "node:fs";
+import { lstatSync, readdirSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import type { Database } from "bun:sqlite";
 
 import { all, get, run } from "./db";
+import { hashFileSha256 } from "./hashing";
 
 const MAX_FILES = 2_000;
 const MAX_DEPTH = 20;
-const HASH_CHUNK_BYTES = 1024 * 1024;
 
 export interface ProjectArtifact {
   path: string;
@@ -64,7 +63,7 @@ export function recordProjectArtifacts(
       file.relativePath,
       options.taskId,
       file.size,
-      hashFile(file.absolutePath),
+      hashFileSha256(file.absolutePath),
       createdAt,
     );
   }
@@ -143,21 +142,5 @@ function walk(
     if (!stat.isFile()) continue;
     const relativePath = relative(root, absolutePath).split(sep).join("/");
     files.push({ relativePath, absolutePath, size: stat.size });
-  }
-}
-
-function hashFile(path: string): string {
-  const hash = createHash("sha256");
-  const descriptor = openSync(path, "r");
-  try {
-    const buffer = Buffer.allocUnsafe(HASH_CHUNK_BYTES);
-    for (;;) {
-      const bytes = readSync(descriptor, buffer, 0, buffer.length, null);
-      if (bytes <= 0) break;
-      hash.update(buffer.subarray(0, bytes));
-    }
-    return hash.digest("hex");
-  } finally {
-    closeSync(descriptor);
   }
 }

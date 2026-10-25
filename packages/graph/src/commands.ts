@@ -12,6 +12,7 @@ import type { Database } from "bun:sqlite";
 
 import { all, get, run } from "./db";
 import { HttpError } from "./errors";
+import { recordFactEvidence, type FactEvidenceFileInput } from "./fact-evidence";
 import { recordFactMeta } from "./runs";
 import type {
   CompleteRequest,
@@ -375,6 +376,7 @@ export interface FactEvidence {
   runId?: string | null;
   evidenceRefs?: readonly string[];
   evidenceStatus?: "provided" | "missing";
+  evidenceFiles?: readonly FactEvidenceFileInput[];
 }
 
 export function concludeIntent(
@@ -406,6 +408,14 @@ export function concludeIntent(
     evidenceStatus: evidence?.evidenceStatus ?? "missing",
     createdAt: now,
   });
+  if (evidence?.evidenceFiles !== undefined && evidence.evidenceFiles.length > 0) {
+    recordFactEvidence(conn, {
+      projectId,
+      factId,
+      files: evidence.evidenceFiles,
+      createdAt: now,
+    });
+  }
   run(
     conn,
     "UPDATE intents SET to_fact_id = ?, worker = ?, last_heartbeat_at = ?, concluded_at = ? WHERE id = ? AND project_id = ?",

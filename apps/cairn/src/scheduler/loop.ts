@@ -763,7 +763,7 @@ export class Scheduler {
     // evidence fails the task (the filesystem is untrusted input).
     const evidence: EvidenceCollection =
       running.kind === "reason"
-        ? { status: "missing", refs: [], invalid: [] }
+        ? { status: "missing", refs: [], files: [], invalid: [] }
         : collectEvidence(result.evidence_refs, running.hostWorkspace);
     if (evidence.invalid.length > 0) {
       const reasons = evidence.invalid
@@ -878,6 +878,7 @@ export class Scheduler {
         runId: running.runId,
         evidenceRefs: evidence.refs,
         evidenceStatus: evidence.status,
+        evidenceFiles: evidence.files,
       },
     );
     return "success";
@@ -915,6 +916,7 @@ export class Scheduler {
         runId: running.runId,
         evidenceRefs: evidence.refs,
         evidenceStatus: evidence.status,
+        evidenceFiles: evidence.files,
       },
     );
     return "success";
@@ -943,6 +945,7 @@ export class Scheduler {
         runId: running.runId,
         evidenceRefs: evidence.refs,
         evidenceStatus: evidence.status,
+        evidenceFiles: evidence.files,
       },
     );
     try {

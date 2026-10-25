@@ -46,6 +46,32 @@ export interface FactMeta {
   created_at: string | null;
 }
 
+/** Content digest recorded when a fact's evidence was accepted (no content is stored). */
+export interface FactEvidenceFile {
+  path: string;
+  size: number;
+  sha256: string;
+  created_at: string;
+}
+
+/**
+ * Live comparison between the recorded digest and the file that exists now.
+ * `unverified` means no workspace root was configured, so only stored metadata is known.
+ */
+export type EvidenceFileStatus =
+  | "ok"
+  | "modified"
+  | "missing"
+  | "unreadable"
+  | "invalid"
+  | "unverified";
+
+export interface VerifiedFactEvidence extends FactEvidenceFile {
+  status: EvidenceFileStatus;
+  current_size: number | null;
+  current_sha256: string | null;
+}
+
 export type RunOutcome =
   | "success"
   | "failed"
