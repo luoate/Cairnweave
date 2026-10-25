@@ -4,7 +4,7 @@
 skills / Observer）合并成**一个 Bun/TypeScript 代码库**，不再维护 Python ↔ TypeScript
 之间的进程桥、JSONL RPC 和 worker 适配器。
 
-状态：**M6（运维清理与重启恢复已落地）**；M0–M4、M5a–M5c 的计划项全部完成。
+状态：**M7（控制面审计账本已落地）**；M0–M4、M5a–M5c、M6 的计划项全部完成。
 `cairn serve` 是可运行的 Cairn 兼容服务：SQLite schema、领域服务、全部五个路由、
 YAML/timeline 导出、静态 Web UI 均已就位，并用 Python Cairn 生成的 golden 做了逐字
 对照。进程内 scheduler、任务/结果文件 worker 协议、BreachWeave Solver 接入已在 M2
@@ -97,6 +97,22 @@ M6 增加：
 - **artifacts 刷新**：`retention.refresh_artifacts: true` 时每次 sweep 重建 artifacts
   索引；已索引路径保留最初记录它的 `task_id`，新路径记为 `retention-sweep`。
 
+M7 增加：
+
+- **控制面审计账本**：任务结束（成功、失败、取消）时，控制面读取
+  `<sessionDir>/audit.jsonl`，按行写入 `audit_events` 旁路表（项目、task、seq、
+  事件 JSON、`prev_hash`、`hash`）。哈希绑定项目/task/序号/前一条哈希/事件文本，
+  每个 task 一条独立链。
+- **有界导入**：只接受普通文件（不跟随符号链接），最多 8 MiB / 10,000 条，单条
+  ≤16K 字符；空行、非 JSON、非对象和超长行跳过并计数。同一 task 已导入时不追加；
+  导入失败只记日志，不影响任务结果。
+- **只读查询**：`GET /projects/{id}/audit` 返回每个 task 的
+  `event_count`/`root_hash`/时间范围；`GET /projects/{id}/audit/{task_id}` 返回事件
+  与重新计算的 `chain_ok`/`broken_at`。未知项目 404，无记录的 task 返回空链。
+- 账本存放在 SQLite，因此 session 目录被 M6 retention 清理后审计仍可查询。哈希链
+  能发现账本行被改写或链接断裂，但不是签名：能重写数据库的人也能重算整条链，
+  且控制面崩溃前未 finish 的事件不会进入账本。
+
 默认仍是确定性 fake solver，测试与离线运行不需要模型凭据。Observer 只接在
 `CAIRN_SOLVER=breachweave` 的真实 Solver 路径上，fake solver 会忽略它。
 
@@ -152,6 +168,7 @@ apps/cairn/src/
   scheduler/tasks.ts     prompt 渲染 + 路径映射 + task.json/context 落盘
   scheduler/evidence.ts  证据校验、哈希与实时比对（工作区包含、realpath、上限）
   scheduler/retention.ts session 目录扫描、age/count 选择与受保护路径判定
+  scheduler/audit.ts     有界读取 audit.jsonl 并导入控制面账本
   runtime/types.ts       scheduler ↔ 沙箱接口（local / container）
   runtime/local.ts       本地子进程 runtime
   runtime/docker.ts      每项目容器、docker exec、任务级终止、清理
@@ -176,6 +193,7 @@ packages/graph/          schema、领域模型、服务、命令、导出、YAML
   src/runs.ts            runs / fact_meta 旁路表读写
   src/fact-evidence.ts   fact_evidence 内容摘要读写
   src/pending-concludes.ts 跨重启的 conclude 队列
+  src/audit.ts           控制面审计账本：哈希链、查询与断链校验
   src/export.ts          YAML、timeline 与图切片导出
   src/yaml.ts            PyYAML 兼容的 block-style 发射器
   testdata/              Python 生成的 golden
@@ -480,9 +498,9 @@ M6 的跨进程恢复 gate 不调用模型：它先写下一台崩溃控制面�
 bun run tools/gate/m6-restart-gate.ts
 ```
 
-## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6，2026-10-25，Bun 1.4.4）
+## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7，2026-10-25，Bun 1.4.4）
 
-- `bun test`：**242 passed**（30 个文件），0 failed。
+- `bun test`：**258 passed**（33 个文件），0 failed。
 - `bun run typecheck`：`tsc --noEmit` 通过。
 - **HTTP 对照**：`api.golden.json` 的 60 步请求（成功路径、400/403/404/405/409、租约过期、
   删除级联、导出、路由错误）由 Python FastAPI + 固定时钟生成；TS 重放后状态码、content-type
@@ -584,6 +602,12 @@ bun run tools/gate/m6-restart-gate.ts
   其它文件不受影响；`refresh_artifacts` 重建索引并保留原有 `task_id`。跨进程 gate
   `tools/gate/m6-restart-gate.ts` 为 **9/9 PASS**（2026-10-25）：新启动的
   `cairn serve` 从持久化状态直接派发 conclude，随后队列清空、Fact 与 run 证据落库。
+- **审计账本（M7）**：图侧覆盖链式写入、每 task 独立序号与 `prev_hash`、重复导入不追加、
+  项目/任务隔离、未知项目 404、改写事件或断开链接后的 `broken_at`、非对象事件拒绝与
+  项目删除级联。导入侧覆盖空行/非法 JSON/标量/数组/超长行跳过、缺失路径、目录替代、
+  符号链接拒绝、10,000 条上限与空文件；scheduler 集成测试用 `audit-worker` fixture
+  断言任务结束后账本可查且 `chain_ok`。HTTP 测试覆盖汇总、明细、篡改后的
+  `chain_ok:false`、未知 task 空链与未知项目 404。
 
 golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定时钟、`TZ=UTC`）。
 重新生成方法与约束见 `docs/PORTING.md`。
@@ -619,6 +643,7 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M5b ✅ | 证据 size/SHA-256 固化 + 实时校验路由 | 221 passed / 27 files（2026-10-25） |
 | M5c ✅ | 证据最小字节策略 + 跨重启持久化 conclude 队列 | 230 passed / 28 files（2026-10-25） |
 | M6 ✅ | session 保留策略、启动/周期 sweep、pending 对账、artifacts 刷新 | 242 passed / 30 files；跨进程恢复 gate 9/9（2026-10-25） |
+| M7 ✅ | 控制面审计账本：任务结束导入、逐任务哈希链、只读查询 | 258 passed / 33 files（2026-10-25） |
 
 ## 与 Phase 0 的关系
 

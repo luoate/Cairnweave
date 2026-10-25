@@ -141,6 +141,18 @@ export {
   type RecordPendingConcludeInput,
 } from "./pending-concludes";
 
+export {
+  AUDIT_GENESIS_HASH,
+  auditEventHash,
+  getTaskAudit,
+  listProjectAudit,
+  recordTaskAudit,
+  type AuditEvent,
+  type AuditTaskSummary,
+  type RecordTaskAuditInput,
+  type TaskAudit,
+} from "./audit";
+
 export { hashFileSha256 } from "./hashing";
 
 export {

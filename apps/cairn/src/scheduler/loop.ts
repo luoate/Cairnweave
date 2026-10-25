@@ -60,6 +60,7 @@ import { createRuntime, type RuntimeBackend, type WorkerProcess } from "../runti
 import { environmentSnapshot } from "../runtime/types";
 import { latestSolverSessionFile } from "../solver/session-file";
 import { collectEvidence, type EvidenceCollection } from "./evidence";
+import { ingestTaskAudit } from "./audit";
 import { scanSessionDirs, selectSessionsForRemoval } from "./retention";
 import {
   observerEnvironment,
@@ -1205,6 +1206,7 @@ export class Scheduler {
     }
 
     this.recordArtifacts(running);
+    this.recordAudit(running);
     this.recordRunFinish(
       running.runId,
       outcome,
@@ -1302,6 +1304,35 @@ export class Scheduler {
     } catch (error) {
       this.log(
         `artifact indexing failed project=${running.projectId} task=${running.taskId}: ${describe(error)}`,
+      );
+    }
+  }
+
+  /**
+   * The audit file is written by the worker and may be absent, malformed or huge.
+   * Ingestion is sidecar bookkeeping and must never change the task outcome.
+   */
+  private recordAudit(running: RunningTask): void {
+    try {
+      const result = ingestTaskAudit(this.db, {
+        projectId: running.projectId,
+        taskId: running.taskId,
+        sessionDir: running.sessionDir,
+      });
+      if (result.status === "recorded") {
+        this.log(
+          `audit ingested project=${running.projectId} task=${running.taskId} ` +
+            `events=${result.recorded} skipped=${result.skipped}` +
+            (result.truncated ? " truncated=true" : ""),
+        );
+      } else if (result.status === "unreadable") {
+        this.log(
+          `audit unreadable project=${running.projectId} task=${running.taskId}`,
+        );
+      }
+    } catch (error) {
+      this.log(
+        `audit ingest failed project=${running.projectId} task=${running.taskId}: ${describe(error)}`,
       );
     }
   }

@@ -134,6 +134,17 @@ CREATE TABLE IF NOT EXISTS pending_concludes (
     PRIMARY KEY (project_id, intent_id)
 );
 
+CREATE TABLE IF NOT EXISTS audit_events (
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    task_id TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    event TEXT NOT NULL,
+    prev_hash TEXT NOT NULL,
+    hash TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (project_id, task_id, seq)
+);
+
 CREATE TABLE IF NOT EXISTS counters (
     name TEXT PRIMARY KEY,
     value INTEGER NOT NULL DEFAULT 0

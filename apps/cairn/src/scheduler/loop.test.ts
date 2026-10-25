@@ -17,10 +17,12 @@ import {
   createProject,
   getFactMeta,
   getProjectDetail,
+  getTaskAudit,
   hashFileSha256,
   listFactEvidence,
   listPendingConcludes,
   listProjectArtifacts,
+  listProjectAudit,
   listProjectRuns,
   recordPendingConclude,
   type CairnDatabase,
@@ -112,6 +114,18 @@ function flakyScheduler(retainTaskFiles = true): Scheduler {
   return new Scheduler({
     db,
     config: flakyConfig,
+    workspaceRoot: join(directory, "workspace"),
+    log: (message) => logs.push(message),
+    leaseIntervalMs: 500,
+    workerArgv: (taskPath) => [process.execPath, fixture, taskPath],
+  });
+}
+
+function auditScheduler(): Scheduler {
+  const fixture = join(import.meta.dir, "testdata", "audit-worker.ts");
+  return new Scheduler({
+    db,
+    config,
     workspaceRoot: join(directory, "workspace"),
     log: (message) => logs.push(message),
     leaseIntervalMs: 500,
@@ -450,6 +464,36 @@ describe("scheduler with the fake solver", () => {
       const remaining = existsSync(sessions) ? readdirSync(sessions) : [];
       expect(remaining).toEqual([]);
       expect(logs.some((line) => line.includes("conclude queued"))).toBe(true);
+    },
+    30_000,
+  );
+
+  test(
+    "ingests worker audit into the control-plane ledger",
+    async () => {
+      const project = createProjectRow(true);
+      const loop = auditScheduler();
+      await loop.runUntilIdle();
+
+      const detail = load(project.project.id);
+      expect(detail.project.status).toBe("completed");
+
+      const summaries = db.withConn((conn) =>
+        listProjectAudit(conn, project.project.id),
+      );
+      expect(summaries.length).toBeGreaterThan(0);
+      for (const summary of summaries) {
+        expect(summary.event_count).toBe(1);
+        const audit = db.withConn((conn) =>
+          getTaskAudit(conn, project.project.id, summary.task_id),
+        );
+        expect(audit.chain_ok).toBe(true);
+        expect(audit.events[0]!.event).toMatchObject({
+          type: "tool_call",
+          decision: "allow",
+        });
+      }
+      expect(logs.some((line) => line.includes("audit ingested"))).toBe(true);
     },
     30_000,
   );

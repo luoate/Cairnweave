@@ -1,4 +1,4 @@
-# 架构（M6 更新）
+# 架构（M7 更新）
 
 本文固定合并后的角色边界、数据所有权和失败语义。实现以本文为准；需要改动时先改本文并
 记录原因。
@@ -37,6 +37,9 @@ M6 已落地：scheduler 在首次派发前跑一次 housekeeping sweep，之后
 待恢复 conclude 与所有 pending 行指向的目录；启动 sweep 同时对账
 `pending_concludes`，丢弃指向已完成项目、已结束 intent 或缺失会话的行。可选
 `retention.refresh_artifacts` 在同一轮重建 artifacts 索引并保留原 `task_id`。
+M7 已落地：任务结束时把 `audit.jsonl` 有界导入控制面 SQLite 的 `audit_events`，
+按 task 建立哈希链，并提供汇总/明细只读路由。审计因此不再依赖 session 目录存活；
+但导入发生在 finish 之后，worker 崩溃前的事件与伪造/漏写不在账本覆盖范围内。
 
 ## 1. 范围
 
@@ -56,7 +59,8 @@ M0–M3 的非目标：多用户认证、分布式存储、Web UI 重设计、�
 - 派发前确保项目沙箱存在（本地工作区或每项目容器），沙箱不可用时跳过而不是降级。
 - 为每个任务生成 `task.json`，拉起并监督 worker，读取并校验 `result.json`。
 - 任务结束后扫描 `<workspace>/artifacts/**` 并写入 `project_artifacts` 索引；Host Bridge
-  的 `audit.jsonl` 由 worker 进程写入 `sessionDir`。
+  的 `audit.jsonl` 由 worker 进程写入 `sessionDir`，控制面在任务结束时把它导入
+  `audit_events` 账本（有界、逐 task 哈希链）。导入失败只记日志，不改变任务结果。
 - `--config` 时还运行 housekeeping sweep：启动时（首次派发前）执行一次，之后按
   `retention.sweep_interval_seconds` 周期执行。sweep 对账 `pending_concludes`、清理
   过期/超额 session 目录，并可选刷新 artifacts 索引。保护信息读取失败时跳过本轮的
@@ -323,9 +327,9 @@ stderr 归档到 `sessionDir/{stdout,stderr}.log`。需要 UI 实时进度时再
   一样由控制面从 SQLite 读取。
 - 索引失败只记日志，不影响任务结果；下一次扫描会重建。
 
-### 5.6 runs、fact_meta、fact_evidence 与 pending_concludes
+### 5.6 runs、fact_meta、fact_evidence、pending_concludes 与 audit_events
 
-四张表都在 `packages/graph/src/db.ts` 中创建，既不属于图导出，也不参与任何既有命令：
+五张表都在 `packages/graph/src/db.ts` 中创建，既不属于图导出，也不参与任何既有命令：
 
 - `runs(id, project_id, task_id, kind, intent_id, worker, trigger, outcome, exit_code,
   started_at, finished_at, duration_ms, session, evidence_count, detail)`，按
@@ -340,6 +344,10 @@ stderr 归档到 `sessionDir/{stdout,stderr}.log`。需要 UI 实时进度时再
   `(project_id, intent_id)`，外键指向项目并级联删除。`phase` 是 `bootstrap |
   explore`；`session` 是失败任务的工作区相对会话目录，重启后由当前 workspace root
   重建宿主路径。插入是幂等的：同一 intent 重复失败不会重置已排队的 phase。
+- `audit_events(project_id, task_id, seq, event, prev_hash, hash, created_at)`，主键
+  `(project_id, task_id, seq)`，外键指向项目并级联删除。`event` 是规范化后的单行
+  JSON 文本；哈希输入为 `project_id\ntask_id\nseq\nprev_hash\nevent`，每个 task 的
+  首条 `prev_hash` 是 64 个 `0`。同一 task 已有行时导入整体跳过，不会分叉或续写。
 
 HTTP（只读，均在控制面进程内直接查库）：
 
@@ -352,6 +360,21 @@ HTTP（只读，均在控制面进程内直接查库）：
   `current_sha256`。`serve --config` 时用配置的 workspace root 校验；纯 HTTP 模式返回
   `unverified`。未知 Fact 或项目 404，无证据 Fact 返回 `[]`。校验是同步流式哈希，耗时
   与文件大小成正比；证据数量上限 20，响应不缓存结果。
+- `GET /projects/{id}/audit` → 每个已有账本的 task 一行
+  `{task_id,event_count,root_hash,first_at,last_at}`，按 `task_id` 排序；未知项目 404。
+- `GET /projects/{id}/audit/{task_id}` → `{task_id,event_count,chain_ok,broken_at,
+  root_hash,events}`。`events` 按 `seq` 排序，`event` 为解析后的 JSON（解析失败时保留
+  原文）；`chain_ok` 由控制面按存储文本重新计算，`broken_at` 是首个不匹配的 seq。
+  未知项目 404；该 task 没有账本时返回空链（`chain_ok:true`、`root_hash:null`）。
+
+审计导入的边界：
+
+- 只读取 `sessionDir/audit.jsonl` 这个普通文件，`lstat` 后拒绝符号链接与目录。
+- 最多读取 8 MiB、写入 10,000 条，单条文本上限 16K 字符；空行、非法 JSON、非对象和
+  超长行跳过。文件/条目超限时截断并在日志中标记，不报错。
+- 导入是 best-effort：数据库或文件错误只记日志，任务结果与 run 记录不受影响。
+  控制面崩溃导致未执行 `finish` 的任务不会自动补导；其 session 目录可能在后续
+  retention 中被删除。
 
 ### 5.7 session 保留与启动对账（M6）
 
@@ -590,6 +613,11 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
 - session 保留（M6）只删除 `<workspace>/.cairn/sessions` 的直接子目录，跳过符号链接；
   运行中任务与 pending 会话受保护。保护集合读取失败时整轮不删除（fail closed）。删除
   不可恢复，默认关闭两条规则；若要保留审计证据，应先备份或把 session 移出可清理范围。
+- 审计账本（M7）把 `audit.jsonl` 导入控制面 SQLite，因此 session 目录被清理后审计仍
+  可查询；逐 task 哈希链能发现账本行被改写或链接断裂。但事件仍由 worker 生成，导入只
+  证明“控制面在任务结束时看到了这些行”，不证明 worker 没有漏写或伪造；能改写数据库的
+  人也能重算整条链。它不是签名，也不是实时账本；控制面崩溃前未 `finish` 的事件不在
+  覆盖范围内。
 - Observer 看板是**建议性数据**，不是图事实：主 Solver 只读，真正结论仍必须写进
   `result.json` 并经控制面校验。看板的写保护只覆盖结构化文件工具与白名单；`bash` 可在
   工作区内改写它。看板不得存 flag、凭据、完整工具输出或与授权范围无关的数据。默认
@@ -617,8 +645,10 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
 4. Prompt group 是否在 M3 后彻底移除，还是保留给 fake/mock 集成测试。
 5. 本地模式的 `bash` 依赖：容器镜像自带 POSIX shell 与 `procps`；本地模式仍要求用户在
    Windows 安装 Git Bash/MSYS2/Cygwin/WSL 之一，是否注入跨平台 shell 替身待定。
-6. 强审计：`audit.jsonl` 目前写在 worker 可写目录。是否把审计事件逐行实时转发到控制面
-   （或由控制面只写账本）属于 M4 的安全增强。
+6. 强审计：M7 已在任务结束时把 `audit.jsonl` 有界导入控制面 SQLite（逐 task 哈希链），
+   审计不再依赖 worker 可写的 session 目录存活。但导入仍是**结束后**发生：worker
+   崩溃前的事件、worker 的漏写/伪造，以及能重写数据库的攻击者都不在防护范围内。
+   逐行实时转发到控制面，或由控制面在每次 `tool_call` 时直接判定并记账，仍是后续增强。
 7. 图切片的默认 caps（80 facts / 60 intents）尚未在真实大项目上调参；是否也对 reason
    启用切片、以及是否需要按 token 预算而非对象计数，待有真实数据后决定。
 8. Observer 看板的完整性：结构化文件工具的写保护已落地，但 `bash` 仍可写工作区内的

@@ -17,11 +17,13 @@ import {
   getFactMeta,
   getProjectDetail,
   getProjectOr404,
+  getTaskAudit,
   heartbeatIntent,
   heartbeatReason,
   intentToModel,
   listFactEvidence,
   listProjectArtifacts,
+  listProjectAudit,
   listProjectRuns,
   listProjects,
   nextFactId,
@@ -238,6 +240,16 @@ function buildRoutes(db: CairnDatabase, workspaceRoot?: string): Route[] {
 
   route("GET", "/projects/{project_id}/runs", ({ params }) =>
     db.withConn((conn) => json(listProjectRuns(conn, params["project_id"]!))),
+  );
+
+  route("GET", "/projects/{project_id}/audit", ({ params }) =>
+    db.withConn((conn) => json(listProjectAudit(conn, params["project_id"]!))),
+  );
+
+  route("GET", "/projects/{project_id}/audit/{task_id}", ({ params }) =>
+    db.withConn((conn) =>
+      json(getTaskAudit(conn, params["project_id"]!, params["task_id"]!)),
+    ),
   );
 
   route("GET", "/projects/{project_id}/facts/{fact_id}/meta", ({ params }) => {
