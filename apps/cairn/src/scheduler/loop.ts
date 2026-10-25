@@ -21,14 +21,19 @@ import {
   completeProject,
   concludeIntent,
   createIntent,
+  deletePendingConclude,
   exportProjectSliceYaml,
   exportProjectYaml,
   finishRun,
+  getPendingConclude,
   getProjectDetail,
   getProjectScope,
+  hasPendingConclude,
   heartbeatIntent,
+  isPendingConcludeSession,
   listProjects,
   nextRunId,
+  recordPendingConclude,
   releaseIntent,
   releaseReason,
   recordProjectArtifacts,
@@ -38,6 +43,7 @@ import {
   utcnow,
   type CairnDatabase,
   type Intent,
+  type PendingConcludeRow,
   type ProjectDetail,
   type ProjectScope,
   type ProjectSummary,
@@ -143,8 +149,6 @@ export class Scheduler {
   private readonly leaseIntervalMs: number;
 
   private readonly running = new Map<string, RunningTask>();
-  /** Keyed by `<projectId>:<intentId>`; survives only in this scheduler process. */
-  private readonly pendingConcludes = new Map<string, PendingConclude>();
   private readonly checkpoints = new Map<string, ReasonCheckpoint>();
   private readonly loggedSkips = new Set<string>();
   private readonly processes = new Map<string, WorkerProcess>();
@@ -764,7 +768,9 @@ export class Scheduler {
     const evidence: EvidenceCollection =
       running.kind === "reason"
         ? { status: "missing", refs: [], files: [], invalid: [] }
-        : collectEvidence(result.evidence_refs, running.hostWorkspace);
+        : collectEvidence(result.evidence_refs, running.hostWorkspace, {
+            minBytes: this.config.tasks.evidence.minBytes,
+          });
     if (evidence.invalid.length > 0) {
       const reasons = evidence.invalid
         .map((issue) => `${issue.ref || "<ref>"}: ${issue.reason}`)
@@ -973,7 +979,16 @@ export class Scheduler {
     // A conclude task is one salvage attempt. Whether it succeeded or failed, the queued
     // entry is done; a failure releases the intent for the normal explore path.
     if (running.kind === "conclude" && running.intentId !== undefined) {
-      this.pendingConcludes.delete(pendingKey(running.projectId, running.intentId));
+      try {
+        this.db.withConn((conn) =>
+          deletePendingConclude(conn, running.projectId, running.intentId!),
+        );
+      } catch (error) {
+        this.log(
+          `pending conclude cleanup failed project=${running.projectId} ` +
+            `intent=${running.intentId}: ${describe(error)}`,
+        );
+      }
     }
 
     this.recordArtifacts(running);
@@ -1002,17 +1017,34 @@ export class Scheduler {
     }
 
     if (!this.config.worker.retainTaskFiles) {
-      this.removeTaskDir(running.sessionDir);
+      this.removeTaskDir(running.projectId, running.sessionDir);
       // The failed task's directory was kept alive for the conclude; now that the salvage
       // attempt is over, it follows the same retention policy.
       if (running.resumeSessionDir !== undefined) {
-        this.removeTaskDir(running.resumeSessionDir);
+        this.removeTaskDir(running.projectId, running.resumeSessionDir);
       }
     }
   }
 
-  private removeTaskDir(hostSessionDir: string): void {
-    if (this.isPendingSession(hostSessionDir)) return;
+  private removeTaskDir(projectId: string, hostSessionDir: string): void {
+    const workspace = projectWorkspace(this.workspaceRoot, projectId);
+    const session = workspaceReference(workspace, hostSessionDir);
+    try {
+      if (
+        this.db.withConn((conn) =>
+          isPendingConcludeSession(conn, projectId, session),
+        )
+      ) {
+        return;
+      }
+    } catch (error) {
+      // Fail closed: without a definite answer, keep the directory rather than delete a
+      // session a queued conclude still needs.
+      this.log(
+        `retention check failed project=${projectId} session=${session}: ${describe(error)}`,
+      );
+      return;
+    }
     try {
       rmSync(hostSessionDir, { recursive: true, force: true });
     } catch {
@@ -1020,18 +1052,19 @@ export class Scheduler {
     }
   }
 
-  private isPendingSession(hostSessionDir: string): boolean {
-    for (const pending of this.pendingConcludes.values()) {
-      if (pending.hostSessionDir === hostSessionDir) return true;
-    }
-    return false;
-  }
-
   /** Forget a queued conclude and release its retained directory per retention policy. */
   private dropPending(projectId: string, pending: PendingConclude): void {
-    this.pendingConcludes.delete(pendingKey(projectId, pending.intentId));
+    try {
+      this.db.withConn((conn) =>
+        deletePendingConclude(conn, projectId, pending.intentId),
+      );
+    } catch (error) {
+      this.log(
+        `drop pending failed project=${projectId} intent=${pending.intentId}: ${describe(error)}`,
+      );
+    }
     if (!this.config.worker.retainTaskFiles) {
-      this.removeTaskDir(pending.hostSessionDir);
+      this.removeTaskDir(projectId, pending.hostSessionDir);
     }
   }
 
@@ -1136,25 +1169,44 @@ export class Scheduler {
       );
       return false;
     }
-    const key = pendingKey(running.projectId, running.intentId);
-    if (this.pendingConcludes.has(key)) return true;
-    this.pendingConcludes.set(key, {
-      intentId: running.intentId,
-      of: running.kind,
-      hostSessionDir: running.sessionDir,
-    });
+    const { projectId, intentId, kind } = running;
+    const session = workspaceReference(running.hostWorkspace, running.sessionDir);
+    let alreadyQueued: boolean;
+    try {
+      alreadyQueued = this.db.withConn((conn) => {
+        if (hasPendingConclude(conn, projectId, intentId)) return true;
+        recordPendingConclude(conn, { projectId, intentId, phase: kind, session });
+        return false;
+      });
+    } catch (error) {
+      this.log(`conclude queue failed task=${running.taskId}: ${describe(error)}`);
+      return false;
+    }
+    if (alreadyQueued) return true;
     this.log(
-      `conclude queued project=${running.projectId} intent=${running.intentId} ` +
-        `phase=${running.kind} reason=${why} session=${sessionFile}`,
+      `conclude queued project=${projectId} intent=${intentId} ` +
+        `phase=${kind} reason=${why} session=${sessionFile}`,
     );
     return true;
   }
 
   private pendingConcludeFor(projectId: string): PendingConclude | undefined {
-    for (const [key, pending] of this.pendingConcludes) {
-      if (key.startsWith(`${projectId}:`)) return pending;
+    let row: PendingConcludeRow | null;
+    try {
+      row = this.db.withConn((conn) => getPendingConclude(conn, projectId));
+    } catch (error) {
+      this.log(`pending conclude load failed project=${projectId}: ${describe(error)}`);
+      return undefined;
     }
-    return undefined;
+    if (row === null) return undefined;
+    // Rebuild from the current workspace root: the stored path is relative, so the queue
+    // keeps working if the control plane restarts with a different root.
+    const workspace = projectWorkspace(this.workspaceRoot, projectId);
+    return {
+      intentId: row.intent_id,
+      of: row.phase,
+      hostSessionDir: join(workspace, ...row.session.split("/")),
+    };
   }
 
   private isIntentRunning(projectId: string, intentId: string): boolean {
@@ -1270,10 +1322,6 @@ export class Scheduler {
 /** Workspace-relative, forward-slash session path for the runs API (no host paths). */
 function workspaceReference(workspace: string, target: string): string {
   return relative(workspace, target).split(sep).join("/");
-}
-
-function pendingKey(projectId: string, intentId: string): string {
-  return `${projectId}:${intentId}`;
 }
 
 function isInitialProject(project: ProjectDetail): boolean {

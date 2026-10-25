@@ -55,11 +55,20 @@ export interface GraphSliceConfig {
   maxIntents: number;
 }
 
+export interface EvidenceConfig {
+  /**
+   * Smallest accepted evidence file in bytes; 0 disables the check. Empty and tiny
+   * files are usually placeholders, so the default rejects zero-byte evidence.
+   */
+  minBytes: number;
+}
+
 export interface TasksConfig {
   bootstrap: BootstrapTaskConfig;
   reason: ReasonTaskConfig;
   explore: ExploreTaskConfig;
   graphSlice: GraphSliceConfig;
+  evidence: EvidenceConfig;
 }
 
 export const DEFAULT_GRAPH_SLICE: GraphSliceConfig = {
@@ -67,6 +76,8 @@ export const DEFAULT_GRAPH_SLICE: GraphSliceConfig = {
   maxFacts: 80,
   maxIntents: 60,
 };
+
+export const DEFAULT_EVIDENCE: EvidenceConfig = { minBytes: 1 };
 
 export type ObserverTaskKind = "bootstrap" | "reason" | "explore" | "conclude";
 
@@ -339,6 +350,18 @@ function parseTasks(value: unknown): TasksConfig {
     graphSlice: has(tasks, "graph_slice")
       ? parseGraphSlice(tasks["graph_slice"])
       : { ...DEFAULT_GRAPH_SLICE },
+    evidence: has(tasks, "evidence")
+      ? parseEvidence(tasks["evidence"])
+      : { ...DEFAULT_EVIDENCE },
+  };
+}
+
+function parseEvidence(value: unknown): EvidenceConfig {
+  const evidence = recordAt(value, "tasks.evidence");
+  return {
+    minBytes: has(evidence, "min_bytes")
+      ? nonNegativeInt(evidence["min_bytes"], "tasks.evidence.min_bytes")
+      : DEFAULT_EVIDENCE.minBytes,
   };
 }
 

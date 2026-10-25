@@ -13,13 +13,16 @@ import { join } from "node:path";
 
 import {
   configureDatabase,
+  createIntent,
   createProject,
   getFactMeta,
   getProjectDetail,
   hashFileSha256,
   listFactEvidence,
+  listPendingConcludes,
   listProjectArtifacts,
   listProjectRuns,
+  recordPendingConclude,
   type CairnDatabase,
   type ProjectDetail,
 } from "@cairn/graph";
@@ -335,6 +338,60 @@ describe("scheduler with the fake solver", () => {
       expect(logs.some((line) => line.includes("phase=bootstrap"))).toBe(true);
     },
     60_000,
+  );
+
+  test(
+    "dispatches a conclude queued by a previous process",
+    async () => {
+      const project = createProjectRow(false);
+      const intent = db.withConn((conn) =>
+        createIntent(conn, project.project.id, {
+          from: ["origin"],
+          description: "queued before restart",
+          creator: "tester",
+          worker: null,
+        }),
+      );
+      const session = ".cairn/sessions/explore-restart";
+      const workspace = join(directory, "workspace", project.project.id);
+      mkdirSync(join(workspace, ...session.split("/"), "solver-session"), {
+        recursive: true,
+      });
+      writeFileSync(
+        join(workspace, ...session.split("/"), "solver-session", "session.jsonl"),
+        "{}\n",
+        "utf8",
+      );
+      db.withConn((conn) =>
+        recordPendingConclude(conn, {
+          projectId: project.project.id,
+          intentId: intent.id,
+          phase: "explore",
+          session,
+        }),
+      );
+      expect(
+        db.withConn((conn) => listPendingConcludes(conn, project.project.id)),
+      ).toHaveLength(1);
+
+      // A fresh scheduler has no in-memory queue: the row alone must drive dispatch.
+      const loop = scheduler();
+      await loop.runUntilIdle();
+
+      expect(logs.some((line) => line.includes("dispatched conclude"))).toBe(true);
+      const runs = db.withConn((conn) => listProjectRuns(conn, project.project.id));
+      expect(
+        runs.some((run) => run.kind === "conclude" && run.outcome === "success"),
+      ).toBe(true);
+      expect(
+        db.withConn((conn) => listPendingConcludes(conn, project.project.id)),
+      ).toEqual([]);
+      const concluded = load(project.project.id).intents.find(
+        (entry) => entry.id === intent.id,
+      );
+      expect(concluded?.to).not.toBeNull();
+    },
+    30_000,
   );
 
   test(

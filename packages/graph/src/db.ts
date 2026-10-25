@@ -125,6 +125,15 @@ CREATE TABLE IF NOT EXISTS fact_evidence (
     FOREIGN KEY (fact_id, project_id) REFERENCES facts(id, project_id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS pending_concludes (
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    intent_id TEXT NOT NULL,
+    phase TEXT NOT NULL,
+    session TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (project_id, intent_id)
+);
+
 CREATE TABLE IF NOT EXISTS counters (
     name TEXT PRIMARY KEY,
     value INTEGER NOT NULL DEFAULT 0

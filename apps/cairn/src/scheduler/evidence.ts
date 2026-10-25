@@ -18,8 +18,14 @@ import {
 
 const MAX_EVIDENCE_REFS = 20;
 const MAX_REF_LENGTH = 512;
+const DEFAULT_MIN_BYTES = 1;
 
 export type EvidenceStatus = "provided" | "missing";
+
+export interface EvidenceOptions {
+  /** Reject files smaller than this many bytes; 0 disables the check. */
+  minBytes?: number;
+}
 
 export interface EvidenceIssue {
   ref: string;
@@ -42,6 +48,7 @@ export interface EvidenceCollection {
 export function collectEvidence(
   refs: readonly string[] | undefined,
   workspace: string,
+  options: EvidenceOptions = {},
 ): EvidenceCollection {
   if (refs === undefined || refs.length === 0) {
     return { status: "missing", refs: [], files: [], invalid: [] };
@@ -54,6 +61,7 @@ export function collectEvidence(
       invalid: [{ ref: "", reason: `too many evidence refs (max ${MAX_EVIDENCE_REFS})` }],
     };
   }
+  const minBytes = options.minBytes ?? DEFAULT_MIN_BYTES;
 
   let realWorkspace: string;
   try {
@@ -71,7 +79,7 @@ export function collectEvidence(
   const files: EvidenceFile[] = [];
   const invalid: EvidenceIssue[] = [];
   for (const raw of refs) {
-    const checked = checkRef(raw, realWorkspace);
+    const checked = checkRef(raw, realWorkspace, minBytes);
     if ("reason" in checked) {
       invalid.push({ ref: raw, reason: checked.reason });
       continue;
@@ -109,7 +117,7 @@ export function verifyEvidenceFiles(
         current_sha256: null,
       };
     }
-    const checked = checkRef(stored.path, realWorkspace);
+    const checked = checkRef(stored.path, realWorkspace, 0);
     if ("reason" in checked) {
       return {
         ...stored,
@@ -133,7 +141,7 @@ export function verifyEvidenceFiles(
 
 type RefResult = { file: EvidenceFile } | { reason: string };
 
-function checkRef(raw: string, realWorkspace: string): RefResult {
+function checkRef(raw: string, realWorkspace: string, minBytes: number): RefResult {
   if (raw.length > MAX_REF_LENGTH) return { reason: "path is too long" };
   const normalized = raw.replaceAll("\\", "/").trim();
   if (normalized === "") return { reason: "path is empty" };
@@ -166,10 +174,13 @@ function checkRef(raw: string, realWorkspace: string): RefResult {
     return { reason: "resolved path escapes the workspace" };
   }
 
-  let sha256: string;
   try {
-    sha256 = hashFileSha256(realTarget);
-    return { file: { path: ref, size: lstatSync(realTarget).size, sha256 } };
+    const size = lstatSync(realTarget).size;
+    if (minBytes > 0 && size < minBytes) {
+      const unit = minBytes === 1 ? "byte" : "bytes";
+      return { reason: `file is smaller than the minimum evidence size (${minBytes} ${unit})` };
+    }
+    return { file: { path: ref, size, sha256: hashFileSha256(realTarget) } };
   } catch {
     return { reason: "file is not readable" };
   }

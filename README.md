@@ -4,7 +4,7 @@
 skills / Observer）合并成**一个 Bun/TypeScript 代码库**，不再维护 Python ↔ TypeScript
 之间的进程桥、JSONL RPC 和 worker 适配器。
 
-状态：**M5b（证据哈希固化 + 实时校验已落地）**；M0–M4 与 M5a 的计划项全部完成。
+状态：**M5c（证据最小大小 + conclude 队列持久化已落地）**；M0–M4、M5a、M5b 的计划项全部完成。
 `cairn serve` 是可运行的 Cairn 兼容服务：SQLite schema、领域服务、全部五个路由、
 YAML/timeline 导出、静态 Web UI 均已就位，并用 Python Cairn 生成的 golden 做了逐字
 对照。进程内 scheduler、任务/结果文件 worker 协议、BreachWeave Solver 接入已在 M2
@@ -70,6 +70,16 @@ M5b 增加：
   `unverified`，仍能看到写入时摘要。
 - 校验不会跟随符号链接或越出工作区；摘要只证明“结论时文件内容如此”，不证明文件是
   任务生成或未被提前篡改。
+
+M5c 增加：
+
+- **最小证据大小**：`tasks.evidence.min_bytes`（默认 `1`，`0` 关闭）在写图前拒绝空文件
+  和极小文件；被拒绝的引用按非法证据处理，任务失败。该校验只发生在接受阶段，实时
+  校验仍只比较内容漂移。
+- **持久化 conclude 队列**：失败 explore/bootstrap 排队的 conclude 写入
+  `pending_concludes` 旁路表（项目、意图、phase、工作区相对的会话路径）。控制面重启
+  后仍优先派发，会话路径按当前 workspace root 重建；conclude 结束、意图失效或准备
+  失败时删除行，项目删除级联清理。
 
 默认仍是确定性 fake solver，测试与离线运行不需要模型凭据。Observer 只接在
 `CAIRN_SOLVER=breachweave` 的真实 Solver 路径上，fake solver 会忽略它。
@@ -148,6 +158,7 @@ packages/graph/          schema、领域模型、服务、命令、导出、YAML
   src/hashing.ts         流式 SHA-256（artifacts 与证据共用）
   src/runs.ts            runs / fact_meta 旁路表读写
   src/fact-evidence.ts   fact_evidence 内容摘要读写
+  src/pending-concludes.ts 跨重启的 conclude 队列
   src/export.ts          YAML、timeline 与图切片导出
   src/yaml.ts            PyYAML 兼容的 block-style 发射器
   testdata/              Python 生成的 golden
@@ -289,6 +300,8 @@ payload，因此既有校验和 golden 响应不变）：
 
 - 控制面在写图前校验每条路径：非空、≤512 字符、最多 20 条，拒绝绝对路径、盘符、
   `..`、NUL、目录、符号链接、不存在与 realpath 越界；通过后统一为 `/` 并去重。
+- 证据文件默认至少要 1 字节（`tasks.evidence.min_bytes`，`0` 关闭）：空文件通常是
+  占位符，声明了却无法提供内容时按非法证据失败。
 - 省略或空数组 → `evidence_status: "missing"`，任务照常完成；声称了但有一条非法 →
   任务失败。reason 任务不产出 Fact，不要求证据。
 - 每个任务一行 `runs`（成功/失败/取消/lease 丢失都记录），每个任务产出的 Fact 一行
@@ -441,9 +454,9 @@ bootstrap 任务，预置一条 pending idea，并检查主 solver 只使用只�
 CAIRN_GATE_KEEP=1 bun run tools/gate/m4c-observer-gate.ts
 ```
 
-## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b，2026-10-25，Bun 1.4.4）
+## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c，2026-10-25，Bun 1.4.4）
 
-- `bun test`：**221 passed**（27 个文件），0 failed。
+- `bun test`：**230 passed**（28 个文件），0 failed。
 - `bun run typecheck`：`tsc --noEmit` 通过。
 - **HTTP 对照**：`api.golden.json` 的 60 步请求（成功路径、400/403/404/405/409、租约过期、
   删除级联、导出、路由错误）由 Python FastAPI + 固定时钟生成；TS 重放后状态码、content-type
@@ -455,7 +468,8 @@ CAIRN_GATE_KEEP=1 bun run tools/gate/m4c-observer-gate.ts
   均与 Python 版逐字一致；含中文、引号、换行、`{origin}` 字面量与替换顺序用例。
 - **配置校验**：`dispatch.example.yaml` 可加载；未知顶层键、旧 `workers` 段、并发上限、
   容器模式缺少 `container`、prompt 组/占位符缺失均报错；`tasks.graph_slice` 的默认值
-  （关闭，80/60）与非法 caps 均有断言。
+  （关闭，80/60）与非法 caps 均有断言；`tasks.evidence.min_bytes` 的默认值、`0` 关闭
+  与负值/非整数拒绝也有覆盖。
 - **契约解析**：宽容 JSON 提取（整段、fence、前后散文、字符串内大括号、嵌套对象、
   先坏后好）与四个 payload 校验器覆盖 Cairn 的接受范围和错误文本。
 - **scheduler 端到端**：真实拉起 `cairn worker` 子进程（fake solver）。非 bootstrap 项目
@@ -466,7 +480,8 @@ CAIRN_GATE_KEEP=1 bun run tools/gate/m4c-observer-gate.ts
   conclude 任务带 `resumeSessionDir` 与 `concludeOf`、explore 两个 intent 都被结束；
   bootstrap conclude 只产出一个 Fact 而不把项目标记为完成。另有一条
   `retain_task_files: false` 用例，断言 conclude 结束后失败任务与 conclude 任务两个
-  session 目录都被删除。
+  session 目录都被删除。M5c 另用预置的 `pending_concludes` 行 + 新 Scheduler 实例
+  验证重启后无需内存状态即可派发 conclude，并在结束后清空队列。
 - **图切片**：4 条导出单测覆盖 focus intent/来源、其他未结束 intent、确定性与全图不变、
   极小 caps 下仍保留硬性内容并置 `truncated: true`、未知 focus 报错；scheduler 测试确认
   开启后 explore 快照含 `slice:` 段而 reason 快照仍是全图。
@@ -532,6 +547,9 @@ CAIRN_GATE_KEEP=1 bun run tools/gate/m4c-observer-gate.ts
   workspace 不存在时的 `unreadable`。HTTP 测试覆盖未改动、篡改、删除、无 workspace
   root 的 `unverified`、无证据 Fact 的空数组、未知 Fact/项目 404；scheduler 端到端
   断言 `fact_evidence` 行的摘要与实际文件逐字一致。
+- **最小证据与持久化队列（M5c）**：默认拒绝 0 字节文件，`min_bytes` 的边界（等于阈值
+  接受、小于阈值拒绝）与 `0` 关闭均有断言；`pending_concludes` 覆盖去重、排序、删除、
+  会话查找、未知项目 404 与项目级联删除。
 
 golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定时钟、`TZ=UTC`）。
 重新生成方法与约束见 `docs/PORTING.md`。
@@ -565,6 +583,7 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | **M4** | Observer | 完成（M4c）；设计与已知限制见 `docs/OBSERVER.md` |
 | M5a ✅ | 证据门控 + `runs` / `fact_meta` 旁路表 + 两个只读路由 | 210 passed / 26 files；图/YAML/golden 响应不变（2026-10-25） |
 | M5b ✅ | 证据 size/SHA-256 固化 + 实时校验路由 | 221 passed / 27 files（2026-10-25） |
+| M5c ✅ | 证据最小字节策略 + 跨重启持久化 conclude 队列 | 230 passed / 28 files（2026-10-25） |
 
 ## 与 Phase 0 的关系
 

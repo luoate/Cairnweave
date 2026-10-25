@@ -1,4 +1,4 @@
-# 架构（M5b 更新）
+# 架构（M5c 更新）
 
 本文固定合并后的角色边界、数据所有权和失败语义。实现以本文为准；需要改动时先改本文并
 记录原因。
@@ -29,7 +29,9 @@ sidecar（`packages/agent/src/solver/extension/cairn-observer/`）；主 solver 
 不变，新数据只进旁路表。M5b 已落地：接受证据时流式计算 size/SHA-256 并写入
 `fact_evidence`；`GET /projects/{id}/facts/{fact_id}/evidence` 用当前工作区重算摘要，
 返回 `ok | modified | missing | unreadable | invalid`（无 workspace root 时为
-`unverified`）。摘要只代表写入时的内容快照，不是签名。
+`unverified`）。摘要只代表写入时的内容快照，不是签名。M5c 已落地：默认拒绝 0 字节
+证据（`tasks.evidence.min_bytes`），并把失败任务的 conclude 队列写入
+`pending_concludes`，使控制面重启后仍能优先派发；会话路径以工作区相对路径存储。
 
 ## 1. 范围
 
@@ -79,7 +81,7 @@ scheduler 与 HTTP API 共用 `packages/graph/src/commands.ts` 的命令，不�
 | 数据 | 写入者 | 读取者 | 位置 |
 | --- | --- | --- | --- |
 | SQLite（projects/facts/intents/hints/settings/project_scopes/project_artifacts） | 控制面 | 控制面 | 控制面主机 |
-| SQLite 旁路表（`runs` / `fact_meta` / `fact_evidence`） | 控制面（不进入图模型与 YAML） | 控制面 | 控制面主机 |
+| SQLite 旁路表（`runs` / `fact_meta` / `fact_evidence` / `pending_concludes`） | 控制面（不进入图模型与 YAML） | 控制面 | 控制面主机 |
 | `graph.yaml` 快照 | 控制面 | worker | 项目工作区/容器内绝对路径 |
 | `task.json` | 控制面 | worker | `sessionDir` |
 | `result.json` | worker（临时文件 + rename 原子写） | 控制面 | `sessionDir` |
@@ -103,6 +105,8 @@ scheduler 与 HTTP API 共用 `packages/graph/src/commands.ts` 的命令，不�
    项目优先续派，其余按轮转顺序取空闲项目，受 `max_workers` /
    `max_running_projects` / `max_project_workers` 约束。
 2. 决定任务种类（与 Cairn 相同）：
+   - 先看 `pending_concludes`：失败 explore/bootstrap 排队的 conclude 优先于新工作；
+     该行在 conclude 结束或意图失效前一直保留，控制面重启后同样生效；
    - 初始项目（只有 origin/goal）：`bootstrap_enabled` → bootstrap（先建
      `creator=dispatcher.bootstrap` 的意图）；否则 reason，trigger=`initial`；
    - 非初始项目：若没有 reason 在跑，按检查点算 trigger（`facts:x->y`、`hints:x->y`、
@@ -143,18 +147,17 @@ scheduler 与 HTTP API 共用 `packages/graph/src/commands.ts` 的命令，不�
    subagent 会话时动态加载该模块。缺少任一环境变量时拒绝启动。
 7. 控制面在 `worker.result_grace_seconds` 内轮询结果文件；退出码非 0、文件缺失或非法
    JSON 都按失败处理。若失败的是 explore/bootstrap，且该任务目录下存在
-   `solver-session/*.jsonl`，控制面**保留租约**并把 `<projectId>:<intentId>` 放入内存
-   pending 队列；否则释放租约。没有 session（例如模型还没产出任何 assistant 消息）时
-   无法 conclude，按 Cairn 原语义释放 intent。
+   `solver-session/*.jsonl`，控制面**保留租约**并把一行 `pending_concludes`
+   （项目、意图、phase、工作区相对的会话路径）写入旁路表；否则释放租约。没有 session
+   （例如模型还没产出任何 assistant 消息）时无法 conclude，按 Cairn 原语义释放 intent。
 8. 下一个 tick 优先派发 pending conclude（先于初始项目判断，避免失败 intent 被立刻
    重派 explore）：它把失败任务的 session 目录作为 `resumeSessionDir`，
    `SessionManager.open` 打开最新 JSONL 并追加 `explore_conclude` /
    `bootstrap_conclude` prompt。conclude 的硬截止取
    `bootstrap.conclude_timeout` 或 `explore.conclude_timeout`，不设 soft deadline，也不
    参与 reason 检查点。explore conclude 的图快照也按同一 intent 切片（若启用）；
-   bootstrap conclude 与 reason 一样拿全图。pending 队列只在控制面进程内：控制面重启后
-   条目丢失，失败任务的租约到期后由 scheduler 按正常流程重派 explore；不承诺跨重启的
-   conclude。
+   bootstrap conclude 与 reason 一样拿全图。队列行在 conclude 结束、意图失效或任务准备
+   失败时删除；控制面重启后行仍在，按存储的相对路径重建宿主会话目录并继续派发。
 9. 应用结果（同一事务）。写图前先校验证据（见 §4.1）：reason 不要求证据；其余 kind 的
    `evidence_refs` 只要有任一条非法，本任务按失败处理、不写图（explore/bootstrap 仍可走
    conclude 回退）。校验通过后：
@@ -216,6 +219,8 @@ M5a/M5b 只增加旁路数据，不改图模型、YAML 导出和既有 HTTP 响�
 - **路径校验**（`scheduler/evidence.ts`）：逐条要求非空字符串、长度 ≤512、最多 20 条，
   拒绝 NUL、绝对路径/盘符、`..`、目录、符号链接；先按工作区做词法包含检查，再用
   realpath 复核，防止链接逃逸。通过后反斜杠统一为 `/` 并去重。
+- **最小大小**：默认拒绝小于 1 字节的证据（`tasks.evidence.min_bytes`，`0` 关闭），
+  空文件因此按非法证据失败；阈值只在接受阶段生效，`/evidence` 校验不受影响。
 - **软/硬语义**：没有 `evidence_refs`（或空数组）不算失败，记为
   `evidence_status: "missing"`；只要声称了但有一条非法，任务失败（fail closed），
   explore/bootstrap 的既有 conclude 回退仍适用。reason 任务不产出 Fact，不要求证据。
@@ -307,9 +312,9 @@ stderr 归档到 `sessionDir/{stdout,stderr}.log`。需要 UI 实时进度时再
   一样由控制面从 SQLite 读取。
 - 索引失败只记日志，不影响任务结果；下一次扫描会重建。
 
-### 5.6 runs、fact_meta 与 fact_evidence
+### 5.6 runs、fact_meta、fact_evidence 与 pending_concludes
 
-三张表都在 `packages/graph/src/db.ts` 中创建，既不属于图导出，也不参与任何既有命令：
+四张表都在 `packages/graph/src/db.ts` 中创建，既不属于图导出，也不参与任何既有命令：
 
 - `runs(id, project_id, task_id, kind, intent_id, worker, trigger, outcome, exit_code,
   started_at, finished_at, duration_ms, session, evidence_count, detail)`，按
@@ -320,6 +325,10 @@ stderr 归档到 `sessionDir/{stdout,stderr}.log`。需要 UI 实时进度时再
 - `fact_evidence(project_id, fact_id, path, size, sha256, created_at)`，主键
   `(project_id, fact_id, path)`，外键指向 Fact 并级联删除。路径是写入时规范化后的
   工作区相对路径；只存摘要，不存内容。
+- `pending_concludes(project_id, intent_id, phase, session, created_at)`，主键
+  `(project_id, intent_id)`，外键指向项目并级联删除。`phase` 是 `bootstrap |
+  explore`；`session` 是失败任务的工作区相对会话目录，重启后由当前 workspace root
+  重建宿主路径。插入是幂等的：同一 intent 重复失败不会重置已排队的 phase。
 
 HTTP（只读，均在控制面进程内直接查库）：
 
@@ -428,6 +437,8 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
 - `tasks.graph_slice` 是新增的可选段：`enabled`（布尔，默认 `false`）、`max_facts`
   （整数 ≥ 2，默认 80）、`max_intents`（正整数，默认 60）。缺省即保持全图行为；非法值
   在启动时以 `ConfigError` 拒绝。
+- `tasks.evidence.min_bytes` 控制接受证据的最小字节数（非负整数，默认 `1`，`0` 关闭）。
+  缺省拒绝 0 字节文件；非法值在启动时以 `ConfigError` 拒绝。
 - `observer` 是新增的可选段（M4c，默认关闭）：`enabled`（布尔）、`model`
   （model-prefs 条目或 `null`）、`every_rounds` / `window_rounds` / `timeout_seconds`
   （正整数）、`max_reviews_per_task`（非负整数）、`kernel_tasks`（
@@ -557,8 +568,8 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
    `docker exec`，但共享工作区（包括 Observer 项目看板）的写冲突没有协调；提高并发前
    需要评估，或为看板增加跨任务锁/分片。
 3. ~~conclude 的会话恢复~~：M4a 已定为复用失败任务的 `sessionDir`，由
-   `SessionManager.open` 恢复最新 JSONL；是否会为 conclude 增加跨重启的持久化队列待定
-   （目前 pending 队列只在内存，重启后按租约过期重派）。
+   `SessionManager.open` 恢复最新 JSONL；M5c 已将 pending 队列持久化到
+   `pending_concludes`，重启后按行优先派发（不再依赖内存或租约过期重派）。
 4. Prompt group 是否在 M3 后彻底移除，还是保留给 fake/mock 集成测试。
 5. 本地模式的 `bash` 依赖：容器镜像自带 POSIX shell 与 `procps`；本地模式仍要求用户在
    Windows 安装 Git Bash/MSYS2/Cygwin/WSL 之一，是否注入跨平台 shell 替身待定。
@@ -570,7 +581,7 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
    看板；是否要对 bash 解析重定向/`tee`/脚本写入，或把看板移出 worker 可写挂载，待定。
    `tools/gate/m4c-observer-gate.ts` 已用真实模型跑通一次短 bootstrap（14/14），但长任务
    下的成本、延迟和看板质量仍需更多实测。
-9. 证据的强度：M5b 已把 size/SHA-256 固化到 `fact_evidence` 并提供实时校验，但仍不
-   要求证据在 Fact 之后保持存在，也不对“声称有证据但为空文件”设内容门槛；是否为
-   空文件/极小文件增加策略、以及是否引入控制面签名，待定。符号链接一律拒绝，在
-   Windows 上开发时会跳过依赖 symlink 的测试。
+9. 证据的强度：M5b 已把 size/SHA-256 固化到 `fact_evidence` 并提供实时校验；M5c 增加
+   `tasks.evidence.min_bytes`（默认拒绝 0 字节文件），但仍不要求证据在 Fact 之后保持
+   存在，也不检查内容是否真的支持结论。是否引入控制面签名、以及是否按任务类型设置
+   不同阈值，待定。符号链接一律拒绝，在 Windows 上开发时会跳过依赖 symlink 的测试。

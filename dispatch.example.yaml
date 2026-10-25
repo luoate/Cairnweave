@@ -56,6 +56,10 @@ tasks:
     enabled: false
     max_facts: 80
     max_intents: 60
+  # Reject evidence files smaller than this many bytes. Empty files are usually
+  # placeholders, so the default is 1; set 0 to accept empty evidence.
+  evidence:
+    min_bytes: 1
 
 worker:
   # Fraction of the hard deadline written as softDeadlineSeconds in task.json.

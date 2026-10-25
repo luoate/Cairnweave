@@ -44,6 +44,7 @@ describe("dispatcher config", () => {
       promptGroup: "default",
     });
     expect(config.tasks.reason.maxIntents).toBe(3);
+    expect(config.tasks.evidence).toEqual({ minBytes: 1 });
     expect(config.local).toEqual({ workspaceRoot: null, completedAction: "keep" });
     expect(config.container).toBeNull();
     expect(config.commonEnv).toEqual({});
@@ -84,6 +85,21 @@ describe("dispatcher config", () => {
     );
     expect(() => parse(BASE + "  graph_slice: {max_intents: 0}\n")).toThrow(
       "tasks.graph_slice.max_intents must be a positive integer",
+    );
+  });
+
+  test("parses and validates the evidence minimum size", () => {
+    expect(parse(BASE + "  evidence: {min_bytes: 0}\n").tasks.evidence).toEqual({
+      minBytes: 0,
+    });
+    expect(parse(BASE + "  evidence: {min_bytes: 12}\n").tasks.evidence).toEqual({
+      minBytes: 12,
+    });
+    expect(() => parse(BASE + "  evidence: {min_bytes: -1}\n")).toThrow(
+      "tasks.evidence.min_bytes must be a non-negative integer",
+    );
+    expect(() => parse(BASE + '  evidence: {min_bytes: "1"}\n')).toThrow(
+      "tasks.evidence.min_bytes must be a non-negative integer",
     );
   });
 

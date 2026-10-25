@@ -128,6 +128,18 @@ export {
   type RecordFactEvidenceInput,
 } from "./fact-evidence";
 
+export {
+  deletePendingConclude,
+  getPendingConclude,
+  hasPendingConclude,
+  isPendingConcludeSession,
+  listPendingConcludes,
+  recordPendingConclude,
+  type PendingConcludePhase,
+  type PendingConcludeRow,
+  type RecordPendingConcludeInput,
+} from "./pending-concludes";
+
 export { hashFileSha256 } from "./hashing";
 
 export {

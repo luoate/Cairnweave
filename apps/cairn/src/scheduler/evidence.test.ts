@@ -124,6 +124,48 @@ describe("evidence collection", () => {
       { ref: "", reason: "too many evidence refs (max 20)" },
     ]);
   });
+
+  test("rejects zero-byte evidence by default", () => {
+    writeFileSync(join(workspace, "artifacts", "empty.txt"), "", "utf8");
+    expect(collectEvidence(["artifacts/empty.txt"], workspace)).toEqual({
+      status: "missing",
+      refs: [],
+      files: [],
+      invalid: [
+        {
+          ref: "artifacts/empty.txt",
+          reason: "file is smaller than the minimum evidence size (1 byte)",
+        },
+      ],
+    });
+  });
+
+  test("honours a configured minimum and allows disabling it", () => {
+    writeFileSync(join(workspace, "artifacts", "empty.txt"), "", "utf8");
+    const rejected = collectEvidence(
+      ["artifacts/empty.txt", "artifacts/nested/dump.txt", "artifacts/scan.log"],
+      workspace,
+      { minBytes: 6 },
+    );
+    expect(rejected.status).toBe("provided");
+    expect(rejected.refs).toEqual(["artifacts/scan.log"]);
+    expect(rejected.invalid).toEqual([
+      {
+        ref: "artifacts/empty.txt",
+        reason: "file is smaller than the minimum evidence size (6 bytes)",
+      },
+      {
+        ref: "artifacts/nested/dump.txt",
+        reason: "file is smaller than the minimum evidence size (6 bytes)",
+      },
+    ]);
+
+    const disabled = collectEvidence(["artifacts/empty.txt"], workspace, { minBytes: 0 });
+    expect(disabled.status).toBe("provided");
+    expect(disabled.files).toEqual([
+      { path: "artifacts/empty.txt", size: 0, sha256: sha("") },
+    ]);
+  });
 });
 
 describe("evidence verification", () => {
