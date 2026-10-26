@@ -98,7 +98,13 @@ CREATE TABLE IF NOT EXISTS runs (
     duration_ms INTEGER,
     session TEXT,
     evidence_count INTEGER NOT NULL DEFAULT 0,
-    detail TEXT
+    detail TEXT,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+    total_tokens INTEGER NOT NULL DEFAULT 0,
+    cost_usd REAL NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS runs_project_started ON runs(project_id, started_at);
@@ -134,6 +140,62 @@ CREATE TABLE IF NOT EXISTS pending_concludes (
     PRIMARY KEY (project_id, intent_id)
 );
 
+-- Candidate graph changes submitted by an Observer/Strategist. The control plane reviews
+-- them; workers never write this table or the graph directly.
+CREATE TABLE IF NOT EXISTS proposals (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    task_id TEXT,
+    run_id TEXT,
+    source TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    dedupe_key TEXT,
+    evidence_refs TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL,
+    decision_reason TEXT,
+    applied_id TEXT,
+    created_at TEXT NOT NULL,
+    reviewed_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS proposals_project_status
+    ON proposals(project_id, status, created_at);
+
+-- Sidecar metadata for accepted intents. It keeps dedupe/source/provenance out of the
+-- Cairn graph and is also where Phase 2 can store priority/budget.
+CREATE TABLE IF NOT EXISTS intent_meta (
+    project_id TEXT NOT NULL,
+    intent_id TEXT NOT NULL,
+    dedupe_key TEXT,
+    source TEXT,
+    proposal_id TEXT,
+    origin_run_id TEXT,
+    priority INTEGER,
+    budget TEXT,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (project_id, intent_id),
+    FOREIGN KEY (intent_id, project_id) REFERENCES intents(id, project_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS intent_meta_dedupe
+    ON intent_meta(project_id, dedupe_key);
+
+-- Persistent slow-layer trigger state (M12a). The scheduler stores watermarks instead of
+-- keeping them in memory so a restart does not re-run reason for an unchanged graph.
+CREATE TABLE IF NOT EXISTS strategist_state (
+    project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+    last_success_at TEXT,
+    last_attempt_at TEXT,
+    last_failure_at TEXT,
+    last_trigger TEXT,
+    last_run_id TEXT,
+    last_fact_count INTEGER NOT NULL DEFAULT 0,
+    last_hint_count INTEGER NOT NULL DEFAULT 0,
+    last_open_intent_count INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS audit_events (
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     task_id TEXT NOT NULL,
@@ -143,6 +205,19 @@ CREATE TABLE IF NOT EXISTS audit_events (
     hash TEXT NOT NULL,
     created_at TEXT NOT NULL,
     PRIMARY KEY (project_id, task_id, seq)
+);
+
+-- One row per task whose live sender stopped before delivering everything. The finish-time
+-- audit.jsonl import remains the recovery path; this only makes the loss visible.
+CREATE TABLE IF NOT EXISTS audit_stream_lost (
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    task_id TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    delivered INTEGER NOT NULL,
+    pending INTEGER NOT NULL,
+    reported_at TEXT,
+    recorded_at TEXT NOT NULL,
+    PRIMARY KEY (project_id, task_id)
 );
 
 CREATE TABLE IF NOT EXISTS counters (
@@ -193,6 +268,8 @@ export function configureDatabase(path: string): CairnDatabase {
   database.withConn((conn) => {
     conn.exec(SCHEMA);
     ensureProjectColumns(conn);
+    ensureRunColumns(conn);
+    ensureIntentMetaColumns(conn);
   });
   return database;
 }
@@ -208,6 +285,42 @@ function ensureProjectColumns(conn: Database): void {
         "UPDATE projects SET bootstrap_enabled = CASE WHEN bootstrap_mode = 'disabled' THEN 0 ELSE 1 END",
       );
     }
+  }
+}
+
+/**
+ * M12b adds usage counters to `runs`. `CREATE TABLE IF NOT EXISTS` does not alter an
+ * existing table, so apply the same additive migration pattern as `projects`.
+ */
+function ensureRunColumns(conn: Database): void {
+  const columns = new Set(
+    all<{ name: string }>(conn, "PRAGMA table_info(runs)").map((row) => row.name),
+  );
+  const additions = [
+    ["input_tokens", "INTEGER NOT NULL DEFAULT 0"],
+    ["output_tokens", "INTEGER NOT NULL DEFAULT 0"],
+    ["cache_read_tokens", "INTEGER NOT NULL DEFAULT 0"],
+    ["cache_write_tokens", "INTEGER NOT NULL DEFAULT 0"],
+    ["total_tokens", "INTEGER NOT NULL DEFAULT 0"],
+    ["cost_usd", "REAL NOT NULL DEFAULT 0"],
+  ] as const;
+  for (const [name, definition] of additions) {
+    if (!columns.has(name)) {
+      conn.exec(`ALTER TABLE runs ADD COLUMN ${name} ${definition}`);
+    }
+  }
+}
+
+/**
+ * M13b adds the producing run to intent metadata so cost attribution can walk
+ * reason run → intent → fact. Existing rows stay null: provenance cannot be recovered.
+ */
+function ensureIntentMetaColumns(conn: Database): void {
+  const columns = new Set(
+    all<{ name: string }>(conn, "PRAGMA table_info(intent_meta)").map((row) => row.name),
+  );
+  if (!columns.has("origin_run_id")) {
+    conn.exec("ALTER TABLE intent_meta ADD COLUMN origin_run_id TEXT");
   }
 }
 

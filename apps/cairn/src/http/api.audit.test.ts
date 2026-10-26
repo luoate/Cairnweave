@@ -6,6 +6,7 @@ import { join } from "node:path";
 import {
   configureDatabase,
   createProject,
+  recordAuditStreamLoss,
   recordTaskAudit,
   run,
   type CairnDatabase,
@@ -128,5 +129,44 @@ describe("audit routes", () => {
 
     expect((await get("/projects/proj_999/audit")).status).toBe(404);
     expect((await get("/projects/proj_999/audit/explore-1")).status).toBe(404);
+  });
+
+  test("exposes live-stream loss without changing the audit chain response", async () => {
+    record("explore-1", [{ decision: "allow", tool: "read" }]);
+    db.withConn((conn) =>
+      recordAuditStreamLoss(conn, {
+        projectId,
+        taskId: "explore-1",
+        reason: "queue overflow",
+        delivered: 1,
+        pending: 2,
+        reportedAt: "2026-03-01T00:01:00Z",
+        recordedAt: "2026-03-01T00:02:00Z",
+      }),
+    );
+
+    const response = await get(`/projects/${projectId}/audit/explore-1/stream-lost`);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      task_id: "explore-1",
+      stream_lost: {
+        task_id: "explore-1",
+        reason: "queue overflow",
+        delivered: 1,
+        pending: 2,
+        reported_at: "2026-03-01T00:01:00Z",
+        recorded_at: "2026-03-01T00:02:00Z",
+      },
+    });
+
+    const empty = await get(`/projects/${projectId}/audit/missing/stream-lost`);
+    expect(empty.status).toBe(200);
+    expect(await empty.json()).toEqual({ task_id: "missing", stream_lost: null });
+
+    const audit = (await (await get(`/projects/${projectId}/audit/explore-1`)).json()) as
+      Record<string, unknown>;
+    expect(audit["stream_lost"]).toBeUndefined();
+
+    expect((await get("/projects/proj_999/audit/explore-1/stream-lost")).status).toBe(404);
   });
 });

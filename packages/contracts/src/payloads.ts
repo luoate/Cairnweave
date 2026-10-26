@@ -8,6 +8,17 @@
 
 type JsonObject = Record<string, unknown>;
 
+/** Priority assigned to a reason intent that does not specify one. */
+export const DEFAULT_INTENT_PRIORITY = 50;
+
+/** Optional reason-intent budget, stored in `intent_meta.budget` as JSON. */
+export interface ReasonIntentBudget {
+  /** Hard ceiling for this intent's task, capped by the configured kind timeout. */
+  max_seconds?: number;
+  /** Host Bridge tool-call ceiling for this task. */
+  max_tool_calls?: number;
+}
+
 export type ReasonPayloadResult =
   | { kind: "rejected"; data: null }
   | { kind: "complete"; data: JsonObject }
@@ -66,6 +77,8 @@ export function validateReasonPayload(
       if (!isObject(intent) || !hasOwn(intent, "from") || !hasOwn(intent, "description")) {
         throw new Error(`invalid intent at index ${index}`);
       }
+      validateIntentPriority(intent["priority"], index);
+      validateIntentBudget(intent["budget"], index);
     });
     if (intents.length === 0 && openIntentsEmpty) {
       throw new Error("intents must not be empty when open_intents is empty");
@@ -238,4 +251,40 @@ function requiredDescription(value: unknown, key: string): string {
     throw new Error(`${key}.description is required`);
   }
   return description.trim();
+}
+
+function validateIntentPriority(value: unknown, index: number): void {
+  if (value === undefined) return;
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 100) {
+    throw new Error(`intent priority at index ${index} must be an integer between 0 and 100`);
+  }
+}
+
+function validateIntentBudget(value: unknown, index: number): void {
+  if (value === undefined || value === null) return;
+  if (!isObject(value)) {
+    throw new Error(`intent budget at index ${index} must be an object`);
+  }
+  const allowed = new Set(["max_seconds", "max_tool_calls"]);
+  for (const key of Object.keys(value)) {
+    if (!allowed.has(key)) {
+      throw new Error(`unexpected intent budget key at index ${index}: ${key}`);
+    }
+  }
+  let fields = 0;
+  for (const key of ["max_seconds", "max_tool_calls"] as const) {
+    const field = value[key];
+    if (field === undefined) continue;
+    fields += 1;
+    if (typeof field !== "number" || !Number.isInteger(field) || field <= 0) {
+      throw new Error(
+        `intent budget.${key} at index ${index} must be a positive integer`,
+      );
+    }
+  }
+  if (fields === 0) {
+    throw new Error(
+      `intent budget at index ${index} must contain max_seconds or max_tool_calls`,
+    );
+  }
 }

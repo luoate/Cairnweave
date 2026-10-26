@@ -1,3 +1,17 @@
+/** Controls the sidecar's candidate-file writer; absent means proposals are off. */
+export interface CairnObserverProposalOptions {
+    /** Worker-view `<stateDir>/proposals`; the scheduler ingests it at task finish. */
+    dir: string
+    projectId: string
+    taskId: string
+    allowedKinds: string[]
+    maxPerTask: number
+    maxFileBytes: number
+    maxTotalBytes: number
+    minConfidence: number
+    requireEvidenceForFact: boolean
+}
+
 export interface CairnObserverOptions {
     /** Worker-view path to the compact project/focus snapshot written by the scheduler. */
     contextPath: string
@@ -11,6 +25,8 @@ export interface CairnObserverOptions {
     windowRounds: number
     timeoutSeconds: number
     maxReviewsPerTask: number
+    /** Candidate graph changes; absent when the control plane disabled proposals. */
+    proposals?: CairnObserverProposalOptions
 }
 
 export interface CairnObserverHandle {

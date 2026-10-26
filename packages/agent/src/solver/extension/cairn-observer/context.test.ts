@@ -11,6 +11,16 @@ const KEYS = [
     "CAIRN_OBSERVER_WINDOW_ROUNDS",
     "CAIRN_OBSERVER_TIMEOUT_SECONDS",
     "CAIRN_OBSERVER_MAX_REVIEWS_PER_TASK",
+    "CAIRN_OBSERVER_PROPOSALS_ENABLED",
+    "CAIRN_OBSERVER_PROPOSALS_DIR",
+    "CAIRN_OBSERVER_PROJECT_ID",
+    "CAIRN_OBSERVER_TASK_ID",
+    "CAIRN_OBSERVER_PROPOSALS_ALLOW_KINDS",
+    "CAIRN_OBSERVER_PROPOSALS_MAX_PER_TASK",
+    "CAIRN_OBSERVER_PROPOSALS_MAX_FILE_BYTES",
+    "CAIRN_OBSERVER_PROPOSALS_MAX_TOTAL_BYTES",
+    "CAIRN_OBSERVER_PROPOSALS_MIN_CONFIDENCE",
+    "CAIRN_OBSERVER_PROPOSALS_REQUIRE_EVIDENCE",
 ] as const
 
 const ORIGINAL = new Map<string, string | undefined>()
@@ -93,5 +103,41 @@ describe("Cairn observer environment contract", () => {
             timeoutSeconds: 60,
             maxReviewsPerTask: 8,
         })
+    })
+
+    test("reads the proposal writer contract only when enabled", () => {
+        process.env["CAIRN_OBSERVER_ENABLED"] = "1"
+        setPaths()
+        process.env["CAIRN_OBSERVER_PROPOSALS_ENABLED"] = "1"
+        process.env["CAIRN_OBSERVER_PROPOSALS_DIR"] = "/task/observer/proposals"
+        process.env["CAIRN_OBSERVER_PROJECT_ID"] = "p1"
+        process.env["CAIRN_OBSERVER_TASK_ID"] = "explore-1"
+        process.env["CAIRN_OBSERVER_PROPOSALS_ALLOW_KINDS"] = "hint, nope, fact"
+        process.env["CAIRN_OBSERVER_PROPOSALS_MAX_PER_TASK"] = "6"
+        process.env["CAIRN_OBSERVER_PROPOSALS_MAX_FILE_BYTES"] = "2048"
+        process.env["CAIRN_OBSERVER_PROPOSALS_MAX_TOTAL_BYTES"] = "4096"
+        process.env["CAIRN_OBSERVER_PROPOSALS_MIN_CONFIDENCE"] = "0.3"
+        process.env["CAIRN_OBSERVER_PROPOSALS_REQUIRE_EVIDENCE"] = "1"
+
+        expect(readCairnObserverOptionsFromEnv()?.proposals).toEqual({
+            dir: "/task/observer/proposals",
+            projectId: "p1",
+            taskId: "explore-1",
+            allowedKinds: ["hint", "fact"],
+            maxPerTask: 6,
+            maxFileBytes: 2048,
+            maxTotalBytes: 4096,
+            minConfidence: 0.3,
+            requireEvidenceForFact: true,
+        })
+    })
+
+    test("omits proposals when the contract is incomplete", () => {
+        process.env["CAIRN_OBSERVER_ENABLED"] = "1"
+        setPaths()
+        process.env["CAIRN_OBSERVER_PROPOSALS_ENABLED"] = "1"
+        process.env["CAIRN_OBSERVER_PROPOSALS_DIR"] = "/task/observer/proposals"
+        process.env["CAIRN_OBSERVER_PROJECT_ID"] = "p1"
+        expect(readCairnObserverOptionsFromEnv()?.proposals).toBeUndefined()
     })
 })

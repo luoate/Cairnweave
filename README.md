@@ -4,7 +4,11 @@
 skills / Observer）合并成**一个 Bun/TypeScript 代码库**，不再维护 Python ↔ TypeScript
 之间的进程桥、JSONL RPC 和 worker 适配器。
 
-状态：**M8（同项目并发协调已落地）**；M0–M4、M5a–M5c、M6、M7 的计划项全部完成。
+状态：**M13b（成本归因与因果链完成）**；M0–M4、M5a–M5c、M6–M11、M12a、M12b、
+M12c、M13a、M13b 的计划项全部完成。Phase 1 的“本地看板 + Observer 提案 + 证据门 + 单一
+写图者”闭环已具备；提案默认关闭。Phase 2 的触发持久化、意图优先级/预算、单项目 token/
+成本与并发配额、只读慢层观测、逐 Fact 成本归因与因果链也已落地，并已用真实模型 gate
+核对用量记账、预算耗尽、慢层 API 与 `/cost` 的一致性，见 `docs/STRATEGIST.md`。
 `cairn serve` 是可运行的 Cairn 兼容服务：SQLite schema、领域服务、全部五个路由、
 YAML/timeline 导出、静态 Web UI 均已就位，并用 Python Cairn 生成的 golden 做了逐字
 对照。进程内 scheduler、任务/结果文件 worker 协议、BreachWeave Solver 接入已在 M2
@@ -104,11 +108,13 @@ M7 增加：
   事件 JSON、`prev_hash`、`hash`）。哈希绑定项目/task/序号/前一条哈希/事件文本，
   每个 task 一条独立链。
 - **有界导入**：只接受普通文件（不跟随符号链接），最多 8 MiB / 10,000 条，单条
-  ≤16K 字符；空行、非 JSON、非对象和超长行跳过并计数。同一 task 已导入时不追加；
-  导入失败只记日志，不影响任务结果。
+  ≤16K 字符；空行、非 JSON、非对象和超长行跳过并计数。已有同内容前缀时不重复追加
+  （M9 起实时流留下的前缀由文件导入补写缺失后缀）；导入失败只记日志，不影响任务结果。
 - **只读查询**：`GET /projects/{id}/audit` 返回每个 task 的
   `event_count`/`root_hash`/时间范围；`GET /projects/{id}/audit/{task_id}` 返回事件
   与重新计算的 `chain_ok`/`broken_at`。未知项目 404，无记录的 task 返回空链。
+  `GET /projects/{id}/audit/{task_id}/stream-lost` 单独返回实时流丢失状态，
+  不改变上面的空链响应形状。
 - 账本存放在 SQLite，因此 session 目录被 M6 retention 清理后审计仍可查询。哈希链
   能发现账本行被改写或链接断裂，但不是签名：能重写数据库的人也能重算整条链，
   且控制面崩溃前未 finish 的事件不会进入账本。
@@ -132,6 +138,161 @@ M8 增加：
 边界：命名空间与 locks 都是**策略级**协调，不是内核隔离。`bash` 仍可直接写共享工作区
 或另一个任务的 artifacts 目录（审计会记录命令，但不解析路径）；写看板仍受同样的
 `bash` 限制。需要强隔离时使用容器/只读挂载。
+
+M9 增加：
+
+- **实时审计流（可选）**：`audit_stream.enabled: true` 时，scheduler 为每个任务签发
+  独立 bearer token（只保存 SHA-256，按任务批量复用），通过 `CAIRN_AUDIT_STREAM_URL` /
+  `CAIRN_AUDIT_STREAM_TOKEN` 注入 worker；Host Bridge 在写完 `audit.jsonl` 后把同一条
+  事件按 `(task_id, seq)` 推送到 `POST /projects/{id}/tasks/{task_id}/audit`。token 绑定
+  项目与任务，任务结束立即撤销，且不写进 `task.json`/prompt/日志。
+- **幂等链式追加**：控制面按显式 `seq` 校验并追加到现有哈希链。重试内容一致算重复
+  （`duplicates`），乱序、缺号或同号异内容返回 409，不续写、不分叉。
+- **有界发送与降级**：worker 侧队列、批量、请求超时和重试预算都有上限；认证失败、
+  链冲突或队列溢出让发送器永久停止并写本地 `audit-stream-lost.json`，不会跳过序号。
+  任务结束时仍导入 `audit.jsonl`，只补写缺失的后缀，因此实时流只降低暴露窗口，不改变
+  M7 的最终一致性。
+- **默认关闭**：容器模式无法自动推断控制面地址，必须显式配置 `audit_stream.url`；
+  本地模式缺省使用实际监听的 loopback 地址。关闭时行为与 M7 完全相同。容器模式需要
+  控制面在容器可达的私网/网关地址上监听，此时应为整个 API 加网络层访问控制：任务
+  token 只保护这一条审计写入路由，不能替代其它路由的认证。
+
+M9.1 收尾：
+
+- **token 传输**：容器模式下 `CAIRN_AUDIT_STREAM_TOKEN` 的值只放在 `docker exec`
+  客户端进程的环境里，argv 仅出现 `-e CAIRN_AUDIT_STREAM_TOKEN`；宿主进程列表不再
+  暴露 token。其它 worker 环境变量仍走 `-e NAME=value`。
+- **丢失可见性**：任务结束时读取 worker 写的 `audit-stream-lost.json`，校验普通文件、
+  64 KiB 上限、JSON 字段与非负计数后写入 `audit_stream_lost` 表；只读路由
+  `GET /projects/{id}/audit/{task_id}/stream-lost` 返回
+  `{task_id,stream_lost}`。畸形/符号链接/超限 marker 以通用 `invalid`/`unreadable`
+  落库；该旁路只用于可见性，不改变任务结果或 `audit.jsonl` 的补写。
+- **请求边界**：实时审计路由先检查 `Content-Length`，再按块读取并在超过 1 MiB 时
+  立即取消；单条事件文本与文件导入共用 16,384 字符上限，超限返回 400。
+- **真实容器验证**：新增 `tools/gate/m9-audit-stream-gate.ts`，用真实容器中的 Host
+  Bridge 向真实控制面流式写 allow/block，验证链路、重放幂等、撤销后 401 和 token
+  不出现在 worker 输出；不需要模型凭据。
+
+M10 增加：
+
+- **只读运维面板**：现有单文件 Alpine.js UI（界面文案为中文）增加第二行
+  `运行 / 审计 / 证据` 页签，仍由 `GET /` 与 `/static/*` 直接提供，没有构建步骤。
+  - Runs：`GET /projects/{id}/runs`，显示 kind、worker、outcome、退出码、时长、
+    evidence 数量与 detail，并可跳到对应 task 的 Audit。
+  - Audit：`GET /projects/{id}/audit` 的任务汇总、`/{task_id}` 的哈希链与事件、
+    `/{task_id}/stream-lost` 的实时流丢失标记；断链、allow/block 和 gap 均有显式状态。
+  - Evidence：按 Fact 选择后读取 `/{fact_id}/meta` 与 `/{fact_id}/evidence`，显示
+    `provided/missing/legacy`、写入时摘要与当前 `ok/modified/missing/unreadable/
+    invalid/unverified` 校验结果。
+- **只读边界**：所有面板只调用 GET；打开页签或点刷新才拉取，不参与写图、调度或
+  scope 判定。UI 本身没有认证，容器/远程部署仍必须由网络层限制整个控制面 API 的访问。
+
+M11 增加：
+
+- **Observer 提案闭环（默认关闭）**：sidecar 新增 `propose_graph_change` 工具，只能把
+  候选 fact / intent / hint 写成任务级
+  `<session>/observer/proposals/<uuid>.json`；没有新增 HTTP 写路由，主 Solver 也不能写
+  该目录（Host Bridge 把整个 `<session>/observer/` 视为只读）。任务结束时 scheduler
+  读取候选文件（普通文件、非符号链接、单文件/总量/条数上限），校验结构后写入
+  `proposals` 旁路表。
+- **控制面审核**：每条 pending 提案单独事务处理。`hint` 按内容去重；`intent` 要求
+  `dedupe_key`，按“未结束 intent / 已应用提案”去重，创建未认领 intent；`fact` 必须有
+  来源 Fact 与通过 `collectEvidence` 校验的证据，然后走与 worker 相同的
+  `createIntent` + `concludeIntent` 写图，并记录 `run_id` 与证据摘要。项目非 active
+  时拒绝（`project_inactive`）。
+- **三种模式**：`proposals.mode: off | dry_run | apply`。`dry_run` 完整执行来源、证据与
+  重复校验，但只把结果记为 `dry_run`，不写图；`apply` 才真正写入。所有决策
+  （`applied / rejected / duplicate / dry_run`）带 `decision_reason` 与 `applied_id`。
+- **只读观测**：`GET /projects/{id}/proposals` 支持 `status`/`kind` 过滤；UI 增加第四个
+  只读页签“提案”，显示候选内容、来源、证据、去重键、审核结果与写入 ID。提案文件与
+  `proposals` 表都是旁路数据，YAML 导出与 Cairn 图语义不变。
+- **失败隔离**：候选解析/审核错误只记日志并落为 rejected，不影响任务结果、退出码或
+  `result.json`；重新导入同一保留会话目录是幂等的（提案 ID 由项目、任务、文件名派生）。
+
+M12a 增加：
+
+- **持久化触发状态**：新旁路表 `strategist_state` 按项目保存最近一次 reason 成功的
+  Fact/Hint/open-intent 水位、成功/尝试/失败时间、trigger 与 run id。控制面重启后，
+  未变化的图不会再触发 reason；失败只写 attempt/failure，不推进水位，因此重试仍能看到
+  同一批 delta。表随项目级联删除，不进入图导出或 worker 契约。
+- **事件触发**：`reason` 不再对每个新 Fact 无条件触发。纯函数求值器按顺序判断失败退避、
+  `initial`、`open_intents:N->0`、零产出连续 run、陈旧意图、Fact/Hint 增量、空闲 fallback，
+  并统一施加 `tasks_running`、冷却与滚动一小时配额。`initial` 与 open-intent 清空是紧急
+  触发，绕过冷却/配额但不绕过失败退避；`initial` 还会让路给未认领的 explore 意图。
+- **策略配置**：新增 `strategist` 段（8 个非负整数字段，含关闭开关）；默认
+  `cooldown_seconds: 30`、`failure_backoff_seconds: 120`、`max_runs_per_hour: 12`、
+  `zero_output_threshold: 3`，其余阈值见示例配置。抑制日志按项目/原因去重。
+- **可观测性**：`runs.trigger` 记录实际触发串，`strategist_state.last_trigger` 保留最近
+  一次；M12a 本身不新增 HTTP 路由或 UI，由 M12c 补齐。详见 `docs/STRATEGIST.md`。
+
+M12b 增加：
+
+- **意图优先级与意图级预算**：reason 输出的 intent 可带 `priority`（`0..100`，默认 50）
+  与 `budget.max_seconds` / `budget.max_tool_calls`。它们落在旁路表 `intent_meta`
+  （`source='strategist'`），不改变 Cairn 图或 YAML。快层按
+  `priority DESC, created_at DESC, id DESC` 选择未认领 explore 意图；reason 触发时仍
+  先于 explore。`max_seconds` 只收紧任务超时，`max_tool_calls` 传给 Host Bridge，
+  超限拒绝以 `tool_budget_exhausted` 进入审计。
+- **单项目预算与并发配额**：顶层 `budget` 段支持 `max_project_tokens`、
+  `max_project_cost_usd`、`max_project_tasks`（`0` 关闭/继承）。token/成本按该项目
+  所有已结束 run 汇总后拦截新 bootstrap/reason/explore；pending conclude 不受拦截，
+  以免失败的意图永久卡住。
+- **用量记账**：worker 在 solver 结束后写 `<sessionDir>/usage.json`（失败任务也写），
+  控制面读取后落到 `runs` 的六个用量列；`GET /projects/{id}/runs` 自动带出这些字段。
+
+M12c 增加：
+
+- **只读慢层 API**：`GET /projects/{id}/strategist?limit=20` 返回
+  `{state, budget, intents, reason_runs}`。`state` 是持久化触发水位；`budget` 含已用
+  token/成本、在途任务数、配置上限（纯 HTTP 模式为 `null`）与 token/成本/并发耗尽标记；
+  `intents` 只列未结束意图并按派发优先级排序，附带 `priority`/`budget`/`source`；
+  `reason_runs` 只含 reason 且最新在前。`limit` 默认 20、范围 1–100，未知项目 404，
+  非法值 400，只有 GET。
+- **“慢层”页签**：现有 Alpine UI 新增只读面板，显示预算、触发水位、未结束意图与推理
+  历史。它只调用该路由的 GET，不新增任何写操作或 schema/worker 契约变更。
+  用量是尽力而为的主会话计数，不是计费凭证；在途任务和子代理可能造成偏差。
+  详见 `docs/STRATEGIST.md` 第 6–9 节。
+
+M13a 增加：
+
+- **真实模型成本基线 gate**：`tools/gate/m13-cost-baseline.ts` 在临时工作区用真实
+  BreachWeave Solver 跑一个有界项目（bootstrap 关闭，首个 reason 负责初始方向），逐任务
+  核对 `<sessionDir>/usage.json` → `runs` 六个用量列 → `getProjectUsage()` →
+  `GET /projects/{id}/strategist` 的汇总一致，并断言触发水位、reason 历史、意图排序与
+  预算上限。预算模式（`CAIRN_GATE_EXPECT_EXHAUSTED=1`）验证越过 token 上限后不再派发新
+  的 bootstrap/explore/reason。报告默认写入 `runs/m13-baseline.json`（该目录不入库）。
+- **启动快照脱敏**：真实 Solver 的 `startup.json` 曾把
+  `sessionOptions.authStorage.data.<provider>.key` 原文写进项目工作区。
+  `packages/agent/src/solver/session.ts` 现在按字段名脱敏
+  `key/token/secret/password/authorization/credential` 等，主 Solver 与子代理快照一致；
+  gate 会扫描项目工作区文本文件，发现 `auth.json` 里的凭据值立即失败，且只报告路径。
+- **基线结果（2026-10-26，`deepseek-flash`）**：默认 gate 跑 3 个 reason + 2 个 explore，
+  共 **134,740 tokens**（input 10,954 / output 5,898 / cache_read 117,888，缓存读占
+  87.5%），耗时 65 秒，产出 2 个 Fact。慢层 74,273 tokens（55.1%），快层 60,467 tokens；
+  全项目摊薄约 67,370 tokens/Fact（两个 explore 的直接归属分别为 36,438 与 24,029）。
+  M13b 归因显示：Fact 直付 60,467，reason 创建意图的编排分摊 24,115（两个意图各一半），
+  已归因 84,582，因两个 reason 验证轮没有创建意图而留下 50,158 未归因。网关未返回价格
+  （`models.json` 的 cost 为 0），因此报告把 token 作为基线、费用记 0 并给出 warning；
+  可用 `CAIRN_GATE_PRICE_*_PER_M` 在报告中估算美元成本。两个 Fact 都没有被接受的证据，
+  说明“完成项目”与“可复核证据”在当前 goal/prompt 下仍是两件事。
+
+M13b 增加：
+
+- **意图来源溯源**：`intent_meta` 新增 `origin_run_id`；reason 输出与 Observer 提案
+  被应用时记录创建该意图的 run。旧库自动补列，历史意图保持 `null`（来源无法回溯）。
+  这不改 Cairn 图、YAML 导出或 worker 契约。
+- **只读成本 API**：`GET /projects/{id}/cost` 返回项目总用量、按 run kind 汇总、
+  `attribution`（事实直付 / 编排分摊 / 已归因 / 未归因）、逐 Fact 成本、逐意图成本、
+  逐 run 产出与 `edges` 因果边。分配规则是每个 run 的用量平均分给直接产出（创建的
+  意图 + 产出的事实），意图的创建份额再分给它产出的事实；失败的 run、无产出 reason
+  和无 Fact 意图留在 `unattributed`。**事实成本合计是项目用量的分区；意图成本包含
+  执行 run，与事实合计重叠，不能相加。** 只有 GET；未知项目 404，其他方法 405。
+- **“成本”页签**：现有 Alpine UI 新增只读面板，展示总量、归因完整性、按类型汇总、
+  每个 Fact 的直付/编排成本及其来源 run/意图、意图执行成本、因果边与 run 产出。
+  它只调用 `/cost` 的 GET，不新增写路由或调度行为。
+- **gate 扩展**：`tools/gate/m13-cost-baseline.ts` 额外核对 `/cost` 的总量与
+  `by_kind` 和 `runs` 行一致、`attributed + unattributed = total`、动态 Fact 有直付
+  归属且能回溯创建意图的 run、所有因果边只引用已记录节点，并确认 POST 被拒绝。
 
 默认仍是确定性 fake solver，测试与离线运行不需要模型凭据。Observer 只接在
 `CAIRN_SOLVER=breachweave` 的真实 Solver 路径上，fake solver 会忽略它。
@@ -161,7 +322,8 @@ cairn serve（控制面，一个进程）
         ├─ solver：默认确定性 fake；CAIRN_SOLVER=breachweave 用 packages/agent
         ├─ 模型/凭据：~/.tch-agent/config（容器内只读挂载到 /cairn/agent-config）
         ├─ Host Bridge：每次 tool_call 前做 Scope 硬校验，逐条写 audit.jsonl
-        ├─ Observer（可选）：主 Solver 只读项目看板；独立 sidecar 会话维护看板
+        ├─ Observer（可选）：主 Solver 只读项目看板；独立 sidecar 维护看板并提交候选
+        ├─ 提案候选：<session>/observer/proposals/*.json（控制面在任务结束时导入）
         └─ 原子写入 result.json 后退出
 ```
 
@@ -180,7 +342,7 @@ apps/cairn/src/
   roles/control.ts       cairn serve：HTTP API + SQLite（--config 时启动 scheduler）
   roles/worker.ts        worker：跑 solver、宽容解析、原子写 result.json
   http/api.ts            Cairn 兼容路由（Bun.serve 零依赖）
-  http/static/           Cairn 原有 Web UI（来自上游，AGPL-3.0）
+  http/static/           Cairn Web UI + 只读 运行/慢层/审计/证据/提案 面板（无构建步骤）
   config.ts              dispatch.yaml 校验（Bun.YAML）
   prompts/prompting.ts   prompt 加载、渲染、JSON 格式化、占位符校验
   prompts/default/*.md   上游默认 prompt（逐字复制）
@@ -188,6 +350,8 @@ apps/cairn/src/
   scheduler/loop.ts      tick、派发、租约、超时、artifacts、切片选择、Observer env、runs
   scheduler/tasks.ts     prompt 渲染 + 路径映射 + task.json/context 落盘
   scheduler/evidence.ts  证据校验、哈希与实时比对（工作区包含、realpath、上限）
+  scheduler/proposals.ts 候选文件导入、结构校验、证据/去重审核与图写入
+  scheduler/strategist.ts 慢层触发求值（水位、事件、退避、冷却、小时配额）
   scheduler/retention.ts session 目录扫描、age/count 选择与受保护路径判定
   scheduler/audit.ts     有界读取 audit.jsonl 并导入控制面账本
   runtime/types.ts       scheduler ↔ 沙箱接口（local / container）
@@ -212,8 +376,11 @@ packages/graph/          schema、领域模型、服务、命令、导出、YAML
   src/artifacts.ts       artifacts 扫描、SHA-256、索引查询
   src/hashing.ts         流式 SHA-256（artifacts 与证据共用）
   src/runs.ts            runs / fact_meta 旁路表读写
+  src/cost.ts            逐 Fact/意图成本归因与因果边（只读，M13b）
   src/fact-evidence.ts   fact_evidence 内容摘要读写
   src/pending-concludes.ts 跨重启的 conclude 队列
+  src/proposals.ts      proposals / intent_meta 旁路表与去重查询
+  src/strategist.ts     strategist_state 水位与 reason run 摘要/计数
   src/audit.ts           控制面审计账本：哈希链、查询与断链校验
   src/export.ts          YAML、timeline 与图切片导出
   src/yaml.ts            PyYAML 兼容的 block-style 发射器
@@ -230,9 +397,12 @@ tools/gate/m3-real-container-gate.ts  真实容器 + 真实模型 + Scope 硬拦
 tools/gate/m4-conclude-gate.ts  真实模型的会话恢复 conclude gate（计费）
 tools/gate/m4c-observer-gate.ts  真实模型的 Observer 看板 review gate（计费）
 tools/gate/m6-restart-gate.ts    fake solver 的跨进程 conclude 恢复 gate（不计费）
+tools/gate/m13-cost-baseline.ts  真实模型的用量/预算/慢层与成本归因 gate（计费）
 tools/vendor/            vendor 资产生成器
+runs/m13-baseline.json   最近一次真实模型基线报告（本地生成，不入库）
 docs/ARCHITECTURE.md     角色、数据所有权、时序、沙箱、失败语义
 docs/OBSERVER.md         Observer 实现、配置、权限、flush 语义与已知限制（M4c）
+docs/STRATEGIST.md       慢层触发、意图优先级/预算、用量记账、只读 API、成本基线与归因（M12a–M13b）
 docs/PORTING.md          Python 模块 → TS 模块映射与对照测试策略
 ```
 
@@ -433,6 +603,91 @@ observer:
   时由 M8 的项目级 review 租约串行化复核（拿不到租约就跳过本轮），但看板写入本身仍是
   策略级保护。详见 `docs/OBSERVER.md`。
 
+### 图提案（M11，可选，默认关闭）
+
+提案让 Observer 的结论进入 Cairn 图，但**不把写权限交给 worker**。sidecar 只能写候选
+文件；控制面是唯一审核者和写图者。
+
+```yaml
+observer:
+  enabled: true
+  kernel_tasks: ["explore"]
+
+proposals:
+  enabled: true
+  mode: apply                 # off | dry_run | apply
+  max_per_task: 20
+  max_file_bytes: 16384
+  max_total_bytes: 65536
+  allow_kinds: ["fact", "intent", "hint"]
+  require_evidence_for_fact: true
+  min_confidence: 0
+```
+
+- 启用条件：`observer.enabled`、任务 kind 命中 `kernel_tasks`、`proposals.enabled`、
+  `mode != off`、`max_per_task > 0` 且 `allow_kinds` 非空。否则 sidecar 不注册
+  `propose_graph_change`，也不会注入提案环境变量。
+- 传输：`<session>/observer/proposals/<uuid>.json`，原子写入；控制面在任务结束时按
+  文件名确定性地派生提案 ID，因此保留目录重复导入不会产生重复行。
+- 审核规则：`fact` 必须有存在的来源 Fact 与真实证据文件，审核通过后用
+  `createIntent` + `concludeIntent` 写入；`intent` 必须有 `dedupe_key`，与未结束
+  intent 或已应用提案重复时标为 `duplicate`；`hint` 按内容去重。项目非 active 时
+  拒绝。审核失败只记录，不影响 worker 结果。
+- `dry_run` 适合先观察模型会提出什么：它执行全部校验，但只记录 `dry_run`，不写图。
+- 只读查询：`GET /projects/{id}/proposals[?status=&kind=]`；UI 的“提案”页签同样只发
+  GET。控制面 API 仍未认证，远程/容器部署必须加网络层访问控制。
+
+### 慢层触发（M12a）
+
+reason 的触发条件与退避可以按项目统一配置；这些值只影响调度，不改变 Cairn 图或任务
+契约：
+
+```yaml
+strategist:
+  min_new_facts: 1              # 0 关闭 Fact 增量触发
+  min_new_hints: 1              # 0 关闭 Hint 增量触发
+  cooldown_seconds: 30          # 非紧急触发的最小间隔；0 关闭
+  failure_backoff_seconds: 120  # 失败后禁止任何触发的窗口；0 关闭
+  max_runs_per_hour: 12         # 滚动一小时 reason 上限；0 关闭
+  zero_output_threshold: 3      # 连续零产出 run 阈值；0 关闭
+  stale_intent_seconds: 0       # 所有 open intent 陈旧多久后触发；0 关闭
+  fallback_interval_seconds: 0  # 空闲兜底间隔；0 关闭
+```
+
+- 求值顺序与紧急/抑制规则见 `docs/STRATEGIST.md`。失败退避优先于一切；紧急触发不绕过
+  退避，也要等运行中的 explore/conclude 结束。
+- `initial` 只在没有未认领 open intent 时触发；已有方向时先让 explore 跑。
+- 每次 reason 的成功/失败写入 `strategist_state`；成功的 noop 也推进水位。状态写失败
+  只记日志，不影响任务结果。
+
+### 调度优先级与项目预算（M12b）
+
+```yaml
+budget:
+  max_project_tokens: 0       # 该项目已结束 run 的 total_tokens 上限；0 关闭
+  max_project_cost_usd: 0     # 该项目已结束 run 的 cost_usd 上限；0 关闭
+  max_project_tasks: 0        # 单项目并发上限；0 使用 runtime.max_project_workers
+```
+
+- reason 可给每个 intent 附 `priority` 与 `budget`；priority 只决定快层 explore 的先后，
+  不会让 explore 抢在已触发的 reason 之前。
+- `max_seconds` 只能收紧该任务类型的超时；`max_tool_calls` 是每 worker 进程的 Host
+  Bridge 调用上限，超限后拒绝并以 `tool_budget_exhausted` 审计，不是安全边界。
+- token/成本门禁只统计已结束 run，且不拦截 pending conclude；在途任务完成前可能超预算。
+- worker 的用量写在 `usage.json` 并汇总到 `runs`。
+
+### 慢层只读视图（M12c）
+
+```bash
+curl "http://127.0.0.1:8000/projects/<project_id>/strategist?limit=20"
+```
+
+- 响应含 `state`（`strategist_state` 或 `null`）、`budget`、`intents` 与 `reason_runs`。
+- `budget.limits` 只在 `cairn serve --config` 时出现；纯 HTTP 模式返回 `null`，但仍显示
+  已记录用量。`budget.running_tasks` 统计 `runs.outcome IS NULL`，可能与调度器内存状态
+  因崩溃遗留而略有差异；`exhausted.tasks` 只在 `max_project_tasks > 0` 时判断。
+- UI 的“慢层”页签显示同一数据；API 仍未认证，远程/容器部署需要网络层访问控制。
+
 ## 真实 Solver 与模型配置（M2c）
 
 默认 solver 是确定性的 `fake`。用环境变量启用真实 BreachWeave Solver：
@@ -488,6 +743,19 @@ bun run tools/gate/m2c-gate.ts
 至少新增一个 Fact、且 Fact 描述包含 marker。失败时保留临时目录，`CAIRN_GATE_KEEP=1`
 可强制保留以便检查 `task.json`、`result.json`、`solver-session/` 与日志。
 
+真实模型的成本/预算基线 gate（M13a，M13b 扩展了 `/cost` 归因）默认最多跑 6 个任务
+（可调），并核对用量旁路、`runs`、项目汇总、慢层 API 与因果链：
+
+```bash
+bun run tools/gate/m13-cost-baseline.ts
+CAIRN_GATE_BUDGET_TOKENS=1000 CAIRN_GATE_EXPECT_EXHAUSTED=1 \
+  CAIRN_GATE_REPORT=runs/m13-budget-exhaustion.json \
+  bun run tools/gate/m13-cost-baseline.ts
+```
+
+报告默认写到 `runs/m13-baseline.json`；参数、断言与基线数字见 `docs/STRATEGIST.md`
+第 10 节。它同样计费、不在 `bun test` 中。
+
 容器 + 真实模型的联调 gate 是 `tools/gate/m3-real-container-gate.ts`，同样不在
 `bun test` 中。它要求 Docker、`cairn-worker:latest` 与本机模型凭据，会真实调用模型并
 产生费用。除模型路径外，它还会在容器内用 `docker exec` 直接运行 Host Bridge 的
@@ -503,6 +771,16 @@ CAIRN_GATE_PROXY_PROBE_URL=https://<gateway>/v1/models \
 `CAIRN_GATE_PROXY_PROBE_URL` 只验证“容器能把 HTTPS 经代理送出去”（任何 HTTP 状态码都
 算连通）；`CAIRN_GATE_DOCKER_IMAGE`、`CAIRN_DOCKER`、`CAIRN_AGENT_CONFIG_DIR` 可覆盖
 镜像、CLI 与配置目录。
+
+审计流的真实容器 gate 不需要模型凭据，适合在每次改 Docker 环境注入或审计路由后运行：
+
+```bash
+bun run tools/gate/m9-audit-stream-gate.ts
+```
+
+它在临时项目容器里运行 Host Bridge，向宿主上真实启动的控制面流式提交 allow/block，
+再断言账本链、序号、重放幂等、撤销后 401、无丢失标记，以及 token 不出现在 worker
+输出；同样要求 Docker 与 `cairn-worker:latest`（镜像需包含当前源码）。
 
 Observer 的真实模型联调 gate 是 `tools/gate/m4c-observer-gate.ts`。它在本地模式跑一个
 bootstrap 任务，预置一条 pending idea，并检查主 solver 只使用只读看板工具、sidecar 只用
@@ -520,9 +798,9 @@ M6 的跨进程恢复 gate 不调用模型：它先写下一台崩溃控制面�
 bun run tools/gate/m6-restart-gate.ts
 ```
 
-## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8，2026-10-25，Bun 1.4.4）
+## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b，2026-10-26，Bun 1.4.4）
 
-- `bun test`：**258 passed**（33 个文件），0 failed。
+- `bun test`：**405 passed**（50 个文件），0 failed。
 - `bun run typecheck`：`tsc --noEmit` 通过。
 - **HTTP 对照**：`api.golden.json` 的 60 步请求（成功路径、400/403/404/405/409、租约过期、
   删除级联、导出、路由错误）由 Python FastAPI + 固定时钟生成；TS 重放后状态码、content-type
@@ -536,7 +814,8 @@ bun run tools/gate/m6-restart-gate.ts
   容器模式缺少 `container`、prompt 组/占位符缺失均报错；`tasks.graph_slice` 的默认值
   （关闭，80/60）与非法 caps 均有断言；`tasks.evidence.min_bytes` 的默认值、`0` 关闭
   与负值/非整数拒绝也有覆盖；`retention` 四个字段的默认值、合法覆盖与
-  负值/非整数/非布尔拒绝同样有断言。
+  负值/非整数/非布尔拒绝同样有断言；`strategist` 的 8 个默认值、完整覆盖与
+  负数/类型/非对象拒绝也有断言。
 - **契约解析**：宽容 JSON 提取（整段、fence、前后散文、字符串内大括号、嵌套对象、
   先坏后好）与四个 payload 校验器覆盖 Cairn 的接受范围和错误文本。
 - **scheduler 端到端**：真实拉起 `cairn worker` 子进程（fake solver）。非 bootstrap 项目
@@ -637,6 +916,64 @@ bun run tools/gate/m6-restart-gate.ts
   集成测试用 `concurrent-worker` fixture 让两个同项目 explore 任务在屏障处真正重叠，
   断言两个 Fact、两条成功 run、各自的 `artifacts/<task-id>/out.txt` 索引与 provenance，
   以及 `task.json` 的 `artifactDir` 与 prompt 注入。
+- **实时审计流（M9）**：图侧覆盖显式 seq 追加、重复事件幂等、缺号/冲突拒绝与
+  `onConflict: "stop"` 的结束时补写；token 测试覆盖项目/任务绑定、替换、撤销与空 token；
+  HTTP 测试覆盖鉴权失败（缺失/异项目/已撤销）、乱序与分叉 409、批次信封校验和未启用
+  时的 404；Host Bridge 测试覆盖本地文件与转发内容一致、批量/顺序、瞬时失败重试、409
+  永久停止、队列溢出与 flush 超时的本地标记。scheduler 集成测试用 `stream-worker`
+  fixture 先实时追加 seq 1、再在结束时由文件导入补写 seq 2，并断言 token 已撤销且从未
+  出现在 `task.json`。
+- **M9.1 加固**：Docker runtime 单测断言审计 token 只出现在 `docker exec` 客户端环境，
+  不在 argv/worker 环境之外；HTTP 测试覆盖声明的超长 body（不读取即 413）、chunked
+  超长 body（读约 5 块即中止）和单事件 20K 字符（400）；图侧与导入共用 16K 上限。
+  丢失 marker 单测覆盖有效、缺失、畸形、超长、超长原因截断和符号链接不跟随；scheduler
+  集成测试断言 finish 写入 `audit_stream_lost` 并记录 `audit stream lost` 日志；API
+  测试覆盖 `stream-lost` 路由、未知 task 返回 `null`、未知项目 404，且 M7 链详情响应
+  不变。真实容器 gate 15/15、M3 容器 smoke 14/14、M3 真实模型容器 gate 16/16。
+- **只读运维面板（M10）**：HTTP 测试确认 `/` 与静态资产可服务；内联 `cairnApp()` 脚本
+  通过语法解析；三个面板的 loader 只发 GET。另用 headless Edge + CDP 在播种了 runs、
+  audit、stream-loss 与证据的临时项目上实际点击 Runs/Audit/Evidence，断言 2 条 run、
+  2 个 task 的链完整、loss 标记与 `ok` 证据均渲染，浏览器无 JS 异常。
+- **Observer 提案闭环（M11）**：图侧覆盖提案存储、按项目/状态/类型过滤、确定性 ID 去重、
+  一次性状态迁移与项目级联删除；scheduler 侧覆盖候选文件摄取（幂等、坏文件跳过、单文件/
+  单任务/总字节预算、符号链接与符号链接目录拒绝）、hint/intent/fact 三类应用、三类去重
+  （精确内容、已应用 dedupe key、打开中的 intent）、证据缺失/无效/越界/来源 Fact 缺失的
+  拒绝、`dry_run` 不写图、项目停用与损坏 payload；sidecar 侧覆盖文本归一化、证据强制、
+  阈值与类型校验、原子写入与无临时文件残留、数量与字节上限；HTTP 侧覆盖只读列表/过滤、
+  非法过滤 400、未知项目 404、POST 405 且不落库；另有 UI 第四个页签的 GET-only 断言、
+  提案环境变量契约与 Host Bridge 对 `observer/` 状态目录的只读保护测试。
+- **慢层触发（M12a）**：图侧覆盖状态缺失、成功水位、失败不清水位、新项目失败不造水位与
+  项目级联；run 摘要覆盖产 Fact 判定、reason 排除与滚动一小时计数。纯求值器覆盖
+  `initial`、快层让路、Fact/Hint 阈值、open-intent 清空与死循环保护、冷却、失败退避、
+  小时配额、零产出重置、运行中任务抑制、陈旧意图与 fallback。scheduler 集成测试断言
+  成功状态落库后新 Scheduler 不重复 reason，以及失败写入 backoff 后下一次 tick 只记录
+  抑制日志；`runs.trigger` 同步记录 `initial`。
+- **调度优先级与项目预算（M12b）**：图侧覆盖 `runs` 用量列持久化、项目汇总、旧表增量
+  迁移，以及 `intent_meta` 优先级/预算往返与损坏数据归一化；契约侧覆盖 priority 范围、
+  budget 未知键/空预算/非正整数字段与 usage 负值/损坏/超大旁路拒绝。scheduler 集成测试
+  断言 reason 的优先级/预算落库、按优先级选择 explore、worker usage 端到端持久化、
+  token/成本门禁、pending conclude 绕过预算，以及 `max_project_tasks` 的配额与继承；
+  Host Bridge 测试覆盖工具上限拒绝与 `tool_budget_exhausted` 审计事件。
+- **慢层只读 API 与 UI（M12c）**：HTTP 侧覆盖空状态与纯 HTTP 模式的 `null` limits、
+  未结束意图的优先级排序与元数据、状态字段、reason-only 过滤与 `limit`、运行中/失败
+  任务用量汇总、预算上限与耗尽标记、未知项目 404、非法 `limit` 400 与非 GET 405；
+  UI 侧断言“慢层”页签存在、`loadStrategist` 只发 GET 且带 `?limit=20`，内联脚本仍可
+  解析。
+- **真实模型成本基线与归因（M13a + M13b）**：默认 gate **44/44 PASS**（2026-10-26）：
+  5 个真实任务（3 reason + 2 explore）全部成功，项目 completed；每个 `usage.json` 的
+  六个字段与 `runs` 行、`getProjectUsage()`、`/strategist` 汇总逐项相等；触发水位、
+  reason 历史与未结束意图顺序和调度器一致；`/cost` 的总量/分类与 `runs` 一致、归因
+  可对账、动态 Fact 有直付归属并能回溯创建 run、13 条因果边只引用已知节点，POST 返回
+  405；扫描 50 个文件未发现凭据。预算模式 **43/43 PASS**：首个真实 reason 使用
+  22,381 tokens 越过 1,000 上限，`exhausted.tokens=true`，之后没有新的
+  bootstrap/explore/reason 派发。`session.test.ts` 另用 2 条单测断言主 Solver 与子代理
+  的 `startup.json` 不再包含凭据原文。两项 gate 均计费、不在 `bun test` 中。
+- **成本归因与因果链（M13b）**：图侧测试覆盖多 run 分摊、整数余数、意图创建份额二次
+  分摊、证据状态/来源事实、缺失来源时归因停在上层、空项目与未知项目；迁移测试确认旧
+  `intent_meta` 自动补 `origin_run_id` 且历史行保持 `null`；scheduler 测试确认 reason
+  创建的意图落库创建 run。HTTP/UI 测试覆盖 `/cost` 的零状态、完整归因、404/405，以及
+  “成本”页签与 `loadCost` 只发 GET。M13a gate 同时校验 `/cost` 与 run 行一致、归因
+  可对账、因果边只引用已知节点，并拒绝 POST。
 
 golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定时钟、`TZ=UTC`）。
 重新生成方法与约束见 `docs/PORTING.md`。
@@ -674,6 +1011,15 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M6 ✅ | session 保留策略、启动/周期 sweep、pending 对账、artifacts 刷新 | 242 passed / 30 files；跨进程恢复 gate 9/9（2026-10-25） |
 | M7 ✅ | 控制面审计账本：任务结束导入、逐任务哈希链、只读查询 | 258 passed / 33 files（2026-10-25） |
 | M8 ✅ | 同项目并发协调：任务级 artifacts 命名空间、索引溯源、Observer 复核租约 | 270 passed / 34 files（2026-10-25） |
+| M9 ✅ | 实时审计流：任务级 token、幂等链式追加、有界发送与结束补写 | 286 passed / 37 files（2026-10-25） |
+| M9.1 ✅ | 审计流收尾：token 不再出现在宿主 argv、丢失 marker 落库/只读路由、请求体与事件上限、真实容器 gate | 295 passed / 37 files；M9 gate 15/15（2026-10-25） |
+| M10 ✅ | 只读运维面板：现有 Alpine UI 的 运行 / 审计 / 证据 页签 | 298 passed / 38 files；headless Edge 实测三个面板无 JS 异常（2026-10-26） |
+| M11 ✅ | Observer 提案闭环：sidecar 候选文件 → 控制面摄取/证据门控/去重/单写者落图 → 只读 API 与「提案」页签 | 332 passed / 42 files（2026-10-26） |
+| M12a ✅ | 慢层触发持久化：`strategist_state` 水位、事件触发、失败退避、冷却/小时配额 | 354 passed / 44 files（2026-10-26） |
+| M12b ✅ | 调度优先级与预算：`intent_meta` 优先级/意图预算、单项目 token/成本门禁、并发配额、用量记账 | 387 passed / 46 files（2026-10-26） |
+| M12c ✅ | 慢层只读观测：`GET /strategist` 状态/预算/意图/推理历史 + Alpine「慢层」页签 | 394 passed / 47 files（2026-10-26） |
+| M13a ✅ | 真实模型成本基线：用量旁路 → runs → API 核对、预算耗尽门禁、`startup.json` 凭据脱敏 | 396 passed / 48 files；真实模型 gate 33/33 + 预算模式 32/32（2026-10-26） |
+| M13b ✅ | 成本归因与因果链：`intent_meta.origin_run_id`、只读 `/cost`、逐 Fact/意图分摊与因果边、Alpine「成本」页签 | 405 passed / 50 files；真实模型 gate 44/44 + 预算模式 43/43（2026-10-26） |
 
 ## 与 Phase 0 的关系
 

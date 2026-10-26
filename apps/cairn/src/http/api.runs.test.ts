@@ -65,6 +65,14 @@ describe("GET /projects/{id}/runs", () => {
         durationMs: 5000,
         exitCode: 0,
         evidenceCount: 1,
+        usage: {
+          inputTokens: 120,
+          outputTokens: 30,
+          cacheReadTokens: 10,
+          cacheWriteTokens: 5,
+          totalTokens: 165,
+          costUsd: 0.0042,
+        },
       });
     });
 
@@ -87,6 +95,12 @@ describe("GET /projects/{id}/runs", () => {
         session: ".cairn/sessions/explore-1",
         evidence_count: 1,
         detail: null,
+        input_tokens: 120,
+        output_tokens: 30,
+        cache_read_tokens: 10,
+        cache_write_tokens: 5,
+        total_tokens: 165,
+        cost_usd: 0.0042,
       },
     ]);
   });

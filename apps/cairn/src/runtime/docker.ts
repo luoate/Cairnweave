@@ -18,6 +18,7 @@ import type { ContainerConfig } from "../config";
 import { CONTAINER_AGENT_CONFIG, CONTAINER_WORKSPACE, containerPathFor } from "./paths";
 import {
   describeError,
+  environmentSnapshot,
   type RuntimeBackend,
   type WorkerProcess,
   type WorkerSpawnOptions,
@@ -60,10 +61,27 @@ export interface DockerChild {
   kill(signal?: string): void;
 }
 
+export interface DockerSpawnOptions {
+  stdout: "pipe";
+  stderr: "pipe";
+  /**
+   * Environment for the `docker` client itself. Used only for secret `-e NAME`
+   * pass-through so a token never appears in the host process argv.
+   */
+  env?: Record<string, string>;
+}
+
 export type DockerSpawn = (
   argv: readonly string[],
-  options: { stdout: "pipe"; stderr: "pipe" },
+  options: DockerSpawnOptions,
 ) => DockerChild;
+
+/**
+ * Values passed as `-e NAME` with the value supplied by the docker client's own
+ * environment. The container still receives `NAME=value`, but the secret is not in
+ * the argv that other host processes can read.
+ */
+const INHERITED_ENV_NAMES = new Set(["CAIRN_AUDIT_STREAM_TOKEN"]);
 
 const defaultSpawn: DockerSpawn = (argv, options) => {
   const child = Bun.spawn([...argv], options);
@@ -228,12 +246,25 @@ export class DockerRuntime implements RuntimeBackend {
       "-w",
       CONTAINER_WORKSPACE,
     ];
+    const inheritedEnv: Record<string, string> = {};
     for (const [key, value] of Object.entries(workerEnv)) {
-      args.push("-e", `${key}=${value}`);
+      if (INHERITED_ENV_NAMES.has(key)) {
+        inheritedEnv[key] = value;
+        // `-e NAME` makes docker read the value from the CLI process environment.
+        args.push("-e", key);
+      } else {
+        args.push("-e", `${key}=${value}`);
+      }
     }
     args.push(project.containerName, ...this.workerArgv(options.workerTaskPath));
 
-    const child = this.spawn(args, { stdout: "pipe", stderr: "pipe" });
+    const spawnOptions: DockerSpawnOptions = { stdout: "pipe", stderr: "pipe" };
+    if (Object.keys(inheritedEnv).length > 0) {
+      // Keep the docker client's normal environment (PATH, DOCKER_HOST, proxy settings)
+      // and add only the pass-through values.
+      spawnOptions.env = { ...environmentSnapshot(process.env), ...inheritedEnv };
+    }
+    const child = this.spawn(args, spawnOptions);
     const containerName = project.containerName;
     const taskPath = options.workerTaskPath;
     return {

@@ -32,6 +32,29 @@ export interface Hint {
   created_at: string;
 }
 
+/**
+ * Advisory limits attached to one reason-produced intent. They are sidecar data and never
+ * change the Cairn graph export. A missing field means "use the configured default".
+ */
+export interface IntentBudget {
+  max_seconds?: number;
+  max_tool_calls?: number;
+}
+
+/** Sidecar metadata for an accepted intent (priority, budget, provenance). */
+export interface IntentMeta {
+  project_id: string;
+  intent_id: string;
+  dedupe_key: string | null;
+  source: string | null;
+  proposal_id: string | null;
+  /** Run whose output created this intent (reason turn or applied proposal). */
+  origin_run_id: string | null;
+  priority: number | null;
+  budget: IntentBudget | null;
+  created_at: string;
+}
+
 export type EvidenceStatus = "provided" | "missing" | "legacy";
 
 /**
@@ -97,6 +120,156 @@ export interface Run {
   session: string | null;
   evidence_count: number;
   detail: string | null;
+  /** Solver-session usage; all zero when the worker could not report any. */
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  total_tokens: number;
+  cost_usd: number;
+}
+
+/** One kind's share of the project's recorded usage (M13b). */
+export interface CostKind {
+  kind: string;
+  runs: number;
+  tokens: number;
+  cost_usd: number;
+}
+
+/**
+ * How the project total was assigned to facts. Fact totals partition the project usage;
+ * intent totals are a separate, overlapping view and must not be summed with them.
+ */
+export interface CostAttribution {
+  fact_direct_tokens: number;
+  fact_direct_cost_usd: number;
+  orchestration_tokens: number;
+  orchestration_cost_usd: number;
+  orchestration_attributed_tokens: number;
+  orchestration_attributed_cost_usd: number;
+  attributed_tokens: number;
+  attributed_cost_usd: number;
+  unattributed_tokens: number;
+  unattributed_cost_usd: number;
+  complete: boolean;
+}
+
+export interface CostRun {
+  id: string;
+  kind: string;
+  intent_id: string | null;
+  trigger: string | null;
+  outcome: RunOutcome | null;
+  started_at: string;
+  finished_at: string | null;
+  duration_ms: number | null;
+  tokens: number;
+  cost_usd: number;
+  created_intent_ids: string[];
+  produced_fact_ids: string[];
+}
+
+export interface CostIntent {
+  id: string;
+  description: string;
+  from: string[];
+  to: string | null;
+  creator: string;
+  source: string | null;
+  origin_run_id: string | null;
+  created_at: string;
+  concluded_at: string | null;
+  run_ids: string[];
+  produced_fact_ids: string[];
+  direct_tokens: number;
+  direct_cost_usd: number;
+  orchestration_tokens: number;
+  orchestration_cost_usd: number;
+  total_tokens: number;
+  total_cost_usd: number;
+}
+
+export interface CostFact {
+  id: string;
+  description: string;
+  run_id: string | null;
+  run_kind: string | null;
+  intent_id: string | null;
+  evidence_status: EvidenceStatus;
+  evidence_refs: string[];
+  source_fact_ids: string[];
+  /** Runs whose output created the intent that produced this fact (reason or proposal). */
+  origin_run_ids: string[];
+  direct_tokens: number;
+  direct_cost_usd: number;
+  orchestration_tokens: number;
+  orchestration_cost_usd: number;
+  total_tokens: number;
+  total_cost_usd: number;
+}
+
+export type CausalEdgeKind =
+  | "created_intent"
+  | "executed_by"
+  | "produced_fact"
+  | "source_fact"
+  | "concluded_fact";
+
+/**
+ * One directed relation in the cost/因果链 view. Node ids are prefixed with
+ * `run:`, `intent:` or `fact:`. `tokens`/`cost_usd` are local to that edge and are not
+ * additive across kinds: `executed_by` repeats the run total, while `created_intent`
+ * and `produced_fact` carry the allocated share used by the fact totals.
+ */
+export interface CausalEdge {
+  from: string;
+  to: string;
+  kind: CausalEdgeKind;
+  tokens: number;
+  cost_usd: number;
+}
+
+export interface ProjectCostReport {
+  project_id: string;
+  totals: {
+    tokens: number;
+    cost_usd: number;
+    runs: number;
+  };
+  by_kind: CostKind[];
+  attribution: CostAttribution;
+  facts: CostFact[];
+  intents: CostIntent[];
+  runs: CostRun[];
+  edges: CausalEdge[];
+}
+
+/**
+ * Persisted slow-layer watermarks. `last_*_count` describe the graph after the last
+ * successful reason turn; failures only advance the attempt/failure timestamps.
+ */
+export interface StrategistState {
+  project_id: string;
+  last_success_at: string | null;
+  last_attempt_at: string | null;
+  last_failure_at: string | null;
+  last_trigger: string | null;
+  last_run_id: string | null;
+  last_fact_count: number;
+  last_hint_count: number;
+  last_open_intent_count: number;
+  updated_at: string;
+}
+
+/** A finished productive run, used to compute the zero-output streak. */
+export interface StrategistRunSummary {
+  id: string;
+  kind: string;
+  outcome: RunOutcome | null;
+  started_at: string;
+  finished_at: string;
+  produced_fact: boolean;
 }
 
 export interface ProjectReason {
@@ -128,6 +301,32 @@ export interface ProjectDetail {
   facts: Fact[];
   intents: Intent[];
   hints: Hint[];
+}
+
+export type ProposalKind = "fact" | "intent" | "hint";
+export type ProposalStatus = "pending" | "applied" | "rejected" | "duplicate" | "dry_run";
+export type ProposalSource = "observer" | "strategist" | "human";
+
+/**
+ * One candidate graph change. `payload` is the validated, kind-specific JSON object;
+ * `evidence_refs` is duplicated at the top level so the scheduler can review it without
+ * reparsing the payload.
+ */
+export interface Proposal {
+  id: string;
+  project_id: string;
+  task_id: string | null;
+  run_id: string | null;
+  source: ProposalSource;
+  kind: ProposalKind;
+  payload: Record<string, unknown>;
+  dedupe_key: string | null;
+  evidence_refs: string[];
+  status: ProposalStatus;
+  decision_reason: string | null;
+  applied_id: string | null;
+  created_at: string;
+  reviewed_at: string | null;
 }
 
 export interface ConcludeResponse {

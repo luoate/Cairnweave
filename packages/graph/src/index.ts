@@ -40,16 +40,32 @@ export {
   type HeartbeatRequest,
   type Hint,
   type Intent,
+  type IntentBudget,
+  type IntentMeta,
   type ProjectDetail,
   type ProjectMeta,
   type ProjectReason,
   type ProjectStatus,
   type ProjectSummary,
+  type ProjectCostReport,
+  type CostAttribution,
+  type CostFact,
+  type CostIntent,
+  type CostKind,
+  type CostRun,
+  type CausalEdge,
+  type CausalEdgeKind,
+  type Proposal,
+  type ProposalKind,
+  type ProposalSource,
+  type ProposalStatus,
   type ReasonClaimRequest,
   type ReopenRequest,
   type ReopenResponse,
   type Run,
   type RunOutcome,
+  type StrategistRunSummary,
+  type StrategistState,
   type Settings,
   type VerifiedFactEvidence,
   type UpdateProjectStatusRequest,
@@ -94,6 +110,7 @@ export {
   claimReason,
   completeProject,
   concludeIntent,
+  createHint,
   createIntent,
   createProject,
   getProjectDetail,
@@ -113,13 +130,18 @@ export {
 export {
   finishRun,
   getFactMeta,
+  getProjectUsage,
   listProjectRuns,
   recordFactMeta,
   startRun,
   type FinishRunInput,
+  type ProjectUsage,
   type RecordFactMetaInput,
+  type RunUsage,
   type StartRunInput,
 } from "./runs";
+
+export { buildProjectCostReport } from "./cost";
 
 export {
   listFactEvidence,
@@ -142,16 +164,58 @@ export {
 } from "./pending-concludes";
 
 export {
+  createProposal,
+  findAppliedProposalByDedupeKey,
+  findFactByDescription,
+  findHintByContent,
+  findOpenIntentByDedupeKey,
+  getIntentMeta,
+  getProposal,
+  listPendingProposals,
+  listProjectIntentMeta,
+  listProjectProposals,
+  recordIntentMeta,
+  recordProposalDecision,
+  type CreateProposalInput,
+  type ProposalDecisionInput,
+  type ProposalFilters,
+  type RecordIntentMetaInput,
+} from "./proposals";
+
+export {
+  countReasonRunsSince,
+  getStrategistState,
+  listRecentStrategistRuns,
+  recordStrategistFailure,
+  recordStrategistSuccess,
+  type RecordStrategistFailureInput,
+  type RecordStrategistSuccessInput,
+} from "./strategist";
+
+export {
   AUDIT_GENESIS_HASH,
+  MAX_AUDIT_EVENT_TEXT_CHARS,
+  appendTaskAudit,
   auditEventHash,
   getTaskAudit,
   listProjectAudit,
   recordTaskAudit,
+  type AppendTaskAuditInput,
+  type AppendTaskAuditResult,
+  type AuditEntry,
   type AuditEvent,
   type AuditTaskSummary,
   type RecordTaskAuditInput,
   type TaskAudit,
 } from "./audit";
+
+export {
+  getAuditStreamLoss,
+  listProjectAuditStreamLoss,
+  recordAuditStreamLoss,
+  type AuditStreamLoss,
+  type RecordAuditStreamLossInput,
+} from "./audit-stream";
 
 export { hashFileSha256 } from "./hashing";
 

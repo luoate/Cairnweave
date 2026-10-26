@@ -98,6 +98,25 @@ retention:
   # that first indexed them.
   refresh_artifacts: false
 
+# Optional live audit stream (M9). Disabled by default. When enabled, the scheduler
+# mints a per-task bearer token and injects CAIRN_AUDIT_STREAM_URL/TOKEN into the
+# worker; the Host Bridge still writes audit.jsonl first, then forwards each entry to the
+# control plane so the ledger is updated while the task runs. The finish-time import stays
+# authoritative and fills any missing suffix. Tokens never enter task.json or prompts.
+# In container mode the token value is passed through the docker CLI's own environment
+# (`-e CAIRN_AUDIT_STREAM_TOKEN`), not as a value in host argv.
+#
+# If the sender stops, the worker writes audit-stream-lost.json. Finish imports it into
+# the audit_stream_lost sidecar and `GET /projects/{id}/audit/{task_id}/stream-lost`
+# exposes it; the finish-time audit.jsonl import is still the recovery path.
+#
+#   local execution: omit url to use the actual bound loopback address.
+#   container execution: url is required and must be reachable from the container
+#   (for example http://host.docker.internal:8000 on Docker Desktop).
+# audit_stream:
+#   enabled: true
+#   url: "http://127.0.0.1:8000"
+
 # Optional Observer sidecar (M4c). It maintains a project-level ideas/memory board
 # and runs a separate review model; the main solver only gets read-only board tools.
 # The solver answer is never changed by Observer failures, and flush is bounded by
@@ -110,6 +129,55 @@ retention:
 #   timeout_seconds: 60
 #   max_reviews_per_task: 8
 #   kernel_tasks: ["explore"]
+
+# Optional Observer graph proposals (M11). Disabled by default; only effective when
+# observer.enabled is also true and the task kind matches observer.kernel_tasks.
+# The sidecar gets propose_graph_change, which writes candidate fact/intent/hint files
+# under <session>/observer/proposals/. The control plane alone validates, dedupes and
+# applies them; no new write route is exposed and the main solver cannot write that
+# directory with its structured file tools.
+#   mode: off      -> no candidate directory, no ingestion, no review
+#   mode: dry_run  -> run every check, record `dry_run`, never write the graph
+#   mode: apply    -> apply accepted proposals through the normal graph commands
+# proposal ids are derived from project + task + filename, so rescanning a retained
+# session is idempotent.
+# proposals:
+#   enabled: false
+#   mode: apply
+#   max_per_task: 20
+#   max_file_bytes: 16384
+#   max_total_bytes: 65536
+#   allow_kinds: [fact, intent, hint]
+#   require_evidence_for_fact: true
+#   min_confidence: 0
+
+# Optional slow-layer trigger policy (M12a). It decides when the scheduler starts a
+# reason task; it does not change the graph or worker contract. Successful (including
+# noop) reason turns persist fact/hint/open-intent watermarks in strategist_state, so a
+# restart does not re-run reason for an unchanged graph. Failed turns apply a backoff
+# without advancing those watermarks. `initial` and "all open intents finished" are
+# urgent: they skip cooldown and the hourly cap, but never the failure backoff or
+# waiting for running explore/conclude tasks. Set a threshold to 0 to disable it.
+# strategist:
+#   min_new_facts: 1              # 0 disables the fact-delta trigger
+#   min_new_hints: 1              # 0 disables the hint-delta trigger
+#   cooldown_seconds: 30          # minimum gap for non-urgent triggers; 0 disables
+#   failure_backoff_seconds: 120  # block every trigger after a reason failure
+#   max_runs_per_hour: 12         # rolling-hour cap for non-urgent triggers
+#   zero_output_threshold: 3      # consecutive fact-less explore/conclude runs
+#   stale_intent_seconds: 0       # all open intents stale for this long; 0 disables
+#   fallback_interval_seconds: 0  # idle fallback since the last success; 0 disables
+
+# Optional per-project budget policy (M12b). This is a default for every project, not a
+# shared global pool. Token and cost limits are checked against finished runs only: tasks
+# still in flight have not reported usage yet, so a project can overshoot by their usage.
+# A pending conclude always runs, so a held intent can be salvaged or released.
+# Worker usage comes from the main solver session's usage.json sidecar and excludes
+# subagent sessions; treat these limits as cost guardrails, not as billing.
+# budget:
+#   max_project_tokens: 0       # stop new reason/explore/bootstrap at this total; 0 off
+#   max_project_cost_usd: 0     # provider-reported USD total; 0 off
+#   max_project_tasks: 0        # per-project concurrency; 0 inherits max_project_workers
 
 # Environment variables passed to every worker process. They are not written
 # into task.json. Prefer ~/.tch-agent/config/auth.json for model credentials;

@@ -1,9 +1,12 @@
 {
   "name": "cairn-merged",
-  "version": "0.5.0-m8",
+  "version": "0.11.0-m13b",
   "private": true,
   "type": "module",
-  "workspaces": ["apps/*", "packages/*"],
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
     "cairn": "bun run apps/cairn/src/cli.ts",
     "test": "bun test",

@@ -117,6 +117,15 @@ describe("worker task contract", () => {
     }
   });
 
+  test("validates the optional tool-call ceiling", () => {
+    expect(taskErrors({ ...validTask(), maxToolCalls: 40 })).toEqual([]);
+    for (const maxToolCalls of [0, -1, 1.5, "40"]) {
+      expect(messages({ ...validTask(), maxToolCalls })).toContain(
+        "maxToolCalls must be a positive integer",
+      );
+    }
+  });
+
   test("requires a positive hard deadline and an earlier soft deadline", () => {
     expect(messages({ ...validTask(), hardDeadlineSeconds: 0 })).toContain(
       "hardDeadlineSeconds must be a positive integer",

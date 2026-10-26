@@ -1,5 +1,10 @@
 import { readFile } from "node:fs/promises"
-import type { CairnObserverContextFile, CairnObserverOptions, CairnReviewPayload } from "./types"
+import type {
+    CairnObserverContextFile,
+    CairnObserverOptions,
+    CairnObserverProposalOptions,
+    CairnReviewPayload,
+} from "./types"
 
 function envText(name: string): string | undefined {
     const value = process.env[name]?.trim()
@@ -20,6 +25,45 @@ function envNonNegativeInt(name: string, fallback: number): number {
     return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback
 }
 
+function envUnitInterval(name: string, fallback: number): number {
+    const raw = envText(name)
+    if (!raw) return fallback
+    const parsed = Number(raw)
+    return Number.isFinite(parsed) && parsed >= 0 && parsed <= 1 ? parsed : fallback
+}
+
+function envBool(name: string): boolean {
+    return process.env[name] === "1"
+}
+
+function readProposalOptions(): CairnObserverProposalOptions | undefined {
+    if (!envBool("CAIRN_OBSERVER_PROPOSALS_ENABLED")) return undefined
+    const dir = envText("CAIRN_OBSERVER_PROPOSALS_DIR")
+    const projectId = envText("CAIRN_OBSERVER_PROJECT_ID")
+    const taskId = envText("CAIRN_OBSERVER_TASK_ID")
+    const allowedKinds = (envText("CAIRN_OBSERVER_PROPOSALS_ALLOW_KINDS") ?? "")
+        .split(",")
+        .map((kind) => kind.trim())
+        .filter((kind) => kind === "fact" || kind === "intent" || kind === "hint")
+    if (!dir || !projectId || !taskId || allowedKinds.length === 0) {
+        console.error(
+            "[observer] proposals disabled: dir, project id, task id and at least one allowed kind are required",
+        )
+        return undefined
+    }
+    return {
+        dir,
+        projectId,
+        taskId,
+        allowedKinds,
+        maxPerTask: envNonNegativeInt("CAIRN_OBSERVER_PROPOSALS_MAX_PER_TASK", 20),
+        maxFileBytes: envPositiveInt("CAIRN_OBSERVER_PROPOSALS_MAX_FILE_BYTES", 16 * 1024),
+        maxTotalBytes: envPositiveInt("CAIRN_OBSERVER_PROPOSALS_MAX_TOTAL_BYTES", 64 * 1024),
+        minConfidence: envUnitInterval("CAIRN_OBSERVER_PROPOSALS_MIN_CONFIDENCE", 0),
+        requireEvidenceForFact: envBool("CAIRN_OBSERVER_PROPOSALS_REQUIRE_EVIDENCE"),
+    }
+}
+
 /**
  * Reads the scheduler->worker Observer contract. Returns undefined unless the scheduler
  * explicitly enabled it for this task; a malformed contract is logged and treated as off.
@@ -37,6 +81,7 @@ export function readCairnObserverOptionsFromEnv(): CairnObserverOptions | undefi
         return undefined
     }
 
+    const proposals = readProposalOptions()
     return {
         contextPath,
         boardDir,
@@ -46,6 +91,7 @@ export function readCairnObserverOptionsFromEnv(): CairnObserverOptions | undefi
         windowRounds: envPositiveInt("CAIRN_OBSERVER_WINDOW_ROUNDS", 8),
         timeoutSeconds: envPositiveInt("CAIRN_OBSERVER_TIMEOUT_SECONDS", 60),
         maxReviewsPerTask: envNonNegativeInt("CAIRN_OBSERVER_MAX_REVIEWS_PER_TASK", 8),
+        ...(proposals === undefined ? {} : { proposals }),
     }
 }
 
@@ -138,8 +184,9 @@ export function formatCairnReviewRounds(
 export function buildCairnObserverPrompt(
     contextText: string,
     payload: CairnReviewPayload,
+    proposalsEnabled = false,
 ): string {
-    return [
+    const lines = [
         contextText,
         "",
         "## Recent Solver Activity",
@@ -152,5 +199,16 @@ export function buildCairnObserverPrompt(
         "- 没有改动就只回复 `NO_CHANGE`。",
         "- 有改动就只写 1-4 条短 bullet，描述你维护了什么。",
         "- 你的全部结论必须落在 ideas / memory 看板上；不要输出解题过程或工具调用。",
-    ].join("\n")
+    ]
+    if (proposalsEnabled) {
+        lines.push(
+            "",
+            "## Graph Proposals",
+            "- 只有出现值得进入 Cairn 图的 durable 结论时，才调用 `propose_graph_change`。",
+            "- `fact` 必须引用已有 fact id 和真实 evidence 文件；`intent` 必须给出稳定的 `dedupe_key`；`hint` 要短且可复用。",
+            "- 提案只是候选：控制面会做证据、去重与范围校验，可能拒绝或标为重复，不代表已写入图。",
+            "- 不要提交 flag、凭据、完整工具输出、临时路径或题面复述。",
+        )
+    }
+    return lines.join("\n")
 }

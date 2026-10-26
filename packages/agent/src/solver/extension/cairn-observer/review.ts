@@ -6,6 +6,7 @@ import { DEFAULT_CONFIG_DIR, ConfigManager } from "../../../config/index"
 import { OBSERVER_SYSTEM_PROMPT } from "../challenge-observer/observer-agent"
 import { createObserverSidecarToolsWithOptions } from "../challenge-observer/tools"
 import { buildCairnObserverPrompt } from "./context"
+import { createProposeGraphChangeTool } from "./proposals"
 import type { CairnObserverOptions, CairnReviewPayload } from "./types"
 
 /**
@@ -19,7 +20,8 @@ const CAIRN_OBSERVER_ADAPTER_PROMPT = `## Cairn Runtime Adaptation
 
 - 没有 challenge state、difficulty、flag、hint 或 instance 字段；不要等待这些信息。
 - 你会收到 project / focus intent / authorized scope / recent facts / open intents 与最近轮次。
-- 你不能执行 shell、文件、网络或验证工具，也不能提交 flag；你只维护 ideas 和 memory 看板。
+- 你不能执行 shell、文件、网络或验证工具，也不能提交 flag；默认只维护 ideas 和 memory 看板。
+- 如果运行环境提供 \`propose_graph_change\`，你只能用它提交候选 fact/intent/hint；它不等于写入图。
 - \`send_efficiency_reminder\` 在这个运行模式下不存在；不要尝试调用它。
 - 看板可能被同一项目的其他任务读取；只写 durable、可复用、能跨任务成立的结论。
 - 不记录 flag、凭据、完整工具输出、临时路径或与任务无关的题面复述。`
@@ -69,6 +71,7 @@ async function loadSolverEntries(): Promise<unknown[]> {
 async function resolveSessionOptions(
     config: ConfigManager,
     observerModel: string | undefined,
+    observerProposalOptions: CairnObserverOptions["proposals"],
 ): Promise<CreateAgentSessionOptions> {
     const resourceLoader = new DefaultResourceLoader({
         agentDir: config.dir,
@@ -77,12 +80,15 @@ async function resolveSessionOptions(
     await resourceLoader.reload()
 
     const solverEntries = await loadSolverEntries()
+    const tools = createObserverSidecarToolsWithOptions({
+        getSolverEntries: () => solverEntries,
+        enableSteer: false,
+    })
     const options: CreateAgentSessionOptions = {
         tools: [],
-        customTools: createObserverSidecarToolsWithOptions({
-            getSolverEntries: () => solverEntries,
-            enableSteer: false,
-        }),
+        customTools: observerProposalOptions
+            ? [...tools, createProposeGraphChangeTool(observerProposalOptions)]
+            : tools,
         resourceLoader,
         authStorage: config.auth,
         modelRegistry: config.models,
@@ -114,9 +120,16 @@ export async function runCairnObserverReview(
     if (payload.rounds.length === 0) return { applied: false }
 
     const config = await ConfigManager.getInstance(resolveObserverConfigDir())
-    const sessionOptions = await resolveSessionOptions(config, observerOptions.model)
+    const sessionOptions = await resolveSessionOptions(
+        config,
+        observerOptions.model,
+        observerOptions.proposals,
+    )
     const sidecarSessionDir = join(observerOptions.stateDir, "sidecar")
     await mkdir(sidecarSessionDir, { recursive: true })
+    if (observerOptions.proposals) {
+        await mkdir(observerOptions.proposals.dir, { recursive: true })
+    }
 
     const workspaceDir = resolveObserverWorkspaceDir()
     const { session } = await createAgentSession({
@@ -155,7 +168,13 @@ export async function runCairnObserverReview(
 
     try {
         await Promise.race([
-            session.prompt(buildCairnObserverPrompt(contextText, payload)),
+            session.prompt(
+                buildCairnObserverPrompt(
+                    contextText,
+                    payload,
+                    observerOptions.proposals !== undefined,
+                ),
+            ),
             timeoutPromise,
         ])
     } finally {

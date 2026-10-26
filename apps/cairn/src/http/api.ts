@@ -1,7 +1,10 @@
+import { DEFAULT_INTENT_PRIORITY } from "@cairn/contracts";
 import {
   HttpError,
   RequestValidationError,
   all,
+  appendTaskAudit,
+  buildProjectCostReport,
   checkProjectCompleted,
   checkProjectHintWritable,
   claimReason,
@@ -13,10 +16,13 @@ import {
   expireReasonLeases,
   exportProjectTimeline,
   exportProjectYaml,
+  getAuditStreamLoss,
   getCompletionIntentOr409,
   getFactMeta,
   getProjectDetail,
   getProjectOr404,
+  getProjectUsage,
+  getStrategistState,
   getTaskAudit,
   heartbeatIntent,
   heartbeatReason,
@@ -24,6 +30,8 @@ import {
   listFactEvidence,
   listProjectArtifacts,
   listProjectAudit,
+  listProjectIntentMeta,
+  listProjectProposals,
   listProjectRuns,
   listProjects,
   nextFactId,
@@ -45,12 +53,15 @@ import {
   releaseIntent,
   releaseReason,
   utcnow,
+  type AuditEntry,
   type CairnDatabase,
   type IntentRow,
   type ProjectRow,
 } from "@cairn/graph";
 import { resolve, sep } from "node:path";
 
+import type { AuditTokenRegistry } from "../audit-stream/tokens";
+import type { BudgetConfig } from "../config";
 import { verifyEvidenceFiles } from "../scheduler/evidence";
 import { projectWorkspace } from "../scheduler/tasks";
 
@@ -63,6 +74,13 @@ export interface ApiOptions {
    * still be read without it, but live verification reports `unverified`.
    */
   workspaceRoot?: string;
+  /** Enables the authenticated live audit append endpoint when provided. */
+  auditTokens?: AuditTokenRegistry;
+  /**
+   * The scheduler's per-project budget policy. When omitted (pure HTTP mode) the
+   * strategist view still reports recorded usage but returns null limits.
+   */
+  budget?: BudgetConfig;
 }
 
 export interface Api {
@@ -95,8 +113,11 @@ function text(value: string): Response {
   return new Response(value, { headers: { "content-type": "text/plain; charset=utf-8" } });
 }
 
-async function readBody(request: Request): Promise<unknown> {
-  const raw = await request.text();
+async function readBody(request: Request, maxBytes?: number): Promise<unknown> {
+  const raw =
+    maxBytes === undefined
+      ? await request.text()
+      : await readBoundedBody(request, maxBytes);
   if (raw.trim() === "") {
     return {};
   }
@@ -114,9 +135,94 @@ async function readBody(request: Request): Promise<unknown> {
   }
 }
 
+/**
+ * Reads a request body without buffering more than `maxBytes`. A declared Content-Length
+ * is rejected before the first read; a chunked body is aborted as soon as it crosses the
+ * cap, so a client cannot force an unbounded allocation.
+ */
+async function readBoundedBody(request: Request, maxBytes: number): Promise<string> {
+  const declared = request.headers.get("content-length");
+  if (declared !== null) {
+    const length = Number(declared);
+    if (Number.isSafeInteger(length) && length > maxBytes) {
+      throw new HttpError(413, "Request body too large");
+    }
+  }
+  if (request.body === null) return "";
+
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value === undefined) continue;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        try {
+          await reader.cancel();
+        } catch {
+          // The peer may already have closed the stream.
+        }
+        throw new HttpError(413, "Request body too large");
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return Buffer.concat(chunks, total).toString("utf8");
+}
+
+function requireAuditToken(
+  request: Request,
+  registry: AuditTokenRegistry,
+  projectId: string,
+  taskId: string,
+): void {
+  const header = request.headers.get("authorization") ?? "";
+  const match = /^Bearer[ \t]+(\S+)$/i.exec(header.trim());
+  if (match === null || !registry.authenticate(match[1]!, projectId, taskId)) {
+    throw new HttpError(401, "Invalid audit stream token");
+  }
+}
+
+function parseAuditStreamBody(value: unknown): AuditEntry[] {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new HttpError(400, "audit stream body must be a JSON object");
+  }
+  const events = (value as Record<string, unknown>)["events"];
+  if (!Array.isArray(events)) {
+    throw new HttpError(400, "audit stream events must be an array");
+  }
+  if (events.length === 0) {
+    throw new HttpError(400, "audit stream events must not be empty");
+  }
+  if (events.length > MAX_AUDIT_STREAM_EVENTS) {
+    throw new HttpError(
+      400,
+      `audit stream accepts at most ${MAX_AUDIT_STREAM_EVENTS} events per request`,
+    );
+  }
+  return events.map((entry, index) => {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      throw new HttpError(400, `audit stream events[${index}] must be an object`);
+    }
+    const record = entry as Record<string, unknown>;
+    if (!("seq" in record) || !("event" in record)) {
+      throw new HttpError(
+        400,
+        `audit stream events[${index}] must contain seq and event`,
+      );
+    }
+    return { seq: record["seq"] as number, event: record["event"] };
+  });
+}
+
 export function createApi(options: ApiOptions): Api {
-  const { db, staticDir, workspaceRoot } = options;
-  const routes = buildRoutes(db, workspaceRoot);
+  const { db, staticDir, workspaceRoot, auditTokens, budget } = options;
+  const routes = buildRoutes(db, workspaceRoot, auditTokens, budget);
 
   async function handle(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -183,7 +289,40 @@ async function serveStatic(staticDir: string, pathname: string): Promise<Respons
   return new Response(file);
 }
 
-function buildRoutes(db: CairnDatabase, workspaceRoot?: string): Route[] {
+const MAX_AUDIT_STREAM_BODY_BYTES = 1024 * 1024;
+const MAX_AUDIT_STREAM_EVENTS = 256;
+const STRATEGIST_RUN_LIMIT_DEFAULT = 20;
+const STRATEGIST_RUN_LIMIT_MAX = 100;
+
+/**
+ * `limit` bounds only the recent reason-run list. It is a single optional query parameter;
+ * malformed or out-of-range values are rejected instead of silently clamped, so an
+ * operator can tell a typo from an empty history.
+ */
+function parseStrategistLimit(raw: string | null): number {
+  if (raw === null) return STRATEGIST_RUN_LIMIT_DEFAULT;
+  if (!/^[0-9]+$/.test(raw)) {
+    throw new HttpError(
+      400,
+      `limit must be an integer between 1 and ${STRATEGIST_RUN_LIMIT_MAX}`,
+    );
+  }
+  const parsed = Number(raw);
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > STRATEGIST_RUN_LIMIT_MAX) {
+    throw new HttpError(
+      400,
+      `limit must be an integer between 1 and ${STRATEGIST_RUN_LIMIT_MAX}`,
+    );
+  }
+  return parsed;
+}
+
+function buildRoutes(
+  db: CairnDatabase,
+  workspaceRoot?: string,
+  auditTokens?: AuditTokenRegistry,
+  budget?: BudgetConfig,
+): Route[] {
   const routes: Route[] = [];
 
   function route(method: string, template: string, handler: RouteHandler): void {
@@ -242,6 +381,114 @@ function buildRoutes(db: CairnDatabase, workspaceRoot?: string): Route[] {
     db.withConn((conn) => json(listProjectRuns(conn, params["project_id"]!))),
   );
 
+  // Read-only slow-layer view (M12c): persisted trigger watermarks, the effective
+  // per-project budget, open intents in dispatch order, and recent reason runs.
+  route("GET", "/projects/{project_id}/strategist", ({ params, url }) =>
+    db.withConn((conn) => {
+      const projectId = params["project_id"]!;
+      getProjectOr404(conn, projectId);
+      const limit = parseStrategistLimit(url.searchParams.get("limit"));
+
+      const runs = listProjectRuns(conn, projectId);
+      const usage = getProjectUsage(conn, projectId);
+      const runningTasks = runs.reduce(
+        (count, run) => count + (run.outcome === null ? 1 : 0),
+        0,
+      );
+      const meta = new Map(
+        listProjectIntentMeta(conn, projectId).map((entry) => [entry.intent_id, entry]),
+      );
+      const intents = getProjectDetail(conn, projectId).intents
+        .filter((intent) => intent.to === null && intent.concluded_at === null)
+        .map((intent) => {
+          const extra = meta.get(intent.id);
+          return {
+            ...intent,
+            priority: extra?.priority ?? DEFAULT_INTENT_PRIORITY,
+            budget: extra?.budget ?? null,
+            source: extra?.source ?? null,
+          };
+        })
+        // Mirrors the scheduler's explore order: priority DESC, then newest first.
+        .sort(
+          (left, right) =>
+            right.priority - left.priority ||
+            right.created_at.localeCompare(left.created_at) ||
+            right.id.localeCompare(left.id),
+        );
+
+      const limits =
+        budget === undefined
+          ? null
+          : {
+              max_project_tokens: budget.maxProjectTokens,
+              max_project_cost_usd: budget.maxProjectCostUsd,
+              max_project_tasks: budget.maxProjectTasks,
+            };
+      const exhausted = {
+        tokens:
+          limits !== null &&
+          limits.max_project_tokens > 0 &&
+          usage.tokens >= limits.max_project_tokens,
+        cost_usd:
+          limits !== null &&
+          limits.max_project_cost_usd > 0 &&
+          usage.cost_usd >= limits.max_project_cost_usd,
+        // max_project_tasks is a concurrency quota; 0 inherits runtime.max_project_workers,
+        // which this HTTP-only view does not know, so it reports "not exhausted".
+        tasks:
+          limits !== null &&
+          limits.max_project_tasks > 0 &&
+          runningTasks >= limits.max_project_tasks,
+      };
+
+      return json({
+        state: getStrategistState(conn, projectId),
+        budget: {
+          used_tokens: usage.tokens,
+          used_cost_usd: usage.cost_usd,
+          running_tasks: runningTasks,
+          limits,
+          exhausted,
+        },
+        intents,
+        reason_runs: [...runs]
+          .filter((run) => run.kind === "reason")
+          .reverse()
+          .slice(0, limit),
+      });
+    }),
+  );
+
+  // Read-only cost attribution and causal chain (M13b): which run paid for each fact,
+  // which run created its intent, and how runs/intents/facts connect.
+  route("GET", "/projects/{project_id}/cost", ({ params }) =>
+    db.withConn((conn) => json(buildProjectCostReport(conn, params["project_id"]!))),
+  );
+
+  // Read-only: proposals are written by the scheduler from task-scoped candidate files.
+  route("GET", "/projects/{project_id}/proposals", ({ params, url }) =>
+    db.withConn((conn) => {
+      const status = url.searchParams.get("status");
+      if (
+        status !== null &&
+        !["pending", "applied", "rejected", "duplicate", "dry_run"].includes(status)
+      ) {
+        throw new HttpError(400, "Unsupported proposal status");
+      }
+      const kind = url.searchParams.get("kind");
+      if (kind !== null && !["fact", "intent", "hint"].includes(kind)) {
+        throw new HttpError(400, "Unsupported proposal kind");
+      }
+      return json(
+        listProjectProposals(conn, params["project_id"]!, {
+          ...(status === null ? {} : { status: status as "pending" | "applied" | "rejected" | "duplicate" | "dry_run" }),
+          ...(kind === null ? {} : { kind: kind as "fact" | "intent" | "hint" }),
+        }),
+      );
+    }),
+  );
+
   route("GET", "/projects/{project_id}/audit", ({ params }) =>
     db.withConn((conn) => json(listProjectAudit(conn, params["project_id"]!))),
   );
@@ -251,6 +498,40 @@ function buildRoutes(db: CairnDatabase, workspaceRoot?: string): Route[] {
       json(getTaskAudit(conn, params["project_id"]!, params["task_id"]!)),
     ),
   );
+
+  route("GET", "/projects/{project_id}/audit/{task_id}/stream-lost", ({ params }) =>
+    db.withConn((conn) => {
+      const taskId = params["task_id"]!;
+      return json({
+        task_id: taskId,
+        stream_lost: getAuditStreamLoss(conn, params["project_id"]!, taskId),
+      });
+    }),
+  );
+
+  if (auditTokens !== undefined) {
+    route("POST", "/projects/{project_id}/tasks/{task_id}/audit", async ({ params, request }) => {
+      const projectId = params["project_id"]!;
+      const taskId = params["task_id"]!;
+      // Authenticate before reading the body: an unauthorized caller gets no parsing work
+      // and no information about the ledger.
+      requireAuditToken(request, auditTokens, projectId, taskId);
+      const entries = parseAuditStreamBody(
+        await readBody(request, MAX_AUDIT_STREAM_BODY_BYTES),
+      );
+      return db.withConn((conn) => {
+        // Live appends are strict: a gap or fork must be reported so the worker stops and
+        // leaves the rest to the finish-time import.
+        const result = appendTaskAudit(conn, {
+          projectId,
+          taskId,
+          entries,
+          onConflict: "throw",
+        });
+        return json({ recorded: result.recorded, duplicates: result.duplicates });
+      });
+    });
+  }
 
   route("GET", "/projects/{project_id}/facts/{fact_id}/meta", ({ params }) => {
     const meta = db.withConn((conn) =>

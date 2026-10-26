@@ -121,6 +121,44 @@ afterEach(() => {
   rmSync(directory, { recursive: true, force: true });
 });
 
+describe("intent budgets", () => {
+  test("tightens the deadline and carries the tool-call ceiling", () => {
+    const project = projectFixture();
+    const prepared = prepareTask({
+      config: parseDispatchConfig(CONFIG),
+      project,
+      exportYaml: "project: p1\n",
+      kind: "explore",
+      intent: project.intents[0]!,
+      budget: { max_seconds: 5, max_tool_calls: 7 },
+      scope: { targets: ["127.0.0.1:8080"] },
+      workspaceRoot: directory,
+    });
+
+    expect(prepared.task.hardDeadlineSeconds).toBe(5);
+    expect(prepared.task.softDeadlineSeconds).toBe(4);
+    expect(prepared.task.maxToolCalls).toBe(7);
+  });
+
+  test("never extends the configured task timeout", () => {
+    const project = projectFixture();
+    const prepared = prepareTask({
+      config: parseDispatchConfig(CONFIG),
+      project,
+      exportYaml: "project: p1\n",
+      kind: "explore",
+      intent: project.intents[0]!,
+      budget: { max_seconds: 600 },
+      scope: { targets: ["127.0.0.1:8080"] },
+      workspaceRoot: directory,
+    });
+
+    expect(prepared.task.hardDeadlineSeconds).toBe(30);
+    expect(prepared.task.softDeadlineSeconds).toBe(24);
+    expect(prepared.task.maxToolCalls).toBeUndefined();
+  });
+});
+
 describe("Observer task preparation", () => {
   test("writes a bounded context snapshot and env for an enabled explore task", () => {
     const project = projectFixture();
@@ -187,6 +225,93 @@ describe("Observer task preparation", () => {
       CAIRN_OBSERVER_MAX_REVIEWS_PER_TASK: "4",
       CAIRN_OBSERVER_MODEL: "cheap-review",
     });
+  });
+
+  test("exposes the proposal contract only when both Observer and proposals are enabled", () => {
+    const project = projectFixture();
+    const config = parseDispatchConfig({
+      ...CONFIG,
+      observer: {
+        enabled: true,
+        every_rounds: 3,
+        window_rounds: 6,
+        timeout_seconds: 15,
+        max_reviews_per_task: 4,
+        kernel_tasks: ["explore"],
+      },
+      proposals: {
+        enabled: true,
+        mode: "dry_run",
+        max_per_task: 3,
+        max_file_bytes: 2048,
+        max_total_bytes: 4096,
+        allow_kinds: ["hint", "fact"],
+        min_confidence: 0.25,
+        require_evidence_for_fact: false,
+      },
+    });
+    const prepared = prepareTask({
+      config,
+      project,
+      exportYaml: "project: p1\n",
+      kind: "explore",
+      intent: project.intents[0]!,
+      scope: { targets: ["127.0.0.1:8080"] },
+      workspaceRoot: directory,
+    });
+
+    expect(prepared.observer.proposals).toMatchObject({
+      projectId: "p1",
+      taskId: prepared.task.taskId,
+      allowKinds: ["hint", "fact"],
+      maxPerTask: 3,
+      maxFileBytes: 2048,
+      maxTotalBytes: 4096,
+      minConfidence: 0.25,
+      requireEvidenceForFact: false,
+    });
+    expect(prepared.observer.proposals!.dir).toBe(
+      join(prepared.observer.stateDir, "proposals"),
+    );
+    expect(existsSync(prepared.observer.proposals!.dir)).toBe(true);
+
+    expect(observerEnvironment(prepared.observer)).toMatchObject({
+      CAIRN_OBSERVER_PROPOSALS_ENABLED: "1",
+      CAIRN_OBSERVER_PROPOSALS_DIR: prepared.observer.proposals!.dir,
+      CAIRN_OBSERVER_PROJECT_ID: "p1",
+      CAIRN_OBSERVER_TASK_ID: prepared.task.taskId,
+      CAIRN_OBSERVER_PROPOSALS_ALLOW_KINDS: "hint,fact",
+      CAIRN_OBSERVER_PROPOSALS_MAX_PER_TASK: "3",
+      CAIRN_OBSERVER_PROPOSALS_MAX_FILE_BYTES: "2048",
+      CAIRN_OBSERVER_PROPOSALS_MAX_TOTAL_BYTES: "4096",
+      CAIRN_OBSERVER_PROPOSALS_MIN_CONFIDENCE: "0.25",
+      CAIRN_OBSERVER_PROPOSALS_REQUIRE_EVIDENCE: "0",
+    });
+
+    const off = prepareTask({
+      config: parseDispatchConfig({
+        ...CONFIG,
+        observer: {
+          enabled: true,
+          every_rounds: 3,
+          window_rounds: 6,
+          timeout_seconds: 15,
+          max_reviews_per_task: 4,
+          kernel_tasks: ["explore"],
+        },
+        proposals: { enabled: true, mode: "off" },
+      }),
+      project,
+      exportYaml: "project: p1\n",
+      kind: "explore",
+      intent: project.intents[0]!,
+      scope: { targets: ["127.0.0.1:8080"] },
+      workspaceRoot: directory,
+    });
+    expect(off.observer.proposals).toBeNull();
+    expect(observerEnvironment(off.observer)).not.toHaveProperty(
+      "CAIRN_OBSERVER_PROPOSALS_ENABLED",
+    );
   });
 
   test("keeps the focused intent visible when the open-intent cap is exceeded", () => {

@@ -141,6 +141,56 @@ describe("validateReasonPayload", () => {
       "accepted must be true or false",
     );
   });
+
+  test("accepts per-intent priority and budget hints unchanged", () => {
+    const intent = {
+      from: ["f001"],
+      description: "one",
+      priority: 80,
+      budget: { max_seconds: 120, max_tool_calls: 12 },
+    };
+    expect(
+      validateReasonPayload({ accepted: true, data: { intents: [intent] } }, true, 3),
+    ).toEqual({ kind: "intents", data: [intent] });
+  });
+
+  test("rejects an out-of-range or non-integer priority", () => {
+    for (const priority of [-1, 101, 3.5, "high"]) {
+      expect(() =>
+        validateReasonPayload(
+          {
+            accepted: true,
+            data: { intents: [{ from: ["f001"], description: "one", priority }] },
+          },
+          true,
+          3,
+        ),
+      ).toThrow("priority");
+    }
+  });
+
+  test("rejects malformed intent budgets", () => {
+    for (const budget of [
+      "soon",
+      [],
+      {},
+      { max_seconds: 0 },
+      { max_tool_calls: -1 },
+      { max_seconds: 1.5 },
+      { unknown: 1 },
+    ]) {
+      expect(() =>
+        validateReasonPayload(
+          {
+            accepted: true,
+            data: { intents: [{ from: ["f001"], description: "one", budget }] },
+          },
+          true,
+          3,
+        ),
+      ).toThrow("budget");
+    }
+  });
 });
 
 describe("validateExplorePayload", () => {

@@ -20,8 +20,47 @@ interface ScopePolicyEnvelope {
   artifactDir?: string;
 }
 
+interface AuditStreamEnvelope {
+  url: string;
+  token: string;
+}
+
+interface CachedBridge {
+  key: string;
+  bridge: HostBridge;
+}
+
+// The factory runs once per solver/subagent session. They share one task, so they must
+// also share one audit sender: per-session senders would restart sequence numbers at 1.
+let cached: CachedBridge | null = null;
+
 export function createHostBridgeExtensionFromEnv(): (pi: PiApiLike) => void {
+  return hostBridgeExtension(bridgeFromEnv());
+}
+
+/** Flushes queued live audit entries; called by the worker before it exits. */
+export async function flushHostBridgeAudit(): Promise<void> {
+  await cached?.bridge.flushAuditStream();
+}
+
+function bridgeFromEnv(): HostBridge {
   const policy = parsePolicy(process.env["CAIRN_SCOPE_POLICY"]);
+  const stream = parseAuditStream();
+  const maxToolCalls = parseMaxToolCalls(process.env["CAIRN_TASK_MAX_TOOL_CALLS"]);
+  const boardDir = process.env["CAIRN_OBSERVER_BOARD_DIR"]?.trim();
+  const observerStateDir = process.env["CAIRN_OBSERVER_STATE_DIR"]?.trim();
+  const protectedWriteRoots = [boardDir, observerStateDir].filter(
+    (path): path is string => path !== undefined && path !== "",
+  );
+  const key = [
+    process.env["CAIRN_SCOPE_POLICY"] ?? "",
+    protectedWriteRoots.join("\u0000"),
+    stream?.url ?? "",
+    stream?.token ?? "",
+    maxToolCalls === undefined ? "" : String(maxToolCalls),
+  ].join("\u0000");
+  if (cached !== null && cached.key === key) return cached.bridge;
+
   const bridge = new HostBridge({
     projectId: policy.projectId,
     taskId: policy.taskId,
@@ -29,11 +68,45 @@ export function createHostBridgeExtensionFromEnv(): (pi: PiApiLike) => void {
     sessionDir: policy.sessionDir,
     scopeTargets: policy.targets,
     ...(policy.artifactDir === undefined ? {} : { artifactDir: policy.artifactDir }),
-    ...(process.env["CAIRN_OBSERVER_BOARD_DIR"]?.trim()
-      ? { protectedWriteRoots: [process.env["CAIRN_OBSERVER_BOARD_DIR"]!.trim()] }
-      : {}),
+    ...(protectedWriteRoots.length === 0 ? {} : { protectedWriteRoots }),
+    ...(stream === undefined ? {} : { auditStream: stream }),
+    ...(maxToolCalls === undefined ? {} : { maxToolCalls }),
   });
-  return hostBridgeExtension(bridge);
+  cached = { key, bridge };
+  return bridge;
+}
+
+function parseMaxToolCalls(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw.trim() === "") return undefined;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value <= 0 || value > 1_000_000) {
+    throw new Error("CAIRN_TASK_MAX_TOOL_CALLS must be a positive integer up to 1000000");
+  }
+  return value;
+}
+
+function parseAuditStream(): AuditStreamEnvelope | undefined {
+  const url = process.env["CAIRN_AUDIT_STREAM_URL"]?.trim();
+  const token = process.env["CAIRN_AUDIT_STREAM_TOKEN"]?.trim();
+  if (url === undefined || url === "") {
+    if (token !== undefined && token !== "") {
+      throw new Error("CAIRN_AUDIT_STREAM_URL is required when a stream token is set");
+    }
+    return undefined;
+  }
+  if (token === undefined || token === "") {
+    throw new Error("CAIRN_AUDIT_STREAM_TOKEN is required when a stream URL is set");
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error("CAIRN_AUDIT_STREAM_URL is not a valid URL");
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error("CAIRN_AUDIT_STREAM_URL must be an http(s) URL");
+  }
+  return { url, token };
 }
 
 function parsePolicy(raw: string | undefined): ScopePolicyEnvelope {

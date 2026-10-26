@@ -17,6 +17,7 @@ import { recordFactMeta } from "./runs";
 import type {
   CompleteRequest,
   ConcludeResponse,
+  CreateHintRequest,
   CreateIntentRequest,
   CreateProjectRequest,
   Fact,
@@ -30,6 +31,7 @@ import type {
 import {
   buildIntents,
   checkProjectActive,
+  checkProjectHintWritable,
   clearProjectReason,
   expireReasonLeases,
   expireWorkers,
@@ -181,6 +183,26 @@ export function getProjectDetail(conn: Database, projectId: string): ProjectDeta
     intents: buildIntents(conn, projectId),
     hints,
   };
+}
+
+export function createHint(
+  conn: Database,
+  projectId: string,
+  body: CreateHintRequest,
+): Hint {
+  checkProjectHintWritable(conn, projectId);
+  const now = utcnow();
+  const hintId = nextHintId(conn, projectId);
+  run(
+    conn,
+    "INSERT INTO hints (id, project_id, content, creator, created_at) VALUES (?, ?, ?, ?, ?)",
+    hintId,
+    projectId,
+    body.content,
+    body.creator,
+    now,
+  );
+  return { id: hintId, content: body.content, creator: body.creator, created_at: now };
 }
 
 export function createIntent(

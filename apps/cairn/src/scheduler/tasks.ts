@@ -10,7 +10,12 @@ import {
   type TaskKind,
   type WorkerTask,
 } from "@cairn/contracts";
-import type { Intent, ProjectDetail, ProjectScope } from "@cairn/graph";
+import type {
+  Intent,
+  IntentBudget,
+  ProjectDetail,
+  ProjectScope,
+} from "@cairn/graph";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -29,6 +34,20 @@ import {
 export type RunnableTaskKind = TaskKind;
 export type ConcludeOf = "bootstrap" | "explore";
 
+/** Candidate-file writer contract for the Observer sidecar. */
+export interface PreparedProposals {
+  /** Worker-view `<stateDir>/proposals`. */
+  dir: string;
+  projectId: string;
+  taskId: string;
+  allowKinds: string[];
+  maxPerTask: number;
+  maxFileBytes: number;
+  maxTotalBytes: number;
+  minConfidence: number;
+  requireEvidenceForFact: boolean;
+}
+
 /** Worker-side coordinates for the opt-in Observer sidecar. */
 export interface PreparedObserver {
   enabled: boolean;
@@ -43,6 +62,8 @@ export interface PreparedObserver {
   windowRounds: number;
   timeoutSeconds: number;
   maxReviewsPerTask: number;
+  /** Null when proposals are disabled, the mode is off, or the Observer is off. */
+  proposals: PreparedProposals | null;
 }
 
 export interface PreparedTask {
@@ -74,6 +95,8 @@ export interface PrepareTaskInput {
   concludeOf?: ConcludeOf;
   /** Conclude only: host-side session directory of that failed phase. */
   resumeFromHostSessionDir?: string;
+  /** Optional intent-level limits stored in `intent_meta` (reason output only). */
+  budget?: IntentBudget | null;
   /** Test hook; otherwise resolved from config.local/container.workspace_root or cwd. */
   workspaceRoot?: string;
   /** Host -> worker path mapper. Identity in local mode. */
@@ -126,7 +149,11 @@ export function prepareTask(input: PrepareTaskInput): PreparedTask {
       ? mapPath(requireResumeDir(input.resumeFromHostSessionDir))
       : undefined;
 
-  const hardDeadlineSeconds = hardDeadline(config, kind, concludeOf);
+  // An intent budget can only tighten the kind timeout, never extend it.
+  const hardDeadlineSeconds = capDeadline(
+    hardDeadline(config, kind, concludeOf),
+    input.budget?.max_seconds,
+  );
   const softDeadlineSeconds =
     kind === "conclude" ? undefined : softDeadline(config, hardDeadlineSeconds);
   const openIntents = project.intents.filter((intent) => intent.to === null);
@@ -186,6 +213,9 @@ export function prepareTask(input: PrepareTaskInput): PreparedTask {
     scope,
     ...(softDeadlineSeconds === undefined ? {} : { softDeadlineSeconds }),
     hardDeadlineSeconds,
+    ...(input.budget?.max_tool_calls === undefined
+      ? {}
+      : { maxToolCalls: input.budget.max_tool_calls }),
   };
 
   const observer = prepareObserver(config, project, kind, task, scope, {
@@ -248,7 +278,15 @@ function prepareObserver(
 
   const hostBoardDir = join(paths.hostWorkspace, ".cairn", "board");
   const hostStateDir = join(paths.hostSessionDir, "observer");
+  const hostProposalDir = join(hostStateDir, "proposals");
   const hostContextPath = join(paths.hostSessionDir, "observer-context.json");
+
+  const proposalsEnabled =
+    enabled &&
+    config.proposals.enabled &&
+    config.proposals.mode !== "off" &&
+    config.proposals.maxPerTask > 0 &&
+    config.proposals.allowKinds.length > 0;
 
   const observer: PreparedObserver = {
     enabled,
@@ -260,6 +298,19 @@ function prepareObserver(
     windowRounds: config.observer.windowRounds,
     timeoutSeconds: config.observer.timeoutSeconds,
     maxReviewsPerTask: config.observer.maxReviewsPerTask,
+    proposals: proposalsEnabled
+      ? {
+          dir: paths.mapPath(hostProposalDir),
+          projectId: project.project.id,
+          taskId: task.taskId,
+          allowKinds: [...config.proposals.allowKinds],
+          maxPerTask: config.proposals.maxPerTask,
+          maxFileBytes: config.proposals.maxFileBytes,
+          maxTotalBytes: config.proposals.maxTotalBytes,
+          minConfidence: config.proposals.minConfidence,
+          requireEvidenceForFact: config.proposals.requireEvidenceForFact,
+        }
+      : null,
   };
 
   if (!enabled) return observer;
@@ -268,6 +319,7 @@ function prepareObserver(
   // task-scoped and is removed together with the session directory.
   mkdirSync(hostBoardDir, { recursive: true });
   mkdirSync(hostStateDir, { recursive: true });
+  if (proposalsEnabled) mkdirSync(hostProposalDir, { recursive: true });
 
   // Keep the focused intent first so the cap can never hide the intent this task is
   // actually working on from its reviewer.
@@ -340,6 +392,19 @@ export function observerEnvironment(observer: PreparedObserver): Record<string, 
     CAIRN_OBSERVER_MAX_REVIEWS_PER_TASK: String(observer.maxReviewsPerTask),
   };
   if (observer.model !== null) env["CAIRN_OBSERVER_MODEL"] = observer.model;
+  if (observer.proposals !== null) {
+    env["CAIRN_OBSERVER_PROPOSALS_ENABLED"] = "1";
+    env["CAIRN_OBSERVER_PROPOSALS_DIR"] = observer.proposals.dir;
+    env["CAIRN_OBSERVER_PROJECT_ID"] = observer.proposals.projectId;
+    env["CAIRN_OBSERVER_TASK_ID"] = observer.proposals.taskId;
+    env["CAIRN_OBSERVER_PROPOSALS_ALLOW_KINDS"] = observer.proposals.allowKinds.join(",");
+    env["CAIRN_OBSERVER_PROPOSALS_MAX_PER_TASK"] = String(observer.proposals.maxPerTask);
+    env["CAIRN_OBSERVER_PROPOSALS_MAX_FILE_BYTES"] = String(observer.proposals.maxFileBytes);
+    env["CAIRN_OBSERVER_PROPOSALS_MAX_TOTAL_BYTES"] = String(observer.proposals.maxTotalBytes);
+    env["CAIRN_OBSERVER_PROPOSALS_MIN_CONFIDENCE"] = String(observer.proposals.minConfidence);
+    env["CAIRN_OBSERVER_PROPOSALS_REQUIRE_EVIDENCE"] =
+      observer.proposals.requireEvidenceForFact ? "1" : "0";
+  }
   return env;
 }
 
@@ -360,6 +425,11 @@ function hardDeadline(
         ? config.tasks.bootstrap.concludeTimeout
         : config.tasks.explore.concludeTimeout;
   }
+}
+
+function capDeadline(configured: number, budgeted: number | undefined): number {
+  if (budgeted === undefined) return configured;
+  return Math.max(1, Math.min(configured, budgeted));
 }
 
 function requireResumeDir(value: string | undefined): string {

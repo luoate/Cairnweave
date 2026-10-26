@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -239,19 +239,19 @@
     </div>
     <div class="flex-1"></div>
     <div class="flex items-center gap-3 text-[11px] text-slate-400">
-      <span class="inline-flex items-center gap-1.5 shrink-0" title="All projects">
-        <span class="font-medium uppercase tracking-[0.12em] text-slate-400">All</span>
+      <span class="inline-flex items-center gap-1.5 shrink-0" title="全部项目">
+        <span class="font-medium uppercase tracking-[0.12em] text-slate-400">全部</span>
         <span class="font-semibold text-slate-600 tabular-nums" x-text="projects.length"></span>
       </span>
-      <span class="inline-flex items-center gap-1.5 shrink-0" title="Active projects">
+      <span class="inline-flex items-center gap-1.5 shrink-0" title="进行中的项目">
         <span class="h-1.5 w-1.5 rounded-full bg-teal-500"></span>
         <span class="font-semibold text-teal-700 tabular-nums" x-text="countProjectsByStatus('active')"></span>
       </span>
-      <span class="inline-flex items-center gap-1.5 shrink-0" title="Stopped projects">
+      <span class="inline-flex items-center gap-1.5 shrink-0" title="已停止的项目">
         <span class="h-1.5 w-1.5 rounded-full bg-amber-500"></span>
         <span class="font-semibold text-amber-700 tabular-nums" x-text="countProjectsByStatus('stopped')"></span>
       </span>
-      <span class="inline-flex items-center gap-1.5 shrink-0" title="Completed projects">
+      <span class="inline-flex items-center gap-1.5 shrink-0" title="已完成的项目">
         <span class="h-1.5 w-1.5 rounded-full bg-slate-400"></span>
         <span class="font-semibold text-slate-600 tabular-nums" x-text="countProjectsByStatus('completed')"></span>
       </span>
@@ -259,15 +259,15 @@
         @click="stopAllActiveProjects()"
         :disabled="!hasActiveProjects() || isStoppingAllProjects"
         class="h-7 px-2.5 rounded-lg border border-amber-200 text-xs text-amber-700 hover:bg-amber-50 transition inline-flex items-center gap-1.5 shrink-0 disabled:cursor-not-allowed disabled:opacity-40"
-        title="Stop all active projects">
+        title="停止所有进行中的项目">
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg>
-        <span x-text="isStoppingAllProjects ? 'Stopping...' : 'Stop Active'"></span>
+        <span x-text="isStoppingAllProjects ? '正在停止…' : '停止全部'"></span>
       </button>
     </div>
     <div class="flex items-center gap-1.5">
       <button @click="showNewProject = true" class="h-7 px-2.5 rounded-lg border border-brand-200 text-xs text-brand-600 hover:bg-brand-50 transition inline-flex items-center gap-1.5">
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
-        New Project
+        新建项目
       </button>
     </div>
     <div class="flex items-center gap-1.5 ml-1">
@@ -284,8 +284,8 @@
     <template x-if="projects.length === 0">
       <div class="flex flex-col items-center justify-center h-full text-slate-400">
         <img src="/static/favicon.svg" alt="" class="w-20 h-20 mb-5 opacity-30">
-        <p class="text-lg font-medium text-slate-500">No projects yet</p>
-        <p class="text-sm mt-1">Create a project to start exploring</p>
+        <p class="text-lg font-medium text-slate-500">还没有项目</p>
+        <p class="text-sm mt-1">创建项目以开始探索</p>
       </div>
     </template>
 
@@ -297,7 +297,7 @@
             <span class="text-[11px] font-mono text-slate-400 tracking-wide" x-text="p.id"></span>
             <span class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold uppercase tracking-[0.12em]"
               :class="projectStatusBadgeClass(p.status)"
-              x-text="p.status"></span>
+              x-text="projectStatusLabel(p.status)"></span>
           </div>
           <div class="mb-3 flex-1">
             <div class="title-action-trigger flex items-start gap-2">
@@ -305,8 +305,8 @@
               <button type="button"
                 @click.stop="openRenameProject(p.id, p.title)"
                 class="title-action-button mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-400 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-600 focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400"
-                title="Rename project"
-                :aria-label="`Rename ${p.title}`">
+                title="重命名项目"
+                :aria-label="`重命名 ${p.title}`">
                 <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="m16.862 4.487 1.65-1.65a1.875 1.875 0 1 1 2.652 2.652l-9.193 9.193a4.5 4.5 0 0 1-1.897 1.13L6 17l1.188-4.074a4.5 4.5 0 0 1 1.13-1.897l8.544-8.542Z"/><path d="M19.5 7.125 16.875 4.5"/><path d="M5.25 18.75h13.5"/></svg>
               </button>
             </div>
@@ -360,7 +360,7 @@
               <button type="button" @click.stop="viewProjectYaml(p.id, p.title)"
                 class="px-2 py-1 rounded-lg border border-slate-200 text-[11px] text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition flex items-center gap-1">
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><path d="M14.25 3H7.5A2.25 2.25 0 0 0 5.25 5.25v13.5A2.25 2.25 0 0 0 7.5 21h9a2.25 2.25 0 0 0 2.25-2.25V8.25L14.25 3Z"/><path d="M14.25 3v5.25h4.5"/><path d="M8.25 12h7.5M8.25 15h5.25"/></svg>
-                Snapshot
+                快照
               </button>
               <template x-if="p.status !== 'completed'">
                 <button type="button" @click.stop="toggleProjectStopById(p.id, p.status)"
@@ -370,20 +370,20 @@
                     : 'border-teal-200 text-teal-600 hover:bg-teal-50'">
                   <svg x-show="p.status === 'active'" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg>
                   <svg x-show="p.status === 'stopped'" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7V5Z"/></svg>
-                  <span x-text="p.status === 'active' ? 'Stop' : 'Resume'"></span>
+                  <span x-text="p.status === 'active' ? '停止' : '恢复'"></span>
                 </button>
               </template>
               <template x-if="p.status === 'completed'">
                 <button type="button" @click.stop="openReopenProject(p.id, p.title)"
                   class="px-2 py-1 rounded-lg border border-sky-200 text-[11px] text-sky-600 hover:bg-sky-50 transition flex items-center gap-1">
                   <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.708"/><path d="M3 3v6h6"/></svg>
-                  Reopen
+                  重新打开
                 </button>
               </template>
               <button type="button" @click.stop="deleteProjectById(p.id, p.title)"
                 class="px-2 py-1 rounded-lg border border-rose-200 text-[11px] text-rose-500 hover:bg-rose-50 hover:text-rose-600 transition flex items-center gap-1">
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4.75A1.75 1.75 0 0 1 9.75 3h4.5A1.75 1.75 0 0 1 16 4.75V6"/><path d="M19 6l-.63 11.338A2 2 0 0 1 16.37 19.5H7.63a2 2 0 0 1-1.997-2.162L5 6"/><path d="M10 10.5v5"/><path d="M14 10.5v5"/></svg>
-                Delete
+                删除
               </button>
             </div>
           </div>
@@ -405,49 +405,49 @@
       <h2 class="text-[15px] font-semibold text-slate-700 truncate" x-text="project.project.title"></h2>
       <button x-show="!replay.active" @click="openRenameProject(project.project.id, project.project.title)"
         class="title-action-button inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-400 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-600 focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400"
-        title="Rename project"
-        :aria-label="`Rename ${project.project.title}`">
+        title="重命名项目"
+        :aria-label="`重命名 ${project.project.title}`">
         <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="m16.862 4.487 1.65-1.65a1.875 1.875 0 1 1 2.652 2.652l-9.193 9.193a4.5 4.5 0 0 1-1.897 1.13L6 17l1.188-4.074a4.5 4.5 0 0 1 1.13-1.897l8.544-8.542Z"/><path d="M19.5 7.125 16.875 4.5"/><path d="M5.25 18.75h13.5"/></svg>
       </button>
       <span class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold uppercase tracking-[0.12em] shrink-0"
         :class="projectStatusBadgeClass(project.project.status)"
-        x-text="project.project.status"></span>
+        x-text="projectStatusLabel(project.project.status)"></span>
     </div>
     <div class="flex-1"></div>
     <div class="flex items-center gap-4 text-xs text-slate-400">
-      <span x-text="`${project.facts.length} facts`"></span>
-      <span x-text="`${project.intents.length} intents`"></span>
+      <span x-text="`${project.facts.length} 个事实`"></span>
+      <span x-text="`${project.intents.length} 个意图`"></span>
     </div>
     <div class="flex items-center gap-1.5">
       <template x-if="!replay.active">
         <button @click="startProjectReplay()" class="px-2.5 py-1 rounded-lg border border-violet-200 text-xs text-violet-600 hover:bg-violet-50 transition flex items-center gap-1.5">
           <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7V5Z"/><path d="M4 5v14"/></svg>
-          Replay
+          回放
         </button>
       </template>
       <template x-if="replay.active">
         <div class="flex items-center gap-1.5 rounded-xl border border-violet-200 bg-violet-50/80 px-2 py-1 text-xs text-violet-700">
           <span class="font-medium whitespace-nowrap" x-text="replayProgressLabel()"></span>
-          <button @click="toggleProjectReplayPlayback()" class="inline-flex h-6 w-6 items-center justify-center rounded-md border border-violet-200 bg-white/80 hover:bg-white transition" :title="replay.playing ? 'Pause replay' : 'Resume replay'">
+          <button @click="toggleProjectReplayPlayback()" class="inline-flex h-6 w-6 items-center justify-center rounded-md border border-violet-200 bg-white/80 hover:bg-white transition" :title="replay.playing ? '暂停回放' : '继续回放'">
             <svg x-show="replay.playing" class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 6h3v12H8zM13 6h3v12h-3z"/></svg>
             <svg x-show="!replay.playing" class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7V5Z"/></svg>
           </button>
-          <button @click="restartProjectReplay()" class="inline-flex h-6 w-6 items-center justify-center rounded-md border border-violet-200 bg-white/80 hover:bg-white transition" title="Restart replay">
+          <button @click="restartProjectReplay()" class="inline-flex h-6 w-6 items-center justify-center rounded-md border border-violet-200 bg-white/80 hover:bg-white transition" title="重新开始回放">
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.708"/><path d="M3 3v6h6"/></svg>
           </button>
           <select x-model="replay.stepMs" @change="updateReplaySpeed()" class="h-6 rounded-md border border-violet-200 bg-white/80 px-1.5 text-[11px] text-violet-700 focus:outline-none focus:ring-2 focus:ring-violet-100">
-            <option value="700">Fast</option>
-            <option value="1100">Normal</option>
-            <option value="1600">Slow</option>
+            <option value="700">快</option>
+            <option value="1100">正常</option>
+            <option value="1600">慢</option>
           </select>
           <button @click="exitProjectReplay()" class="inline-flex h-6 items-center justify-center rounded-md border border-violet-200 bg-white/80 px-2 hover:bg-white transition">
-            Exit
+            退出
           </button>
         </div>
       </template>
       <button @click="viewProjectYaml(selectedProjectId, project.project.title)" class="px-2.5 py-1 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition flex items-center gap-1.5">
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><path d="M14.25 3H7.5A2.25 2.25 0 0 0 5.25 5.25v13.5A2.25 2.25 0 0 0 7.5 21h9a2.25 2.25 0 0 0 2.25-2.25V8.25L14.25 3Z"/><path d="M14.25 3v5.25h4.5"/><path d="M8.25 12h7.5M8.25 15h5.25"/></svg>
-        Snapshot
+        快照
       </button>
       <template x-if="!replay.active && project.project.status !== 'completed'">
         <button @click="toggleProjectStop()"
@@ -457,19 +457,19 @@
             : 'border-teal-200 text-teal-600 hover:bg-teal-50'">
           <svg x-show="project.project.status === 'active'" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg>
           <svg x-show="project.project.status === 'stopped'" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7V5Z"/></svg>
-          <span x-text="project.project.status === 'active' ? 'Stop' : 'Resume'"></span>
+          <span x-text="project.project.status === 'active' ? '停止' : '恢复'"></span>
         </button>
       </template>
       <template x-if="!replay.active && project.project.status === 'completed'">
         <button @click="openReopenProject(project.project.id, project.project.title)"
           class="px-2.5 py-1 rounded-lg border border-sky-200 text-xs text-sky-600 hover:bg-sky-50 transition flex items-center gap-1.5">
           <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.708"/><path d="M3 3v6h6"/></svg>
-          Reopen
+          重新打开
         </button>
       </template>
       <button x-show="!replay.active" @click="deleteProject()" class="px-2.5 py-1 rounded-lg border border-rose-200 text-xs text-rose-500 hover:bg-rose-50 hover:text-rose-600 transition flex items-center gap-1.5">
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4.75A1.75 1.75 0 0 1 9.75 3h4.5A1.75 1.75 0 0 1 16 4.75V6"/><path d="M19 6l-.63 11.338A2 2 0 0 1 16.37 19.5H7.63a2 2 0 0 1-1.997-2.162L5 6"/><path d="M10 10.5v5"/><path d="M14 10.5v5"/></svg>
-        Delete
+        删除
       </button>
     </div>
     <div class="flex items-center gap-1.5 ml-1">
@@ -486,7 +486,7 @@
     <!-- Graph -->
     <div class="flex-1 relative min-w-0">
       <div class="absolute top-3 left-3 z-10 flex items-center gap-1.5">
-        <button @click="fitGraph()" class="h-7 w-7 bg-white/90 backdrop-blur rounded-lg shadow-sm border border-slate-200/60 text-slate-500 hover:text-slate-700 hover:bg-white transition inline-flex items-center justify-center" title="Fit graph" aria-label="Fit graph">
+        <button @click="fitGraph()" class="h-7 w-7 bg-white/90 backdrop-blur rounded-lg shadow-sm border border-slate-200/60 text-slate-500 hover:text-slate-700 hover:bg-white transition inline-flex items-center justify-center" title="适应画布" aria-label="适应画布">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
         </button>
         <select x-model="layoutMode" @change="applySelectedLayout()"
@@ -506,11 +506,11 @@
             <div class="flex items-start gap-3">
               <span class="reason-beacon mt-1 shrink-0"></span>
               <div class="min-w-0">
-                <div class="text-[10px] font-semibold uppercase tracking-[0.18em] text-sky-500">Reason Running</div>
+                <div class="text-[10px] font-semibold uppercase tracking-[0.18em] text-sky-500">推理运行中</div>
                 <div class="mt-0.5 text-sm font-semibold text-slate-700 truncate" x-text="project.project.reason.worker"></div>
                 <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
-                  <span x-show="project.project.reason.trigger" x-text="`Trigger ${project.project.reason.trigger}`"></span>
-                  <span x-text="`Heartbeat ${formatTime(project.project.reason.last_heartbeat_at)}`"></span>
+                  <span x-show="project.project.reason.trigger" x-text="`触发 ${reasonTriggerLabel(project.project.reason.trigger)}`"></span>
+                  <span x-text="`心跳 ${formatTime(project.project.reason.last_heartbeat_at)}`"></span>
                 </div>
               </div>
             </div>
@@ -532,19 +532,19 @@
           <button @click="openCreateIntent()" :disabled="!canActOnSelectedFacts()"
             class="px-3 py-1.5 bg-white/90 backdrop-blur border border-brand-200 text-brand-600 rounded-lg shadow-sm text-xs font-medium hover:bg-brand-50 transition disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-1">
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>
-            Intent
+            意图
           </button>
           <button @click="openCompleteProject()" :disabled="!canActOnSelectedFacts()"
             class="px-3 py-1.5 bg-white/90 backdrop-blur border border-teal-200 text-teal-600 rounded-lg shadow-sm text-xs font-medium hover:bg-teal-50 transition disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-1">
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>
-            Complete
+            完成
           </button>
         </div>
         <div class="flex gap-1.5" x-show="projectCanWriteHints()">
           <button @click="openHintModal()"
             class="px-3 py-1.5 bg-white/90 backdrop-blur border border-amber-200 text-amber-600 rounded-lg shadow-sm text-xs font-medium hover:bg-amber-50 transition flex items-center gap-1">
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 1 1 7.072 0l-.548.547A3.374 3.374 0 0 0 14 18.469V19a2 2 0 1 1-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547Z"/></svg>
-            Hint
+            提示
           </button>
         </div>
         <div class="flex gap-1.5" x-show="projectIsActive()">
@@ -556,12 +556,12 @@
           <button @click="releaseSelectedIntent()" :disabled="!selectedReleasableOpenIntentRecord()"
             class="px-3 py-1.5 bg-white/90 backdrop-blur border border-amber-200 text-amber-700 rounded-lg shadow-sm text-xs font-medium hover:bg-amber-50 transition disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-1">
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 10V7.75A3.75 3.75 0 1 1 16.5 7"/><path d="M7.5 10.5h9A1.5 1.5 0 0 1 18 12v6A1.5 1.5 0 0 1 16.5 19.5h-9A1.5 1.5 0 0 1 6 18v-6A1.5 1.5 0 0 1 7.5 10.5Z"/><path d="M12 14.25v1.5"/></svg>
-            Release
+            释放
           </button>
           <button @click="selectedActionableOpenIntentRecord() && openConclude(selectedActionableOpenIntentRecord())" :disabled="!selectedActionableOpenIntentRecord()"
             class="px-3 py-1.5 bg-white/90 backdrop-blur border border-teal-200 text-teal-600 rounded-lg shadow-sm text-xs font-medium hover:bg-teal-50 transition disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-1">
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14.25 3H7.5A2.25 2.25 0 0 0 5.25 5.25v13.5A2.25 2.25 0 0 0 7.5 21h9a2.25 2.25 0 0 0 2.25-2.25V8.25L14.25 3Z"/><path d="M14.25 3v5.25h4.5"/><path d="M9 13.5 10.875 15.375 15 11.25"/></svg>
-            Conclude
+            结束
           </button>
         </div>
       </div>
@@ -575,23 +575,49 @@
 
     <!-- Side panel -->
     <div class="border-l border-slate-200/60 bg-white flex flex-col overflow-hidden shrink-0 relative z-20" :style="{ width: sidePanelWidth + 'px', minWidth: sidePanelWidth + 'px', flexBasis: sidePanelWidth + 'px' }">
-      <div class="flex border-b border-slate-100 shrink-0">
-        <button @click="sideTab = 'detail'" class="flex-1 px-3 py-2.5 text-xs font-medium transition"
-          :class="sideTab === 'detail' ? 'text-brand-600 border-b-2 border-brand-500' : 'text-slate-400 hover:text-slate-600'">Detail</button>
-        <button @click="sideTab = 'hints'" class="flex-1 px-3 py-2.5 text-xs font-medium transition"
-          :class="sideTab === 'hints' ? 'text-brand-600 border-b-2 border-brand-500' : 'text-slate-400 hover:text-slate-600'">
-          Hints <span class="ml-0.5 text-[10px] opacity-60" x-text="project.hints.length"></span>
-        </button>
-        <button @click="sideTab = 'log'" class="flex-1 px-3 py-2.5 text-xs font-medium transition"
-          :class="sideTab === 'log' ? 'text-brand-600 border-b-2 border-brand-500' : 'text-slate-400 hover:text-slate-600'">Log</button>
+      <div class="border-b border-slate-100 shrink-0">
+        <div class="grid grid-cols-3">
+          <button @click="selectSideTab('detail')" class="px-2 py-2.5 text-[11px] font-medium transition border-b-2"
+            :class="sideTab === 'detail' ? 'text-brand-600 border-brand-500' : 'text-slate-400 border-transparent hover:text-slate-600'">详情</button>
+          <button @click="selectSideTab('hints')" class="px-2 py-2.5 text-[11px] font-medium transition border-b-2"
+            :class="sideTab === 'hints' ? 'text-brand-600 border-brand-500' : 'text-slate-400 border-transparent hover:text-slate-600'">
+            提示 <span class="ml-0.5 text-[10px] opacity-60" x-text="project.hints.length"></span>
+          </button>
+          <button @click="selectSideTab('log')" class="px-2 py-2.5 text-[11px] font-medium transition border-b-2"
+            :class="sideTab === 'log' ? 'text-brand-600 border-brand-500' : 'text-slate-400 border-transparent hover:text-slate-600'">日志</button>
+        </div>
+        <div class="grid grid-cols-6 border-t border-slate-100 bg-slate-50/60">
+          <button @click="selectSideTab('runs')" class="px-2 py-2 text-[11px] font-medium transition border-b-2"
+            :class="sideTab === 'runs' ? 'text-brand-600 border-brand-500 bg-white' : 'text-slate-400 border-transparent hover:text-slate-600'">
+            运行 <span class="ml-0.5 text-[10px] opacity-60" x-show="runsPanel.loadedFor && runsPanel.items.length" x-text="runsPanel.items.length"></span>
+          </button>
+          <button @click="selectSideTab('strategist')" class="px-2 py-2 text-[11px] font-medium transition border-b-2"
+            :class="sideTab === 'strategist' ? 'text-brand-600 border-brand-500 bg-white' : 'text-slate-400 border-transparent hover:text-slate-600'">
+            慢层 <span class="ml-0.5 text-[10px] opacity-60" x-show="strategistPanel.data" x-text="strategistPanel.data ? strategistPanel.data.intents.length : ''"></span>
+          </button>
+          <button @click="selectSideTab('audit')" class="px-2 py-2 text-[11px] font-medium transition border-b-2"
+            :class="sideTab === 'audit' ? 'text-brand-600 border-brand-500 bg-white' : 'text-slate-400 border-transparent hover:text-slate-600'">
+            审计 <span class="ml-0.5 text-[10px] opacity-60" x-show="auditPanel.loadedFor && auditPanel.summaries.length" x-text="auditPanel.summaries.length"></span>
+          </button>
+          <button @click="selectSideTab('evidence')" class="px-2 py-2 text-[11px] font-medium transition border-b-2"
+            :class="sideTab === 'evidence' ? 'text-brand-600 border-brand-500 bg-white' : 'text-slate-400 border-transparent hover:text-slate-600'">证据</button>
+          <button @click="selectSideTab('proposals')" class="px-2 py-2 text-[11px] font-medium transition border-b-2"
+            :class="sideTab === 'proposals' ? 'text-brand-600 border-brand-500 bg-white' : 'text-slate-400 border-transparent hover:text-slate-600'">
+            提案 <span class="ml-0.5 text-[10px] opacity-60" x-show="proposalsPanel.loadedFor && proposalsPanel.items.length" x-text="proposalsPanel.items.length"></span>
+          </button>
+          <button @click="selectSideTab('cost')" class="px-2 py-2 text-[11px] font-medium transition border-b-2"
+            :class="sideTab === 'cost' ? 'text-brand-600 border-brand-500 bg-white' : 'text-slate-400 border-transparent hover:text-slate-600'">
+            成本 <span class="ml-0.5 text-[10px] opacity-60" x-show="costPanel.data && costPanel.data.runs.length" x-text="costPanel.data ? costPanel.data.runs.length : ''"></span>
+          </button>
+        </div>
       </div>
 
       <!-- Detail -->
       <div x-show="sideTab === 'detail'" class="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50/40">
         <template x-if="!selectedNode">
           <div class="rounded-2xl border border-dashed border-slate-200 bg-white/80 px-5 py-10 text-center shadow-sm">
-            <p class="text-sm text-slate-400">Click a node or edge</p>
-            <p class="text-xs text-slate-300 mt-1">Shift+click for multi-select</p>
+            <p class="text-sm text-slate-400">点击节点或连线</p>
+            <p class="text-xs text-slate-300 mt-1">按住 Shift 点击可多选</p>
           </div>
         </template>
         <template x-if="selectedNode && selectedNode.type === 'fact' && selectedFacts.length > 1">
@@ -607,23 +633,23 @@
                           'bg-rose-50 text-rose-600': fact.id === 'goal',
                           'bg-brand-50 text-brand-700': fact.id !== 'origin' && fact.id !== 'goal'
                         }" x-text="fact.id"></span>
-                      <span class="text-[11px] text-slate-400 uppercase tracking-wider">Fact</span>
+                      <span class="text-[11px] text-slate-400 uppercase tracking-wider">事实</span>
                     </div>
                     <button type="button" @click="removeFactSelection(fact.id)"
-                      class="text-[11px] text-slate-400 hover:text-slate-600 transition">Remove</button>
+                      class="text-[11px] text-slate-400 hover:text-slate-600 transition">移除</button>
                   </div>
                 </div>
                 <div class="p-4 space-y-3">
                   <p class="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap break-words" x-text="fact.description"></p>
                   <div class="text-xs text-slate-400 space-y-1.5">
                     <template x-if="fact.id === 'origin'">
-                      <p>Project starting point</p>
+                      <p>项目起点</p>
                     </template>
                     <template x-if="fact.id === 'goal'">
-                      <p>Project target fact</p>
+                      <p>项目目标事实</p>
                     </template>
                     <template x-if="fact.id !== 'origin' && fact.id !== 'goal' && getProducingIntent(fact.id)">
-                      <p x-text="`Produced by ${getProducingIntent(fact.id).id} from ${getProducingIntent(fact.id).from.join(', ')}`"></p>
+                      <p x-text="`由 ${getProducingIntent(fact.id).id} 从 ${getProducingIntent(fact.id).from.join(', ')} 产出`"></p>
                     </template>
                   </div>
                 </div>
@@ -641,7 +667,12 @@
                     'bg-rose-50 text-rose-600': selectedFactId() === 'goal',
                     'bg-brand-50 text-brand-700': selectedFactId() !== 'origin' && selectedFactId() !== 'goal'
                   }" x-text="selectedFactId()"></span>
-                <span class="text-[11px] text-slate-400 font-medium uppercase tracking-wider">Fact</span>
+                <span class="text-[11px] text-slate-400 font-medium uppercase tracking-wider">事实</span>
+                <div class="flex-1"></div>
+                <button type="button" @click="openEvidenceForFact(selectedFactId())"
+                  class="rounded-lg border border-slate-200 px-2 py-0.5 text-[10px] font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition">
+                  证据
+                </button>
               </div>
             </div>
             <div class="p-4 space-y-4">
@@ -649,31 +680,31 @@
               <div class="space-y-3 text-xs">
                 <template x-if="selectedFactId() === 'origin'">
                   <div class="pt-4 border-t border-slate-100">
-                    <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-3">Origin</p>
-                    <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Role</span><span class="text-slate-600 text-right break-words">Project starting point</span></div>
+                    <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-3">起点</p>
+                    <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">角色</span><span class="text-slate-600 text-right break-words">项目起点</span></div>
                   </div>
                 </template>
                 <template x-if="selectedFactId() === 'goal'">
                   <div class="pt-4 border-t border-slate-100 space-y-3">
-                    <p class="text-[10px] font-semibold text-rose-500 uppercase tracking-widest">Goal</p>
-                    <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Role</span><span class="text-slate-600 text-right break-words">Project target fact</span></div>
+                    <p class="text-[10px] font-semibold text-rose-500 uppercase tracking-widest">目标</p>
+                    <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">角色</span><span class="text-slate-600 text-right break-words">项目目标事实</span></div>
                     <template x-if="selectedFactProducingIntent()">
                       <div class="pt-1 space-y-3">
-                        <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Completed By</span><span class="font-mono text-slate-600 text-right break-all" x-text="selectedFactProducingIntent().id"></span></div>
-                        <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Worker</span><span class="text-slate-600 text-right break-all" x-text="selectedFactProducingIntent().worker || '—'"></span></div>
-                        <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Concluded</span><span class="text-slate-600 text-right break-words" x-text="formatTime(selectedFactProducingIntent().concluded_at || selectedFactProducingIntent().created_at)"></span></div>
+                        <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">完成者</span><span class="font-mono text-slate-600 text-right break-all" x-text="selectedFactProducingIntent().id"></span></div>
+                        <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">执行器</span><span class="text-slate-600 text-right break-all" x-text="selectedFactProducingIntent().worker || '—'"></span></div>
+                        <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">结束时间</span><span class="text-slate-600 text-right break-words" x-text="formatTime(selectedFactProducingIntent().concluded_at || selectedFactProducingIntent().created_at)"></span></div>
                       </div>
                     </template>
                   </div>
                 </template>
                 <template x-if="selectedFactId() !== 'origin' && selectedFactId() !== 'goal' && selectedFactProducingIntent()">
                   <div class="pt-4 border-t border-slate-100 space-y-3">
-                    <p class="text-[10px] font-semibold text-brand-500 uppercase tracking-widest">Produced By</p>
-                    <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Intent</span><span class="font-mono text-slate-600 text-right break-all" x-text="selectedFactProducingIntent().id"></span></div>
-                    <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">From</span><span class="font-mono text-slate-600 text-right break-all" x-text="selectedFactProducingIntent().from.join(', ')"></span></div>
-                    <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Creator</span><span class="text-slate-600 text-right break-all" x-text="selectedFactProducingIntent().creator"></span></div>
-                    <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Worker</span><span class="text-slate-600 text-right break-all" x-text="selectedFactProducingIntent().worker || '—'"></span></div>
-                    <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Concluded</span><span class="text-slate-600 text-right break-words" x-text="formatTime(selectedFactProducingIntent().concluded_at || selectedFactProducingIntent().created_at)"></span></div>
+                    <p class="text-[10px] font-semibold text-brand-500 uppercase tracking-widest">产出者</p>
+                    <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">意图</span><span class="font-mono text-slate-600 text-right break-all" x-text="selectedFactProducingIntent().id"></span></div>
+                    <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">来源</span><span class="font-mono text-slate-600 text-right break-all" x-text="selectedFactProducingIntent().from.join(', ')"></span></div>
+                    <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">创建者</span><span class="text-slate-600 text-right break-all" x-text="selectedFactProducingIntent().creator"></span></div>
+                    <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">执行器</span><span class="text-slate-600 text-right break-all" x-text="selectedFactProducingIntent().worker || '—'"></span></div>
+                    <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">结束时间</span><span class="text-slate-600 text-right break-words" x-text="formatTime(selectedFactProducingIntent().concluded_at || selectedFactProducingIntent().created_at)"></span></div>
                   </div>
                 </template>
               </div>
@@ -691,14 +722,14 @@
             <div class="p-4 space-y-4">
               <p class="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap break-words" x-text="selectedIntentRecord().description"></p>
               <div class="pt-4 border-t border-slate-100 space-y-3 text-xs">
-                <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">From</span><span class="font-mono text-slate-600 text-right break-all" x-text="selectedIntentRecord().from.join(', ')"></span></div>
-                <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">To</span><span class="font-mono text-slate-600 text-right break-all" x-text="selectedIntentRecord().to || '—'"></span></div>
-                <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Creator</span><span class="text-slate-600 text-right break-all" x-text="selectedIntentRecord().creator"></span></div>
-                <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Worker</span><span class="text-slate-600 text-right break-all" x-text="selectedIntentRecord().worker || '—'"></span></div>
-                <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Heartbeat</span><span class="text-slate-600 text-right break-words" x-text="selectedIntentRecord().last_heartbeat_at ? formatTime(selectedIntentRecord().last_heartbeat_at) : '—'"></span></div>
-                <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Created</span><span class="text-slate-600 text-right break-words" x-text="formatTime(selectedIntentRecord().created_at)"></span></div>
+                <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">来源</span><span class="font-mono text-slate-600 text-right break-all" x-text="selectedIntentRecord().from.join(', ')"></span></div>
+                <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">目标</span><span class="font-mono text-slate-600 text-right break-all" x-text="selectedIntentRecord().to || '—'"></span></div>
+                <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">创建者</span><span class="text-slate-600 text-right break-all" x-text="selectedIntentRecord().creator"></span></div>
+                <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">执行器</span><span class="text-slate-600 text-right break-all" x-text="selectedIntentRecord().worker || '—'"></span></div>
+                <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">心跳</span><span class="text-slate-600 text-right break-words" x-text="selectedIntentRecord().last_heartbeat_at ? formatTime(selectedIntentRecord().last_heartbeat_at) : '—'"></span></div>
+                <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">创建时间</span><span class="text-slate-600 text-right break-words" x-text="formatTime(selectedIntentRecord().created_at)"></span></div>
                 <template x-if="selectedIntentRecord().concluded_at">
-                  <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Concluded</span><span class="text-slate-600 text-right break-words" x-text="formatTime(selectedIntentRecord().concluded_at)"></span></div>
+                  <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">结束时间</span><span class="text-slate-600 text-right break-words" x-text="formatTime(selectedIntentRecord().concluded_at)"></span></div>
                 </template>
               </div>
             </div>
@@ -710,7 +741,7 @@
       <div x-show="sideTab === 'hints'" class="flex-1 overflow-y-auto p-4 space-y-3 bg-amber-50/25">
         <template x-if="project.hints.length === 0">
           <div class="rounded-2xl border border-dashed border-amber-200 bg-white/80 px-5 py-10 text-center shadow-sm">
-            <p class="text-sm text-slate-300">No hints yet</p>
+            <p class="text-sm text-slate-300">暂无提示</p>
           </div>
         </template>
         <template x-for="h in project.hints" :key="h.id">
@@ -739,7 +770,7 @@
             <div class="space-y-2.5">
               <div class="space-y-1">
                 <div class="flex items-center justify-between gap-3 text-[11px]">
-                  <span class="text-slate-400">Sequence</span>
+                  <span class="text-slate-400">序号</span>
                   <span class="font-mono text-slate-600" x-text="selectedTimelineSummary().sequenceLabel"></span>
                 </div>
                 <div class="h-1.5 rounded-full bg-slate-100 overflow-hidden">
@@ -748,7 +779,7 @@
               </div>
               <div class="space-y-1">
                 <div class="flex items-center justify-between gap-3 text-[11px]">
-                  <span class="text-slate-400">Time Span</span>
+                  <span class="text-slate-400">时间跨度</span>
                   <span class="font-mono text-slate-600 text-right" x-text="selectedTimelineSummary().timeLabel"></span>
                 </div>
                 <div class="h-1.5 rounded-full bg-slate-100 overflow-hidden">
@@ -759,7 +790,7 @@
           </section>
         </template>
         <template x-if="timelineEvents().length === 0">
-          <p class="text-sm text-slate-300 text-center mt-12">No activity yet</p>
+          <p class="text-sm text-slate-300 text-center mt-12">暂无活动</p>
         </template>
         <template x-for="entry in timelineEvents()" :key="entry.id">
           <div class="flex items-stretch gap-3" :id="timelineEntryDomId(entry.id)">
@@ -786,6 +817,829 @@
           </div>
         </template>
       </div>
+
+      <!-- Runs (read-only operational view) -->
+      <div x-show="sideTab === 'runs'" class="flex-1 overflow-y-auto p-3 space-y-3 bg-slate-50/30">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <div class="flex items-center gap-1.5">
+              <span class="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">运行</span>
+              <span class="px-1.5 py-0.5 rounded-full border border-slate-200 bg-white text-[9px] font-medium uppercase tracking-wide text-slate-400">只读</span>
+            </div>
+            <p class="mt-1 text-xs text-slate-500" x-text="runsPanel.loadedFor ? `${runsPanel.items.length} 次任务尝试` : '执行器任务尝试'"></p>
+          </div>
+          <button type="button" @click="loadRuns()" :disabled="runsPanel.loading" title="刷新运行" aria-label="刷新运行"
+            class="h-7 w-7 shrink-0 rounded-lg border border-slate-200 bg-white text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition disabled:opacity-40 inline-flex items-center justify-center">
+            <svg class="w-3.5 h-3.5" :class="{ 'animate-spin': runsPanel.loading }" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5"/><path d="M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5"/></svg>
+          </button>
+        </div>
+
+        <template x-if="runsPanel.error">
+          <div class="rounded-xl border border-rose-200 bg-rose-50/80 px-3 py-2.5">
+            <p class="text-[11px] text-rose-600 break-words" x-text="runsPanel.error"></p>
+            <button type="button" @click="loadRuns()" class="mt-1.5 text-[11px] font-medium text-rose-600 hover:text-rose-700">重试</button>
+          </div>
+        </template>
+
+        <template x-if="runsPanel.loading && runsPanel.items.length === 0">
+          <div class="space-y-2 animate-pulse">
+            <div class="h-24 rounded-2xl border border-slate-200 bg-white"></div>
+            <div class="h-24 rounded-2xl border border-slate-200 bg-white"></div>
+          </div>
+        </template>
+
+        <template x-if="!runsPanel.loading && !runsPanel.error && runsPanel.loadedFor && runsPanel.items.length === 0">
+          <div class="rounded-2xl border border-dashed border-slate-200 bg-white/80 px-4 py-10 text-center shadow-sm">
+            <p class="text-sm text-slate-400">暂无运行记录</p>
+            <p class="mt-1 text-xs text-slate-300">调度器启动任务后，这里会显示任务尝试。</p>
+          </div>
+        </template>
+
+        <template x-for="run in runsPanel.items" :key="run.id">
+          <article class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+            <div class="px-3 py-2.5 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between gap-2">
+              <div class="min-w-0">
+                <div class="font-mono text-[11px] text-slate-600 truncate" :title="run.id" x-text="run.id"></div>
+                <div class="mt-0.5 flex items-center gap-1.5 text-[10px] text-slate-400 min-w-0">
+                  <span class="uppercase tracking-wide shrink-0" x-text="runKindLabel(run.kind)"></span>
+                  <span class="shrink-0">·</span>
+                  <span class="truncate" x-text="run.worker"></span>
+                </div>
+              </div>
+              <span class="shrink-0 rounded-full border px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide"
+                :class="runOutcomeClass(run)" x-text="runOutcomeLabel(run)"></span>
+            </div>
+            <div class="p-3 space-y-2.5">
+              <div class="grid grid-cols-2 gap-x-3 gap-y-1.5 text-[11px]">
+                <div><span class="text-slate-400">开始时间</span><div class="text-slate-600 break-words" x-text="formatDate(run.started_at)"></div></div>
+                <div><span class="text-slate-400">耗时</span><div class="text-slate-600" x-text="runDurationLabel(run)"></div></div>
+                <div><span class="text-slate-400">退出码</span><div class="text-slate-600" x-text="runExitLabel(run)"></div></div>
+                <div><span class="text-slate-400">证据</span><div class="text-slate-600" x-text="`${run.evidence_count} 个文件`"></div></div>
+              </div>
+              <div class="flex items-start justify-between gap-2 text-[11px]">
+                <div class="min-w-0">
+                  <span class="text-slate-400">任务</span>
+                  <div class="font-mono text-slate-600 break-all" x-text="run.task_id"></div>
+                </div>
+                <button type="button" @click="openAuditForTask(run.task_id)"
+                  class="shrink-0 rounded-lg border border-brand-200 px-2 py-1 text-[10px] font-medium text-brand-600 hover:bg-brand-50 transition">
+                  审计 →
+                </button>
+              </div>
+              <template x-if="run.detail">
+                <p class="rounded-lg bg-slate-50 px-2.5 py-2 text-[11px] text-slate-500 whitespace-pre-wrap break-words" x-text="run.detail"></p>
+              </template>
+            </div>
+          </article>
+        </template>
+      </div>
+
+      <!-- Strategist (read-only slow-layer state, budget and trigger history) -->
+      <div x-show="sideTab === 'strategist'" class="flex-1 overflow-y-auto p-3 space-y-3 bg-slate-50/30">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <div class="flex items-center gap-1.5">
+              <span class="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">慢层</span>
+              <span class="px-1.5 py-0.5 rounded-full border border-slate-200 bg-white text-[9px] font-medium uppercase tracking-wide text-slate-400">只读</span>
+            </div>
+            <p class="mt-1 text-xs text-slate-500" x-text="strategistPanel.data ? `${strategistPanel.data.intents.length} 个未结束意图 · ${strategistPanel.data.reason_runs.length} 次推理` : '触发水位、预算与推理历史'"></p>
+          </div>
+          <button type="button" @click="loadStrategist()" :disabled="strategistPanel.loading" title="刷新慢层" aria-label="刷新慢层"
+            class="h-7 w-7 shrink-0 rounded-lg border border-slate-200 bg-white text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition disabled:opacity-40 inline-flex items-center justify-center">
+            <svg class="w-3.5 h-3.5" :class="{ 'animate-spin': strategistPanel.loading }" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5"/><path d="M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5"/></svg>
+          </button>
+        </div>
+
+        <template x-if="strategistPanel.error">
+          <div class="rounded-xl border border-rose-200 bg-rose-50/80 px-3 py-2.5">
+            <p class="text-[11px] text-rose-600 break-words" x-text="strategistPanel.error"></p>
+            <button type="button" @click="loadStrategist()" class="mt-1.5 text-[11px] font-medium text-rose-600 hover:text-rose-700">重试</button>
+          </div>
+        </template>
+
+        <template x-if="strategistPanel.loading && !strategistPanel.data">
+          <div class="space-y-2 animate-pulse">
+            <div class="h-24 rounded-2xl border border-slate-200 bg-white"></div>
+            <div class="h-40 rounded-2xl border border-slate-200 bg-white"></div>
+          </div>
+        </template>
+
+        <template x-if="strategistPanel.data && !strategistPanel.data.state && strategistPanel.data.intents.length === 0 && strategistPanel.data.reason_runs.length === 0">
+          <div class="rounded-2xl border border-dashed border-slate-200 bg-white/80 px-4 py-10 text-center shadow-sm">
+            <p class="text-sm text-slate-400">慢层尚未运行</p>
+            <p class="mt-1 text-xs text-slate-300">调度器触发 reason 后，这里会显示水位、预算与触发历史。</p>
+          </div>
+        </template>
+
+        <template x-if="strategistPanel.data">
+          <div class="space-y-3">
+            <!-- Budget -->
+            <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+              <div class="px-3 py-2.5 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between gap-2">
+                <span class="text-[11px] font-semibold text-slate-600">单项目预算</span>
+                <span class="rounded-full border px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide"
+                  :class="strategistExhaustedClass(strategistPanel.data.budget)"
+                  x-text="strategistExhaustedLabel(strategistPanel.data.budget)"></span>
+              </div>
+              <div class="p-3 grid grid-cols-3 gap-x-3 gap-y-2 text-[11px]">
+                <div>
+                  <span class="text-slate-400">Token</span>
+                  <div class="text-slate-600" x-text="strategistBudgetText(strategistPanel.data.budget.used_tokens, strategistPanel.data.budget.limits ? strategistPanel.data.budget.limits.max_project_tokens : 0)"></div>
+                </div>
+                <div>
+                  <span class="text-slate-400">成本</span>
+                  <div class="text-slate-600" x-text="strategistCostText(strategistPanel.data.budget.used_cost_usd, strategistPanel.data.budget.limits ? strategistPanel.data.budget.limits.max_project_cost_usd : 0)"></div>
+                </div>
+                <div>
+                  <span class="text-slate-400">并发</span>
+                  <div class="text-slate-600" x-text="strategistBudgetText(strategistPanel.data.budget.running_tasks, strategistPanel.data.budget.limits ? strategistPanel.data.budget.limits.max_project_tasks : 0)"></div>
+                </div>
+              </div>
+              <p class="px-3 pb-2.5 text-[10px] text-slate-400" x-text="strategistPanel.data.budget.limits ? '上限来自 dispatch 配置；仅统计已结束任务，在途任务可能造成超额。' : '未启用调度器配置，只显示已记录用量。'"></p>
+            </section>
+
+            <!-- Watermarks -->
+            <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+              <div class="px-3 py-2.5 border-b border-slate-100 bg-slate-50/70">
+                <span class="text-[11px] font-semibold text-slate-600">触发水位</span>
+              </div>
+              <div class="p-3 space-y-2 text-[11px]">
+                <template x-if="!strategistPanel.data.state">
+                  <p class="text-slate-400">尚无成功或失败的 reason 记录。</p>
+                </template>
+                <template x-if="strategistPanel.data.state">
+                  <div class="space-y-2">
+                    <div class="grid grid-cols-2 gap-x-3 gap-y-1.5">
+                      <div><span class="text-slate-400">最近成功</span><div class="text-slate-600" x-text="formatDate(strategistPanel.data.state.last_success_at) || '—'"></div></div>
+                      <div><span class="text-slate-400">最近尝试</span><div class="text-slate-600" x-text="formatDate(strategistPanel.data.state.last_attempt_at) || '—'"></div></div>
+                      <div><span class="text-slate-400">最近失败</span><div class="text-slate-600" :class="strategistPanel.data.state.last_failure_at ? 'text-rose-600' : ''" x-text="formatDate(strategistPanel.data.state.last_failure_at) || '—'"></div></div>
+                      <div><span class="text-slate-400">触发</span><div class="text-slate-600 break-words" x-text="reasonTriggerLabel(strategistPanel.data.state.last_trigger) || '—'"></div></div>
+                    </div>
+                    <div class="grid grid-cols-3 gap-x-3 gap-y-1">
+                      <div><span class="text-slate-400">事实水位</span><div class="text-slate-600" x-text="strategistPanel.data.state.last_fact_count"></div></div>
+                      <div><span class="text-slate-400">提示水位</span><div class="text-slate-600" x-text="strategistPanel.data.state.last_hint_count"></div></div>
+                      <div><span class="text-slate-400">未结束意图</span><div class="text-slate-600" x-text="strategistPanel.data.state.last_open_intent_count"></div></div>
+                    </div>
+                    <div class="font-mono text-[10px] text-slate-400 break-all" x-text="strategistPanel.data.state.last_run_id ? `run ${strategistPanel.data.state.last_run_id}` : ''"></div>
+                  </div>
+                </template>
+              </div>
+            </section>
+
+            <!-- Open intents -->
+            <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+              <div class="px-3 py-2.5 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between gap-2">
+                <span class="text-[11px] font-semibold text-slate-600">未结束意图</span>
+                <span class="text-[10px] text-slate-400">按派发优先级</span>
+              </div>
+              <div class="p-3 space-y-2">
+                <template x-if="strategistPanel.data.intents.length === 0">
+                  <p class="text-[11px] text-slate-400">没有未结束意图。</p>
+                </template>
+                <template x-for="intent in strategistPanel.data.intents" :key="intent.id">
+                  <article class="rounded-xl border border-slate-100 bg-slate-50/50 px-2.5 py-2 space-y-1.5">
+                    <div class="flex items-start justify-between gap-2">
+                      <div class="min-w-0">
+                        <div class="flex items-center gap-1.5">
+                          <span class="shrink-0 rounded-md border px-1.5 py-0.5 text-[9px] font-semibold"
+                            :class="strategistPriorityClass(intent.priority)" x-text="`P${intent.priority}`"></span>
+                          <span class="font-mono text-[10px] text-slate-400 truncate" x-text="intent.id"></span>
+                        </div>
+                        <p class="mt-1 text-[11px] text-slate-600 leading-relaxed break-words" x-text="intent.description"></p>
+                      </div>
+                      <span class="shrink-0 rounded-full border px-2 py-0.5 text-[9px] font-medium"
+                        :class="intent.worker ? 'border-sky-200 bg-sky-50 text-sky-600' : 'border-slate-200 bg-white text-slate-500'"
+                        x-text="intent.worker ? '执行中' : '待认领'"></span>
+                    </div>
+                    <div class="grid grid-cols-2 gap-x-3 gap-y-1 text-[10px]">
+                      <div><span class="text-slate-400">来源事实</span><div class="font-mono text-slate-500 break-all" x-text="(intent.from || []).join(', ') || '—'"></div></div>
+                      <div><span class="text-slate-400">预算</span><div class="text-slate-500" x-text="strategistIntentBudget(intent)"></div></div>
+                    </div>
+                    <div class="flex items-center justify-between gap-2 text-[10px] text-slate-400">
+                      <span class="truncate" x-text="[intent.source || '未知来源', intent.creator].filter(Boolean).join(' · ')"></span>
+                      <span class="shrink-0" x-text="formatDate(intent.created_at)"></span>
+                    </div>
+                  </article>
+                </template>
+              </div>
+            </section>
+
+            <!-- Reason history -->
+            <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+              <div class="px-3 py-2.5 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between gap-2">
+                <span class="text-[11px] font-semibold text-slate-600">推理历史</span>
+                <span class="text-[10px] text-slate-400">最近 20 次</span>
+              </div>
+              <div class="p-3 space-y-2">
+                <template x-if="strategistPanel.data.reason_runs.length === 0">
+                  <p class="text-[11px] text-slate-400">还没有 reason 运行记录。</p>
+                </template>
+                <template x-for="run in strategistPanel.data.reason_runs" :key="run.id">
+                  <article class="rounded-xl border border-slate-100 bg-slate-50/50 px-2.5 py-2 space-y-1.5">
+                    <div class="flex items-start justify-between gap-2">
+                      <div class="min-w-0">
+                        <div class="font-mono text-[10px] text-slate-500 truncate" x-text="run.id"></div>
+                        <div class="mt-1 flex items-center gap-1.5 text-[10px] text-slate-400">
+                          <span class="truncate" x-text="reasonTriggerLabel(run.trigger) || '未知触发'"></span>
+                          <span class="shrink-0">·</span>
+                          <span class="shrink-0" x-text="formatDate(run.started_at)"></span>
+                        </div>
+                      </div>
+                      <span class="shrink-0 rounded-full border px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide"
+                        :class="runOutcomeClass(run)" x-text="runOutcomeLabel(run)"></span>
+                    </div>
+                    <div class="grid grid-cols-3 gap-x-2 text-[10px]">
+                      <div><span class="text-slate-400">耗时</span><div class="text-slate-500" x-text="runDurationLabel(run)"></div></div>
+                      <div><span class="text-slate-400">Token</span><div class="text-slate-500" x-text="formatNumber(run.total_tokens)"></div></div>
+                      <div><span class="text-slate-400">成本</span><div class="text-slate-500" x-text="strategistCostText(run.cost_usd)"></div></div>
+                    </div>
+                    <template x-if="run.detail">
+                      <p class="rounded-lg bg-white px-2 py-1.5 text-[10px] text-slate-500 whitespace-pre-wrap break-words" x-text="run.detail"></p>
+                    </template>
+                  </article>
+                </template>
+              </div>
+            </section>
+          </div>
+        </template>
+      </div>
+
+      <!-- Audit (read-only ledger + live stream loss) -->
+      <div x-show="sideTab === 'audit'" class="flex-1 overflow-y-auto p-3 space-y-3 bg-slate-50/30">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <div class="flex items-center gap-1.5">
+              <span class="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">审计</span>
+              <span class="px-1.5 py-0.5 rounded-full border border-slate-200 bg-white text-[9px] font-medium uppercase tracking-wide text-slate-400">只读</span>
+            </div>
+            <p class="mt-1 text-xs text-slate-500" x-text="auditPanel.loadedFor ? `${auditPanel.summaries.length} 个有账本事件的任务` : '任务账本与流式审计状态'"></p>
+          </div>
+          <button type="button" @click="loadAudit()" :disabled="auditPanel.loading" title="刷新审计" aria-label="刷新审计"
+            class="h-7 w-7 shrink-0 rounded-lg border border-slate-200 bg-white text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition disabled:opacity-40 inline-flex items-center justify-center">
+            <svg class="w-3.5 h-3.5" :class="{ 'animate-spin': auditPanel.loading }" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5"/><path d="M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5"/></svg>
+          </button>
+        </div>
+
+        <template x-if="auditPanel.error">
+          <div class="rounded-xl border border-rose-200 bg-rose-50/80 px-3 py-2.5">
+            <p class="text-[11px] text-rose-600 break-words" x-text="auditPanel.error"></p>
+            <button type="button" @click="loadAudit()" class="mt-1.5 text-[11px] font-medium text-rose-600 hover:text-rose-700">重试</button>
+          </div>
+        </template>
+
+        <template x-if="auditPanel.loading && auditPanel.summaries.length === 0">
+          <div class="space-y-2 animate-pulse">
+            <div class="h-8 rounded-xl border border-slate-200 bg-white"></div>
+            <div class="h-28 rounded-2xl border border-slate-200 bg-white"></div>
+          </div>
+        </template>
+
+        <template x-if="!auditPanel.loading && !auditPanel.error && auditPanel.loadedFor && auditPanel.summaries.length === 0 && !auditPanel.selectedTaskId">
+          <div class="rounded-2xl border border-dashed border-slate-200 bg-white/80 px-4 py-10 text-center shadow-sm">
+            <p class="text-sm text-slate-400">暂无审计事件</p>
+            <p class="mt-1 text-xs text-slate-300">任务结束时会导入工具决策；启用实时审计时会边运行边写入。</p>
+          </div>
+        </template>
+
+        <template x-if="auditTaskChoices().length > 0">
+          <select x-model="auditPanel.selectedTaskId" @change="loadAuditTask(auditPanel.selectedTaskId)"
+            class="w-full rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-[11px] text-slate-600 focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-300">
+            <template x-for="task in auditTaskChoices()" :key="task.task_id">
+              <option :value="task.task_id" x-text="auditTaskChoiceLabel(task)"></option>
+            </template>
+          </select>
+        </template>
+
+        <template x-if="auditPanel.selectedTaskId">
+          <div class="rounded-xl border px-3 py-2.5 text-[11px]"
+            :class="auditPanel.loss ? 'border-rose-200 bg-rose-50/70' : auditPanel.lossError ? 'border-amber-200 bg-amber-50/60' : 'border-teal-200 bg-teal-50/60'">
+            <div class="flex items-center justify-between gap-2">
+              <span class="font-semibold uppercase tracking-wide" :class="auditPanel.loss ? 'text-rose-600' : auditPanel.lossError ? 'text-amber-600' : 'text-teal-600'">
+                <span x-show="auditPanel.lossLoading">正在检查实时流</span>
+                <span x-show="!auditPanel.lossLoading && auditPanel.loss">已记录流丢失</span>
+                <span x-show="!auditPanel.lossLoading && !auditPanel.loss && auditPanel.lossLoaded">未记录流丢失</span>
+                <span x-show="auditPanel.lossError">流丢失状态不可用</span>
+              </span>
+              <span x-show="auditPanel.loss" class="shrink-0 rounded-full bg-rose-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-rose-600">缺口</span>
+            </div>
+            <template x-if="auditPanel.lossError">
+              <p class="mt-1.5 text-amber-700 break-words" x-text="auditPanel.lossError"></p>
+            </template>
+            <template x-if="auditPanel.loss">
+              <div class="mt-1.5 space-y-1">
+                <p class="text-rose-700 break-words" x-text="auditPanel.loss.reason"></p>
+                <div class="flex flex-wrap gap-x-3 gap-y-1 text-rose-600/80 tabular-nums">
+                  <span x-text="`已送达 ${auditPanel.loss.delivered}`"></span>
+                  <span x-text="`待送达 ${auditPanel.loss.pending}`"></span>
+                  <span x-text="`上报 ${auditPanel.loss.reported_at ? formatDate(auditPanel.loss.reported_at) : '未知'}`"></span>
+                </div>
+                <p class="text-[10px] text-rose-500/80 break-words" x-text="`记录于 ${formatDate(auditPanel.loss.recorded_at)}`"></p>
+              </div>
+            </template>
+          </div>
+        </template>
+
+        <template x-if="auditPanel.detailLoading">
+          <div class="space-y-2 animate-pulse">
+            <div class="h-20 rounded-2xl border border-slate-200 bg-white"></div>
+            <div class="h-16 rounded-xl border border-slate-200 bg-white"></div>
+          </div>
+        </template>
+
+        <template x-if="auditPanel.detailError">
+          <div class="rounded-xl border border-rose-200 bg-rose-50/80 px-3 py-2.5">
+            <p class="text-[11px] text-rose-600 break-words" x-text="auditPanel.detailError"></p>
+            <button type="button" @click="loadAuditTask(auditPanel.selectedTaskId)" class="mt-1.5 text-[11px] font-medium text-rose-600 hover:text-rose-700">重试</button>
+          </div>
+        </template>
+
+        <template x-if="!auditPanel.detailLoading && !auditPanel.detailError && auditPanel.detail">
+          <div class="space-y-2">
+            <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+              <div class="px-3 py-2.5 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between gap-2">
+                <span class="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">哈希链</span>
+                <span class="shrink-0 rounded-full border px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide"
+                  :class="auditPanel.detail.chain_ok ? 'border-teal-200 bg-teal-50 text-teal-600' : 'border-rose-200 bg-rose-50 text-rose-600'"
+                  x-text="auditPanel.detail.chain_ok ? '完整' : `断点 @ ${auditPanel.detail.broken_at}`"></span>
+              </div>
+              <div class="p-3 space-y-2.5">
+                <div class="grid grid-cols-2 gap-2 text-[11px]">
+                  <div><span class="text-slate-400">事件数</span><div class="text-slate-600 tabular-nums" x-text="auditPanel.detail.event_count"></div></div>
+                  <div><span class="text-slate-400">任务</span><div class="font-mono text-slate-600 break-all" x-text="auditPanel.detail.task_id"></div></div>
+                </div>
+                <div>
+                  <span class="text-[10px] uppercase tracking-wide text-slate-400">根哈希</span>
+                  <div class="mt-0.5 font-mono text-[10px] text-slate-500 break-all" :title="auditPanel.detail.root_hash"
+                    x-text="auditPanel.detail.root_hash ? shortHash(auditPanel.detail.root_hash, 16) : '—'"></div>
+                </div>
+              </div>
+            </section>
+
+            <template x-if="auditPanel.detail.events.length === 0">
+              <div class="rounded-xl border border-dashed border-slate-200 bg-white/80 px-3 py-6 text-center">
+                <p class="text-xs text-slate-400">此任务暂无账本事件</p>
+              </div>
+            </template>
+
+            <template x-for="row in auditPanel.detail.events" :key="`${row.task_id}:${row.seq}`">
+              <article class="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+                <div class="px-2.5 py-2 bg-slate-50/70 border-b border-slate-100 flex items-center justify-between gap-2">
+                  <div class="flex items-center gap-1.5 min-w-0">
+                    <span class="font-mono text-[10px] text-slate-400 shrink-0" x-text="`#${row.seq}`"></span>
+                    <span class="font-mono text-[11px] text-slate-600 truncate" x-text="auditEventTool(row.event)"></span>
+                    <span class="text-[10px] text-slate-400 truncate" x-text="auditEventAction(row.event)"></span>
+                  </div>
+                  <span class="shrink-0 rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase"
+                    :class="auditDecisionClass(row.event)" x-text="auditDecisionLabel(row.event)"></span>
+                </div>
+                <div class="px-2.5 py-2 space-y-1.5 text-[11px]">
+                  <p class="text-slate-400" x-text="formatDate(auditEventTimestamp(row))"></p>
+                  <template x-if="auditTargetsLabel(row.event)">
+                    <p class="font-mono text-[10px] text-slate-500 break-all" x-text="auditTargetsLabel(row.event)"></p>
+                  </template>
+                  <template x-if="auditEventReason(row.event)">
+                    <p class="text-rose-600 break-words" x-text="auditEventReason(row.event)"></p>
+                  </template>
+                  <template x-if="auditEventDetail(row.event)">
+                    <p class="text-slate-500 break-words" x-text="auditEventDetail(row.event)"></p>
+                  </template>
+                  <details class="pt-1">
+                    <summary class="cursor-pointer list-none text-[10px] font-medium text-slate-400 hover:text-slate-600">事件哈希与 JSON</summary>
+                    <div class="mt-1.5 space-y-1 rounded-lg bg-slate-50 px-2 py-1.5">
+                      <div class="font-mono text-[9px] text-slate-400 break-all" x-text="`前序 ${shortHash(row.prev_hash)}`"></div>
+                      <div class="font-mono text-[9px] text-slate-400 break-all" x-text="`哈希 ${shortHash(row.hash)}`"></div>
+                      <pre class="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-all font-mono text-[9px] leading-relaxed text-slate-500" x-text="prettyJson(row.event)"></pre>
+                    </div>
+                  </details>
+                </div>
+              </article>
+            </template>
+          </div>
+        </template>
+      </div>
+
+      <!-- Evidence (read-only fact metadata + file verification) -->
+      <div x-show="sideTab === 'evidence'" class="flex-1 overflow-y-auto p-3 space-y-3 bg-slate-50/30">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <div class="flex items-center gap-1.5">
+              <span class="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">证据</span>
+              <span class="px-1.5 py-0.5 rounded-full border border-slate-200 bg-white text-[9px] font-medium uppercase tracking-wide text-slate-400">只读</span>
+            </div>
+            <p class="mt-1 text-xs text-slate-500">已记录摘要与当前工作区的对比</p>
+          </div>
+          <button type="button" @click="loadEvidence()" :disabled="evidencePanel.loading" title="刷新证据" aria-label="刷新证据"
+            class="h-7 w-7 shrink-0 rounded-lg border border-slate-200 bg-white text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition disabled:opacity-40 inline-flex items-center justify-center">
+            <svg class="w-3.5 h-3.5" :class="{ 'animate-spin': evidencePanel.loading }" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5"/><path d="M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5"/></svg>
+          </button>
+        </div>
+
+        <select x-model="evidencePanel.factId" @change="loadEvidenceFact(evidencePanel.factId)"
+          class="w-full rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-[11px] text-slate-600 focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-300">
+          <template x-for="fact in project.facts" :key="fact.id">
+            <option :value="fact.id" x-text="evidenceFactOptionLabel(fact)"></option>
+          </template>
+        </select>
+
+        <template x-if="evidencePanel.error">
+          <div class="rounded-xl border border-rose-200 bg-rose-50/80 px-3 py-2.5">
+            <p class="text-[11px] text-rose-600 break-words" x-text="evidencePanel.error"></p>
+            <button type="button" @click="loadEvidenceFact(evidencePanel.factId)" class="mt-1.5 text-[11px] font-medium text-rose-600 hover:text-rose-700">重试</button>
+          </div>
+        </template>
+
+        <template x-if="evidencePanel.loading && !evidencePanel.meta">
+          <div class="space-y-2 animate-pulse">
+            <div class="h-24 rounded-2xl border border-slate-200 bg-white"></div>
+            <div class="h-20 rounded-xl border border-slate-200 bg-white"></div>
+          </div>
+        </template>
+
+        <template x-if="!evidencePanel.loading && !evidencePanel.error && evidencePanel.meta">
+          <div class="space-y-2">
+            <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+              <div class="px-3 py-2.5 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between gap-2">
+                <span class="font-mono text-[11px] font-bold text-brand-700 break-all" x-text="evidencePanel.meta.fact_id"></span>
+                <span class="shrink-0 rounded-full border px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide"
+                  :class="factEvidenceStatusClass(evidencePanel.meta.evidence_status)"
+                  x-text="factEvidenceStatusLabel(evidencePanel.meta.evidence_status)"></span>
+              </div>
+              <div class="p-3 space-y-2 text-[11px]">
+                <div class="flex items-start justify-between gap-3">
+                  <span class="text-slate-400 shrink-0">运行</span>
+                  <span class="font-mono text-slate-600 text-right break-all" x-text="evidencePanel.meta.run_id || '—'"></span>
+                </div>
+                <div class="flex items-start justify-between gap-3">
+                  <span class="text-slate-400 shrink-0">记录于</span>
+                  <span class="text-slate-600 text-right break-words" x-text="evidencePanel.meta.created_at ? formatDate(evidencePanel.meta.created_at) : '—'"></span>
+                </div>
+                <div>
+                  <span class="text-slate-400">证据引用</span>
+                  <template x-if="evidencePanel.meta.evidence_refs.length === 0">
+                    <p class="mt-0.5 text-slate-400">无</p>
+                  </template>
+                  <div class="mt-1 space-y-1">
+                    <template x-for="ref in evidencePanel.meta.evidence_refs" :key="ref">
+                      <p class="font-mono text-[10px] text-slate-500 break-all rounded bg-slate-50 px-2 py-1" x-text="ref"></p>
+                    </template>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <div class="flex items-center justify-between px-0.5">
+              <span class="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">已验证文件</span>
+              <span class="text-[10px] text-slate-400 tabular-nums" x-text="evidencePanel.files.length"></span>
+            </div>
+
+            <template x-if="evidencePanel.files.length === 0">
+              <div class="rounded-xl border border-dashed border-slate-200 bg-white/80 px-3 py-6 text-center">
+                <p class="text-xs text-slate-400">此事实未记录证据文件</p>
+              </div>
+            </template>
+
+            <template x-for="file in evidencePanel.files" :key="file.path">
+              <article class="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+                <div class="px-2.5 py-2 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between gap-2">
+                  <span class="font-mono text-[10px] text-slate-600 break-all" x-text="file.path"></span>
+                  <span class="shrink-0 rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase"
+                    :class="evidenceFileStatusClass(file.status)" x-text="evidenceFileStatusLabel(file.status)"></span>
+                </div>
+                <div class="px-2.5 py-2 space-y-1.5 text-[11px]">
+                  <div class="grid grid-cols-2 gap-2">
+                    <div><span class="text-slate-400">记录大小</span><div class="text-slate-600" x-text="formatBytes(file.size)"></div></div>
+                    <div><span class="text-slate-400">当前大小</span><div class="text-slate-600" x-text="file.current_size === null ? '—' : formatBytes(file.current_size)"></div></div>
+                  </div>
+                  <div>
+                    <span class="text-[10px] uppercase tracking-wide text-slate-400">SHA-256</span>
+                    <div class="font-mono text-[9px] text-slate-500 break-all" :title="file.sha256" x-text="shortHash(file.sha256, 16)"></div>
+                    <template x-if="file.current_sha256 && file.current_sha256 !== file.sha256">
+                      <div class="mt-1 font-mono text-[9px] text-rose-500 break-all" :title="file.current_sha256" x-text="`当前 ${shortHash(file.current_sha256, 16)}`"></div>
+                    </template>
+                  </div>
+                  <p class="text-[10px] leading-relaxed" :class="evidenceFileStatusTextClass(file.status)" x-text="evidenceFileStatusHint(file.status)"></p>
+                </div>
+              </article>
+            </template>
+          </div>
+        </template>
+      </div>
+
+      <!-- Proposals (read-only candidate graph changes) -->
+      <div x-show="sideTab === 'proposals'" class="flex-1 overflow-y-auto p-3 space-y-3 bg-slate-50/30">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <div class="flex items-center gap-1.5">
+              <span class="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">提案</span>
+              <span class="px-1.5 py-0.5 rounded-full border border-slate-200 bg-white text-[9px] font-medium uppercase tracking-wide text-slate-400">只读</span>
+            </div>
+            <p class="mt-1 text-xs text-slate-500" x-text="proposalsPanel.loadedFor ? `${proposalsPanel.items.length} 条候选变更` : 'Observer 候选与审核结果'"></p>
+          </div>
+          <button type="button" @click="loadProposals()" :disabled="proposalsPanel.loading" title="刷新提案" aria-label="刷新提案"
+            class="h-7 w-7 shrink-0 rounded-lg border border-slate-200 bg-white text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition disabled:opacity-40 inline-flex items-center justify-center">
+            <svg class="w-3.5 h-3.5" :class="{ 'animate-spin': proposalsPanel.loading }" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5"/><path d="M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5"/></svg>
+          </button>
+        </div>
+
+        <template x-if="proposalsPanel.error">
+          <div class="rounded-xl border border-rose-200 bg-rose-50/80 px-3 py-2.5">
+            <p class="text-[11px] text-rose-600 break-words" x-text="proposalsPanel.error"></p>
+            <button type="button" @click="loadProposals()" class="mt-1.5 text-[11px] font-medium text-rose-600 hover:text-rose-700">重试</button>
+          </div>
+        </template>
+
+        <template x-if="proposalsPanel.loading && proposalsPanel.items.length === 0">
+          <div class="space-y-2 animate-pulse">
+            <div class="h-24 rounded-2xl border border-slate-200 bg-white"></div>
+            <div class="h-24 rounded-2xl border border-slate-200 bg-white"></div>
+          </div>
+        </template>
+
+        <template x-if="!proposalsPanel.loading && !proposalsPanel.error && proposalsPanel.loadedFor && proposalsPanel.items.length === 0">
+          <div class="rounded-2xl border border-dashed border-slate-200 bg-white/80 px-4 py-10 text-center shadow-sm">
+            <p class="text-sm text-slate-400">暂无提案</p>
+            <p class="mt-1 text-xs text-slate-300">在配置中启用 proposals 后，Observer 只能提交候选，由控制面审核并写入图。</p>
+          </div>
+        </template>
+
+        <template x-for="proposal in proposalsPanel.items" :key="proposal.id">
+          <article class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+            <div class="px-3 py-2.5 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between gap-2">
+              <div class="min-w-0">
+                <div class="flex items-center gap-1.5">
+                  <span class="shrink-0 rounded-md px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide"
+                    :class="proposalKindClass(proposal.kind)" x-text="proposalKindLabel(proposal.kind)"></span>
+                  <span class="font-mono text-[10px] text-slate-400 truncate" :title="proposal.id" x-text="proposal.id"></span>
+                </div>
+                <p class="mt-1 text-[11px] text-slate-600 leading-relaxed break-words" x-text="proposalSummary(proposal)"></p>
+              </div>
+              <span class="shrink-0 rounded-full border px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide"
+                :class="proposalStatusClass(proposal.status)" x-text="proposalStatusLabel(proposal.status)"></span>
+            </div>
+            <div class="p-3 space-y-2 text-[11px]">
+              <div class="grid grid-cols-2 gap-x-3 gap-y-1.5">
+                <div><span class="text-slate-400">来源</span><div class="text-slate-600" x-text="proposalSourceLabel(proposal.source)"></div></div>
+                <div><span class="text-slate-400">创建时间</span><div class="text-slate-600" x-text="formatDate(proposal.created_at)"></div></div>
+              </div>
+              <template x-if="proposal.payload && proposal.payload.from && proposal.payload.from.length > 0">
+                <div>
+                  <span class="text-slate-400">来源事实</span>
+                  <div class="mt-0.5 flex flex-wrap gap-1">
+                    <template x-for="factId in proposal.payload.from" :key="factId">
+                      <span class="rounded bg-slate-50 px-1.5 py-0.5 font-mono text-[10px] text-slate-500" x-text="factId"></span>
+                    </template>
+                  </div>
+                </div>
+              </template>
+              <template x-if="proposal.dedupe_key">
+                <div>
+                  <span class="text-slate-400">去重键</span>
+                  <div class="font-mono text-[10px] text-slate-500 break-all" x-text="proposal.dedupe_key"></div>
+                </div>
+              </template>
+              <template x-if="proposal.evidence_refs.length > 0">
+                <div>
+                  <span class="text-slate-400">证据引用</span>
+                  <div class="mt-1 space-y-1">
+                    <template x-for="ref in proposal.evidence_refs" :key="ref">
+                      <p class="font-mono text-[10px] text-slate-500 break-all rounded bg-slate-50 px-2 py-1" x-text="ref"></p>
+                    </template>
+                  </div>
+                </div>
+              </template>
+              <div class="grid grid-cols-2 gap-x-3 gap-y-1.5">
+                <div class="min-w-0"><span class="text-slate-400">任务</span><div class="font-mono text-slate-600 break-all" x-text="proposal.task_id || '—'"></div></div>
+                <div class="min-w-0"><span class="text-slate-400">运行</span><div class="font-mono text-slate-600 break-all" x-text="proposal.run_id || '—'"></div></div>
+              </div>
+              <template x-if="proposal.applied_id">
+                <div class="flex items-start justify-between gap-3">
+                  <span class="text-slate-400 shrink-0">写入 ID</span>
+                  <span class="font-mono text-slate-600 text-right break-all" x-text="proposal.applied_id"></span>
+                </div>
+              </template>
+              <template x-if="proposal.decision_reason">
+                <p class="rounded-lg bg-slate-50 px-2.5 py-2 text-[11px] text-slate-500 whitespace-pre-wrap break-words" x-text="proposal.decision_reason"></p>
+              </template>
+              <template x-if="proposal.reviewed_at">
+                <div class="flex items-start justify-between gap-3">
+                  <span class="text-slate-400 shrink-0">审核时间</span>
+                  <span class="text-slate-600 text-right break-words" x-text="formatDate(proposal.reviewed_at)"></span>
+                </div>
+              </template>
+            </div>
+          </article>
+        </template>
+      </div>
+
+      <!-- Cost attribution and causal chain (read-only, M13b) -->
+      <div x-show="sideTab === 'cost'" class="flex-1 overflow-y-auto p-3 space-y-3 bg-slate-50/30">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <div class="flex items-center gap-1.5">
+              <span class="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">成本</span>
+              <span class="px-1.5 py-0.5 rounded-full border border-slate-200 bg-white text-[9px] font-medium uppercase tracking-wide text-slate-400">只读</span>
+            </div>
+            <p class="mt-1 text-xs text-slate-500"
+              x-text="costPanel.data ? `${formatNumber(costPanel.data.totals.tokens)} Token · ${strategistCostText(costPanel.data.totals.cost_usd)} · ${costPanel.data.totals.runs} 次运行` : '用量归因与因果链'"></p>
+          </div>
+          <button type="button" @click="loadCost()" :disabled="costPanel.loading" title="刷新成本" aria-label="刷新成本"
+            class="h-7 w-7 shrink-0 rounded-lg border border-slate-200 bg-white text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition disabled:opacity-40 inline-flex items-center justify-center">
+            <svg class="w-3.5 h-3.5" :class="{ 'animate-spin': costPanel.loading }" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5"/><path d="M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5"/></svg>
+          </button>
+        </div>
+
+        <template x-if="costPanel.error">
+          <div class="rounded-xl border border-rose-200 bg-rose-50/80 px-3 py-2.5">
+            <p class="text-[11px] text-rose-600 break-words" x-text="costPanel.error"></p>
+            <button type="button" @click="loadCost()" class="mt-1.5 text-[11px] font-medium text-rose-600 hover:text-rose-700">重试</button>
+          </div>
+        </template>
+
+        <template x-if="costPanel.loading && !costPanel.data">
+          <div class="space-y-2 animate-pulse">
+            <div class="h-28 rounded-2xl border border-slate-200 bg-white"></div>
+            <div class="h-40 rounded-2xl border border-slate-200 bg-white"></div>
+          </div>
+        </template>
+
+        <template x-if="!costPanel.loading && !costPanel.error && costPanel.loadedFor && costPanel.data && costPanel.data.totals.runs === 0">
+          <div class="rounded-2xl border border-dashed border-slate-200 bg-white/80 px-4 py-10 text-center shadow-sm">
+            <p class="text-sm text-slate-400">暂无成本记录</p>
+            <p class="mt-1 text-xs text-slate-300">调度器完成任务后，这里会按事实和意图展示用量归因。</p>
+          </div>
+        </template>
+
+        <template x-if="costPanel.data && costPanel.data.totals.runs > 0">
+          <div class="space-y-3">
+            <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+              <div class="px-3 py-2.5 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between gap-2">
+                <span class="text-[11px] font-semibold text-slate-600">项目总用量</span>
+                <span class="rounded-full border px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide"
+                  :class="costPanel.data.attribution.complete ? 'border-teal-200 bg-teal-50 text-teal-700' : 'border-amber-200 bg-amber-50 text-amber-600'"
+                  x-text="costPanel.data.attribution.complete ? '全部归因' : '存在未归因'"></span>
+              </div>
+              <div class="p-3 space-y-2.5 text-[11px]">
+                <div class="grid grid-cols-3 gap-x-3 gap-y-1">
+                  <div><span class="text-slate-400">Token</span><div class="text-slate-600 tabular-nums" x-text="formatNumber(costPanel.data.totals.tokens)"></div></div>
+                  <div><span class="text-slate-400">成本</span><div class="text-slate-600 tabular-nums" x-text="strategistCostText(costPanel.data.totals.cost_usd)"></div></div>
+                  <div><span class="text-slate-400">运行</span><div class="text-slate-600 tabular-nums" x-text="costPanel.data.totals.runs"></div></div>
+                </div>
+                <div class="grid grid-cols-2 gap-x-3 gap-y-1 border-t border-slate-100 pt-2">
+                  <div><span class="text-slate-400">事实直付</span><div class="text-slate-600 tabular-nums" x-text="`${formatNumber(costPanel.data.attribution.fact_direct_tokens)} Token`"></div></div>
+                  <div><span class="text-slate-400">意图创建</span><div class="text-slate-600 tabular-nums" x-text="`${formatNumber(costPanel.data.attribution.orchestration_tokens)} Token`"></div></div>
+                  <div><span class="text-slate-400">编排已归因</span><div class="text-slate-600 tabular-nums" x-text="`${formatNumber(costPanel.data.attribution.orchestration_attributed_tokens)} Token`"></div></div>
+                  <div><span class="text-slate-400">已归因事实</span><div class="text-slate-600 tabular-nums" x-text="`${formatNumber(costPanel.data.attribution.attributed_tokens)} Token`"></div></div>
+                  <div><span class="text-slate-400">未归因</span><div class="tabular-nums" :class="costPanel.data.attribution.unattributed_tokens > 0 ? 'text-amber-600' : 'text-slate-600'" x-text="`${formatNumber(costPanel.data.attribution.unattributed_tokens)} Token`"></div></div>
+                </div>
+                <p class="text-[10px] leading-relaxed text-slate-400">每个 run 的用量平均分给它的直接产出；意图创建成本只在该意图产出事实后进入「编排已归因」。事实合计是项目用量的分区，意图合计与执行 run 重叠，不能相加。</p>
+              </div>
+            </section>
+
+            <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+              <div class="px-3 py-2.5 border-b border-slate-100 bg-slate-50/70">
+                <span class="text-[11px] font-semibold text-slate-600">按运行类型</span>
+              </div>
+              <div class="p-3 space-y-1.5 text-[11px]">
+                <template x-for="row in costPanel.data.by_kind" :key="row.kind">
+                  <div class="flex items-center justify-between gap-3 rounded-lg bg-slate-50/60 px-2.5 py-1.5">
+                    <span class="text-slate-600" x-text="runKindLabel(row.kind)"></span>
+                    <span class="text-[10px] text-slate-400 tabular-nums" x-text="`${row.runs} 次 · ${formatNumber(row.tokens)} Token · ${strategistCostText(row.cost_usd)}`"></span>
+                  </div>
+                </template>
+              </div>
+            </section>
+
+            <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+              <div class="px-3 py-2.5 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between gap-2">
+                <span class="text-[11px] font-semibold text-slate-600">事实成本</span>
+                <span class="text-[10px] text-slate-400" x-text="`${costFactRows().length} 个有成本来源的事实`"></span>
+              </div>
+              <div class="p-3 space-y-2">
+                <template x-if="costFactRows().length === 0">
+                  <p class="text-[11px] text-slate-400">还没有由运行产出的事实。</p>
+                </template>
+                <template x-for="fact in costFactRows()" :key="fact.id">
+                  <article class="rounded-xl border border-slate-100 bg-slate-50/50 px-2.5 py-2 space-y-1.5">
+                    <div class="flex items-start justify-between gap-2">
+                      <div class="min-w-0">
+                        <div class="flex items-center gap-1.5">
+                          <span class="font-mono text-[10px] text-slate-400 truncate" x-text="fact.id"></span>
+                          <span class="shrink-0 rounded-full border px-1.5 py-0.5 text-[9px] font-medium"
+                            :class="factEvidenceStatusClass(fact.evidence_status)" x-text="factEvidenceStatusLabel(fact.evidence_status)"></span>
+                        </div>
+                        <p class="mt-1 text-[11px] text-slate-600 leading-relaxed break-words" x-text="fact.description"></p>
+                      </div>
+                      <div class="shrink-0 text-right">
+                        <div class="text-[11px] font-semibold text-slate-700 tabular-nums" x-text="strategistCostText(fact.total_cost_usd)"></div>
+                        <div class="text-[9px] text-slate-400 tabular-nums" x-text="`${formatNumber(fact.total_tokens)} Token`"></div>
+                      </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-x-3 gap-y-1 text-[10px]">
+                      <div><span class="text-slate-400">直付</span><div class="text-slate-500 tabular-nums" x-text="`${formatNumber(fact.direct_tokens)} Token · ${strategistCostText(fact.direct_cost_usd)}`"></div></div>
+                      <div><span class="text-slate-400">编排</span><div class="text-slate-500 tabular-nums" x-text="`${formatNumber(fact.orchestration_tokens)} Token · ${strategistCostText(fact.orchestration_cost_usd)}`"></div></div>
+                      <div><span class="text-slate-400">产出运行</span><div class="font-mono text-slate-500 break-all" x-text="fact.run_id || '—'"></div></div>
+                      <div><span class="text-slate-400">意图</span><div class="font-mono text-slate-500 break-all" x-text="fact.intent_id || '—'"></div></div>
+                      <div><span class="text-slate-400">创建意图的运行</span><div class="font-mono text-slate-500 break-all" x-text="(fact.origin_run_ids || []).join(', ') || '—'"></div></div>
+                      <div><span class="text-slate-400">来源事实</span><div class="font-mono text-slate-500 break-all" x-text="(fact.source_fact_ids || []).join(', ') || '—'"></div></div>
+                    </div>
+                    <div class="text-[10px] text-slate-400" x-text="fact.evidence_refs.length > 0 ? `证据 ${fact.evidence_refs.length} 项` : '无证据引用'"></div>
+                  </article>
+                </template>
+              </div>
+            </section>
+
+            <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+              <div class="px-3 py-2.5 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between gap-2">
+                <span class="text-[11px] font-semibold text-slate-600">意图成本</span>
+                <span class="text-[10px] text-slate-400" x-text="`${costIntentRows().length} 个意图`"></span>
+              </div>
+              <div class="p-3 space-y-2">
+                <template x-if="costIntentRows().length === 0">
+                  <p class="text-[11px] text-slate-400">当前没有带成本记录的意图。</p>
+                </template>
+                <template x-for="intent in costIntentRows()" :key="intent.id">
+                  <article class="rounded-xl border border-slate-100 bg-slate-50/50 px-2.5 py-2 space-y-1.5">
+                    <div class="flex items-start justify-between gap-2">
+                      <div class="min-w-0">
+                        <div class="flex items-center gap-1.5 text-[10px] text-slate-400">
+                          <span class="font-mono truncate" x-text="intent.id"></span>
+                          <span class="shrink-0" x-text="intent.source || intent.creator"></span>
+                        </div>
+                        <p class="mt-1 text-[11px] text-slate-600 leading-relaxed break-words" x-text="intent.description"></p>
+                      </div>
+                      <div class="shrink-0 text-right">
+                        <div class="text-[11px] font-semibold text-slate-700 tabular-nums" x-text="strategistCostText(intent.total_cost_usd)"></div>
+                        <div class="text-[9px] text-slate-400 tabular-nums" x-text="`${formatNumber(intent.total_tokens)} Token`"></div>
+                      </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-x-3 gap-y-1 text-[10px]">
+                      <div><span class="text-slate-400">执行 + 编排</span><div class="text-slate-500 tabular-nums" x-text="`${formatNumber(intent.direct_tokens)} + ${formatNumber(intent.orchestration_tokens)} Token`"></div></div>
+                      <div><span class="text-slate-400">创建运行</span><div class="font-mono text-slate-500 break-all" x-text="intent.origin_run_id || '—'"></div></div>
+                      <div><span class="text-slate-400">执行运行</span><div class="font-mono text-slate-500 break-all" x-text="(intent.run_ids || []).join(', ') || '—'"></div></div>
+                      <div><span class="text-slate-400">产出事实</span><div class="font-mono text-slate-500 break-all" x-text="(intent.produced_fact_ids || []).join(', ') || '—'"></div></div>
+                    </div>
+                  </article>
+                </template>
+              </div>
+            </section>
+
+            <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+              <div class="px-3 py-2.5 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between gap-2">
+                <span class="text-[11px] font-semibold text-slate-600">因果边</span>
+                <span class="text-[10px] text-slate-400" x-text="`${costPanel.data.edges.length} 条`"></span>
+              </div>
+              <div class="p-3 space-y-1.5">
+                <template x-if="costPanel.data.edges.length === 0">
+                  <p class="text-[11px] text-slate-400">没有可连接的运行、意图或事实。</p>
+                </template>
+                <template x-for="edge in costPanel.data.edges" :key="`${edge.kind}:${edge.from}:${edge.to}`">
+                  <div class="rounded-lg border border-slate-100 bg-slate-50/50 px-2 py-1.5 text-[10px]">
+                    <div class="flex items-center justify-between gap-2">
+                      <span class="font-medium text-slate-500" x-text="causalEdgeLabel(edge.kind)"></span>
+                      <span class="shrink-0 text-slate-400 tabular-nums"
+                        x-text="edge.tokens > 0 ? `${formatNumber(edge.tokens)} Token · ${strategistCostText(edge.cost_usd)}` : ''"></span>
+                    </div>
+                    <div class="mt-0.5 font-mono text-slate-400 break-all" x-text="`${edge.from} → ${edge.to}`"></div>
+                  </div>
+                </template>
+              </div>
+            </section>
+
+            <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+              <div class="px-3 py-2.5 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between gap-2">
+                <span class="text-[11px] font-semibold text-slate-600">运行产出</span>
+                <span class="text-[10px] text-slate-400" x-text="`${costPanel.data.runs.length} 次`"></span>
+              </div>
+              <div class="p-3 space-y-2">
+                <template x-for="run in costPanel.data.runs" :key="run.id">
+                  <article class="rounded-xl border border-slate-100 bg-slate-50/50 px-2.5 py-2 space-y-1.5">
+                    <div class="flex items-start justify-between gap-2">
+                      <div class="min-w-0">
+                        <div class="flex items-center gap-1.5">
+                          <span class="text-[10px] font-medium text-slate-500" x-text="runKindLabel(run.kind)"></span>
+                          <span class="font-mono text-[10px] text-slate-400 truncate" x-text="run.id"></span>
+                        </div>
+                        <div class="mt-0.5 text-[10px] text-slate-400" x-text="run.intent_id ? `意图 ${run.intent_id}` : '无绑定意图'"></div>
+                      </div>
+                      <span class="shrink-0 rounded-full border px-1.5 py-0.5 text-[9px] font-medium"
+                        :class="runOutcomeClass(run)" x-text="runOutcomeLabel(run)"></span>
+                    </div>
+                    <div class="grid grid-cols-3 gap-x-2 text-[10px]">
+                      <div><span class="text-slate-400">Token</span><div class="text-slate-500 tabular-nums" x-text="formatNumber(run.tokens)"></div></div>
+                      <div><span class="text-slate-400">成本</span><div class="text-slate-500 tabular-nums" x-text="strategistCostText(run.cost_usd)"></div></div>
+                      <div><span class="text-slate-400">耗时</span><div class="text-slate-500" x-text="runDurationLabel(run)"></div></div>
+                    </div>
+                    <div class="text-[10px] text-slate-400">
+                      <div x-text="`创建意图：${(run.created_intent_ids || []).join(', ') || '—'}`"></div>
+                      <div x-text="`产出事实：${(run.produced_fact_ids || []).join(', ') || '—'}`"></div>
+                    </div>
+                  </article>
+                </template>
+              </div>
+            </section>
+          </div>
+        </template>
+      </div>
     </div>
   </div>
 </div>
@@ -796,34 +1650,34 @@
 <!-- New Project -->
 <div x-show="showNewProject" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showNewProject = false">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 border border-slate-200/60" @click.stop>
-    <h3 class="text-base font-semibold text-slate-700 mb-4">New Project</h3>
+    <h3 class="text-base font-semibold text-slate-700 mb-4">新建项目</h3>
     <div class="space-y-3">
-      <input x-model="newProject.title" placeholder="Project title" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
-      <textarea x-model="newProject.origin" placeholder="Origin — starting point" rows="2" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
-      <textarea x-model="newProject.goal" placeholder="Goal — what to achieve" rows="2" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
+      <input x-model="newProject.title" placeholder="项目标题" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+      <textarea x-model="newProject.origin" placeholder="起点 — 起始状态" rows="2" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
+      <textarea x-model="newProject.goal" placeholder="目标 — 期望达成" rows="2" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
       <label class="flex items-center gap-2 px-1 text-sm text-slate-600">
         <input type="checkbox" x-model="newProject.bootstrap" class="h-4 w-4 rounded border-slate-300 text-brand-500 focus:ring-brand-200">
-        <span>Run bootstrap attempt</span>
+        <span>立即执行初始探索</span>
       </label>
 
       <div>
         <div class="flex items-center justify-between mb-2">
-          <span class="text-[11px] text-slate-400 font-medium uppercase tracking-wider">Hints (optional)</span>
-          <button type="button" @click="newProject.hints.push({ content: '' })" class="text-[11px] text-brand-500 hover:text-brand-600 font-medium">+ Add</button>
+          <span class="text-[11px] text-slate-400 font-medium uppercase tracking-wider">提示（可选）</span>
+          <button type="button" @click="newProject.hints.push({ content: '' })" class="text-[11px] text-brand-500 hover:text-brand-600 font-medium">+ 添加</button>
         </div>
         <template x-for="(hint, idx) in newProject.hints" :key="idx">
           <div class="flex gap-2 mb-2">
-            <input x-model="hint.content" placeholder="Hint content" class="flex-1 px-3 py-1.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+            <input x-model="hint.content" placeholder="提示内容" class="flex-1 px-3 py-1.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
             <button type="button" @click="newProject.hints.splice(idx, 1)" x-show="newProject.hints.length > 1" class="px-2 text-slate-300 hover:text-red-400 transition text-sm">&times;</button>
           </div>
         </template>
-        <p class="text-[11px] text-slate-400">Hint creator uses local actor: <span class="font-medium text-slate-600" x-text="actorName()"></span></p>
+        <p class="text-[11px] text-slate-400">提示创建者使用本地操作者： <span class="font-medium text-slate-600" x-text="actorName()"></span></p>
       </div>
     </div>
     <div class="flex justify-end gap-2 mt-5">
-      <button @click="showNewProject = false" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">Cancel</button>
+      <button @click="showNewProject = false" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">取消</button>
       <button @click="createProject()" :disabled="!newProject.title || !newProject.origin || !newProject.goal"
-        class="px-5 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition disabled:opacity-30 shadow-sm shadow-brand-200">Create</button>
+        class="px-5 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition disabled:opacity-30 shadow-sm shadow-brand-200">创建</button>
     </div>
   </div>
 </div>
@@ -831,9 +1685,9 @@
 <!-- Create Intent -->
 <div x-show="showIntentModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showIntentModal = false">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 border border-slate-200/60" @click.stop>
-    <h3 class="text-base font-semibold text-slate-700 mb-1">New Intent</h3>
+    <h3 class="text-base font-semibold text-slate-700 mb-1">新建意图</h3>
     <div class="mb-4">
-      <label class="text-[11px] text-slate-400 mb-1 block font-medium">From facts</label>
+      <label class="text-[11px] text-slate-400 mb-1 block font-medium">来源事实</label>
       <div class="w-full px-3 py-2 border border-slate-200 rounded-xl bg-slate-50 min-h-[42px] flex flex-wrap gap-1.5 items-center">
         <template x-for="fid in selectedFacts" :key="`intent-from-${fid}`">
           <span class="px-2 py-1 rounded-lg bg-white border border-slate-200 text-[11px] font-mono text-slate-600" x-text="fid"></span>
@@ -841,17 +1695,17 @@
       </div>
     </div>
     <div class="space-y-3">
-      <textarea x-model="intentForm.description" placeholder="What will you explore?" rows="3" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
+      <textarea x-model="intentForm.description" placeholder="你打算探索什么？" rows="3" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
       <div class="px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-500">
-        Actor: <span class="font-medium text-slate-700" x-text="actorName()"></span>
+        操作者： <span class="font-medium text-slate-700" x-text="actorName()"></span>
       </div>
     </div>
     <div class="flex justify-end gap-2 mt-5">
-      <button @click="showIntentModal = false" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">Cancel</button>
+      <button @click="showIntentModal = false" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">取消</button>
       <button @click="createIntent(false)" :disabled="!intentForm.description"
-        class="px-5 py-2 text-sm border border-slate-200 text-slate-600 rounded-xl font-medium hover:bg-slate-50 transition disabled:opacity-30">Declare</button>
+        class="px-5 py-2 text-sm border border-slate-200 text-slate-600 rounded-xl font-medium hover:bg-slate-50 transition disabled:opacity-30">声明</button>
       <button @click="createIntent(true)" :disabled="!intentForm.description"
-        class="px-5 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition disabled:opacity-30 shadow-sm shadow-brand-200">Declare &amp; Claim</button>
+        class="px-5 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition disabled:opacity-30 shadow-sm shadow-brand-200">声明并认领</button>
     </div>
   </div>
 </div>
@@ -859,18 +1713,18 @@
 <!-- Conclude -->
 <div x-show="showConcludeModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showConcludeModal = false">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 border border-slate-200/60" @click.stop>
-    <h3 class="text-base font-semibold text-slate-700 mb-1">Conclude Intent</h3>
+    <h3 class="text-base font-semibold text-slate-700 mb-1">结束意图</h3>
     <p class="text-xs text-slate-400 mb-4 font-mono" x-text="concludeForm.intentId"></p>
     <div class="space-y-3">
-      <textarea x-model="concludeForm.description" placeholder="What did you find? (new fact)" rows="3" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
+      <textarea x-model="concludeForm.description" placeholder="发现了什么？（新事实）" rows="3" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
       <div class="px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-500">
-        Actor: <span class="font-medium text-slate-700" x-text="actorName()"></span>
+        操作者： <span class="font-medium text-slate-700" x-text="actorName()"></span>
       </div>
     </div>
     <div class="flex justify-end gap-2 mt-5">
-      <button @click="showConcludeModal = false" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">Cancel</button>
+      <button @click="showConcludeModal = false" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">取消</button>
       <button @click="concludeIntent()" :disabled="!concludeForm.description"
-        class="px-5 py-2 text-sm bg-teal-500 text-white rounded-xl font-medium hover:bg-teal-600 transition disabled:opacity-30 shadow-sm shadow-teal-200">Conclude</button>
+        class="px-5 py-2 text-sm bg-teal-500 text-white rounded-xl font-medium hover:bg-teal-600 transition disabled:opacity-30 shadow-sm shadow-teal-200">结束</button>
     </div>
   </div>
 </div>
@@ -878,26 +1732,26 @@
 <!-- Complete Project -->
 <div x-show="showCompleteModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showCompleteModal = false">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 border border-slate-200/60" @click.stop>
-    <h3 class="text-base font-semibold text-slate-700 mb-1">Complete Project</h3>
-    <p class="text-xs text-slate-400 mb-4">Mark project as completed</p>
+    <h3 class="text-base font-semibold text-slate-700 mb-1">完成项目</h3>
+    <p class="text-xs text-slate-400 mb-4">将项目标记为已完成</p>
     <div class="space-y-3">
       <div>
-        <label class="text-[11px] text-slate-400 mb-1 block font-medium">From facts</label>
+        <label class="text-[11px] text-slate-400 mb-1 block font-medium">来源事实</label>
         <div class="w-full px-3 py-2 border border-slate-200 rounded-xl bg-slate-50 min-h-[42px] flex flex-wrap gap-1.5 items-center">
           <template x-for="fid in selectedFacts" :key="`complete-from-${fid}`">
             <span class="px-2 py-1 rounded-lg bg-white border border-slate-200 text-[11px] font-mono text-slate-600" x-text="fid"></span>
           </template>
         </div>
       </div>
-      <textarea x-model="completeForm.description" placeholder="Why is the goal met?" rows="2" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
+      <textarea x-model="completeForm.description" placeholder="为什么目标已达成？" rows="2" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
       <div class="px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-500">
-        Actor: <span class="font-medium text-slate-700" x-text="actorName()"></span>
+        操作者： <span class="font-medium text-slate-700" x-text="actorName()"></span>
       </div>
     </div>
     <div class="flex justify-end gap-2 mt-5">
-      <button @click="showCompleteModal = false" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">Cancel</button>
+      <button @click="showCompleteModal = false" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">取消</button>
       <button @click="completeProject()" :disabled="selectedFacts.length === 0 || !completeForm.description"
-        class="px-5 py-2 text-sm bg-teal-500 text-white rounded-xl font-medium hover:bg-teal-600 transition disabled:opacity-30 shadow-sm shadow-teal-200">Complete</button>
+        class="px-5 py-2 text-sm bg-teal-500 text-white rounded-xl font-medium hover:bg-teal-600 transition disabled:opacity-30 shadow-sm shadow-teal-200">完成</button>
     </div>
   </div>
 </div>
@@ -905,17 +1759,17 @@
 <!-- Hint -->
 <div x-show="showHintModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showHintModal = false">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 border border-slate-200/60" @click.stop>
-    <h3 class="text-base font-semibold text-slate-700 mb-4">Add Hint</h3>
+    <h3 class="text-base font-semibold text-slate-700 mb-4">添加提示</h3>
     <div class="space-y-3">
-      <textarea x-model="hintForm.content" placeholder="Strategy advice or note..." rows="3" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
+      <textarea x-model="hintForm.content" placeholder="策略建议或备注…" rows="3" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
       <div class="px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-500">
-        Actor: <span class="font-medium text-slate-700" x-text="actorName()"></span>
+        操作者： <span class="font-medium text-slate-700" x-text="actorName()"></span>
       </div>
     </div>
     <div class="flex justify-end gap-2 mt-5">
-      <button @click="showHintModal = false" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">Cancel</button>
+      <button @click="showHintModal = false" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">取消</button>
       <button @click="addHint()" :disabled="!hintForm.content"
-        class="px-5 py-2 text-sm bg-amber-500 text-white rounded-xl font-medium hover:bg-amber-600 transition disabled:opacity-30 shadow-sm shadow-amber-200">Add</button>
+        class="px-5 py-2 text-sm bg-amber-500 text-white rounded-xl font-medium hover:bg-amber-600 transition disabled:opacity-30 shadow-sm shadow-amber-200">添加</button>
     </div>
 </div>
 </div>
@@ -923,18 +1777,18 @@
 <!-- Reopen -->
 <div x-show="showReopenModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showReopenModal = false">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 border border-slate-200/60" @click.stop>
-    <h3 class="text-base font-semibold text-slate-700 mb-1">Reopen Project</h3>
+    <h3 class="text-base font-semibold text-slate-700 mb-1">重新打开项目</h3>
     <p class="text-xs text-slate-400 mb-4" x-text="projectLabel(reopenForm.projectId, reopenForm.projectTitle)"></p>
     <div class="space-y-3">
-      <textarea x-model="reopenForm.description" placeholder="Why is this project not actually complete?" rows="3" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
+      <textarea x-model="reopenForm.description" placeholder="为什么这个项目实际上尚未完成？" rows="3" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
       <div class="px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-500">
-        Actor: <span class="font-medium text-slate-700" x-text="actorName()"></span>
+        操作者： <span class="font-medium text-slate-700" x-text="actorName()"></span>
       </div>
     </div>
     <div class="flex justify-end gap-2 mt-5">
-      <button @click="showReopenModal = false" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">Cancel</button>
+      <button @click="showReopenModal = false" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">取消</button>
       <button @click="reopenProject()" :disabled="!reopenForm.projectId || !reopenForm.description"
-        class="px-5 py-2 text-sm bg-sky-500 text-white rounded-xl font-medium hover:bg-sky-600 transition disabled:opacity-30 shadow-sm shadow-sky-200">Reopen</button>
+        class="px-5 py-2 text-sm bg-sky-500 text-white rounded-xl font-medium hover:bg-sky-600 transition disabled:opacity-30 shadow-sm shadow-sky-200">重新打开</button>
     </div>
   </div>
 </div>
@@ -942,16 +1796,16 @@
 <!-- Rename Project -->
 <div x-show="showRenameModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showRenameModal = false">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 border border-slate-200/60" @click.stop>
-    <h3 class="text-base font-semibold text-slate-700 mb-1">Rename Project</h3>
+    <h3 class="text-base font-semibold text-slate-700 mb-1">重命名项目</h3>
     <p class="text-xs text-slate-400 mb-4" x-text="projectLabel(renameForm.projectId, renameForm.originalTitle)"></p>
     <div class="space-y-3">
-      <input x-ref="renameTitleInput" x-model="renameForm.title" @keydown.enter.prevent="renameProject()" placeholder="Project title" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
-      <p class="text-[11px] text-slate-400">This only changes the project title and is allowed in any project status.</p>
+      <input x-ref="renameTitleInput" x-model="renameForm.title" @keydown.enter.prevent="renameProject()" placeholder="项目标题" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+      <p class="text-[11px] text-slate-400">只修改项目标题，任何项目状态下均可操作。</p>
     </div>
     <div class="flex justify-end gap-2 mt-5">
-      <button @click="showRenameModal = false" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">Cancel</button>
+      <button @click="showRenameModal = false" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">取消</button>
       <button @click="renameProject()" :disabled="!renameForm.projectId || !renameForm.title"
-        class="px-5 py-2 text-sm bg-slate-800 text-white rounded-xl font-medium hover:bg-slate-900 transition disabled:opacity-30 shadow-sm">Save</button>
+        class="px-5 py-2 text-sm bg-slate-800 text-white rounded-xl font-medium hover:bg-slate-900 transition disabled:opacity-30 shadow-sm">保存</button>
     </div>
   </div>
 </div>
@@ -959,14 +1813,14 @@
 <!-- Local Preferences -->
 <div x-show="showLocalPrefs" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showLocalPrefs = false">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 border border-slate-200/60" @click.stop>
-    <h3 class="text-base font-semibold text-slate-700 mb-4">Local Preferences</h3>
+    <h3 class="text-base font-semibold text-slate-700 mb-4">本地偏好</h3>
     <div class="space-y-4">
       <div>
-        <label class="text-[11px] text-slate-400 mb-1 block font-medium">Actor</label>
-        <input x-model="localPrefs.actor_name" placeholder="Your name" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+        <label class="text-[11px] text-slate-400 mb-1 block font-medium">操作者</label>
+        <input x-model="localPrefs.actor_name" placeholder="你的名字" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
       </div>
       <div>
-        <label class="text-[11px] text-slate-400 mb-1 block font-medium">Default layout</label>
+        <label class="text-[11px] text-slate-400 mb-1 block font-medium">默认布局</label>
         <select x-model="localPrefs.layout_mode" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
           <option value="dagre_tb">Dagre ↓</option>
           <option value="dagre_lr">Dagre →</option>
@@ -976,11 +1830,11 @@
           <option value="elk_lr">ELK →</option>
         </select>
       </div>
-      <p class="text-[11px] text-slate-400">Stored only in this browser.</p>
+      <p class="text-[11px] text-slate-400">仅保存在当前浏览器。</p>
     </div>
     <div class="flex justify-end gap-2 mt-5">
-      <button @click="showLocalPrefs = false" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">Close</button>
-      <button @click="saveLocalSettings()" class="px-4 py-2 text-sm bg-slate-800 text-white rounded-xl font-medium hover:bg-slate-900 transition shadow-sm">Save Local</button>
+      <button @click="showLocalPrefs = false" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">关闭</button>
+      <button @click="saveLocalSettings()" class="px-4 py-2 text-sm bg-slate-800 text-white rounded-xl font-medium hover:bg-slate-900 transition shadow-sm">保存本地设置</button>
     </div>
   </div>
 </div>
@@ -988,19 +1842,19 @@
 <!-- Settings -->
 <div x-show="showSettings" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showSettings = false">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 border border-slate-200/60" @click.stop>
-    <h3 class="text-base font-semibold text-slate-700 mb-4">Server Settings</h3>
+    <h3 class="text-base font-semibold text-slate-700 mb-4">服务端设置</h3>
     <div>
-      <label class="text-[11px] text-slate-400 mb-1 block font-medium">Intent timeout (seconds)</label>
+      <label class="text-[11px] text-slate-400 mb-1 block font-medium">意图超时（秒）</label>
       <input type="number" x-model.number="settingsForm.intent_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
     </div>
     <div class="mt-4">
-      <label class="text-[11px] text-slate-400 mb-1 block font-medium">Reason timeout (seconds)</label>
+      <label class="text-[11px] text-slate-400 mb-1 block font-medium">推理超时（秒）</label>
       <input type="number" x-model.number="settingsForm.reason_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
-      <p class="text-[11px] text-slate-400 mt-2">Shared backend configuration.</p>
+      <p class="text-[11px] text-slate-400 mt-2">所有客户端共享的服务端配置。</p>
     </div>
     <div class="flex justify-end gap-2 mt-5">
-      <button @click="showSettings = false" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">Close</button>
-      <button @click="saveServerSettings()" class="px-4 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition shadow-sm shadow-brand-200">Save Server</button>
+      <button @click="showSettings = false" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">关闭</button>
+      <button @click="saveServerSettings()" class="px-4 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition shadow-sm shadow-brand-200">保存服务端设置</button>
     </div>
   </div>
 </div>
@@ -1014,13 +1868,13 @@
           <button @click="switchExportTab('yaml')" class="px-2.5 py-1 text-xs font-medium transition"
             :class="exportTab === 'yaml' ? 'bg-slate-100 text-slate-700' : 'text-slate-400 hover:text-slate-600'">YAML</button>
           <button @click="switchExportTab('timeline')" class="px-2.5 py-1 text-xs font-medium transition"
-            :class="exportTab === 'timeline' ? 'bg-slate-100 text-slate-700' : 'text-slate-400 hover:text-slate-600'">Timeline</button>
+            :class="exportTab === 'timeline' ? 'bg-slate-100 text-slate-700' : 'text-slate-400 hover:text-slate-600'">时间线</button>
         </div>
         <p class="text-xs text-slate-400 truncate" x-text="yamlPreviewTitle"></p>
       </div>
       <div class="flex items-center gap-2">
-        <button @click="copyYamlPreview()" class="px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">Copy</button>
-        <button @click="showYamlModal = false" class="px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">Close</button>
+        <button @click="copyYamlPreview()" class="px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">复制</button>
+        <button @click="showYamlModal = false" class="px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">关闭</button>
       </div>
     </div>
     <div class="max-h-[75vh] overflow-auto bg-slate-50 p-4">
@@ -1039,18 +1893,18 @@
         <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4.75A1.75 1.75 0 0 1 9.75 3h4.5A1.75 1.75 0 0 1 16 4.75V6"/><path d="M19 6l-.63 11.338A2 2 0 0 1 16.37 19.5H7.63a2 2 0 0 1-1.997-2.162L5 6"/><path d="M10 10.5v5"/><path d="M14 10.5v5"/></svg>
       </div>
       <div class="min-w-0 flex-1">
-        <h3 class="text-base font-semibold text-slate-700">Delete Project</h3>
+        <h3 class="text-base font-semibold text-slate-700">删除项目</h3>
         <p class="text-sm text-slate-500 mt-1 leading-relaxed">
-          This will permanently remove
-          <span class="font-medium text-slate-700 break-all" x-text="deleteConfirmLabel()"></span>.
+          这将永久删除
+          <span class="font-medium text-slate-700 break-all" x-text="deleteConfirmLabel()"></span>。
         </p>
-        <p class="text-xs text-slate-400 mt-3">This action cannot be undone.</p>
+        <p class="text-xs text-slate-400 mt-3">此操作无法撤销。</p>
       </div>
     </div>
     <div class="flex justify-end gap-2 mt-6">
-      <button @click="closeDeleteModal()" :disabled="isDeletingProject" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition disabled:opacity-40 disabled:cursor-not-allowed">Cancel</button>
+      <button @click="closeDeleteModal()" :disabled="isDeletingProject" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition disabled:opacity-40 disabled:cursor-not-allowed">取消</button>
       <button @click="confirmDeleteProject()" :disabled="isDeletingProject" class="px-4 py-2 text-sm bg-rose-500 text-white rounded-xl font-medium hover:bg-rose-600 transition shadow-sm shadow-rose-200 disabled:opacity-40 disabled:cursor-not-allowed">
-        <span x-text="isDeletingProject ? 'Deleting...' : 'Delete'"></span>
+        <span x-text="isDeletingProject ? '正在删除…' : '删除'"></span>
       </button>
     </div>
   </div>
@@ -1108,7 +1962,7 @@ function cairnApp() {
     hintForm: { content: '' },
     reopenForm: { projectId: '', projectTitle: '', description: '' },
     renameForm: { projectId: '', originalTitle: '', title: '' },
-    localPrefs: { actor_name: 'Human', layout_mode: 'dagre_tb' },
+    localPrefs: { actor_name: '本机用户', layout_mode: 'dagre_tb' },
     settingsForm: { intent_timeout: 5, reason_timeout: 5 },
     deleteConfirm: { id: '', title: '' },
     isDeletingProject: false,
@@ -1132,6 +1986,53 @@ function cairnApp() {
     projectListScrollTop: 0,
     shouldRestoreProjectListScroll: false,
     isStoppingAllProjects: false,
+
+    runsPanel: {
+      items: [],
+      loading: false,
+      error: '',
+      loadedFor: '',
+    },
+    strategistPanel: {
+      data: null,
+      loading: false,
+      error: '',
+      loadedFor: '',
+    },
+    auditPanel: {
+      summaries: [],
+      loading: false,
+      error: '',
+      loadedFor: '',
+      selectedTaskId: '',
+      detail: null,
+      detailLoading: false,
+      detailError: '',
+      loss: null,
+      lossLoading: false,
+      lossError: '',
+      lossLoaded: false,
+    },
+    evidencePanel: {
+      factId: '',
+      meta: null,
+      files: [],
+      loading: false,
+      error: '',
+      loadedFor: '',
+    },
+    proposalsPanel: {
+      items: [],
+      loading: false,
+      error: '',
+      loadedFor: '',
+    },
+    costPanel: {
+      data: null,
+      loading: false,
+      error: '',
+      loadedFor: '',
+    },
 
     async init() {
       this._panelResizeMove = (e) => this.onPanelResize(e);
@@ -1219,7 +2120,7 @@ function cairnApp() {
       try {
         const raw = localStorage.getItem('cairn.localPrefs');
         if (!raw) {
-          this.localPrefs.actor_name = 'Human';
+          this.localPrefs.actor_name = '本机用户';
         } else {
           const parsed = JSON.parse(raw);
           if (typeof parsed.actor_name === 'string') this.localPrefs.actor_name = parsed.actor_name;
@@ -1237,7 +2138,7 @@ function cairnApp() {
       } catch (e) {
         console.error(e);
       }
-      if (!this.localPrefs.actor_name.trim()) this.localPrefs.actor_name = 'Human';
+      if (!this.localPrefs.actor_name.trim()) this.localPrefs.actor_name = '本机用户';
       if (!this.isValidLayoutMode(this.localPrefs.layout_mode)) this.localPrefs.layout_mode = 'dagre_tb';
       this.layoutMode = this.localPrefs.layout_mode;
     },
@@ -1259,7 +2160,7 @@ function cairnApp() {
     },
 
     actorName() {
-      return this.localPrefs.actor_name.trim() || 'Human';
+      return this.localPrefs.actor_name.trim() || '本机用户';
     },
 
     projectStatusBadgeClass(status) {
@@ -1271,15 +2172,39 @@ function cairnApp() {
       return classes[status] || 'bg-slate-100 text-slate-500';
     },
 
+    projectStatusLabel(status) {
+      const labels = { active: '进行中', stopped: '已停止', completed: '已完成' };
+      return labels[status] || status || '未知';
+    },
+
+    runKindLabel(kind) {
+      const labels = { bootstrap: '初始探索', reason: '推理', explore: '探索', conclude: '收尾' };
+      return labels[kind] || kind || '未知';
+    },
+
     reasonBadgeText(reason, compact = false) {
       if (!reason) return '';
-      if (compact) return `Reason · ${reason.worker}`;
-      const trigger = reason.trigger ? ` (${reason.trigger})` : '';
-      return `Reasoning · ${reason.worker}${trigger}`;
+      if (compact) return `推理 · ${reason.worker}`;
+      const trigger = reason.trigger ? `（触发 ${this.reasonTriggerLabel(reason.trigger)}）` : '';
+      return `推理中 · ${reason.worker}${trigger}`;
+    },
+
+    reasonTriggerLabel(trigger) {
+      if (!trigger) return '';
+      const labels = { initial: '初始', bootstrap: '初始探索', new_facts: '新事实' };
+      if (labels[trigger]) return labels[trigger];
+      return trigger
+        .split(',')
+        .map(part => part
+          .replace(/^facts:/, '事实 ')
+          .replace(/^hints:/, '提示 ')
+          .replace(/^open_intents:/, '未结束意图 ')
+          .replace(/->/g, '→'))
+        .join('、');
     },
 
     workingIntentBadgeText(count) {
-      return `Exploring · ${count}`;
+      return `探索中 · ${count}`;
     },
 
     isBootstrapIntent(intent) {
@@ -1300,7 +2225,7 @@ function cairnApp() {
     },
 
     openIntentNodeLabel(intent) {
-      return this.isBootstrapIntent(intent) ? 'Bootstrap' : '?';
+      return this.isBootstrapIntent(intent) ? '初始探索' : '?';
     },
 
     openIntentNodeSize(intent) {
@@ -1409,9 +2334,9 @@ function cairnApp() {
       if (!this.yamlPreviewText) return;
       try {
         await this.copyText(this.yamlPreviewText);
-        this.showToast('Copied');
+        this.showToast('已复制');
       } catch {
-        this.showToast('Copy failed', 'error');
+        this.showToast('复制失败', 'error');
       }
     },
 
@@ -1567,7 +2492,7 @@ function cairnApp() {
         } else {
           await this.loadProjects();
         }
-        this.showToast(`Deleted ${projectId}`);
+        this.showToast(`已删除 ${projectId}`);
       } catch (e) {
         this.showToast(e.message, 'error');
       } finally {
@@ -1586,6 +2511,563 @@ function cairnApp() {
 
     async loadProject(id) {
       try { this.project = await this.api('GET', `/projects/${id}`); } catch(e) { this.showToast(e.message, 'error'); }
+    },
+
+    resetOpsPanels() {
+      this.runsPanel = { items: [], loading: false, error: '', loadedFor: '' };
+      this.strategistPanel = { data: null, loading: false, error: '', loadedFor: '' };
+      this.auditPanel = {
+        summaries: [],
+        loading: false,
+        error: '',
+        loadedFor: '',
+        selectedTaskId: '',
+        detail: null,
+        detailLoading: false,
+        detailError: '',
+        loss: null,
+        lossLoading: false,
+        lossError: '',
+        lossLoaded: false,
+      };
+      this.evidencePanel = { factId: '', meta: null, files: [], loading: false, error: '', loadedFor: '' };
+      this.proposalsPanel = { items: [], loading: false, error: '', loadedFor: '' };
+      this.costPanel = { data: null, loading: false, error: '', loadedFor: '' };
+    },
+
+    selectSideTab(tab) {
+      if (!['detail', 'hints', 'log', 'runs', 'strategist', 'audit', 'evidence', 'proposals', 'cost'].includes(tab)) return;
+      this.sideTab = tab;
+      this.loadActiveOpsTab();
+    },
+
+    loadActiveOpsTab() {
+      if (this.sideTab === 'runs') this.loadRuns();
+      else if (this.sideTab === 'strategist') this.loadStrategist();
+      else if (this.sideTab === 'audit') this.loadAudit();
+      else if (this.sideTab === 'evidence') this.loadEvidence();
+      else if (this.sideTab === 'proposals') this.loadProposals();
+      else if (this.sideTab === 'cost') this.loadCost();
+    },
+
+    async loadRuns() {
+      const projectId = this.selectedProjectId;
+      if (!projectId) return;
+      this.runsPanel.loading = true;
+      this.runsPanel.error = '';
+      try {
+        const runs = await this.api('GET', `/projects/${encodeURIComponent(projectId)}/runs`);
+        if (this.selectedProjectId !== projectId) return;
+        this.runsPanel.items = Array.isArray(runs) ? [...runs].reverse() : [];
+        this.runsPanel.loadedFor = projectId;
+      } catch (e) {
+        if (this.selectedProjectId === projectId) this.runsPanel.error = this.errorText(e);
+      } finally {
+        if (this.selectedProjectId === projectId) this.runsPanel.loading = false;
+      }
+    },
+
+    async loadStrategist() {
+      const projectId = this.selectedProjectId;
+      if (!projectId) return;
+      this.strategistPanel.loading = true;
+      this.strategistPanel.error = '';
+      try {
+        const data = await this.api('GET', `/projects/${encodeURIComponent(projectId)}/strategist?limit=20`);
+        if (this.selectedProjectId !== projectId) return;
+        this.strategistPanel.data = data && typeof data === 'object' ? data : null;
+        this.strategistPanel.loadedFor = projectId;
+      } catch (e) {
+        if (this.selectedProjectId === projectId) this.strategistPanel.error = this.errorText(e);
+      } finally {
+        if (this.selectedProjectId === projectId) this.strategistPanel.loading = false;
+      }
+    },
+
+    async loadProposals() {
+      const projectId = this.selectedProjectId;
+      if (!projectId) return;
+      this.proposalsPanel.loading = true;
+      this.proposalsPanel.error = '';
+      try {
+        const rows = await this.api('GET', `/projects/${encodeURIComponent(projectId)}/proposals`);
+        if (this.selectedProjectId !== projectId) return;
+        this.proposalsPanel.items = Array.isArray(rows) ? [...rows].reverse() : [];
+        this.proposalsPanel.loadedFor = projectId;
+      } catch (e) {
+        if (this.selectedProjectId === projectId) this.proposalsPanel.error = this.errorText(e);
+      } finally {
+        if (this.selectedProjectId === projectId) this.proposalsPanel.loading = false;
+      }
+    },
+
+    async loadCost() {
+      const projectId = this.selectedProjectId;
+      if (!projectId) return;
+      this.costPanel.loading = true;
+      this.costPanel.error = '';
+      try {
+        const data = await this.api('GET', `/projects/${encodeURIComponent(projectId)}/cost`);
+        if (this.selectedProjectId !== projectId) return;
+        this.costPanel.data = data && typeof data === 'object' ? data : null;
+        this.costPanel.loadedFor = projectId;
+      } catch (e) {
+        if (this.selectedProjectId === projectId) this.costPanel.error = this.errorText(e);
+      } finally {
+        if (this.selectedProjectId === projectId) this.costPanel.loading = false;
+      }
+    },
+
+    async loadAudit(preferredTaskId = null) {
+      const projectId = this.selectedProjectId;
+      if (!projectId) return;
+      this.auditPanel.loading = true;
+      this.auditPanel.error = '';
+      try {
+        const rows = await this.api('GET', `/projects/${encodeURIComponent(projectId)}/audit`);
+        if (this.selectedProjectId !== projectId) return;
+        const summaries = Array.isArray(rows) ? [...rows] : [];
+        summaries.sort((a, b) =>
+          String(b.last_at || '').localeCompare(String(a.last_at || '')) ||
+          String(a.task_id).localeCompare(String(b.task_id))
+        );
+        this.auditPanel.summaries = summaries;
+        this.auditPanel.loadedFor = projectId;
+        const selected = preferredTaskId || this.auditPanel.selectedTaskId || summaries[0]?.task_id || '';
+        this.auditPanel.selectedTaskId = selected;
+        if (selected) await this.loadAuditTask(selected);
+        else this.clearAuditTask();
+      } catch (e) {
+        if (this.selectedProjectId === projectId) this.auditPanel.error = this.errorText(e);
+      } finally {
+        if (this.selectedProjectId === projectId) this.auditPanel.loading = false;
+      }
+    },
+
+    clearAuditTask() {
+      this.auditPanel.detail = null;
+      this.auditPanel.detailLoading = false;
+      this.auditPanel.detailError = '';
+      this.auditPanel.loss = null;
+      this.auditPanel.lossLoading = false;
+      this.auditPanel.lossError = '';
+      this.auditPanel.lossLoaded = false;
+    },
+
+    async loadAuditTask(taskId) {
+      const projectId = this.selectedProjectId;
+      if (!projectId || !taskId) {
+        this.clearAuditTask();
+        return;
+      }
+      this.auditPanel.detail = null;
+      this.auditPanel.detailLoading = true;
+      this.auditPanel.detailError = '';
+      this.auditPanel.loss = null;
+      this.auditPanel.lossLoading = true;
+      this.auditPanel.lossError = '';
+      this.auditPanel.lossLoaded = false;
+
+      const encodedProject = encodeURIComponent(projectId);
+      const encodedTask = encodeURIComponent(taskId);
+      const [detailResult, lossResult] = await Promise.allSettled([
+        this.api('GET', `/projects/${encodedProject}/audit/${encodedTask}`),
+        this.api('GET', `/projects/${encodedProject}/audit/${encodedTask}/stream-lost`),
+      ]);
+
+      if (this.selectedProjectId !== projectId || this.auditPanel.selectedTaskId !== taskId) return;
+
+      if (detailResult.status === 'fulfilled') {
+        this.auditPanel.detail = detailResult.value;
+      } else {
+        this.auditPanel.detailError = this.errorText(detailResult.reason);
+      }
+
+      if (lossResult.status === 'fulfilled') {
+        this.auditPanel.loss = lossResult.value?.stream_lost ?? null;
+        this.auditPanel.lossLoaded = true;
+      } else {
+        this.auditPanel.lossError = this.errorText(lossResult.reason);
+      }
+
+      this.auditPanel.detailLoading = false;
+      this.auditPanel.lossLoading = false;
+    },
+
+    async openAuditForTask(taskId) {
+      if (!taskId) return;
+      this.sideTab = 'audit';
+      this.auditPanel.selectedTaskId = taskId;
+      // Do not show the previously selected task's chain if the summary fetch fails.
+      this.clearAuditTask();
+      await this.loadAudit(taskId);
+    },
+
+    auditTaskChoices() {
+      const selected = this.auditPanel.selectedTaskId;
+      const choices = this.auditPanel.summaries.slice();
+      if (selected && !choices.some(task => task.task_id === selected)) {
+        const detail = this.auditPanel.detail;
+        choices.unshift({
+          task_id: selected,
+          event_count: detail?.task_id === selected ? detail.event_count : null,
+          root_hash: detail?.root_hash ?? null,
+          first_at: null,
+          last_at: null,
+        });
+      }
+      return choices;
+    },
+
+    auditTaskChoiceLabel(task) {
+      const count = task?.event_count;
+      if (count === null || count === undefined) return `${task.task_id} · 无账本事件`;
+      return `${task.task_id} · ${count} 个事件`;
+    },
+
+    async loadEvidence() {
+      if (!this.project) return;
+      const projectId = this.selectedProjectId;
+      const facts = Array.isArray(this.project.facts) ? this.project.facts : [];
+      let factId = this.evidencePanel.factId;
+      if (!facts.some(fact => fact.id === factId)) {
+        const selected = (this.selectedFacts || []).find(id => facts.some(fact => fact.id === id));
+        factId = selected
+          || (facts.some(fact => fact.id === 'goal') ? 'goal' : '')
+          || facts[0]?.id
+          || '';
+      }
+      this.evidencePanel.factId = factId;
+      if (!projectId || !factId) return;
+      await this.loadEvidenceFact(factId);
+    },
+
+    async loadEvidenceFact(factId) {
+      const projectId = this.selectedProjectId;
+      if (!projectId || !factId) {
+        this.evidencePanel.meta = null;
+        this.evidencePanel.files = [];
+        return;
+      }
+      this.evidencePanel.factId = factId;
+      this.evidencePanel.meta = null;
+      this.evidencePanel.files = [];
+      this.evidencePanel.loading = true;
+      this.evidencePanel.error = '';
+      const encodedProject = encodeURIComponent(projectId);
+      const encodedFact = encodeURIComponent(factId);
+      try {
+        const [meta, files] = await Promise.all([
+          this.api('GET', `/projects/${encodedProject}/facts/${encodedFact}/meta`),
+          this.api('GET', `/projects/${encodedProject}/facts/${encodedFact}/evidence`),
+        ]);
+        if (this.selectedProjectId !== projectId || this.evidencePanel.factId !== factId) return;
+        this.evidencePanel.meta = meta;
+        this.evidencePanel.files = Array.isArray(files) ? files : [];
+        this.evidencePanel.loadedFor = `${projectId}:${factId}`;
+      } catch (e) {
+        if (this.selectedProjectId === projectId && this.evidencePanel.factId === factId) {
+          this.evidencePanel.error = this.errorText(e);
+        }
+      } finally {
+        if (this.selectedProjectId === projectId && this.evidencePanel.factId === factId) {
+          this.evidencePanel.loading = false;
+        }
+      }
+    },
+
+    async openEvidenceForFact(factId) {
+      if (!factId) return;
+      this.sideTab = 'evidence';
+      this.evidencePanel.factId = factId;
+      await this.loadEvidenceFact(factId);
+    },
+
+    evidenceFactOptionLabel(fact) {
+      const raw = typeof fact?.description === 'string' ? fact.description.replace(/\s+/g, ' ').trim() : '';
+      if (!raw) return fact.id;
+      return `${fact.id} · ${raw.length > 44 ? `${raw.slice(0, 44)}…` : raw}`;
+    },
+
+    errorText(error) {
+      return error && error.message ? error.message : String(error);
+    },
+
+    runOutcomeLabel(run) {
+      const labels = {
+        success: '成功',
+        failed: '失败',
+        rejected: '拒绝',
+        cancelled: '已取消',
+        unhealthy: '不健康',
+        inactive: '未激活',
+        running: '运行中',
+      };
+      const outcome = run?.outcome || 'running';
+      return labels[outcome] || outcome;
+    },
+
+    runOutcomeClass(run) {
+      const outcome = run?.outcome;
+      if (outcome === 'success') return 'border-teal-200 bg-teal-50 text-teal-700';
+      if (outcome === 'failed' || outcome === 'rejected') return 'border-rose-200 bg-rose-50 text-rose-600';
+      if (outcome === 'unhealthy') return 'border-orange-200 bg-orange-50 text-orange-600';
+      if (outcome === 'cancelled' || outcome === 'inactive') return 'border-slate-200 bg-slate-100 text-slate-500';
+      return 'border-sky-200 bg-sky-50 text-sky-600';
+    },
+
+    runDurationLabel(run) {
+      if (run?.duration_ms !== null && run?.duration_ms !== undefined) {
+        return this.formatDurationMs(run.duration_ms);
+      }
+      return run?.finished_at ? '—' : '运行中';
+    },
+
+    runExitLabel(run) {
+      if (run?.exit_code !== null && run?.exit_code !== undefined) return String(run.exit_code);
+      return run?.finished_at ? '—' : '等待中';
+    },
+
+    formatNumber(value) {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed.toLocaleString('zh-CN') : '0';
+    },
+
+    strategistBudgetText(used, limit) {
+      const current = this.formatNumber(used);
+      const cap = Number(limit);
+      return cap > 0 ? `${current} / ${this.formatNumber(cap)}` : current;
+    },
+
+    strategistCostText(used, limit) {
+      const current = `$${Number(used || 0).toFixed(4)}`;
+      const cap = Number(limit);
+      return cap > 0 ? `${current} / $${cap.toFixed(4)}` : current;
+    },
+
+    costFactRows() {
+      const facts = this.costPanel.data && Array.isArray(this.costPanel.data.facts) ? this.costPanel.data.facts : [];
+      return facts.filter((fact) => fact.run_id !== null || fact.total_tokens > 0);
+    },
+
+    costIntentRows() {
+      const intents = this.costPanel.data && Array.isArray(this.costPanel.data.intents) ? this.costPanel.data.intents : [];
+      return intents.filter((intent) =>
+        intent.total_tokens > 0 ||
+        intent.origin_run_id !== null ||
+        (intent.produced_fact_ids || []).length > 0
+      );
+    },
+
+    causalEdgeLabel(kind) {
+      const labels = {
+        created_intent: '创建意图',
+        executed_by: '执行意图',
+        produced_fact: '产出事实',
+        source_fact: '来源事实',
+        concluded_fact: '结论事实',
+      };
+      return labels[kind] || kind;
+    },
+
+    strategistIntentBudget(intent) {
+      const budget = intent?.budget;
+      if (!budget) return '默认';
+      const parts = [];
+      if (budget.max_seconds) parts.push(`${budget.max_seconds} 秒`);
+      if (budget.max_tool_calls) parts.push(`${budget.max_tool_calls} 次工具`);
+      return parts.length > 0 ? parts.join(' · ') : '默认';
+    },
+
+    strategistPriorityClass(priority) {
+      if (priority >= 80) return 'border-rose-200 bg-rose-50 text-rose-600';
+      if (priority >= 50) return 'border-amber-200 bg-amber-50 text-amber-600';
+      return 'border-slate-200 bg-white text-slate-500';
+    },
+
+    strategistExhaustedFlags(budget) {
+      if (!budget || !budget.exhausted) return [];
+      const flags = [];
+      if (budget.exhausted.tokens) flags.push('Token 用尽');
+      if (budget.exhausted.cost_usd) flags.push('成本用尽');
+      if (budget.exhausted.tasks) flags.push('并发已满');
+      return flags;
+    },
+
+    strategistExhaustedLabel(budget) {
+      const flags = this.strategistExhaustedFlags(budget);
+      return flags.length > 0 ? flags.join(' · ') : '正常';
+    },
+
+    strategistExhaustedClass(budget) {
+      return this.strategistExhaustedFlags(budget).length > 0
+        ? 'border-rose-200 bg-rose-50 text-rose-600'
+        : 'border-teal-200 bg-teal-50 text-teal-700';
+    },
+
+    proposalSummary(proposal) {
+      const payload = proposal?.payload || {};
+      if (proposal?.kind === 'hint') return payload.content || '(空提示)';
+      return payload.description || '(空描述)';
+    },
+
+    proposalKindLabel(kind) {
+      const labels = { fact: '事实', intent: '意图', hint: '提示' };
+      return labels[kind] || kind;
+    },
+
+    proposalKindClass(kind) {
+      if (kind === 'fact') return 'bg-brand-50 text-brand-700';
+      if (kind === 'intent') return 'bg-amber-50 text-amber-700';
+      if (kind === 'hint') return 'bg-teal-50 text-teal-700';
+      return 'bg-slate-100 text-slate-500';
+    },
+
+    proposalStatusLabel(status) {
+      const labels = {
+        pending: '待审核',
+        applied: '已写入',
+        rejected: '已拒绝',
+        duplicate: '重复',
+        dry_run: '仅演练',
+      };
+      return labels[status] || status;
+    },
+
+    proposalStatusClass(status) {
+      if (status === 'applied') return 'border-teal-200 bg-teal-50 text-teal-700';
+      if (status === 'rejected') return 'border-rose-200 bg-rose-50 text-rose-600';
+      if (status === 'duplicate') return 'border-slate-200 bg-slate-100 text-slate-500';
+      if (status === 'dry_run') return 'border-amber-200 bg-amber-50 text-amber-600';
+      return 'border-sky-200 bg-sky-50 text-sky-600';
+    },
+
+    proposalSourceLabel(source) {
+      const labels = { observer: '观察者', strategist: '策略器', human: '人工' };
+      return labels[source] || source;
+    },
+
+    auditDecisionLabel(event) {
+      const decision = event && typeof event === 'object' && typeof event.decision === 'string'
+        ? event.decision
+        : 'unknown';
+      const labels = { allow: '允许', block: '阻止', unknown: '未知' };
+      return labels[decision] || decision;
+    },
+
+    auditDecisionClass(event) {
+      const decision = event && typeof event === 'object' ? event.decision : null;
+      if (decision === 'allow') return 'border-teal-200 bg-teal-50 text-teal-700';
+      if (decision === 'block') return 'border-rose-200 bg-rose-50 text-rose-600';
+      return 'border-slate-200 bg-slate-100 text-slate-500';
+    },
+
+    auditEventTool(event) {
+      if (!event || typeof event !== 'object') return typeof event === 'string' ? event : '事件';
+      return typeof event.tool === 'string' ? event.tool : '事件';
+    },
+
+    auditEventAction(event) {
+      if (!event || typeof event !== 'object' || event.action === null || event.action === undefined) return '';
+      return Array.isArray(event.action) ? event.action.join(', ') : String(event.action);
+    },
+
+    auditEventTimestamp(row) {
+      const event = row?.event;
+      if (event && typeof event === 'object' && typeof event.ts === 'string') return event.ts;
+      return row?.created_at || '';
+    },
+
+    auditTargetsLabel(event) {
+      if (!event || typeof event !== 'object') return '';
+      const targets = event.targets;
+      if (Array.isArray(targets)) {
+        return targets.map(target => typeof target === 'string' ? target : JSON.stringify(target)).join(', ');
+      }
+      return typeof targets === 'string' ? targets : '';
+    },
+
+    auditEventReason(event) {
+      if (!event || typeof event !== 'object' || typeof event.reason !== 'string') return '';
+      return event.reason;
+    },
+
+    auditEventDetail(event) {
+      if (!event || typeof event !== 'object' || typeof event.detail !== 'string') return '';
+      return event.detail;
+    },
+
+    factEvidenceStatusLabel(status) {
+      const labels = { provided: '已提供', missing: '缺失', legacy: '历史数据' };
+      return labels[status] || String(status || '未知');
+    },
+
+    factEvidenceStatusClass(status) {
+      if (status === 'provided') return 'border-teal-200 bg-teal-50 text-teal-700';
+      if (status === 'missing') return 'border-rose-200 bg-rose-50 text-rose-600';
+      return 'border-slate-200 bg-slate-100 text-slate-500';
+    },
+
+    evidenceFileStatusLabel(status) {
+      const labels = {
+        ok: '正常',
+        modified: '已修改',
+        missing: '缺失',
+        unreadable: '不可读',
+        invalid: '无效',
+        unverified: '未验证',
+      };
+      return labels[status] || status || '未知';
+    },
+
+    evidenceFileStatusClass(status) {
+      if (status === 'ok') return 'border-teal-200 bg-teal-50 text-teal-700';
+      if (status === 'modified') return 'border-amber-200 bg-amber-50 text-amber-700';
+      if (status === 'missing' || status === 'unreadable' || status === 'invalid') {
+        return 'border-rose-200 bg-rose-50 text-rose-600';
+      }
+      return 'border-slate-200 bg-slate-100 text-slate-500';
+    },
+
+    evidenceFileStatusTextClass(status) {
+      if (status === 'ok') return 'text-teal-600';
+      if (status === 'modified') return 'text-amber-600';
+      if (status === 'missing' || status === 'unreadable' || status === 'invalid') return 'text-rose-500';
+      return 'text-slate-400';
+    },
+
+    evidenceFileStatusHint(status) {
+      const hints = {
+        ok: '文件的大小与摘要仍与记录一致。',
+        modified: '文件在该事实记录后发生了修改。',
+        missing: '记录的文件已不在工作区中。',
+        unreadable: '文件存在，但无法读取。',
+        invalid: '记录路径无效，或超出了项目工作区。',
+        unverified: '未配置工作区根目录，因此只显示已存储的元数据。',
+      };
+      return hints[status] || '无法获取校验状态。';
+    },
+
+    shortHash(hash, keep = 10) {
+      if (typeof hash !== 'string' || hash.length === 0) return '—';
+      if (hash.length <= keep + 9) return hash;
+      return `${hash.slice(0, keep)}…${hash.slice(-8)}`;
+    },
+
+    prettyJson(value) {
+      try {
+        const text = JSON.stringify(value, null, 2);
+        return text === undefined ? String(value) : text;
+      } catch {
+        return String(value);
+      }
+    },
+
+    formatBytes(bytes) {
+      if (bytes === null || bytes === undefined || !Number.isFinite(bytes)) return '—';
+      if (bytes < 1024) return `${bytes} B`;
+      if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
+      return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
     },
 
     async toggleProjectStop() {
@@ -1629,7 +3111,7 @@ function cairnApp() {
         }
       }
       if (reload) await this.loadProjects();
-      if (toast) this.showToast(status === 'stopped' ? 'Project stopped' : 'Project resumed');
+      if (toast) this.showToast(status === 'stopped' ? '项目已停止' : '项目已恢复');
       return updated;
     },
 
@@ -1645,9 +3127,9 @@ function cairnApp() {
         const successCount = results.filter(result => result.status === 'fulfilled').length;
         const failureCount = results.length - successCount;
         if (failureCount === 0) {
-          this.showToast(`Stopped ${successCount} active project${successCount === 1 ? '' : 's'}`);
+          this.showToast(`已停止 ${successCount} 个进行中的项目`);
         } else {
-          this.showToast(`Stopped ${successCount} projects, ${failureCount} failed`, 'error');
+          this.showToast(`已停止 ${successCount} 个项目，${failureCount} 个失败`, 'error');
         }
       } catch (e) {
         this.showToast(e.message, 'error');
@@ -1689,15 +3171,15 @@ function cairnApp() {
         this.showRenameModal = false;
         this.renameForm = { projectId: '', originalTitle: '', title: '' };
         await this.loadProjects();
-        this.showToast('Project renamed');
+        this.showToast('项目已重命名');
       } catch (e) {
         this.showToast(e.message, 'error');
       }
     },
 
     replayProgressLabel() {
-      if (!this.replay.active || this.replay.frames.length === 0) return 'Replay';
-      return `Replay ${Math.min(this.replay.frameIndex + 1, this.replay.frames.length)} / ${this.replay.frames.length}`;
+      if (!this.replay.active || this.replay.frames.length === 0) return '回放';
+      return `回放 ${Math.min(this.replay.frameIndex + 1, this.replay.frames.length)} / ${this.replay.frames.length}`;
     },
 
     stopReplayTimer() {
@@ -1777,11 +3259,11 @@ function cairnApp() {
           id: `reason-started-${event.intentId}`,
           type: 'reason_started',
           timestamp: sourceIntent?.created_at || event.timestamp,
-          actor: sourceIntent?.creator || event.actor || 'reasoner',
+          actor: sourceIntent?.creator || event.actor || '推理器',
           title: sourceIntent?.description || event.title,
           meta: [
             sourceIntent?.id || event.intentId,
-            `from ${(sourceIntent?.from || event.sourceFactIds || []).join(', ')}`,
+            `来源：${(sourceIntent?.from || event.sourceFactIds || []).join(', ')}`,
           ],
           targetType: 'reason',
           targetId: sourceIntent?.id || event.intentId,
@@ -1798,7 +3280,7 @@ function cairnApp() {
           timestamp: sourceIntent.last_heartbeat_at || sourceIntent.created_at,
           actor: sourceIntent.worker,
           title: sourceIntent.description,
-          meta: [sourceIntent.id, `worker ${sourceIntent.worker}`],
+          meta: [sourceIntent.id, `执行器：${sourceIntent.worker}`],
           targetType: 'intent',
           targetId: sourceIntent.id,
           order: `${event.order}.run`,
@@ -1847,7 +3329,7 @@ function cairnApp() {
 
       if (event.type === 'reason_started') {
         replayProject.project.reason = {
-          worker: event.actor || 'reasoner',
+          worker: event.actor || '推理器',
           trigger: 'new_facts',
           started_at: event.timestamp,
           last_heartbeat_at: event.timestamp,
@@ -1949,7 +3431,7 @@ function cairnApp() {
         }));
         const frames = this.buildReplayFrames(sourceProject, baseEvents);
         if (frames.length === 0) {
-          this.showToast('No timeline to replay', 'error');
+          this.showToast('没有可回放的时间线', 'error');
           return;
         }
 
@@ -2060,7 +3542,7 @@ function cairnApp() {
           await this.loadProject(projectId);
           this.updateGraph();
         }
-        this.showToast('Project reopened');
+        this.showToast('项目已重新打开');
       } catch (e) {
         this.showToast(e.message, 'error');
       }
@@ -2084,8 +3566,10 @@ function cairnApp() {
       this.selectedNode = null;
       this.selectedFacts = [];
       this.selectedTimelineEntryId = null;
+      this.resetOpsPanels();
       await this.loadProject(id);
       this.view = 'graph';
+      if (['runs', 'strategist', 'audit', 'evidence', 'cost'].includes(this.sideTab)) this.loadActiveOpsTab();
       if (location.hash !== `#/projects/${id}`) location.hash = `/projects/${id}`;
       this.$nextTick(() => {
         const clampedWidth = this.clampPanelWidth(this.sidePanelWidth);
@@ -2119,6 +3603,7 @@ function cairnApp() {
       this.selectedNode = null;
       this.selectedFacts = [];
       this.selectedTimelineEntryId = null;
+      this.resetOpsPanels();
       this.teardownAutoFit();
       if (this.cy) { this.cy.destroy(); this.cy = null; }
       if (!fromRoute) location.hash = '/';
@@ -2469,8 +3954,8 @@ function cairnApp() {
     },
 
     summarizeFactLabel(fact) {
-      if (fact.id === 'origin') return 'Origin';
-      if (fact.id === 'goal') return 'Goal';
+      if (fact.id === 'origin') return '起点';
+      if (fact.id === 'goal') return '目标';
       const normalized = fact.description.replace(/\s+/g, ' ').trim();
       const chars = Array.from(normalized);
       if (chars.length <= 24) return normalized || fact.id;
@@ -2860,9 +4345,9 @@ function cairnApp() {
 
     selectedIntentPrimaryActionLabel() {
       const intent = this.selectedOpenIntentRecord();
-      if (!intent) return 'Claim';
-      if (!intent.worker) return 'Claim';
-      return intent.worker === this.actorName() ? 'Heartbeat' : 'Claimed';
+      if (!intent) return '认领';
+      if (!intent.worker) return '认领';
+      return intent.worker === this.actorName() ? '心跳' : '已被认领';
     },
 
     getFactRecord(fid) {
@@ -2880,9 +4365,9 @@ function cairnApp() {
       return i.worker ? 'text-amber-600' : 'text-slate-400';
     },
     intentStatusLabel(i) {
-      if (i.to) return 'Concluded';
-      if (this.isBootstrapIntent(i)) return i.worker ? 'Bootstrap Running' : 'Bootstrap Pending';
-      return i.worker ? 'In Progress' : 'Unclaimed';
+      if (i.to) return '已结束';
+      if (this.isBootstrapIntent(i)) return i.worker ? '初始探索运行中' : '初始探索等待中';
+      return i.worker ? '进行中' : '待认领';
     },
 
     timelineEvents() {
@@ -2899,9 +4384,9 @@ function cairnApp() {
         id: `project-created-${this.project.project.id}`,
         type: 'project_created',
         timestamp: this.project.project.created_at,
-        actor: 'system',
+        actor: '系统',
         title: this.project.project.title,
-        meta: [origin ? origin.description : null, goal ? `goal: ${goal.description}` : null].filter(Boolean),
+        meta: [origin ? origin.description : null, goal ? `目标：${goal.description}` : null].filter(Boolean),
         targetType: 'fact',
         targetId: 'origin',
         order: order++,
@@ -2934,7 +4419,7 @@ function cairnApp() {
           timestamp: intent.created_at,
           actor: intent.creator,
           title: intent.description,
-          meta: [intent.id, `from ${intent.from.join(', ')}`],
+          meta: [intent.id, `来源：${intent.from.join(', ')}`],
           targetType: 'intent',
           targetId: intent.id,
           order: order++,
@@ -2952,7 +4437,7 @@ function cairnApp() {
             timestamp: intent.concluded_at,
             actor: intent.worker || intent.creator,
             title: intent.description,
-            meta: [intent.id, `from ${intent.from.join(', ')}`],
+            meta: [intent.id, `来源：${intent.from.join(', ')}`],
             targetType: 'fact',
             targetId: 'goal',
             order: order++,
@@ -2970,7 +4455,7 @@ function cairnApp() {
           timestamp: intent.concluded_at,
           actor: intent.worker || intent.creator,
           title: fact ? fact.description : intent.description,
-          meta: [intent.id, `produced ${intent.to}`, `from ${intent.from.join(', ')}`],
+          meta: [intent.id, `产出：${intent.to}`, `来源：${intent.from.join(', ')}`],
           targetType: 'fact',
           targetId: intent.to,
           order: order++,
@@ -3062,15 +4547,15 @@ function cairnApp() {
 
     timelineEventBadge(entry) {
       const labels = {
-        project_created: 'Project',
-        hint_added: 'Hint',
-        reason_started: 'Reason',
-        intent_declared: 'Intent',
-        intent_running: 'Execute',
-        intent_concluded: 'Conclude',
-        project_completed: 'Complete',
+        project_created: '项目',
+        hint_added: '提示',
+        reason_started: '推理',
+        intent_declared: '意图',
+        intent_running: '执行',
+        intent_concluded: '结束',
+        project_completed: '完成',
       };
-      return labels[entry.type] || 'Event';
+      return labels[entry.type] || '事件';
     },
 
     timelineEventBadgeClass(entry) {
@@ -3247,17 +4732,17 @@ function cairnApp() {
       }
     },
 
-    formatTime(ts) { if (!ts) return ''; return new Date(ts).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'}); },
-    formatDate(ts) { if (!ts) return ''; const d = new Date(ts); return d.toLocaleDateString([],{year:'numeric',month:'short',day:'numeric'}) + ' ' + d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}); },
-    formatTimelineDate(ts) { if (!ts) return ''; return new Date(ts).toLocaleDateString([],{year:'numeric',month:'short',day:'numeric'}); },
+    formatTime(ts) { if (!ts) return ''; return new Date(ts).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}); },
+    formatDate(ts) { if (!ts) return ''; const d = new Date(ts); return d.toLocaleDateString('zh-CN',{year:'numeric',month:'long',day:'numeric'}) + ' ' + d.toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',hour12:false}); },
+    formatTimelineDate(ts) { if (!ts) return ''; return new Date(ts).toLocaleDateString('zh-CN',{year:'numeric',month:'long',day:'numeric'}); },
     formatDurationMs(ms) {
       const totalSeconds = Math.max(0, Math.round(ms / 1000));
       const hours = Math.floor(totalSeconds / 3600);
       const minutes = Math.floor((totalSeconds % 3600) / 60);
       const seconds = totalSeconds % 60;
-      if (hours > 0) return `${hours}h ${minutes}m`;
-      if (minutes > 0) return `${minutes}m ${seconds}s`;
-      return `${seconds}s`;
+      if (hours > 0) return `${hours} 小时 ${minutes} 分`;
+      if (minutes > 0) return `${minutes} 分 ${seconds} 秒`;
+      return `${seconds} 秒`;
     },
 
     async createProject() {
@@ -3277,7 +4762,7 @@ function cairnApp() {
         this.newProject = { title:'', origin:'', goal:'', bootstrap: true, hints: [{ content:'' }] };
         await this.loadProjects();
         await this.openProject(data.project.id);
-        this.showToast('Project created');
+        this.showToast('项目已创建');
       } catch(e) { this.showToast(e.message, 'error'); }
     },
 
@@ -3299,7 +4784,7 @@ function cairnApp() {
         this.showIntentModal = false;
         await this.loadProject(this.selectedProjectId);
         this.updateGraph();
-        this.showToast(claim ? 'Intent declared and claimed' : 'Intent declared');
+        this.showToast(claim ? '意图已声明并认领' : '意图已声明');
       } catch(e) { this.showToast(e.message, 'error'); }
     },
 
@@ -3312,7 +4797,7 @@ function cairnApp() {
         await this.api('POST', `/projects/${this.selectedProjectId}/intents/${intent.id}/heartbeat`, { worker: actor });
         await this.loadProject(this.selectedProjectId);
         this.updateGraph();
-        this.showToast(claiming ? 'Intent claimed' : 'Heartbeat sent');
+        this.showToast(claiming ? '意图已认领' : '心跳已发送');
       } catch(e) { this.showToast(e.message, 'error'); }
     },
 
@@ -3324,7 +4809,7 @@ function cairnApp() {
         await this.api('POST', `/projects/${this.selectedProjectId}/intents/${intent.id}/release`, { worker: actor });
         await this.loadProject(this.selectedProjectId);
         this.updateGraph();
-        this.showToast('Intent released');
+        this.showToast('意图已释放');
       } catch(e) { this.showToast(e.message, 'error'); }
     },
 
@@ -3338,7 +4823,7 @@ function cairnApp() {
         this.selectedNode = null;
         await this.loadProject(this.selectedProjectId);
         this.updateGraph();
-        this.showToast('Intent concluded');
+        this.showToast('意图已结束');
       } catch(e) { this.showToast(e.message, 'error'); }
     },
 
@@ -3362,7 +4847,7 @@ function cairnApp() {
         await this.loadProjects();
         await this.loadProject(this.selectedProjectId);
         this.updateGraph();
-        this.showToast('Project completed');
+        this.showToast('项目已完成');
       } catch(e) { this.showToast(e.message, 'error'); }
     },
 
@@ -3376,7 +4861,7 @@ function cairnApp() {
         await this.loadProjects();
         await this.loadProject(this.selectedProjectId);
         this.sideTab = 'hints';
-        this.showToast('Hint added');
+        this.showToast('提示已添加');
       } catch(e) { this.showToast(e.message, 'error'); }
     },
 
@@ -3388,7 +4873,7 @@ function cairnApp() {
         this.saveLocalPrefs();
         if (this.cy) this.cy.layout(this.layoutOpts()).run();
         this.showLocalPrefs = false;
-        this.showToast('Local preferences saved');
+        this.showToast('本地偏好已保存');
       } catch(e) { this.showToast(e.message, 'error'); }
     },
 
@@ -3396,7 +4881,7 @@ function cairnApp() {
       try {
         await this.api('PUT', '/settings', this.settingsForm);
         this.showSettings = false;
-        this.showToast('Server settings saved');
+        this.showToast('服务端设置已保存');
       } catch(e) { this.showToast(e.message, 'error'); }
     },
   };

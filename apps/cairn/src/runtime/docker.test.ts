@@ -47,8 +47,15 @@ function runtime(
       kill: (signal?: string) => void;
     };
   } = {},
-): { runtime: DockerRuntime; spawned: string[][]; killed: string[]; logs: string[] } {
+): {
+  runtime: DockerRuntime;
+  spawned: string[][];
+  spawnedEnvs: Array<Record<string, string> | undefined>;
+  killed: string[];
+  logs: string[];
+} {
   const spawned: string[][] = [];
+  const spawnedEnvs: Array<Record<string, string> | undefined> = [];
   const killed: string[] = [];
   const logs: string[] = [];
   const instance = new DockerRuntime({
@@ -64,8 +71,9 @@ function runtime(
     log: (message) => logs.push(message),
     dockerArgv: ["docker"],
     runner,
-    spawn: (argv) => {
+    spawn: (argv, options) => {
       spawned.push([...argv]);
+      spawnedEnvs.push(options.env);
       if (overrides.spawn !== undefined) return overrides.spawn(argv);
       return {
         exited: Promise.resolve(0),
@@ -75,7 +83,7 @@ function runtime(
       };
     },
   });
-  return { runtime: instance, spawned, killed, logs };
+  return { runtime: instance, spawned, spawnedEnvs, killed, logs };
 }
 
 const HOST_WORKSPACE = join(tmpdir(), "cairn-docker-test", "proj-1");
@@ -204,6 +212,40 @@ describe("docker worker execution", () => {
       "--task",
       taskPath,
     ]);
+  });
+
+  test("passes the audit token through the docker client environment, not argv", () => {
+    const { runner } = fakeRunner((argv) =>
+      argv.includes("inspect") ? { code: 0, stdout: "true\n", stderr: "" } : undefined,
+    );
+    const { runtime: docker, spawned, spawnedEnvs } = runtime(runner);
+    docker.ensureProject("proj-1", HOST_WORKSPACE);
+
+    const token = "cairn_audit_test_token_do_not_log";
+    docker.spawnWorker({
+      taskId: "task-1",
+      projectId: "proj-1",
+      workerTaskPath: "/cairn/workspace/.cairn/sessions/task-1/task.json",
+      workerWorkspace: "/cairn/workspace",
+      hostWorkspace: HOST_WORKSPACE,
+      baseEnv: {},
+      controllerEnv: { SECRET_TOKEN: "do-not-leak" },
+      extraEnv: {
+        CAIRN_AUDIT_STREAM_URL: "http://host.docker.internal:8000",
+        CAIRN_AUDIT_STREAM_TOKEN: token,
+      },
+      hardDeadlineSeconds: 30,
+    });
+
+    const argv = spawned[0]!;
+    expect(argv).toContain("CAIRN_AUDIT_STREAM_URL=http://host.docker.internal:8000");
+    expect(argv).toContain("CAIRN_AUDIT_STREAM_TOKEN");
+    expect(argv.join(" ")).not.toContain(token);
+    expect(spawnedEnvs[0]?.["CAIRN_AUDIT_STREAM_TOKEN"]).toBe(token);
+    // The token is passed to the docker CLI, not to the container, as a bare name.
+    expect(argv).not.toContain(`CAIRN_AUDIT_STREAM_TOKEN=${token}`);
+    // The control plane's environment is still not inherited wholesale.
+    expect(spawnedEnvs[0]?.["SECRET_TOKEN"]).toBeUndefined();
   });
 
   test("signals only the task process, not the whole project container", () => {

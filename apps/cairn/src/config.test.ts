@@ -60,6 +60,164 @@ describe("dispatcher config", () => {
       sweepIntervalSeconds: 3600,
       refreshArtifacts: false,
     });
+    expect(config.auditStream).toEqual({ enabled: false, url: null });
+    expect(config.proposals).toEqual({
+      enabled: false,
+      mode: "apply",
+      maxPerTask: 20,
+      maxFileBytes: 16 * 1024,
+      maxTotalBytes: 64 * 1024,
+      allowKinds: ["fact", "intent", "hint"],
+      requireEvidenceForFact: true,
+      minConfidence: 0,
+    });
+    expect(config.strategist).toEqual({
+      minNewFacts: 1,
+      minNewHints: 1,
+      cooldownSeconds: 30,
+      failureBackoffSeconds: 120,
+      maxRunsPerHour: 12,
+      zeroOutputThreshold: 3,
+      staleIntentSeconds: 0,
+      fallbackIntervalSeconds: 0,
+    });
+    expect(config.budget).toEqual({
+      maxProjectTokens: 0,
+      maxProjectCostUsd: 0,
+      maxProjectTasks: 0,
+    });
+  });
+
+  test("parses per-project budget policy", () => {
+    const config = parse(
+      BASE +
+        `budget:
+  max_project_tokens: 250000
+  max_project_cost_usd: 1.25
+  max_project_tasks: 2
+`,
+    );
+    expect(config.budget).toEqual({
+      maxProjectTokens: 250000,
+      maxProjectCostUsd: 1.25,
+      maxProjectTasks: 2,
+    });
+  });
+
+  test("rejects negative budget values", () => {
+    expect(() => parse(BASE + "budget:\n  max_project_tokens: -1\n")).toThrow(
+      "budget.max_project_tokens",
+    );
+    expect(() => parse(BASE + "budget:\n  max_project_cost_usd: -0.01\n")).toThrow(
+      "budget.max_project_cost_usd",
+    );
+    expect(() => parse(BASE + "budget:\n  max_project_tasks: -2\n")).toThrow(
+      "budget.max_project_tasks",
+    );
+  });
+
+  test("parses and validates the Strategist trigger policy", () => {
+    const config = parse(
+      BASE +
+        `strategist:
+  min_new_facts: 2
+  min_new_hints: 0
+  cooldown_seconds: 5
+  failure_backoff_seconds: 30
+  max_runs_per_hour: 4
+  zero_output_threshold: 2
+  stale_intent_seconds: 600
+  fallback_interval_seconds: 900
+`,
+    );
+    expect(config.strategist).toEqual({
+      minNewFacts: 2,
+      minNewHints: 0,
+      cooldownSeconds: 5,
+      failureBackoffSeconds: 30,
+      maxRunsPerHour: 4,
+      zeroOutputThreshold: 2,
+      staleIntentSeconds: 600,
+      fallbackIntervalSeconds: 900,
+    });
+
+    expect(() => parse(BASE + "strategist: {cooldown_seconds: -1}\n")).toThrow(
+      "strategist.cooldown_seconds must be a non-negative integer",
+    );
+    expect(() => parse(BASE + 'strategist: {max_runs_per_hour: "4"}\n')).toThrow(
+      "strategist.max_runs_per_hour must be a non-negative integer",
+    );
+    expect(() => parse(BASE + "strategist: []\n")).toThrow(
+      "strategist must be an object",
+    );
+  });
+
+  test("parses and validates the proposal policy", () => {
+    const config = parse(
+      BASE +
+        `proposals:
+  enabled: true
+  mode: dry_run
+  max_per_task: 4
+  max_file_bytes: 2048
+  max_total_bytes: 8192
+  allow_kinds: [hint, intent]
+  require_evidence_for_fact: false
+  min_confidence: 0.4
+`,
+    );
+    expect(config.proposals).toEqual({
+      enabled: true,
+      mode: "dry_run",
+      maxPerTask: 4,
+      maxFileBytes: 2048,
+      maxTotalBytes: 8192,
+      allowKinds: ["hint", "intent"],
+      requireEvidenceForFact: false,
+      minConfidence: 0.4,
+    });
+
+    expect(() => parse(BASE + "proposals: {enabled: 1}\n")).toThrow(
+      "proposals.enabled must be a boolean",
+    );
+    expect(() => parse(BASE + "proposals: {mode: live}\n")).toThrow(
+      "proposals.mode must be one of: off, dry_run, apply",
+    );
+    expect(() => parse(BASE + "proposals: {allow_kinds: [flag]}\n")).toThrow(
+      "proposals.allow_kinds[0] must be one of: fact, intent, hint",
+    );
+    expect(() => parse(BASE + "proposals: {min_confidence: 2}\n")).toThrow(
+      "proposals.min_confidence must be a number between 0 and 1",
+    );
+    expect(() =>
+      parse(BASE + "proposals: {max_file_bytes: 2048, max_total_bytes: 1024}\n"),
+    ).toThrow("proposals.max_total_bytes cannot be smaller than max_file_bytes");
+    expect(() => parse(BASE + "proposals: {max_per_task: -1}\n")).toThrow(
+      "proposals.max_per_task must be a non-negative integer",
+    );
+  });
+
+  test("parses and validates audit streaming", () => {
+    const config = parse(
+      BASE +
+        `audit_stream:
+  enabled: true
+  url: "http://host.docker.internal:8000"
+`,
+    );
+    expect(config.auditStream).toEqual({
+      enabled: true,
+      url: "http://host.docker.internal:8000",
+    });
+    expect(() => parse(BASE + "audit_stream: {enabled: 1}\n")).toThrow(
+      "audit_stream.enabled must be a boolean",
+    );
+    expect(() => parse(BASE + 'audit_stream: {url: "ftp://x"}\n')).toThrow(
+      "audit_stream.url must be a valid http(s) URL",
+    );
+    expect(() => parse(BASE + 'audit_stream: {url: "not a url"}\n')).toThrow(
+      "audit_stream.url must be a valid http(s) URL",
+    );
   });
 
   test("defaults graph slicing off and parses overrides", () => {

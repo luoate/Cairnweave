@@ -22,6 +22,7 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
 import { CONTAINER_AGENT_CONFIG } from "../runtime/paths";
+import { AuditStreamSender, type AuditStreamSenderOptions } from "./audit-stream";
 import { analyzeCommand } from "./command";
 import {
   endpointAllowed,
@@ -50,6 +51,14 @@ export interface HostBridgeOptions {
    * is shared (single-worker projects).
    */
   artifactDir?: string;
+  /** Optional live forwarding of the same entries to the control plane. */
+  auditStream?: Omit<AuditStreamSenderOptions, "projectId" | "taskId" | "sessionDir">;
+  /**
+   * Tool-call ceiling for this worker process. Once exhausted, further calls are blocked
+   * (and audited as `tool_budget_exhausted`) so the solver can still emit its answer.
+   * Subagent processes have their own bridge and counter.
+   */
+  maxToolCalls?: number;
   /** Test hook. */
   auditPath?: string;
   /** Test hook. */
@@ -62,6 +71,8 @@ export interface BridgeDecision {
   action: string;
   targets: string[];
   reason?: string;
+  /** Set only for the budget-refusal class of decisions. */
+  event?: "tool_budget_exhausted";
 }
 
 type Action =
@@ -125,6 +136,9 @@ export class HostBridge {
   private readonly targets: ParsedTarget[];
   private readonly invalidTargets: Array<{ raw: string; reason: string }>;
   private readonly now: () => Date;
+  private readonly auditStream: AuditStreamSender | null;
+  private readonly maxToolCalls: number | null;
+  private toolCallCount = 0;
 
   constructor(options: HostBridgeOptions) {
     this.projectId = options.projectId;
@@ -133,6 +147,16 @@ export class HostBridge {
     this.auditPath =
       options.auditPath ?? resolve(options.sessionDir, "audit.jsonl");
     this.now = options.now ?? (() => new Date());
+    this.maxToolCalls = options.maxToolCalls ?? null;
+    this.auditStream =
+      options.auditStream === undefined
+        ? null
+        : new AuditStreamSender({
+            ...options.auditStream,
+            projectId: options.projectId,
+            taskId: options.taskId,
+            sessionDir: options.sessionDir,
+          });
     this.deniedRoots = [
       CONTAINER_AGENT_CONFIG,
       resolve(homedir(), ".tch-agent", "config"),
@@ -165,24 +189,21 @@ export class HostBridge {
     const classification = classify(tool, input, this.workspace);
     let decision: BridgeDecision;
 
-    if (this.invalidTargets.length > 0) {
-      decision = this.decision(
-        false,
-        tool,
-        classification,
-        `task scope contains invalid target(s): ${this.invalidTargets
-          .map((entry) => `${entry.raw} (${entry.reason})`)
-          .join(", ")}`,
-      );
-    } else if (this.targets.length === 0) {
-      decision = this.decision(
-        false,
-        tool,
-        classification,
-        "task scope has no usable targets; failing closed",
-      );
+    if (this.maxToolCalls !== null && this.toolCallCount >= this.maxToolCalls) {
+      decision = {
+        ...this.decision(
+          false,
+          tool,
+          classification,
+          `tool budget exhausted (${this.maxToolCalls} calls); finish the task with the evidence already collected`,
+        ),
+        event: "tool_budget_exhausted",
+      };
+    } else if (this.maxToolCalls !== null) {
+      this.toolCallCount += 1;
+      decision = this.evaluateScoped(tool, classification);
     } else {
-      decision = this.evaluate(tool, classification);
+      decision = this.evaluateScoped(tool, classification);
     }
 
     const auditError = this.writeAudit(decision, classification.detail);
@@ -196,6 +217,28 @@ export class HostBridge {
       };
     }
     return decision;
+  }
+
+  private evaluateScoped(tool: string, classification: Classification): BridgeDecision {
+    if (this.invalidTargets.length > 0) {
+      return this.decision(
+        false,
+        tool,
+        classification,
+        `task scope contains invalid target(s): ${this.invalidTargets
+          .map((entry) => `${entry.raw} (${entry.reason})`)
+          .join(", ")}`,
+      );
+    }
+    if (this.targets.length === 0) {
+      return this.decision(
+        false,
+        tool,
+        classification,
+        "task scope has no usable targets; failing closed",
+      );
+    }
+    return this.evaluate(tool, classification);
   }
 
   private evaluate(tool: string, classification: Classification): BridgeDecision {
@@ -257,7 +300,7 @@ export class HostBridge {
         return `write path "${rawPath}" is outside the project workspace`;
       }
       if (this.protectedWriteRoots.some((root) => isUnder(root, path))) {
-        return `write path "${rawPath}" is the Observer board; the solver is read-only`;
+        return `write path "${rawPath}" is owned by the Observer; the solver is read-only`;
       }
       if (
         this.artifactsRoot !== null &&
@@ -301,14 +344,23 @@ export class HostBridge {
       decision: decision.allowed ? "allow" : "block",
       reason: decision.reason ?? null,
       detail: detail.slice(0, 400),
+      ...(decision.event === undefined ? {} : { event: decision.event }),
     };
     try {
       mkdirSync(dirname(this.auditPath), { recursive: true });
       appendFileSync(this.auditPath, `${JSON.stringify(entry)}\n`, "utf8");
-      return null;
     } catch (error) {
       return error instanceof Error ? error.message : String(error);
     }
+    // Only forward what the local file already contains: the file remains the source of
+    // truth for the finish-time backfill.
+    this.auditStream?.enqueue(entry);
+    return null;
+  }
+
+  /** Flushes the live audit queue; the worker calls this before writing its result. */
+  async flushAuditStream(): Promise<void> {
+    await this.auditStream?.close();
   }
 }
 

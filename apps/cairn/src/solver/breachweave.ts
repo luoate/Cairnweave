@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { latestSolverSessionFile } from "./session-file";
-import type { Solver } from "./types";
+import type { Solver, SolverUsage } from "./types";
 
 /** Prompt file released from `packages/agent/src/config/prompts/builtin/cairn-worker.md`. */
 const PROMPT_NAME = "cairn-worker";
@@ -26,12 +26,18 @@ const STEER_MESSAGE =
  */
 export class BreachWeaveSolver implements Solver {
   readonly name = PROMPT_NAME;
+  private lastUsage: SolverUsage | null = null;
 
   constructor(
     private readonly configDir: string | undefined = process.env["CAIRN_AGENT_CONFIG_DIR"],
   ) {}
 
+  getLastUsage(): SolverUsage | null {
+    return this.lastUsage;
+  }
+
   async solve(task: WorkerTask): Promise<string> {
+    this.lastUsage = null;
     // Released once per config directory; existing user files are never overwritten.
     const agent = await import("@cairn/agent");
     const sourceConfigDir = this.configDir ?? agent.DEFAULT_CONFIG_DIR;
@@ -118,6 +124,12 @@ export class BreachWeaveSolver implements Solver {
         return answer;
       } finally {
         if (steerTimer !== undefined) clearTimeout(steerTimer);
+        // Read counters before disposal; a thrown prompt still burned tokens.
+        try {
+          this.lastUsage = usageFromStats(session.getSessionStats());
+        } catch {
+          this.lastUsage = null;
+        }
         session.dispose();
       }
     } finally {
@@ -185,6 +197,24 @@ function resumeFileFor(task: WorkerTask): string {
     throw new Error(`no solver session to resume under ${dir}`);
   }
   return file;
+}
+
+function usageFromStats(stats: {
+  tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
+  cost: number;
+}): SolverUsage {
+  return {
+    inputTokens: nonNegative(stats.tokens.input),
+    outputTokens: nonNegative(stats.tokens.output),
+    cacheReadTokens: nonNegative(stats.tokens.cacheRead),
+    cacheWriteTokens: nonNegative(stats.tokens.cacheWrite),
+    totalTokens: nonNegative(stats.tokens.total),
+    costUsd: nonNegative(stats.cost),
+  };
+}
+
+function nonNegative(value: number): number {
+  return Number.isFinite(value) && value > 0 ? value : 0;
 }
 
 function safeId(value: string): string {

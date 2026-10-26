@@ -1,4 +1,4 @@
-# 架构（M8 更新）
+# 架构（M13b 更新）
 
 本文固定合并后的角色边界、数据所有权和失败语义。实现以本文为准；需要改动时先改本文并
 记录原因。
@@ -40,6 +40,36 @@ M6 已落地：scheduler 在首次派发前跑一次 housekeeping sweep，之后
 M7 已落地：任务结束时把 `audit.jsonl` 有界导入控制面 SQLite 的 `audit_events`，
 按 task 建立哈希链，并提供汇总/明细只读路由。审计因此不再依赖 session 目录存活；
 但导入发生在 finish 之后，worker 崩溃前的事件与伪造/漏写不在账本覆盖范围内。
+M8 已落地：同项目并发时的任务级 artifacts 命名空间、索引溯源与项目级 Observer review
+租约。M9 已落地：可选的实时审计流。Host Bridge 在写本地 `audit.jsonl` 的同时，用任务级
+bearer token 把同一事件按显式 `seq` 追加到控制面；结束时仍导入文件，只补写实时流未覆盖
+的后缀。实时流降低暴露窗口，但不改变 M7 的最终一致性与信任边界。M9.1 收尾：容器模式
+的 token 值改由 `docker exec` 客户端环境保护（argv 只留变量名），请求体真正流式限界，
+单事件上限与文件导入共用，并把 worker 的 `audit-stream-lost.json` 持久化/只读暴露。
+M10 已落地：在原有单文件 Alpine.js UI 上追加只读 `Runs / Audit / Evidence` 页签；
+它们只调用已有的 GET 路由，不引入构建步骤，也不改变图、调度或 scope 判定。
+M11 已落地：Observer 提案闭环。sidecar 通过 `propose_graph_change` 把候选
+fact/intent/hint 写成任务级 JSON 文件；scheduler 摄取并落 `proposals` 旁路表，控制面
+按项目状态、来源、证据与去重规则逐条审核，只有 `apply` 模式才调用既有图命令写图。
+没有新增未认证的写路由，主 Solver 也不能写该目录；提案只影响图写入，不改变任务结果、
+YAML 导出或既有 HTTP 响应。M12a 已落地：慢层（reason）触发状态持久化与事件触发。
+`scheduler/strategist.ts` 是纯求值器，`strategist_state` 旁路表保存每个项目最近成功的
+图水位与尝试/失败时间；scheduler 据此判断 initial、open-intent 清空、零产出、陈旧意图、
+Fact/Hint delta 与 fallback，并施加 `tasks_running`、冷却、失败退避与滚动小时配额。
+控制面重启不会对未变化的图重复 reason。M12b 已落地：reason 输出可带被校验的意图
+`priority` / `budget`，存入 `intent_meta`；快层按优先级选择未认领 explore，且 reason
+仍先于 explore。顶层 `budget` 配置提供单项目 token/成本门禁与并发配额；worker 的
+主 solver 用量写入 `usage.json` 旁路并汇总到 `runs` 的六个用量列。M12c 已落地：新增
+只读 `GET /projects/{id}/strategist`，返回 `strategist_state`、项目用量/上限/耗尽标记、
+按派发顺序排列的未结束意图（含 `intent_meta` 优先级/预算）与最近的 reason run；静态 UI
+增加“慢层”页签。没有新增写路由、schema 或 worker 契约变更。M13a 已落地：真实模型
+基线 gate 逐任务核对 `usage.json` → `runs` → 项目汇总 → 慢层 API，并用预算模式验证
+token 上限耗尽后停止派发；同时修复 `startup.json` 把认证存储写进项目工作区的问题
+（按字段名脱敏）。详见 `docs/STRATEGIST.md` 第 10 节。M13b 已落地：`intent_meta`
+增加 `origin_run_id`，只读 `GET /projects/{id}/cost` 把每个 run 的用量分摊给直接产出
+（创建的意图 + 产出的事实），再沿意图把创建成本分给 Fact，并输出因果边；静态 UI 增加
+“成本”页签。它只读旁路数据，不改 Cairn 图、YAML 导出或 worker 契约。详见
+`docs/STRATEGIST.md` 第 11 节。
 
 ## 1. 范围
 
@@ -88,7 +118,8 @@ scheduler 与 HTTP API 共用 `packages/graph/src/commands.ts` 的命令，不�
 - 可选 Observer（默认关闭）在 Solver 会话旁运行一个独立 review 会话。主 Solver 只拿到
   只读看板工具；sidecar 只维护项目级看板，不执行验证、不写图，也不影响 `result.json`。
   同项目并发时，review 先获取 `<board>/locks/review.lock` 项目级租约（心跳 + 过期接管
-  + 有界等待），拿不到就跳过本轮并记 `review_skipped`。
+  + 有界等待），拿不到就跳过本轮并记 `review_skipped`。M11 起 sidecar 还可拿到
+  `propose_graph_change`，但只写任务级候选文件；写图仍由控制面单写者完成。
 
 隔离单位是项目（容器/工作区），不是进程常驻。这样既保留崩溃隔离，又不需要额外的
 常驻 daemon 协议。
@@ -98,7 +129,7 @@ scheduler 与 HTTP API 共用 `packages/graph/src/commands.ts` 的命令，不�
 | 数据 | 写入者 | 读取者 | 位置 |
 | --- | --- | --- | --- |
 | SQLite（projects/facts/intents/hints/settings/project_scopes/project_artifacts） | 控制面 | 控制面 | 控制面主机 |
-| SQLite 旁路表（`runs` / `fact_meta` / `fact_evidence` / `pending_concludes`） | 控制面（不进入图模型与 YAML） | 控制面 | 控制面主机 |
+| SQLite 旁路表（`runs` / `fact_meta` / `fact_evidence` / `pending_concludes` / `audit_events` / `audit_stream_lost` / `proposals` / `intent_meta` / `strategist_state`） | 控制面（不进入图模型与 YAML） | 控制面 | 控制面主机 |
 | `graph.yaml` 快照 | 控制面 | worker | 项目工作区/容器内绝对路径 |
 | `task.json` | 控制面 | worker | `sessionDir` |
 | `result.json` | worker（临时文件 + rename 原子写） | 控制面 | `sessionDir` |
@@ -108,15 +139,16 @@ scheduler 与 HTTP API 共用 `packages/graph/src/commands.ts` 的命令，不�
 | `solver-session/**` | BreachWeave 会话 | 人/审计 | `<sessionDir>/solver-session/` |
 | `.cairn/board/**` | Observer sidecar | 主 Solver（只读工具）、后续任务 | 项目工作区（跨任务持久） |
 | `observer-context.json` / `observer/**` | 控制面写 context；worker 写 review 状态 | review sidecar、人/审计 | `<sessionDir>/`（任务级） |
+| `observer/proposals/*.json` | Observer sidecar（主 Solver 结构化文件工具只读） | 控制面摄取 | `<sessionDir>/observer/proposals/`（任务级） |
 | 模型/凭据（`~/.tch-agent/config`） | 用户 | worker（只读使用） | 控制面主机（容器模式只读挂载） |
 
 规则：worker 的任何输出都是**不可信输入**；控制面必须按契约校验后才写图。
 
 ## 4. 一次任务的生命周期
 
-以下为 M4c 的实际实现；Observer 仅在 `observer.enabled: true` 且任务 kind 命中
+以下为 M12a 的实际实现；Observer 仅在 `observer.enabled: true` 且任务 kind 命中
 `kernel_tasks` 时接入，图切片仅在 `tasks.graph_slice.enabled: true` 时影响 explore 类
-任务。
+任务，reason 的派发由 `strategist` 策略与持久化水位共同决定。
 
 1. scheduler tick 列出所有项目，只考虑 `status=active` 且**有 scope** 的项目。已经在跑的
    项目优先续派，其余按轮转顺序取空闲项目，受 `max_workers` /
@@ -125,10 +157,13 @@ scheduler 与 HTTP API 共用 `packages/graph/src/commands.ts` 的命令，不�
    - 先看 `pending_concludes`：失败 explore/bootstrap 排队的 conclude 优先于新工作；
      该行在 conclude 结束或意图失效前一直保留，控制面重启后同样生效；
    - 初始项目（只有 origin/goal）：`bootstrap_enabled` → bootstrap（先建
-     `creator=dispatcher.bootstrap` 的意图）；否则 reason，trigger=`initial`；
-   - 非初始项目：若没有 reason 在跑，按检查点算 trigger（`facts:x->y`、`hints:x->y`、
-     `open_intents:N->0`）→ reason；
-   - 否则取最新的未认领、非 bootstrap 意图 → explore。
+     `creator=dispatcher.bootstrap` 的意图）；否则也走慢层求值器（没有成功水位时为
+     `initial`，且必须没有未认领的 open intent、没有生产任务在跑）；
+   - 没有 reason 在跑时，慢层求值器按持久化水位和事件决定 trigger；顺序为失败退避、
+     `initial`、`open_intents:N->0`、零产出连续 run、陈旧意图、`facts:x->y` /
+     `hints:x->y`、fallback。非紧急触发还受冷却与滚动一小时配额约束；任何生产任务
+     在跑时统一抑制（`tasks_running`）；
+   - 没有 reason 触发时，取最新的未认领、非 bootstrap 意图 → explore。
 3. 认领前先调用 `runtime.ensureProject(projectId, hostWorkspace)`：本地模式创建工作区，
    容器模式在没有可用容器时创建它。返回 false（例如 Docker 不可用）时**跳过该项目的
    本次派发**，不降级到本地执行。随后在**一个事务**里认领租约（reason claim 或 intent
@@ -172,7 +207,8 @@ scheduler 与 HTTP API 共用 `packages/graph/src/commands.ts` 的命令，不�
    `SessionManager.open` 打开最新 JSONL 并追加 `explore_conclude` /
    `bootstrap_conclude` prompt。conclude 的硬截止取
    `bootstrap.conclude_timeout` 或 `explore.conclude_timeout`，不设 soft deadline，也不
-   参与 reason 检查点。explore conclude 的图快照也按同一 intent 切片（若启用）；
+   推进 reason 的成功水位；但它和 explore/bootstrap 一样作为生产 run 参与零产出连续计数。
+   explore conclude 的图快照也按同一 intent 切片（若启用）；
    bootstrap conclude 与 reason 一样拿全图。队列行在 conclude 结束、意图失效或任务准备
    失败时删除；控制面重启后行仍在，按存储的相对路径重建宿主会话目录并继续派发。
 9. 应用结果（同一事务）。写图前先校验证据（见 §4.1）：reason 不要求证据；其余 kind 的
@@ -210,8 +246,8 @@ scheduler 与 HTTP API 共用 `packages/graph/src/commands.ts` 的命令，不�
 - Observer 契约不进入 `task.json`，只通过环境变量传递；context 是任务开始时的快照，
   不随图更新。focus intent 永远保留在 open intents 中。
 - 主 Solver 的 pi extension 只注册 `memory_list` / `idea_list` / `idea_search`；review
-  会话（`review.ts`）每次启动独立的 pi session，`tools: []`，只注册看板读写工具与
-  `query_solver_history`，不加载 Host Bridge。
+  会话（`review.ts`）每次启动独立的 pi session，`tools: []`，只注册看板读写工具、
+  `query_solver_history` 与（M11 启用时）`propose_graph_change`，不加载 Host Bridge。
 - review 由 `tool_execution_*` / `message_end` / `agent_end` 事件驱动，串行消费任务级
   队列；`max_reviews_per_task` 在入队前生效。`BreachWeaveSolver.solve()` 在返回答案前
   调用 `flush()`，最多等待 `timeout_seconds`，任何异常都只写
@@ -219,6 +255,31 @@ scheduler 与 HTTP API 共用 `packages/graph/src/commands.ts` 的命令，不�
 - 任务被硬杀时未完成的 review 随进程终止；看板可能落后一轮。`memory_*` / `idea_*`
   写工具不在主 Solver 的 Host Bridge 白名单中，看板文件工具的 `write`/`edit` 也被
   `protectedWriteRoots` 拒绝。`bash` 不受文件路径分析约束，这是策略闸门的已知边界。
+
+### Observer 提案闭环（M11，可选，默认关闭）
+
+提案是 sidecar 影响图语义的唯一通道，仍然满足“控制面是唯一写者”。
+
+- **候选文件**：`propose_graph_change` 把归一化后的 `{version,id,source,kind,
+  project_id,task_id,created_at,dedupe_key,evidence_refs,payload}` 以
+  `<session>/observer/proposals/<uuid>.json` 落盘（临时文件 + `wx` + rename）。工具
+  自身执行字段、类型、置信度、证据与单文件/条数/总字节配额校验；拒绝时返回
+  `isError`，不影响 solver。
+- **摄取**：任务 `finish()` 时与每个 tick 的 active 项目 review 前，scheduler 只扫描
+  普通 `.json` 文件，拒绝符号链接、非法文件名、超限文件与超预算集合。提案 ID 由
+  `project_id + task_id + 文件名` 派生，重复扫描幂等。结构校验通过后写入 `proposals`
+  （`pending`）；任何错误只记日志。
+- **审核**：每条 pending 提案单独事务。`hint` 按内容去重后调用 `createHint`；
+  `intent` 要求 `dedupe_key`，按未结束 intent 与已应用提案去重后创建未认领 intent，
+  并在 `intent_meta` 记录 key；`fact` 必须有存在的非 goal 来源与合法证据，走
+  `createIntent` + `concludeIntent`，与 worker 产出的 Fact 使用同一套证据固化逻辑。
+  项目非 active、来源缺失、证据缺失/非法、重复均记为 `rejected`/`duplicate`。
+- **模式**：`off` 完全不启用；`dry_run` 完整校验但只记 `dry_run`，不写图；`apply`
+  才写图。决策写入 `proposals` 的 `status` / `decision_reason` / `applied_id`。
+- **观测**：`GET /projects/{id}/proposals` 只读，可按 `status` / `kind` 过滤；UI 的第
+  四个页签展示。没有新增写路由。提案/`intent_meta` 不进入图模型与 YAML 导出。
+- **边界**：异步批量生效；审核阶段不复读证据内容；`bash` 仍可伪造候选文件，但控制面
+  校验项目/任务绑定、结构与去重，不能借此绕过审核；`dry_run` 行不会自动重放。
 
 ### 证据门控、哈希与 runs（M5a + M5b）
 
@@ -336,13 +397,15 @@ stderr 归档到 `sessionDir/{stdout,stderr}.log`。需要 UI 实时进度时再
   一样由控制面从 SQLite 读取。
 - 索引失败只记日志，不影响任务结果；下一次扫描会重建。
 
-### 5.6 runs、fact_meta、fact_evidence、pending_concludes 与 audit_events
+### 5.6 旁路表：runs、fact_meta、fact_evidence、pending_concludes、audit_events、audit_stream_lost、intent_meta 与 strategist_state
 
-五张表都在 `packages/graph/src/db.ts` 中创建，既不属于图导出，也不参与任何既有命令：
+这些表都在 `packages/graph/src/db.ts` 中创建，既不属于图导出，也不参与任何既有命令：
 
 - `runs(id, project_id, task_id, kind, intent_id, worker, trigger, outcome, exit_code,
-  started_at, finished_at, duration_ms, session, evidence_count, detail)`，按
-  `(project_id, started_at)` 建索引；项目删除时级联删除。
+  started_at, finished_at, duration_ms, session, evidence_count, detail, input_tokens,
+  output_tokens, cache_read_tokens, cache_write_tokens, total_tokens, cost_usd)`，按
+  `(project_id, started_at)` 建索引；项目删除时级联删除。六个用量列由 M12b 增量迁移
+  补齐，旧行为 0；失败任务的用量同样保留。
 - `fact_meta(fact_id, project_id, run_id, evidence_refs, evidence_status, created_at)`，
   主键 `(fact_id, project_id)`，外键指向 Fact 并级联删除。`evidence_refs` 以 JSON 数组
   存储。`evidence_status` 为 `provided | missing | legacy`。
@@ -356,11 +419,45 @@ stderr 归档到 `sessionDir/{stdout,stderr}.log`。需要 UI 实时进度时再
 - `audit_events(project_id, task_id, seq, event, prev_hash, hash, created_at)`，主键
   `(project_id, task_id, seq)`，外键指向项目并级联删除。`event` 是规范化后的单行
   JSON 文本；哈希输入为 `project_id\ntask_id\nseq\nprev_hash\nevent`，每个 task 的
-  首条 `prev_hash` 是 64 个 `0`。同一 task 已有行时导入整体跳过，不会分叉或续写。
+  首条 `prev_hash` 是 64 个 `0`。写入按显式 `seq` 连续追加：同号同内容算重复（重试或
+  实时流/文件导入重叠），乱序、缺号或同号异内容拒绝，不会分叉。结束导入使用
+  `onConflict: "stop"`，保留已记录前缀并补写后缀；实时流使用 `"throw"`（409）。
+- `audit_stream_lost(project_id, task_id, reason, delivered, pending, reported_at,
+  recorded_at)`，主键 `(project_id, task_id)`，外键指向项目并级联删除。finish 从
+  `audit-stream-lost.json` 导入，同一 task 重复导入覆盖为最新值；只用于暴露实时流
+  未完整送达，不参与哈希链，也不影响 `audit_events` 的补写。
+- `strategist_state(project_id, last_success_at, last_attempt_at, last_failure_at,
+  last_trigger, last_run_id, last_fact_count, last_hint_count, last_open_intent_count,
+  updated_at)`（M12a），主键 `project_id`，外键指向项目并级联删除。reason 成功时写入
+  时间、trigger/run 与当时的 Fact/Hint/open-intent 水位，并清除 failure；失败只写
+  attempt/failure/trigger/run，保留旧水位；`cancelled`/`inactive` 不写。表只服务调度，
+  不进入 YAML、HTTP 图响应或 worker 契约；没有新增路由。
+- `intent_meta(project_id, intent_id, dedupe_key, source, proposal_id, origin_run_id,
+  priority, budget, created_at)`，主键 `(project_id, intent_id)`，外键指向项目并级联
+  删除。M11 用它存提案去重键；M12b 起 reason 创建的意图写 `source='strategist'`、
+  `priority`（默认 50）与 `budget` JSON；M13b 起 reason 和已应用提案写
+  `origin_run_id`，旧库自动补列且历史行保持 `NULL`。读取时归一化非法优先级/预算为
+  `NULL`。不进入图模型、YAML 或 HTTP 图响应。
 
-HTTP（只读，均在控制面进程内直接查库）：
+HTTP（除实时追加外均为只读，均在控制面进程内直接查库）：
 
 - `GET /projects/{id}/runs` → run 数组，按 `started_at, id` 排序；未知项目 404。
+- `GET /projects/{id}/strategist?limit=20`（M12c，只读）→
+  `{state, budget, intents, reason_runs}`。`state` 为 `strategist_state` 或 `null`；
+  `budget` 含 `used_tokens` / `used_cost_usd` / `running_tasks`、配置上限（纯 HTTP
+  模式为 `null`）与 `exhausted` 标记；`intents` 只含未结束意图，按
+  `priority DESC, created_at DESC, id DESC` 排序并附带 `priority` / `budget` /
+  `source`；`reason_runs` 只含 `kind='reason'`，最新在前。`limit` 默认 20、范围
+  1–100，非法值 400；未知项目 404；只有 GET。不修改任何状态。
+- `GET /projects/{id}/cost`（M13b，只读）→
+  `{project_id, totals, by_kind, attribution, facts, intents, runs, edges}`。总量、
+  分类与每个 run 的用量来自 `runs`；Fact/意图成本由 `packages/graph/src/cost.ts` 分摊：
+  run 用量平均分给直接产出（`intent_meta.origin_run_id` 创建的意图 +
+  `fact_meta.run_id` 产出的事实），意图创建份额再分给它产出的事实。Fact 成本是项目
+  用量的分区；意图成本包含执行 run，与 Fact 合计重叠。`edges` 节点前缀为
+  `run:` / `intent:` / `fact:`，kind 为 `created_intent` / `executed_by` /
+  `produced_fact` / `source_fact` / `concluded_fact`。未知项目 404；只有 GET，
+  其他方法 405；不修改任何状态。
 - `GET /projects/{id}/facts/{fact_id}/meta` → 单条 meta；Fact 存在但没有 sidecar 行时
   返回合成的 `legacy` 记录，未知 Fact 404。响应形状与既有 API 一致，直接是 JSON 对象，
   不加信封。
@@ -375,12 +472,76 @@ HTTP（只读，均在控制面进程内直接查库）：
   root_hash,events}`。`events` 按 `seq` 排序，`event` 为解析后的 JSON（解析失败时保留
   原文）；`chain_ok` 由控制面按存储文本重新计算，`broken_at` 是首个不匹配的 seq。
   未知项目 404；该 task 没有账本时返回空链（`chain_ok:true`、`root_hash:null`）。
+- `POST /projects/{id}/tasks/{task_id}/audit`（M9，仅在 `audit_stream.enabled` 时注册）→
+  body `{"events":[{"seq":1,"event":{...}}]}`，最多 256 条、1 MiB；单条事件文本与
+  文件导入共用 16K 字符上限。请求体先检查声明的 `Content-Length`，再按块读取并在
+  超过 1 MiB 时立即取消，不会先整包缓冲。要求 `Authorization: Bearer <token>`，token
+  只能写绑定的项目/task。成功返回 `{recorded,duplicates}`；鉴权失败 401，缺号/分叉
+  409，信封/事件非法 400，超限 413。
+- `GET /projects/{id}/audit/{task_id}/stream-lost`（M9.1，只读）→
+  `{task_id, stream_lost}`。`stream_lost` 为 `null` 或
+  `{task_id,reason,delivered,pending,reported_at,recorded_at}`；未知项目 404。
+  该路由与 M7 的链详情响应分开，空链响应保持原样。
+
+只读运维面板（M10）：
+
+- 静态 UI 仍是单文件 `index.html`（Alpine.js + Cytoscape + vendored Tailwind），由
+  `GET /` 与 `/static/*` 直接提供，没有构建/打包步骤。页签分两行：原有
+  `Detail / Hints / Log`，以及运维页签 `Runs / Strategist / Audit / Evidence /
+  Proposals / Cost`。
+- `Runs` 读取 `GET /projects/{id}/runs`，按最新在前显示 kind、worker、outcome、退出码、
+  时长、evidence 数量和 detail；每行可跳到该 task 的 Audit。
+- `Strategist`（慢层）读取 `GET /projects/{id}/strategist?limit=20`，显示单项目
+  token/成本/并发用量与上限、耗尽徽标、最近成功/尝试/失败水位与触发串、按优先级排序的
+  未结束意图（含意图预算）以及最近 20 次 reason run。纯 HTTP 模式下上限显示为未配置。
+- `Audit` 读取汇总与选举 task 的链详情，并同时读取 `stream-lost`。汇总按 `last_at`
+  最新在前；链详情显示 `chain_ok/broken_at/root_hash`、逐条 allow/block 与原始事件；
+  stream loss 以独立卡片显示 `reason/delivered/pending`。从 Runs 跳到尚无账本事件的
+  task 时，下拉框保留该 task，并显示空链与 loss 状态。
+- `Evidence` 通过 Fact 下拉选择后并发读取 meta 与 evidence，显示 sidecar 的
+  `provided/missing/legacy`、写入时 `size/sha256` 与实时 `status/current_*`。没有
+  workspace root 时沿用 API 的 `unverified` 语义。
+- `Cost`（成本，M13b）读取 `GET /projects/{id}/cost`，显示项目总量与归因完整性、
+  按 run kind 汇总、逐 Fact 的直付/编排成本及产出/创建 run、逐意图的执行与创建成本、
+  因果边和每个 run 的直接产出。它不把意图合计与 Fact 合计相加。
+- 这些面板只在打开页签或点刷新时拉取，全部使用 GET；错误在面板内显示并可重试，
+  不弹写操作、不参与调度。UI 本身不带认证，远程/容器部署仍需网络层限制整个 API。
+
+实时审计流（M9）：
+
+- scheduler 在每次 spawn 前向进程内 `AuditTokenRegistry` 申请 token（32 字节随机数，
+  只存 SHA-256），通过 `CAIRN_AUDIT_STREAM_URL` / `CAIRN_AUDIT_STREAM_TOKEN` 合并进
+  worker 的 `extraEnv`。token 不进入 `task.json`、prompt 或日志；任务 `finish()` 与
+  spawn 失败路径都会撤销它，控制面重启后不存在。
+- 容器模式下，`CAIRN_AUDIT_STREAM_TOKEN` 的值放在 `docker exec` 客户端进程的环境里，
+  argv 只出现 `-e CAIRN_AUDIT_STREAM_TOKEN`（docker CLI 从自身环境取值），避免 token
+  出现在宿主进程列表/命令行；其它变量仍用 `-e NAME=value`。本地模式本来就是进程环境，
+  不经过 argv。
+- Host Bridge 先追加本地 `audit.jsonl`，成功后才把同一 entry 放进有界队列（512 条）。
+  后台按批（≤32）发送并重试瞬时失败/429/5xx；认证失败、400/409/413 或队列溢出视为
+  永久失败，停止发送并写 `<sessionDir>/audit-stream-lost.json`。停止时丢弃未发送队列
+  而不是跳过序号，因此已写账本始终是连续前缀。
+- worker 在 solver 返回后（含异常）调用 `flushAuditStream()`，最多等 3 秒；CLI 随后
+  显式 `process.exit`，未完成的请求不再等待。finish 仍完整导入文件：重复前缀被忽略，
+  缺失后缀被补写。流是延迟优化，不是一次性导入的替代品。
+- finish 同时读取 `audit-stream-lost.json`（M9.1）：只接受普通文件、≤64 KiB、
+  合法 JSON 和非负整数计数；符号链接、超限或畸形内容不会跟随/采信，而是以通用
+  `unreadable`/`invalid` 原因落库。有效 marker 写入 `audit_stream_lost` 表（按
+  `(project_id,task_id)` 覆盖），reason 截断到 512 字符。该记录只用于可见性，既不改
+  任务结果，也不影响 `audit.jsonl` 的补写；控制面崩溃导致未执行 finish 的 marker
+  不会被补导。
+- 启用条件：`audit_stream.enabled: true` 且存在可达 URL。本地模式缺省取实际监听的
+  loopback 地址；容器模式必须显式配置 `audit_stream.url`（容器内的 loopback 不是
+  控制面），并让控制面在容器可达的私网/网关地址上监听。此时 task token 只保护审计
+  写入路由；控制面其余 API 仍需由部署方在网络层限制访问。纯 HTTP 模式（无 scheduler）
+  不注册该路由。
 
 审计导入的边界：
 
 - 只读取 `sessionDir/audit.jsonl` 这个普通文件，`lstat` 后拒绝符号链接与目录。
-- 最多读取 8 MiB、写入 10,000 条，单条文本上限 16K 字符；空行、非法 JSON、非对象和
-  超长行跳过。文件/条目超限时截断并在日志中标记，不报错。
+- 最多读取 8 MiB、写入 10,000 条，单条文本上限 16K 字符；该上限与实时接口共用
+  `MAX_AUDIT_EVENT_TEXT_CHARS`。空行、非法 JSON、非对象和超长行跳过。文件/条目超限
+  时截断并在日志中标记，不报错。
 - 导入是 best-effort：数据库或文件错误只记日志，任务结果与 run 记录不受影响。
   控制面崩溃导致未执行 `finish` 的任务不会自动补导；其 session 目录可能在后续
   retention 中被删除。
@@ -442,6 +603,10 @@ Host Bridge 是 pi 的 `tool_call` 扩展：它在工具执行**之前**拿到�
     工具一律**拒绝**。`subagent` 本身只做本地派生，它的工具调用仍经过同一个 Bridge。
     M4c 的白名单包含只读看板工具 `memory_list` / `idea_list` / `idea_search`；写工具
     `memory_add/update/delete`、`idea_add/update` 不在其中，因此主 Solver 不能改看板。
+- **工具调用上限（M12b）**：任务可带 `maxToolCalls`，worker 以
+  `CAIRN_TASK_MAX_TOOL_CALLS` 传给 Host Bridge。达到上限后所有后续调用被拒绝，审计
+  条目附 `event: "tool_budget_exhausted"`，让 solver 用已有证据收尾。计数在每个 worker
+  进程内独立，subagent 进程另有自己的计数；它是最佳努力的成本护栏，不是安全边界。
 - **匹配语义**：hostname 按字面匹配，不做 DNS 解析；`*.example.com` 只匹配子域（不含
   apex）；`host:port` 要求端口一致；IPv4 CIDR 支持目标与端点都是 CIDR 时的子集判断。
   scheme 只接受 `http`/`https`；`file:` 目标支持本地路径形式。
@@ -515,6 +680,28 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
   `bootstrap|reason|explore|conclude` 的子集，默认 `["explore"]`）。缺省值不会改变旧
   配置行为；非法值在启动时以 `ConfigError` 拒绝。scheduler 只把该配置翻译成
   `CAIRN_OBSERVER_*` 环境变量，不写进 `task.json`。
+- `proposals` 是新增的可选段（M11，默认关闭）：`enabled`（布尔）、`mode`
+  （`off|dry_run|apply`，默认 `apply`）、`max_per_task`（非负整数，默认 20）、
+  `max_file_bytes` / `max_total_bytes`（正整数，默认 16384 / 65536，后者不得小于
+  前者）、`allow_kinds`（`fact|intent|hint` 的子集，默认全部）、
+  `require_evidence_for_fact`（布尔，默认 `true`）、`min_confidence`（`[0,1]`，默认
+  `0`）。只有 `observer.enabled` 且任务命中 `kernel_tasks` 时才会生成候选；scheduler
+  把策略翻译成 `CAIRN_OBSERVER_PROPOSALS_*` 环境变量，不写进 `task.json`。
+- `strategist` 是新增的可选段（M12a）：`min_new_facts`、`min_new_hints`、
+  `cooldown_seconds`、`failure_backoff_seconds`、`max_runs_per_hour`、
+  `zero_output_threshold`、`stale_intent_seconds`、`fallback_interval_seconds`，全部为
+  非负整数。默认依次为 `1/1/30/120/12/3/0/0`；`0` 关闭对应维度（`min_new_facts` 与
+  `min_new_hints` 同时为 `0` 时只剩 initial/open-empty/零产出/陈旧/fallback 等事件）。
+  该段只影响 reason 何时派发，不改变图、任务契约或 worker 环境。
+- `budget` 是新增的可选段（M12b）：`max_project_tokens` 与 `max_project_tasks` 为非负
+  整数，`max_project_cost_usd` 为非负有限数，默认全为 `0`。token/成本 `0` 关闭门禁；
+  `max_project_tasks` 为 `0` 时继承 `runtime.max_project_workers`，非零值仍会与全局
+  `runtime.max_workers` 取较小值。token/成本按项目已结束 run 汇总，只拦截新的
+  bootstrap/reason/explore，不拦截 pending conclude；在途任务未上报前可能超预算。
+- `audit_stream` 是新增的可选段（M9，默认关闭）：`enabled`（布尔，默认 `false`）、
+  `url`（可选的 http(s) 地址）。启用后 scheduler 才签发 bearer token 并注入 worker；
+  本地模式在 `url` 缺省时使用实际监听的 loopback 地址，容器模式必须显式配置。缺省值
+  不改变 M7 的行为；非法 URL 在启动时以 `ConfigError` 拒绝。
 - `runtime.execution` 选择 `container`（默认）或 `local`，两种模式共用同一个
   `RuntimeBackend`；不新增重复的 `sandbox` 段。
   - `container`: `image`（必填）、`network_mode`（必填）、`completed_action`
@@ -541,6 +728,14 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
   不写入工作区、`task.json` 或日志；配置目录的拒绝读取规则仍然覆盖源挂载。
 - `cairn-worker` 提示词引用的 12 个 skills 随 `packages/agent` vendor；未引用的
   `fuzz-dicts-skills` 与 `payloads-everything` 已删除以控制仓库体积。
+- **启动快照脱敏（M13a）**：真实 Solver 会把会话选项写入任务会话目录的
+  `startup.json`。该文件曾把 `sessionOptions.authStorage.data.<provider>.key` 原文带进
+  项目工作区。`packages/agent/src/solver/session.ts` 现在对字段名匹配
+  `key/token/secret/password/authorization/credential`（含 camelCase、下划线、连字符）
+  的值写 `[REDACTED]`，主 Solver 与子代理共用同一序列化路径；`session.test.ts` 锁定该
+  行为；M13a 的真实模型 gate 还会扫描整个项目工作区，出现 `auth.json` 中的凭据值即失败。
+  这不能替代文件权限与容器边界（模型仍可通过 `bash` 读取可访问的文件），但保证控制面
+  自己生成的诊断文件不再落明文密钥。
 - 任务文件可能被保留用于审计，因此**不得包含密钥**。
 
 ## 9. 超时、失败与幂等
@@ -561,7 +756,9 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
 - 幂等：同一个 `taskId` 在一次控制面进程内只应用一次（它在 `running` 表里）。**跨进程的
   持久化 taskId 账本尚未实现**；控制面重启后依赖 Cairn 的意图租约过期语义恢复，已应用
   的结果不会被重放。M4 若需要更强的幂等保证再补账本。
-- 重试策略：不自动重试同一任务；由 scheduler 依据检查点与未认领意图决定是否再派发。
+- 重试策略：不自动重试同一任务；由 scheduler 依据 `strategist_state` 水位、事件触发与
+  未认领意图决定是否再派发。reason 失败后按 `failure_backoff_seconds` 退避；退避期间
+  连紧急触发也被抑制。
   conclude 不是重试：它不重新探索，只把失败会话里已确认的内容写成一个 Fact；若连
   conclude 也失败，则释放 intent，后续按正常流程重派。
 
@@ -627,16 +824,29 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
 - 审计账本（M7）把 `audit.jsonl` 导入控制面 SQLite，因此 session 目录被清理后审计仍
   可查询；逐 task 哈希链能发现账本行被改写或链接断裂。但事件仍由 worker 生成，导入只
   证明“控制面在任务结束时看到了这些行”，不证明 worker 没有漏写或伪造；能改写数据库的
-  人也能重算整条链。它不是签名，也不是实时账本；控制面崩溃前未 `finish` 的事件不在
-  覆盖范围内。
+  人也能重算整条链。默认仍不是实时账本；控制面崩溃前未 `finish` 的事件不在覆盖范围内。
+  M9 的可选实时流把已发生的 `tool_call` 事件及时送入同一账本，token 绑定项目/task、
+  只存哈希、任务结束撤销；但 Host Bridge 运行在不可信 worker 内，token 也只在 worker
+  环境里，因此它降低暴露窗口，不能阻止 worker 漏写/伪造或本地文件被篡改。实时流默认
+  关闭，且必须由部署显式提供 worker 可达的控制面 URL。
 - Observer 看板是**建议性数据**，不是图事实：主 Solver 只读，真正结论仍必须写进
   `result.json` 并经控制面校验。看板的写保护只覆盖结构化文件工具与白名单；`bash` 可在
   工作区内改写它。看板不得存 flag、凭据、完整工具输出或与授权范围无关的数据。同项目
   并发（M8）时 review 通过 `<board>/locks/review.lock` 项目级租约串行，拿不到租约就
   跳过本轮；该租约只覆盖 Observer review，不覆盖 `bash` 直写看板，也不是进程退出后
   自动回收的强锁（靠心跳过期接管）。artifacts 命名空间同样只约束结构化文件工具。
+- Observer 提案（M11）是**不可信输入**：sidecar 与主 Solver 都在 worker 内，候选文件
+  可能被模型、被 `bash` 或被篡改的工作区伪造。控制面把它当作外部输入重新校验版本、
+  类型、项目/任务绑定、来源 Fact、证据路径、置信度与去重键，再在独立事务中决定是否
+  写图；`off`/`dry_run` 不写图。提案不能删除或改写既有事实，也不能绕过 Scope 或证据
+  校验。主 Solver 的结构化文件工具对 `<session>/observer/` 只读，但 `bash` 不受此约束；
+  因此候选配额可能被挤占，审核结论仍需按不可信数据处理。UI 对提案只读，但整个 API
+  仍无认证，远程部署必须加网络层访问控制。
+- 慢层触发状态是控制面内部的调度数据（`strategist_state`），worker 不可读写，也不进入
+  `task.json`；触发/抑制日志只包含项目、trigger、计数与原因，不含 prompt 或模型输出。
 - 凭据只读挂载；日志脱敏；任务与结果文件按项目隔离。exec 环境只传白名单，容器不暴露
-  Docker socket。
+  Docker socket。M13a 起，Solver 的 `startup.json` 按字段名脱敏认证存储，真实模型 gate
+  还会对项目工作区做凭据值扫描，防止诊断快照把 `auth.json` 的内容带进工作区。
 - 容器是主要的爆炸半径边界；本地模式仅用于受控开发/靶场。
 - 合规前提：仅限已获明确书面授权的测试、靶场、比赛或企业自查。
 
@@ -660,9 +870,11 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
 5. 本地模式的 `bash` 依赖：容器镜像自带 POSIX shell 与 `procps`；本地模式仍要求用户在
    Windows 安装 Git Bash/MSYS2/Cygwin/WSL 之一，是否注入跨平台 shell 替身待定。
 6. 强审计：M7 已在任务结束时把 `audit.jsonl` 有界导入控制面 SQLite（逐 task 哈希链），
-   审计不再依赖 worker 可写的 session 目录存活。但导入仍是**结束后**发生：worker
-   崩溃前的事件、worker 的漏写/伪造，以及能重写数据库的攻击者都不在防护范围内。
-   逐行实时转发到控制面，或由控制面在每次 `tool_call` 时直接判定并记账，仍是后续增强。
+   M9 又提供可选的逐事件实时转发；审计不再依赖 worker 可写的 session 目录存活，实时流
+   也缩短了“事件已发生但尚未入账”的窗口。剩余边界：实时流默认关闭且依赖部署提供可达
+   URL；worker 崩溃前未 flush 的尾部事件、worker 的漏写/伪造，以及能重写数据库的攻击者
+   都不在账本防护范围内。由控制面在每次 `tool_call` 时直接判定并记账（而非信任 worker
+   转发）仍是后续增强，需要把 Host Bridge 决策搬到控制面或引入双向 RPC。
 7. 图切片的默认 caps（80 facts / 60 intents）尚未在真实大项目上调参；是否也对 reason
    启用切片、以及是否需要按 token 预算而非对象计数，待有真实数据后决定。
 8. Observer 看板的完整性：结构化文件工具的写保护已落地，但 `bash` 仍可写工作区内的
@@ -673,3 +885,20 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
    `tasks.evidence.min_bytes`（默认拒绝 0 字节文件），但仍不要求证据在 Fact 之后保持
    存在，也不检查内容是否真的支持结论。是否引入控制面签名、以及是否按任务类型设置
    不同阈值，待定。符号链接一律拒绝，在 Windows 上开发时会跳过依赖 symlink 的测试。
+10. 提案的实时性与审批：M11 只在任务结束或后续 tick 摄取，不是实时写图，也没有人工
+    审批队列；是否需要受任务 token 保护的实时上报通道，以及是否给 `apply` 增加人工
+    确认步骤，待有真实使用数据后决定。
+11. 慢层调度与成本：M12a 已持久化触发水位并加事件触发、失败退避、冷却与小时配额；
+    M12b 已加意图优先级/预算、单项目 token/成本门禁与并发配额；M12c 已提供只读
+    strategist API 与“慢层”UI。M13a 在真实模型上跑通了用量链路与预算耗尽（2026-10-26，
+    `deepseek-flash`）：5 个短任务共 134,740 tokens，慢层占 74,273（55.1%），cache read
+    占 87.5%，两个 Fact 均无被接受证据；1,000 token 上限在首个 reason（22,381 tokens）
+    后阻止了后续派发。仍未解决：网关未返回价格，`cost_usd` 只能是 0 或用外部单价估算；
+    只有短任务样本，默认 cooldown 30s、退避 120s、每小时 12 次、零产出 3 次尚未按长
+    任务调参（`stale_intent_seconds` 与 fallback 默认关闭）；图切片是否扩展到 reason
+    需要更多样本。用量的已知偏差：只统计主 solver 会话、在途任务不参与门禁、硬杀/旁路
+    损坏按 0 计，因此 token/成本上限是软约束而非硬计费边界；慢层视图只展示该偏差，不做
+    在途预留。是否把子代理用量汇总进项目账本，待定。M13b 的 `/cost` 只能做**平均分摊**：
+    一个 reason run 创建多个意图、或一个 explore run 产出多个 Fact 时，无法知道真实归属；
+    M13b 之前的意图没有 `origin_run_id`，其编排成本永久未归因。分摊保证总量守恒，但不是
+    逐 token 计量，也不能作为对外计费凭证。

@@ -88,6 +88,97 @@ describe("legacy migrations", () => {
     expect(row).toEqual({ bootstrap_enabled: 1 });
   });
 
+  test("adds usage columns to a legacy runs table", () => {
+    const directory = mkdtempSync(join(tmpdir(), "cairn-legacy-"));
+    directories.push(directory);
+    const path = join(directory, "legacy-runs.db");
+    const legacy = new Database(path, { create: true });
+    legacy.exec(`
+      CREATE TABLE runs (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL,
+          task_id TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          intent_id TEXT,
+          worker TEXT NOT NULL,
+          trigger TEXT,
+          outcome TEXT,
+          exit_code INTEGER,
+          started_at TEXT NOT NULL,
+          finished_at TEXT,
+          duration_ms INTEGER,
+          session TEXT,
+          evidence_count INTEGER NOT NULL DEFAULT 0,
+          detail TEXT
+      )
+    `);
+    legacy
+      .query(
+        "INSERT INTO runs (id, project_id, task_id, kind, worker, started_at) VALUES (?, ?, ?, ?, ?, ?)",
+      )
+      .run("run_001", "proj_001", "task-1", "explore", "cairn-worker", "2026-01-01T00:00:00Z");
+    legacy.close();
+
+    const database = configureDatabase(path);
+    const row = database.withConn((conn) =>
+      get<{
+        input_tokens: number;
+        output_tokens: number;
+        cache_read_tokens: number;
+        cache_write_tokens: number;
+        total_tokens: number;
+        cost_usd: number;
+      }>(
+        conn,
+        "SELECT input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, total_tokens, cost_usd FROM runs WHERE id = 'run_001'",
+      ),
+    );
+    expect(row).toEqual({
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_read_tokens: 0,
+      cache_write_tokens: 0,
+      total_tokens: 0,
+      cost_usd: 0,
+    });
+  });
+
+  test("adds origin_run_id to a legacy intent_meta table", () => {
+    const directory = mkdtempSync(join(tmpdir(), "cairn-legacy-"));
+    directories.push(directory);
+    const path = join(directory, "legacy-intent-meta.db");
+    const legacy = new Database(path, { create: true });
+    legacy.exec(`
+      CREATE TABLE intent_meta (
+          project_id TEXT NOT NULL,
+          intent_id TEXT NOT NULL,
+          dedupe_key TEXT,
+          source TEXT NOT NULL,
+          proposal_id TEXT,
+          priority TEXT,
+          budget TEXT,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (project_id, intent_id)
+      )
+    `);
+    legacy
+      .query(
+        `INSERT INTO intent_meta (project_id, intent_id, source, created_at)
+         VALUES ('proj_001', 'i001', 'strategist', '2026-01-01T00:00:00Z')`,
+      )
+      .run();
+    legacy.close();
+
+    const database = configureDatabase(path);
+    const row = database.withConn((conn) =>
+      get<{ origin_run_id: string | null }>(
+        conn,
+        "SELECT origin_run_id FROM intent_meta WHERE project_id = 'proj_001' AND intent_id = 'i001'",
+      ),
+    );
+    expect(row).toEqual({ origin_run_id: null });
+  });
+
   test("maps the intermediate bootstrap_mode column to bootstrap_enabled", () => {
     const directory = mkdtempSync(join(tmpdir(), "cairn-legacy-"));
     directories.push(directory);

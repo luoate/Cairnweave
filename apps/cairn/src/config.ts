@@ -134,6 +134,115 @@ export const DEFAULT_RETENTION: RetentionConfig = {
   refreshArtifacts: false,
 };
 
+/**
+ * Opt-in live audit streaming. Workers keep writing `audit.jsonl`, but also POST each
+ * `tool_call` decision to the control plane as it happens, using a per-task bearer token.
+ * The finish-time file import stays as the backfill. Disabled by default because it needs
+ * a control-plane URL that is reachable from the worker (not just the host).
+ */
+export interface AuditStreamConfig {
+  enabled: boolean;
+  /** Overrides the derived control-plane URL; required when containers cannot guess it. */
+  url: string | null;
+}
+
+export const DEFAULT_AUDIT_STREAM: AuditStreamConfig = {
+  enabled: false,
+  url: null,
+};
+
+export type ProposalMode = "off" | "dry_run" | "apply";
+export type ProposalKindConfig = "fact" | "intent" | "hint";
+
+/**
+ * Observer/Strategist candidate proposals. Disabled by default. `dry_run` records the
+ * control plane's decision without touching the graph, which is the recommended first
+ * step when validating a new Observer model.
+ */
+export interface ProposalsConfig {
+  enabled: boolean;
+  mode: ProposalMode;
+  maxPerTask: number;
+  maxFileBytes: number;
+  maxTotalBytes: number;
+  allowKinds: ProposalKindConfig[];
+  requireEvidenceForFact: boolean;
+  minConfidence: number;
+}
+
+export const DEFAULT_PROPOSALS: ProposalsConfig = {
+  enabled: false,
+  mode: "apply",
+  maxPerTask: 20,
+  maxFileBytes: 16 * 1024,
+  maxTotalBytes: 64 * 1024,
+  allowKinds: ["fact", "intent", "hint"],
+  requireEvidenceForFact: true,
+  minConfidence: 0,
+};
+
+export const PROPOSAL_MODES: readonly ProposalMode[] = ["off", "dry_run", "apply"];
+export const PROPOSAL_KINDS: readonly ProposalKindConfig[] = ["fact", "intent", "hint"];
+
+/**
+ * Slow-layer (reason/Strategist) trigger policy. `initial` and "all open intents are
+ * gone" are urgent and bypass the cooldown and hourly cap; failure backoff still applies.
+ * Zero disables the corresponding optional trigger/limit.
+ */
+export interface StrategistConfig {
+  /** Minimum new facts since the last successful reason turn. */
+  minNewFacts: number;
+  /** Minimum new hints since the last successful reason turn. */
+  minNewHints: number;
+  /** Minimum seconds between non-urgent reason turns; 0 disables. */
+  cooldownSeconds: number;
+  /** Seconds to wait after a failed/rejected reason turn; 0 disables. */
+  failureBackoffSeconds: number;
+  /** Maximum non-urgent reason runs started per rolling hour; 0 disables. */
+  maxRunsPerHour: number;
+  /** Consecutive finished productive tasks without a fact before a reason turn; 0 disables. */
+  zeroOutputThreshold: number;
+  /** Trigger when every open intent is older than this and idle; 0 disables. */
+  staleIntentSeconds: number;
+  /** Trigger after this long without a successful reason turn; 0 disables. */
+  fallbackIntervalSeconds: number;
+}
+
+export const DEFAULT_STRATEGIST: StrategistConfig = {
+  minNewFacts: 1,
+  minNewHints: 1,
+  cooldownSeconds: 30,
+  failureBackoffSeconds: 120,
+  maxRunsPerHour: 12,
+  zeroOutputThreshold: 3,
+  staleIntentSeconds: 0,
+  fallbackIntervalSeconds: 0,
+};
+
+/**
+ * Per-project cost/concurrency guardrails. These are defaults applied independently to
+ * every project; they are not a global pool. `0` disables the token/cost ceiling and makes
+ * the task ceiling fall back to `runtime.max_project_workers`.
+ *
+ * Token/cost totals include finished runs only. Tasks already in flight have not reported
+ * usage yet, so a project can overshoot by the usage of its currently running tasks; the
+ * next dispatch after they finish observes the full total.
+ */
+export interface BudgetConfig {
+  /** Stop dispatching new reason/explore/bootstrap work at this many total tokens. */
+  maxProjectTokens: number;
+  /** Stop dispatching at this total model cost (provider-reported, USD). */
+  maxProjectCostUsd: number;
+  /** Maximum concurrent tasks for one project; 0 uses runtime.max_project_workers. */
+  maxProjectTasks: number;
+}
+
+export const DEFAULT_BUDGET: BudgetConfig = {
+  maxProjectTokens: 0,
+  maxProjectCostUsd: 0,
+  maxProjectTasks: 0,
+};
+
 export const OBSERVER_TASK_KINDS: readonly ObserverTaskKind[] = [
   "bootstrap",
   "reason",
@@ -201,6 +310,10 @@ export interface DispatchConfig {
   worker: WorkerRunnerConfig;
   observer: ObserverConfig;
   retention: RetentionConfig;
+  auditStream: AuditStreamConfig;
+  proposals: ProposalsConfig;
+  strategist: StrategistConfig;
+  budget: BudgetConfig;
 }
 
 export interface ConfigOptions {
@@ -225,6 +338,10 @@ const TOP_LEVEL_KEYS = new Set([
   "worker",
   "observer",
   "retention",
+  "audit_stream",
+  "proposals",
+  "strategist",
+  "budget",
 ]);
 
 type Mapping = Record<string, unknown>;
@@ -290,6 +407,13 @@ function requiredPositiveInt(mapping: Mapping, key: string, path: string): numbe
 function nonNegativeInt(value: unknown, path: string): number {
   if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
     throw new ConfigError(`${path} must be a non-negative integer`);
+  }
+  return value;
+}
+
+function nonNegativeNumber(value: unknown, path: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new ConfigError(`${path} must be a non-negative number`);
   }
   return value;
 }
@@ -516,6 +640,117 @@ function parseRetention(value: unknown): RetentionConfig {
   };
 }
 
+function parseAuditStream(value: unknown): AuditStreamConfig {
+  const stream = recordAt(value, "audit_stream");
+  const url = optionalString(stream, "url", "audit_stream");
+  if (url !== null) {
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      throw new ConfigError("audit_stream.url must be a valid http(s) URL");
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new ConfigError("audit_stream.url must be a valid http(s) URL");
+    }
+  }
+  return {
+    enabled: has(stream, "enabled")
+      ? booleanAt(stream["enabled"], "audit_stream.enabled")
+      : DEFAULT_AUDIT_STREAM.enabled,
+    url,
+  };
+}
+
+function parseProposalKinds(value: unknown): ProposalKindConfig[] {
+  if (!Array.isArray(value)) {
+    throw new ConfigError("proposals.allow_kinds must be an array of proposal kinds");
+  }
+  return value.map((item, index) =>
+    oneOf(item, `proposals.allow_kinds[${index}]`, PROPOSAL_KINDS),
+  );
+}
+
+function unitInterval(value: unknown, path: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) {
+    throw new ConfigError(`${path} must be a number between 0 and 1`);
+  }
+  return value;
+}
+
+function parseProposals(value: unknown): ProposalsConfig {
+  const proposals = recordAt(value, "proposals");
+  const maxFileBytes = has(proposals, "max_file_bytes")
+    ? requiredPositiveInt(proposals, "max_file_bytes", "proposals")
+    : DEFAULT_PROPOSALS.maxFileBytes;
+  const maxTotalBytes = has(proposals, "max_total_bytes")
+    ? requiredPositiveInt(proposals, "max_total_bytes", "proposals")
+    : DEFAULT_PROPOSALS.maxTotalBytes;
+  if (maxTotalBytes < maxFileBytes) {
+    throw new ConfigError("proposals.max_total_bytes cannot be smaller than max_file_bytes");
+  }
+  return {
+    enabled: has(proposals, "enabled")
+      ? booleanAt(proposals["enabled"], "proposals.enabled")
+      : DEFAULT_PROPOSALS.enabled,
+    mode: has(proposals, "mode")
+      ? oneOf(proposals["mode"], "proposals.mode", PROPOSAL_MODES)
+      : DEFAULT_PROPOSALS.mode,
+    maxPerTask: has(proposals, "max_per_task")
+      ? nonNegativeInt(proposals["max_per_task"], "proposals.max_per_task")
+      : DEFAULT_PROPOSALS.maxPerTask,
+    maxFileBytes,
+    maxTotalBytes,
+    allowKinds: has(proposals, "allow_kinds")
+      ? parseProposalKinds(proposals["allow_kinds"])
+      : [...DEFAULT_PROPOSALS.allowKinds],
+    requireEvidenceForFact: has(proposals, "require_evidence_for_fact")
+      ? booleanAt(
+          proposals["require_evidence_for_fact"],
+          "proposals.require_evidence_for_fact",
+        )
+      : DEFAULT_PROPOSALS.requireEvidenceForFact,
+    minConfidence: has(proposals, "min_confidence")
+      ? unitInterval(proposals["min_confidence"], "proposals.min_confidence")
+      : DEFAULT_PROPOSALS.minConfidence,
+  };
+}
+
+function parseStrategist(value: unknown): StrategistConfig {
+  const strategist = recordAt(value, "strategist");
+  const intAt = (key: keyof StrategistConfig): number => {
+    const snake = key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+    return has(strategist, snake)
+      ? nonNegativeInt(strategist[snake], `strategist.${snake}`)
+      : DEFAULT_STRATEGIST[key];
+  };
+  return {
+    minNewFacts: intAt("minNewFacts"),
+    minNewHints: intAt("minNewHints"),
+    cooldownSeconds: intAt("cooldownSeconds"),
+    failureBackoffSeconds: intAt("failureBackoffSeconds"),
+    maxRunsPerHour: intAt("maxRunsPerHour"),
+    zeroOutputThreshold: intAt("zeroOutputThreshold"),
+    staleIntentSeconds: intAt("staleIntentSeconds"),
+    fallbackIntervalSeconds: intAt("fallbackIntervalSeconds"),
+  };
+}
+
+function parseBudget(value: unknown): BudgetConfig {
+  const budget = recordAt(value, "budget");
+  return {
+    maxProjectTokens: has(budget, "max_project_tokens")
+      ? nonNegativeInt(budget["max_project_tokens"], "budget.max_project_tokens")
+      : DEFAULT_BUDGET.maxProjectTokens,
+    maxProjectCostUsd: has(budget, "max_project_cost_usd")
+      ? nonNegativeNumber(budget["max_project_cost_usd"], "budget.max_project_cost_usd")
+      : DEFAULT_BUDGET.maxProjectCostUsd,
+    maxProjectTasks: has(budget, "max_project_tasks")
+      ? nonNegativeInt(budget["max_project_tasks"], "budget.max_project_tasks")
+      : DEFAULT_BUDGET.maxProjectTasks,
+  };
+}
+
 function parseWorker(value: unknown, scopedArtifactsDefault: boolean): WorkerRunnerConfig {
   const worker = recordAt(value, "worker");
   let softDeadlineRatio = 0.8;
@@ -594,6 +829,22 @@ export function parseDispatchConfig(value: unknown, options: ConfigOptions = {})
     ? parseRetention(root["retention"])
     : { ...DEFAULT_RETENTION };
 
+  const auditStream = has(root, "audit_stream")
+    ? parseAuditStream(root["audit_stream"])
+    : { ...DEFAULT_AUDIT_STREAM };
+
+  const proposals = has(root, "proposals")
+    ? parseProposals(root["proposals"])
+    : { ...DEFAULT_PROPOSALS, allowKinds: [...DEFAULT_PROPOSALS.allowKinds] };
+
+  const strategist = has(root, "strategist")
+    ? parseStrategist(root["strategist"])
+    : { ...DEFAULT_STRATEGIST };
+
+  const budget = has(root, "budget")
+    ? parseBudget(root["budget"])
+    : { ...DEFAULT_BUDGET };
+
   try {
     validatePromptResources(runtime.promptGroup, options.promptsRoot);
   } catch (error) {
@@ -610,6 +861,10 @@ export function parseDispatchConfig(value: unknown, options: ConfigOptions = {})
     worker,
     observer,
     retention,
+    auditStream,
+    proposals,
+    strategist,
+    budget,
   };
 }
 

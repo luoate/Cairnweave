@@ -106,6 +106,14 @@ export function buildSubagentStartupSnapshot(
     }
 }
 
+/**
+ * Keys whose values are credentials, not diagnostic state. The startup snapshot is
+ * written inside the project workspace, so a provider key copied there would be exposed
+ * to the solver and to anything that reads its session directory.
+ */
+const SENSITIVE_DEBUG_KEY =
+    /^(?:api[_-]?key|key|token|access[_-]?token|refresh[_-]?token|id[_-]?token|secret|client[_-]?secret|password|authorization|credential|credentials)$/i
+
 function sanitizeForDebug(value: unknown, depth = 0): SolverStartupDebugValue {
     if (value == null) return value
     if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return value
@@ -120,7 +128,12 @@ function sanitizeForDebug(value: unknown, depth = 0): SolverStartupDebugValue {
         const entries = Object.entries(value as Record<string, unknown>)
         if (entries.length === 0) return `[${value.constructor?.name || "Object"}]`
 
-        return Object.fromEntries(entries.map(([key, item]) => [key, sanitizeForDebug(item, depth + 1)]))
+        return Object.fromEntries(
+            entries.map(([key, item]) => [
+                key,
+                SENSITIVE_DEBUG_KEY.test(key) ? "[REDACTED]" : sanitizeForDebug(item, depth + 1),
+            ]),
+        )
     }
 
     return String(value)

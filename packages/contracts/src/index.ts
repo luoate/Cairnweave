@@ -21,10 +21,21 @@ export { WORKER_EXIT, type WorkerExitCode } from "./exit-codes";
 export { extractJsonObject } from "./parse";
 
 export {
+  DEFAULT_INTENT_PRIORITY,
   validateBootstrapConcludePayload,
   validateBootstrapExecutePayload,
   validateExplorePayload,
   validateReasonPayload,
   type BootstrapExecuteResult,
+  type ReasonIntentBudget,
   type ReasonPayloadResult,
 } from "./payloads";
+
+export {
+  MAX_TASK_USAGE_BYTES,
+  TASK_USAGE_FILE,
+  isTaskUsage,
+  parseTaskUsageJson,
+  taskUsageErrors,
+  type TaskUsage,
+} from "./usage";

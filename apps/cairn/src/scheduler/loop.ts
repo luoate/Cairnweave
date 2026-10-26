@@ -8,33 +8,45 @@
  */
 
 import {
+  DEFAULT_INTENT_PRIORITY,
   parseTaskResultJson,
   validateBootstrapConcludePayload,
   validateBootstrapExecutePayload,
   validateExplorePayload,
   validateReasonPayload,
+  type ReasonIntentBudget,
   type TaskResult,
+  type TaskUsage,
 } from "@cairn/contracts";
 import {
   HttpError,
   claimReason,
   completeProject,
   concludeIntent,
+  countReasonRunsSince,
   createIntent,
   deletePendingConclude,
   exportProjectSliceYaml,
   exportProjectYaml,
   finishRun,
+  getIntentMeta,
   getPendingConclude,
   getProjectDetail,
   getProjectScope,
+  getProjectUsage,
+  getStrategistState,
   hasPendingConclude,
   heartbeatIntent,
   isPendingConcludeSession,
   listAllPendingConcludes,
+  listProjectIntentMeta,
   listProjects,
+  listRecentStrategistRuns,
   nextRunId,
+  recordIntentMeta,
   recordPendingConclude,
+  recordStrategistFailure,
+  recordStrategistSuccess,
   releaseIntent,
   releaseReason,
   recordProjectArtifacts,
@@ -45,6 +57,7 @@ import {
   utcnow,
   type CairnDatabase,
   type Intent,
+  type IntentMeta,
   type PendingConcludeRow,
   type ProjectDetail,
   type ProjectScope,
@@ -55,13 +68,17 @@ import type { Database } from "bun:sqlite";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 
+import type { AuditTokenRegistry } from "../audit-stream/tokens";
 import type { DispatchConfig } from "../config";
 import { createRuntime, type RuntimeBackend, type WorkerProcess } from "../runtime";
 import { environmentSnapshot } from "../runtime/types";
 import { latestSolverSessionFile } from "../solver/session-file";
 import { collectEvidence, type EvidenceCollection } from "./evidence";
-import { ingestTaskAudit } from "./audit";
+import { ingestAuditStreamLoss, ingestTaskAudit } from "./audit";
+import { ingestTaskProposals, reviewPendingProposals } from "./proposals";
 import { scanSessionDirs, selectSessionsForRemoval } from "./retention";
+import { evaluateStrategistTrigger } from "./strategist";
+import { readTaskUsage } from "./usage";
 import {
   observerEnvironment,
   prepareTask,
@@ -98,12 +115,17 @@ export interface SchedulerOptions {
   log?: (message: string) => void;
   /** Override the lease renewal cadence; defaults to runtime.interval seconds. */
   leaseIntervalMs?: number;
+  /** Token registry shared with the HTTP API; required to enable live audit streaming. */
+  auditTokens?: AuditTokenRegistry;
+  /** Control-plane base URL reachable from workers; defaults to `audit_stream.url`. */
+  auditStreamUrl?: string | null;
+  /** Test hook: clock used by the Strategist trigger policy. */
+  now?: () => Date;
 }
 
-interface ReasonCheckpoint {
-  factCount: number;
-  hintCount: number;
-  openIntentCount: number;
+interface AuditStreamTarget {
+  tokens: AuditTokenRegistry;
+  url: string;
 }
 
 /**
@@ -128,7 +150,8 @@ interface RunningTask {
   /** Conclude only: host-side session directory of the failed task being resumed. */
   resumeSessionDir?: string;
   openIntentsEmpty: boolean;
-  checkpoint: ReasonCheckpoint;
+  /** Reason only: the trigger that produced this task, persisted on success/failure. */
+  trigger?: string;
   /** Host-side session directory. */
   sessionDir: string;
   /** Host-side result path. */
@@ -151,9 +174,10 @@ export class Scheduler {
   private readonly runtime: RuntimeBackend;
   private readonly log: (message: string) => void;
   private readonly leaseIntervalMs: number;
+  private readonly auditStream: AuditStreamTarget | null;
+  private readonly now: () => Date;
 
   private readonly running = new Map<string, RunningTask>();
-  private readonly checkpoints = new Map<string, ReasonCheckpoint>();
   private readonly loggedSkips = new Set<string>();
   private readonly processes = new Map<string, WorkerProcess>();
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -165,6 +189,7 @@ export class Scheduler {
     this.config = options.config;
     this.workspaceRoot = resolveWorkspaceRoot(options.config, options.workspaceRoot);
     this.log = options.log ?? ((message) => console.error(`[scheduler] ${message}`));
+    this.now = options.now ?? (() => new Date());
     this.runtime =
       options.runtime ??
       createRuntime({
@@ -174,6 +199,23 @@ export class Scheduler {
       });
     this.leaseIntervalMs =
       options.leaseIntervalMs ?? this.config.runtime.interval * 1000;
+
+    const url =
+      options.auditStreamUrl === undefined
+        ? this.config.auditStream.url
+        : options.auditStreamUrl;
+    this.auditStream =
+      this.config.auditStream.enabled &&
+      options.auditTokens !== undefined &&
+      url !== null
+        ? { tokens: options.auditTokens, url: url.replace(/\/+$/, "") }
+        : null;
+    if (this.config.auditStream.enabled && this.auditStream === null) {
+      this.log(
+        "audit_stream.enabled is set but no reachable URL/token registry is available; " +
+          "live streaming is disabled and the finish-time import remains authoritative",
+      );
+    }
   }
 
   get runningCount(): number {
@@ -440,7 +482,8 @@ export class Scheduler {
   // --- dispatch ---------------------------------------------------------------------
 
   /** Returns true when at least one task was started. */
-  private tick(): boolean {
+  /** One dispatch pass. Public so focused tests can observe a single tick. */
+  tick(): boolean {
     const summaries = this.db.withConn((conn) => listProjects(conn));
     const active = summaries.filter((summary) => summary.status === "active");
     const statusById = new Map(summaries.map((summary) => [summary.id, summary.status]));
@@ -460,7 +503,7 @@ export class Scheduler {
     }
 
     if (active.length === 0) return false;
-    this.initializeCheckpoints(active);
+    this.reviewProjectProposals(active);
 
     let dispatchedAny = false;
     let progress = true;
@@ -502,7 +545,7 @@ export class Scheduler {
   }
 
   private tryDispatch(summary: ProjectSummary): boolean {
-    if (this.projectTaskCount(summary.id) >= this.config.runtime.maxProjectWorkers) {
+    if (this.projectTaskCount(summary.id) >= this.projectTaskLimit()) {
       return false;
     }
 
@@ -558,16 +601,23 @@ export class Scheduler {
       }
     }
 
+    // Cost budgets gate every new dispatch, but not the salvage conclude above: that task
+    // holds an intent lease and must either write its fact or release the intent.
+    if (this.projectBudgetExhausted(summary.id)) return false;
+
     if (isInitialProject(project)) {
       if (project.project.reason !== null) return false;
       if (project.project.bootstrap_enabled) {
         return this.dispatchBootstrap(project, scope);
       }
-      return this.dispatchReason(project, scope, "initial");
+      // Route through the persisted trigger policy even for the first reason turn:
+      // a failed initial attempt must respect backoff after a restart.
+      const trigger = this.strategistTrigger(project);
+      return trigger === null ? false : this.dispatchReason(project, scope, trigger);
     }
 
     if (project.project.reason === null) {
-      const trigger = this.reasonTrigger(project);
+      const trigger = this.strategistTrigger(project);
       if (trigger !== null) {
         return this.dispatchReason(project, scope, trigger);
       }
@@ -591,7 +641,11 @@ export class Scheduler {
         !isBootstrapIntent(intent),
     );
     if (unclaimed.length > 0) {
-      return this.dispatchExplore(project, scope, pickNewest(unclaimed));
+      return this.dispatchExplore(
+        project,
+        scope,
+        pickByPriority(unclaimed, this.intentMetaFor(summary.id)),
+      );
     }
 
     this.logOnce(
@@ -701,6 +755,12 @@ export class Scheduler {
                 maxFacts: slice.maxFacts,
                 maxIntents: slice.maxIntents,
               });
+        // Intent-level budgets are sidecar data; read them in the same transaction that
+        // claims the lease so the deadline and tool ceiling belong to this attempt.
+        const intentBudget =
+          intent === undefined
+            ? null
+            : (getIntentMeta(conn, projectId, intent.id)?.budget ?? null);
         const prepared = prepareTask({
           config: this.config,
           project,
@@ -713,6 +773,7 @@ export class Scheduler {
                 concludeOf: pending.of,
                 resumeFromHostSessionDir: pending.hostSessionDir,
               }),
+          ...(intentBudget === null ? {} : { budget: intentBudget }),
           scope,
           workspaceRoot: this.workspaceRoot,
           pathMapper: (hostPath) => this.runtime.mapPath(hostPath),
@@ -748,18 +809,13 @@ export class Scheduler {
       return false;
     }
 
-    const checkpoint: ReasonCheckpoint = {
-      factCount: project.facts.length,
-      hintCount: project.hints.length,
-      openIntentCount: project.intents.filter((entry) => entry.to === null).length,
-    };
     if (
       !this.startProcess(
         started.prepared,
         started.runId,
         kind,
         intent?.id,
-        checkpoint,
+        trigger,
         pending?.of,
         pending?.hostSessionDir,
       )
@@ -776,12 +832,24 @@ export class Scheduler {
     runId: string,
     kind: RunnableTaskKind,
     intentId: string | undefined,
-    checkpoint: ReasonCheckpoint,
+    trigger: string | undefined,
     concludeOf?: ConcludeOf,
     resumeSessionDir?: string,
   ): boolean {
     const task = prepared.task;
     const startedAtMs = Date.now();
+
+    const extraEnv = observerEnvironment(prepared.observer);
+    if (task.maxToolCalls !== undefined) {
+      extraEnv["CAIRN_TASK_MAX_TOOL_CALLS"] = String(task.maxToolCalls);
+    }
+    if (this.auditStream !== null) {
+      extraEnv["CAIRN_AUDIT_STREAM_URL"] = this.auditStream.url;
+      extraEnv["CAIRN_AUDIT_STREAM_TOKEN"] = this.auditStream.tokens.register(
+        task.projectId,
+        task.taskId,
+      );
+    }
 
     let processHandle: WorkerProcess;
     try {
@@ -795,10 +863,11 @@ export class Scheduler {
         hostWorkspace: prepared.hostWorkspace,
         baseEnv: this.config.commonEnv,
         controllerEnv: environmentSnapshot(process.env),
-        extraEnv: observerEnvironment(prepared.observer),
+        extraEnv,
         hardDeadlineSeconds: task.hardDeadlineSeconds,
       });
     } catch (error) {
+      this.auditStream?.tokens.revoke(task.projectId, task.taskId);
       this.log(`worker spawn failed task=${task.taskId}: ${describe(error)}`);
       this.recordRunFinish(
         runId,
@@ -807,6 +876,7 @@ export class Scheduler {
         null,
         0,
         startedAtMs,
+        null,
       );
       return false;
     }
@@ -820,7 +890,7 @@ export class Scheduler {
       ...(concludeOf === undefined ? {} : { concludeOf }),
       ...(resumeSessionDir === undefined ? {} : { resumeSessionDir }),
       openIntentsEmpty: prepared.openIntentsEmpty,
-      checkpoint,
+      ...(trigger === undefined ? {} : { trigger }),
       sessionDir: prepared.hostSessionDir,
       resultPath: prepared.hostResultPath,
       hostWorkspace: prepared.hostWorkspace,
@@ -1059,11 +1129,20 @@ export class Scheduler {
           const from = requireFactIds(entry["from"]);
           const description = requireText(entry["description"]);
           try {
-            createIntent(conn, running.projectId, {
+            const intent = createIntent(conn, running.projectId, {
               from,
               description,
               creator: WORKER_NAME,
               worker: null,
+            });
+            const budget = intentBudgetOf(entry["budget"]);
+            recordIntentMeta(conn, {
+              projectId: running.projectId,
+              intentId: intent.id,
+              source: "strategist",
+              originRunId: running.runId,
+              priority: intentPriorityOf(entry["priority"]),
+              budget: budget === null ? null : JSON.stringify(budget),
             });
             created += 1;
           } catch (error) {
@@ -1189,6 +1268,8 @@ export class Scheduler {
   private finish(running: RunningTask, outcome: TaskOutcome, detail?: string | null): void {
     this.running.delete(running.taskId);
     this.processes.delete(running.taskId);
+    // The worker flushed before exiting; no process may append to this chain any more.
+    this.auditStream?.tokens.revoke(running.projectId, running.taskId);
 
     // A conclude task is one salvage attempt. Whether it succeeded or failed, the queued
     // entry is done; a failure releases the intent for the normal explore path.
@@ -1207,6 +1288,9 @@ export class Scheduler {
 
     this.recordArtifacts(running);
     this.recordAudit(running);
+    this.recordAuditStreamLoss(running);
+    this.recordProposals(running);
+    // Read before the retention cleanup below removes the task directory.
     this.recordRunFinish(
       running.runId,
       outcome,
@@ -1214,6 +1298,7 @@ export class Scheduler {
       running.exitCode,
       running.evidenceCount,
       running.startedAtMs,
+      readTaskUsage(running.sessionDir),
     );
 
     // Cairn always releases the reason lease in `finally`: success already created the
@@ -1222,8 +1307,8 @@ export class Scheduler {
       this.releaseBestEffort({ projectId: running.projectId, kind: "reason" });
     }
 
-    if (outcome === "success" && running.kind === "reason") {
-      this.checkpoints.set(running.projectId, running.checkpoint);
+    if (running.kind === "reason") {
+      this.recordStrategistOutcome(running, outcome);
     }
     if (outcome !== "success" && outcome !== "rejected") {
       this.log(
@@ -1309,6 +1394,73 @@ export class Scheduler {
   }
 
   /**
+   * Imports candidate files the Observer sidecar wrote during this task, then reviews
+   * everything pending for the project. Both steps are bookkeeping and never change the
+   * task outcome; a malformed candidate is skipped or rejected, not retried forever.
+   */
+  private recordProposals(running: RunningTask): void {
+    try {
+      const ingest = ingestTaskProposals(this.db, this.config, {
+        projectId: running.projectId,
+        taskId: running.taskId,
+        runId: running.runId,
+        sessionDir: running.sessionDir,
+      });
+      if (ingest.ingested > 0) {
+        this.log(
+          `proposals ingested project=${running.projectId} task=${running.taskId} ` +
+            `count=${ingest.ingested} skipped=${ingest.skipped}`,
+        );
+      }
+      for (const issue of ingest.issues) {
+        this.log(
+          `proposal skipped project=${running.projectId} task=${running.taskId}: ${issue}`,
+        );
+      }
+    } catch (error) {
+      this.log(
+        `proposal ingest failed project=${running.projectId} task=${running.taskId}: ${describe(error)}`,
+      );
+    }
+    this.reviewProjectProposalsFor(running.projectId, running.hostWorkspace);
+  }
+
+  /** Failure here must not stop dispatch, so every project is reviewed in isolation. */
+  private reviewProjectProposals(projects: readonly ProjectSummary[]): void {
+    if (!this.config.proposals.enabled || this.config.proposals.mode === "off") return;
+    for (const project of projects) {
+      this.reviewProjectProposalsFor(
+        project.id,
+        projectWorkspace(this.workspaceRoot, project.id),
+      );
+    }
+  }
+
+  private reviewProjectProposalsFor(projectId: string, workspace: string): void {
+    if (!this.config.proposals.enabled || this.config.proposals.mode === "off") return;
+    try {
+      const result = reviewPendingProposals(
+        this.db,
+        this.config,
+        projectId,
+        workspace,
+        this.log,
+      );
+      const changed =
+        result.applied + result.rejected + result.duplicate + result.dryRun + result.skipped;
+      if (changed > 0) {
+        this.log(
+          `proposals reviewed project=${projectId} applied=${result.applied} ` +
+            `rejected=${result.rejected} duplicate=${result.duplicate} ` +
+            `dry_run=${result.dryRun} skipped=${result.skipped}`,
+        );
+      }
+    } catch (error) {
+      this.log(`proposal review failed project=${projectId}: ${describe(error)}`);
+    }
+  }
+
+  /**
    * The audit file is written by the worker and may be absent, malformed or huge.
    * Ingestion is sidecar bookkeeping and must never change the task outcome.
    */
@@ -1337,6 +1489,37 @@ export class Scheduler {
     }
   }
 
+  /**
+   * Makes a live-stream loss visible without touching the task outcome. The marker is
+   * worker-written; ingestion validates it and never follows a symlink.
+   */
+  private recordAuditStreamLoss(running: RunningTask): void {
+    try {
+      const result = ingestAuditStreamLoss(this.db, {
+        projectId: running.projectId,
+        taskId: running.taskId,
+        sessionDir: running.sessionDir,
+      });
+      if (result.status === "recorded" && result.loss !== null) {
+        this.log(
+          `audit stream lost project=${running.projectId} task=${running.taskId} ` +
+            `reason=${JSON.stringify(result.loss.reason)} ` +
+            `delivered=${result.loss.delivered} pending=${result.loss.pending}`,
+        );
+      } else if (result.status === "invalid" || result.status === "unreadable") {
+        this.log(
+          `audit stream marker ${result.status} project=${running.projectId} ` +
+            `task=${running.taskId}`,
+        );
+      }
+    } catch (error) {
+      this.log(
+        `audit stream loss ingest failed project=${running.projectId} ` +
+          `task=${running.taskId}: ${describe(error)}`,
+      );
+    }
+  }
+
   /** Sidecar run bookkeeping must never change the task outcome. */
   private recordRunFinish(
     runId: string,
@@ -1345,6 +1528,7 @@ export class Scheduler {
     exitCode: number | null,
     evidenceCount: number,
     startedAtMs: number,
+    usage: TaskUsage | null,
   ): void {
     try {
       this.db.withConn((conn) =>
@@ -1355,6 +1539,17 @@ export class Scheduler {
           exitCode,
           evidenceCount,
           detail,
+          usage:
+            usage === null
+              ? null
+              : {
+                  inputTokens: usage.input_tokens,
+                  outputTokens: usage.output_tokens,
+                  cacheReadTokens: usage.cache_read_tokens,
+                  cacheWriteTokens: usage.cache_write_tokens,
+                  totalTokens: usage.total_tokens,
+                  costUsd: usage.cost_usd,
+                },
         }),
       );
     } catch (error) {
@@ -1484,36 +1679,126 @@ export class Scheduler {
 
   // --- scheduling helpers -----------------------------------------------------------
 
-  private initializeCheckpoints(active: readonly ProjectSummary[]): void {
-    for (const summary of active) {
-      if (this.checkpoints.has(summary.id)) continue;
-      const openIntentCount =
-        summary.working_intent_count + summary.unclaimed_intent_count;
-      if (openIntentCount === 0) continue;
-      this.checkpoints.set(summary.id, {
-        factCount: summary.fact_count,
-        hintCount: summary.hint_count,
-        openIntentCount,
-      });
+  private strategistTrigger(project: ProjectDetail): string | null {
+    const projectId = project.project.id;
+    const policy = this.config.strategist;
+    const now = this.now();
+
+    const runningTasks = [...this.running.values()].filter(
+      (task) => task.projectId === projectId && task.kind !== "reason",
+    );
+    const runningIntentIds = new Set<string>();
+    for (const task of runningTasks) {
+      if (task.intentId !== undefined) runningIntentIds.add(task.intentId);
     }
+
+    let snapshot: {
+      state: ReturnType<typeof getStrategistState>;
+      recentRuns: ReturnType<typeof listRecentStrategistRuns>;
+      reasonRunsLastHour: number;
+    };
+    try {
+      snapshot = this.db.withConn((conn) => {
+        const since = new Date(now.getTime() - 3_600_000).toISOString();
+        const limit =
+          policy.zeroOutputThreshold > 0
+            ? Math.max(policy.zeroOutputThreshold, 10)
+            : 0;
+        return {
+          state: getStrategistState(conn, projectId),
+          recentRuns:
+            limit > 0 ? listRecentStrategistRuns(conn, projectId, limit) : [],
+          reasonRunsLastHour:
+            policy.maxRunsPerHour > 0
+              ? countReasonRunsSince(conn, projectId, since)
+              : 0,
+        };
+      });
+    } catch (error) {
+      // Without reliable watermarks, stay in the fast layer rather than risk a reason
+      // loop. Explore work keeps running.
+      this.log(`strategist state load failed project=${projectId}: ${describe(error)}`);
+      return null;
+    }
+
+    const evaluation = evaluateStrategistTrigger({
+      project,
+      state: snapshot.state,
+      recentRuns: snapshot.recentRuns,
+      reasonRunsLastHour: snapshot.reasonRunsLastHour,
+      runningProductiveTasks: runningTasks.length,
+      runningIntentIds,
+      now,
+      policy,
+    });
+
+    if (evaluation.trigger !== null) {
+      for (const reason of [
+        "failure_backoff",
+        "cooldown",
+        "rate_limit",
+        "tasks_running",
+      ]) {
+        this.loggedSkips.delete(`strategist:${projectId}:${reason}`);
+      }
+      return evaluation.trigger;
+    }
+    if (evaluation.suppressed !== null) {
+      this.logOnce(
+        `strategist:${projectId}:${evaluation.suppressed}`,
+        `slow-layer suppressed project=${projectId} reason=${evaluation.suppressed} ` +
+          `facts_delta=${evaluation.factsDelta} hints_delta=${evaluation.hintsDelta} ` +
+          `open_intents=${evaluation.openIntentCount} ` +
+          `zero_output_streak=${evaluation.zeroOutputStreak}`,
+      );
+    }
+    return null;
   }
 
-  private reasonTrigger(project: ProjectDetail): string | null {
-    const checkpoint = this.checkpoints.get(project.project.id);
-    if (checkpoint === undefined) return "initial";
-
-    const openIntentCount = project.intents.filter((intent) => intent.to === null).length;
-    const changes: string[] = [];
-    if (project.facts.length > checkpoint.factCount) {
-      changes.push(`facts:${checkpoint.factCount}->${project.facts.length}`);
+  private recordStrategistOutcome(
+    running: RunningTask,
+    outcome: TaskOutcome,
+  ): void {
+    const trigger = running.trigger;
+    if (trigger === undefined) return;
+    try {
+      if (outcome === "success") {
+        const detail = this.db.withConn((conn) =>
+          getProjectDetail(conn, running.projectId),
+        );
+        const openIntentCount = detail.intents.filter(
+          (intent) => intent.to === null,
+        ).length;
+        this.db.withConn((conn) =>
+          recordStrategistSuccess(conn, {
+            projectId: running.projectId,
+            runId: running.runId,
+            trigger,
+            factCount: detail.facts.length,
+            hintCount: detail.hints.length,
+            openIntentCount,
+          }),
+        );
+      } else if (
+        outcome === "failed" ||
+        outcome === "rejected" ||
+        outcome === "unhealthy"
+      ) {
+        this.db.withConn((conn) =>
+          recordStrategistFailure(conn, {
+            projectId: running.projectId,
+            runId: running.runId,
+            trigger,
+          }),
+        );
+      }
+    } catch (error) {
+      // State is advisory: a bookkeeping failure must not change the task result.
+      this.log(
+        `strategist state update failed project=${running.projectId} ` +
+          `task=${running.taskId}: ${describe(error)}`,
+      );
     }
-    if (project.hints.length > checkpoint.hintCount) {
-      changes.push(`hints:${checkpoint.hintCount}->${project.hints.length}`);
-    }
-    if (checkpoint.openIntentCount > 0 && openIntentCount === 0) {
-      changes.push(`open_intents:${checkpoint.openIntentCount}->0`);
-    }
-    return changes.length === 0 ? null : changes.join(",");
   }
 
   private order(summaries: readonly ProjectSummary[]): ProjectSummary[] {
@@ -1546,6 +1831,79 @@ export class Scheduler {
       if (task.projectId === projectId) count += 1;
     }
     return count;
+  }
+
+  /** Per-project concurrency quota; a budget of 0 inherits the runtime default. */
+  private projectTaskLimit(): number {
+    const configured = this.config.budget.maxProjectTasks;
+    if (configured <= 0) return this.config.runtime.maxProjectWorkers;
+    return Math.min(configured, this.config.runtime.maxWorkers);
+  }
+
+  private intentMetaFor(projectId: string): Map<string, IntentMeta> {
+    try {
+      const rows = this.db.withConn((conn) =>
+        listProjectIntentMeta(conn, projectId),
+      );
+      this.loggedSkips.delete(`intent-meta:${projectId}`);
+      return new Map(rows.map((row) => [row.intent_id, row]));
+    } catch (error) {
+      // Priority is advisory: fall back to newest-first instead of stalling dispatch.
+      this.logOnce(
+        `intent-meta:${projectId}`,
+        `intent metadata load failed project=${projectId}: ${describe(error)}`,
+      );
+      return new Map();
+    }
+  }
+
+  /**
+   * Token/cost ceilings are per project and checked against all recorded runs. Tasks in
+   * flight have not reported usage yet, so the next dispatch after they finish is the
+   * first one that sees their full cost.
+   */
+  private projectBudgetExhausted(projectId: string): boolean {
+    const limits = this.config.budget;
+    if (limits.maxProjectTokens <= 0 && limits.maxProjectCostUsd <= 0) return false;
+
+    let usage;
+    try {
+      usage = this.db.withConn((conn) => getProjectUsage(conn, projectId));
+    } catch (error) {
+      // Fail closed: an unreadable budget must not let spend run unbounded.
+      this.logOnce(
+        `budget:${projectId}:unavailable`,
+        `budget lookup failed project=${projectId}: ${describe(error)}; skipping dispatch`,
+      );
+      return true;
+    }
+
+    const tokenKey = `budget:${projectId}:tokens`;
+    const costKey = `budget:${projectId}:cost`;
+    if (
+      limits.maxProjectTokens > 0 &&
+      usage.tokens >= limits.maxProjectTokens
+    ) {
+      this.logOnce(
+        tokenKey,
+        `budget exhausted project=${projectId} tokens=${usage.tokens}/${limits.maxProjectTokens}`,
+      );
+      return true;
+    }
+    if (
+      limits.maxProjectCostUsd > 0 &&
+      usage.cost_usd >= limits.maxProjectCostUsd
+    ) {
+      this.logOnce(
+        costKey,
+        `budget exhausted project=${projectId} cost_usd=${usage.cost_usd}/` +
+          `${limits.maxProjectCostUsd}`,
+      );
+      return true;
+    }
+    this.loggedSkips.delete(tokenKey);
+    this.loggedSkips.delete(costKey);
+    return false;
   }
 
   private hasRunningBootstrap(projectId: string): boolean {
@@ -1586,12 +1944,59 @@ function isBootstrapIntent(intent: Intent): boolean {
   );
 }
 
-function pickNewest(intents: readonly Intent[]): Intent {
-  let newest = intents[0]!;
+/**
+ * Reason is still dispatched before explore when its trigger fires; within the fast layer,
+ * higher-priority intents go first, then the newest, then the id for determinism.
+ */
+function pickByPriority(
+  intents: readonly Intent[],
+  meta: ReadonlyMap<string, IntentMeta>,
+): Intent {
+  let best = intents[0]!;
   for (const intent of intents) {
-    if (intent.created_at > newest.created_at) newest = intent;
+    if (compareIntentPriority(intent, best, meta) < 0) best = intent;
   }
-  return newest;
+  return best;
+}
+
+function compareIntentPriority(
+  left: Intent,
+  right: Intent,
+  meta: ReadonlyMap<string, IntentMeta>,
+): number {
+  const leftPriority = meta.get(left.id)?.priority ?? DEFAULT_INTENT_PRIORITY;
+  const rightPriority = meta.get(right.id)?.priority ?? DEFAULT_INTENT_PRIORITY;
+  if (leftPriority !== rightPriority) return rightPriority - leftPriority;
+  if (left.created_at !== right.created_at) {
+    return right.created_at.localeCompare(left.created_at);
+  }
+  return right.id.localeCompare(left.id);
+}
+
+function intentPriorityOf(value: unknown): number {
+  return typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= 0 &&
+    value <= 100
+    ? value
+    : DEFAULT_INTENT_PRIORITY;
+}
+
+function intentBudgetOf(value: unknown): ReasonIntentBudget | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  const budget: ReasonIntentBudget = {};
+  const seconds = record["max_seconds"];
+  if (typeof seconds === "number" && Number.isInteger(seconds) && seconds > 0) {
+    budget.max_seconds = seconds;
+  }
+  const calls = record["max_tool_calls"];
+  if (typeof calls === "number" && Number.isInteger(calls) && calls > 0) {
+    budget.max_tool_calls = calls;
+  }
+  return Object.keys(budget).length === 0 ? null : budget;
 }
 
 function requireFactIds(value: unknown): string[] {

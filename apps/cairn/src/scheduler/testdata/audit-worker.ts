@@ -7,6 +7,8 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { AUDIT_STREAM_LOST_FILE } from "../../audit-stream/constants";
+
 interface TaskShape {
   taskId: string;
   kind: string;
@@ -32,6 +34,19 @@ writeFileSync(
   })}\n`,
   "utf8",
 );
+if (process.env["CAIRN_TEST_AUDIT_LOST"] === "1") {
+  writeFileSync(
+    join(task.sessionDir, AUDIT_STREAM_LOST_FILE),
+    `${JSON.stringify({
+      ts: "2026-03-01T00:00:00.000Z",
+      task_id: task.taskId,
+      reason: "queue overflow",
+      delivered: 0,
+      pending: 1,
+    })}\n`,
+    "utf8",
+  );
+}
 
 const child = Bun.spawn(
   [

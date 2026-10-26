@@ -52,6 +52,11 @@ const CONFIG = {
     retain_task_files: true,
     result_grace_seconds: 2,
   },
+  strategist: {
+    cooldown_seconds: 0,
+    max_runs_per_hour: 0,
+    zero_output_threshold: 0,
+  },
 };
 
 const WORKER = "cairn-worker";

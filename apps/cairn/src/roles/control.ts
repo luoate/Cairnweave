@@ -6,6 +6,7 @@ import {
 } from "@cairn/graph";
 import { join } from "node:path";
 
+import { AuditTokenRegistry } from "../audit-stream/tokens";
 import { ConfigError, loadDispatchConfig, type DispatchConfig } from "../config";
 import { createApi } from "../http/api";
 import { checkDocker, resolveAgentConfigDir } from "../runtime";
@@ -106,19 +107,37 @@ export async function runControl(args: readonly string[]): Promise<number> {
     return 1;
   }
 
+  // One registry is shared by the API (verification) and the scheduler (minting/revoke).
+  // The write route only exists when the operator opted into live streaming.
+  const auditTokens = new AuditTokenRegistry();
   const api = createApi({
     db,
     staticDir,
-    ...(config === null ? {} : { workspaceRoot: resolveWorkspaceRoot(config) }),
+    ...(config === null
+      ? {}
+      : { workspaceRoot: resolveWorkspaceRoot(config), budget: config.budget }),
+    ...(config === null || !config.auditStream.enabled ? {} : { auditTokens }),
   });
-  const scheduler = config === null ? null : new Scheduler({ db, config });
+  let scheduler: Scheduler | null = null;
+  let server: ReturnType<typeof Bun.serve> | null = null;
 
   try {
-    const server = Bun.serve({
+    server = Bun.serve({
       hostname: host,
       port,
       fetch: (request) => api.handle(request),
     });
+    if (config !== null) {
+      scheduler = new Scheduler({
+        db,
+        config,
+        auditTokens,
+        auditStreamUrl: resolveAuditStreamUrl(config, {
+          hostname: server.hostname ?? host,
+          port: server.port ?? port,
+        }),
+      });
+    }
     console.log(`cairn listening on http://${server.hostname}:${server.port}`);
     console.log(`database: ${dbPath}`);
     if (config !== null) {
@@ -134,7 +153,7 @@ export async function runControl(args: readonly string[]): Promise<number> {
       const stop = async (): Promise<void> => {
         if (stopping) return;
         stopping = true;
-        server.stop(true);
+        server?.stop(true);
         if (scheduler !== null) {
           await scheduler.stop();
         }
@@ -144,12 +163,36 @@ export async function runControl(args: readonly string[]): Promise<number> {
       process.once("SIGTERM", () => void stop());
     });
   } catch (error) {
+    server?.stop(true);
     if (scheduler !== null) {
       await scheduler.stop();
     }
     console.error(`[control] failed to start: ${String(error)}`);
     return 1;
   }
+}
+
+/**
+ * Local workers share the host, so the bound loopback address is enough. A container has
+ * its own loopback; only an explicit `audit_stream.url` can point it at the control plane.
+ */
+function resolveAuditStreamUrl(
+  config: DispatchConfig,
+  server: { hostname: string; port: number },
+): string | null {
+  if (!config.auditStream.enabled || config.auditStream.url !== null) {
+    return config.auditStream.url;
+  }
+  if (config.runtime.execution === "container") {
+    console.error(
+      "[scheduler] audit_stream.url is not set; a container cannot derive the control-plane address, so live streaming is disabled",
+    );
+    return null;
+  }
+  const bound = server.hostname;
+  const host =
+    bound === "0.0.0.0" || bound === "::" || bound === ":::" ? "127.0.0.1" : bound;
+  return `http://${host.includes(":") ? `[${host}]` : host}:${server.port}`;
 }
 
 /**

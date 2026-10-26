@@ -15,6 +15,18 @@ export interface SolverInitPayload {
   resumeSessionFile?: string;
 }
 
+/** Main-session usage counters; subagent sessions are not included. */
+export interface AgentSessionStats {
+  tokens: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    total: number;
+  };
+  cost: number;
+}
+
 export interface AgentSession {
   prompt(
     text: string,
@@ -22,6 +34,8 @@ export interface AgentSession {
   ): Promise<unknown>;
   steer(message: string): Promise<unknown>;
   getLastAssistantText(): string;
+  /** Must be called before `dispose()`. */
+  getSessionStats(): AgentSessionStats;
   dispose(): void;
   subscribe(listener: (event: unknown) => void): unknown;
 }

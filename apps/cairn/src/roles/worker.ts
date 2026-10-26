@@ -2,15 +2,20 @@ import {
   extractJsonObject,
   isTaskResult,
   isWorkerTask,
+  TASK_USAGE_FILE,
   taskErrors,
+  taskUsageErrors,
   WORKER_EXIT,
   type TaskResult,
+  type TaskUsage,
   type WorkerTask,
 } from "@cairn/contracts";
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, resolve, sep } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 
+import { flushHostBridgeAudit } from "../host-bridge/worker-extension";
 import { createSolver } from "../solver";
+import type { SolverUsage } from "../solver/types";
 
 /**
  * Worker role: runs inside the project sandbox, executes exactly one task, writes exactly
@@ -74,6 +79,13 @@ export async function runWorker(args: readonly string[]): Promise<number> {
   } catch (error) {
     console.error(`[worker] solver failed: ${describe(error)}`);
     return WORKER_EXIT.NO_ANSWER;
+  } finally {
+    // The CLI exits explicitly, so pending live-audit requests must be drained here; the
+    // scheduler's finish-time import backfills anything still missing.
+    await flushHostBridgeAudit();
+    // Usage is a sidecar so a solver failure or a rejected answer still counts against
+    // the project's token/cost budget. It never changes the task outcome.
+    writeUsage(task, solver.getLastUsage?.() ?? null);
   }
 
   let result: TaskResult;
@@ -137,6 +149,33 @@ function normalizeResult(payload: Record<string, unknown>): TaskResult {
     throw new Error("solver answer does not form a valid result");
   }
   return result;
+}
+
+function writeUsage(task: WorkerTask, usage: SolverUsage | null): void {
+  if (usage === null) return;
+  const mapped: TaskUsage = {
+    input_tokens: usage.inputTokens,
+    output_tokens: usage.outputTokens,
+    cache_read_tokens: usage.cacheReadTokens,
+    cache_write_tokens: usage.cacheWriteTokens,
+    total_tokens: usage.totalTokens,
+    cost_usd: usage.costUsd,
+  };
+  const errors = taskUsageErrors(mapped);
+  if (errors.length > 0) {
+    console.error(`[worker] ignoring invalid usage: ${errors.join("; ")}`);
+    return;
+  }
+  try {
+    const path = join(task.sessionDir, TASK_USAGE_FILE);
+    mkdirSync(dirname(path), { recursive: true });
+    const temporary = `${path}.tmp`;
+    writeFileSync(temporary, `${JSON.stringify(mapped, null, 2)}\n`, "utf8");
+    renameSync(temporary, path);
+  } catch (error) {
+    // Metering is advisory; never turn a successful answer into a failure.
+    console.error(`[worker] cannot write usage: ${describe(error)}`);
+  }
 }
 
 function isInside(parent: string, child: string): boolean {

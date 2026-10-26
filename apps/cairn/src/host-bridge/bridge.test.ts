@@ -37,6 +37,7 @@ function bridge(
     auditPath?: string;
     protectedWriteRoots?: string[];
     artifactDir?: string;
+    maxToolCalls?: number;
   } = {},
 ): HostBridge {
   return new HostBridge({
@@ -51,6 +52,9 @@ function bridge(
     ...(overrides.artifactDir === undefined
       ? {}
       : { artifactDir: overrides.artifactDir }),
+    ...(overrides.maxToolCalls === undefined
+      ? {}
+      : { maxToolCalls: overrides.maxToolCalls }),
     auditPath: overrides.auditPath ?? auditPath,
     now: () => new Date("2026-01-01T00:00:00.000Z"),
   });
@@ -300,6 +304,21 @@ describe("host bridge fail-closed cases", () => {
     expect(gate.checkToolCall("write", { path: "notes.txt" }).allowed).toBe(true);
   });
 
+  test("keeps the Observer task state and proposal queue read-only", () => {
+    const stateDir = join(workspace, ".cairn", "sessions", "task-1", "observer");
+    const gate = bridge(undefined, { protectedWriteRoots: [stateDir] });
+    expect(
+      gate.checkToolCall("read", { path: ".cairn/sessions/task-1/observer/proposals/a.json" })
+        .allowed,
+    ).toBe(true);
+    expect(
+      gate.checkToolCall("write", {
+        path: ".cairn/sessions/task-1/observer/proposals/a.json",
+      }).allowed,
+    ).toBe(false);
+    expect(gate.checkToolCall("write", { path: "notes.txt" }).allowed).toBe(true);
+  });
+
   test("fails closed when the audit log cannot be written", () => {
     const gate = bridge(undefined, { auditPath: workspace });
     const decision = gate.checkToolCall("read", { path: "notes.txt" });
@@ -328,6 +347,40 @@ describe("host bridge audit", () => {
     expect(lines[1]).toMatchObject({ decision: "block" });
     expect(String(lines[1]!["reason"])).toContain("outside the authorized scope");
     expect(String(lines[1]!["detail"])).toContain("evil.test");
+  });
+});
+
+describe("host bridge tool budget", () => {
+  test("blocks calls past the ceiling and marks the audit event", () => {
+    const gate = bridge(undefined, { maxToolCalls: 2 });
+    expect(gate.checkToolCall("read", { path: "notes.txt" }).allowed).toBe(true);
+    expect(gate.checkToolCall("read", { path: "notes.txt" }).allowed).toBe(true);
+
+    const blocked = gate.checkToolCall("read", { path: "notes.txt" });
+    expect(blocked.allowed).toBe(false);
+    expect(blocked.reason).toContain("tool budget exhausted (2 calls)");
+    expect(blocked.event).toBe("tool_budget_exhausted");
+
+    // Blocked calls do not consume another slot.
+    expect(gate.checkToolCall("read", { path: "notes.txt" }).event).toBe(
+      "tool_budget_exhausted",
+    );
+
+    const lines = auditLines();
+    expect(lines).toHaveLength(4);
+    expect(lines[0]).not.toHaveProperty("event");
+    expect(lines[2]).toMatchObject({
+      decision: "block",
+      event: "tool_budget_exhausted",
+    });
+  });
+
+  test("does not count calls when no ceiling is configured", () => {
+    const gate = bridge();
+    for (let index = 0; index < 10; index += 1) {
+      expect(gate.checkToolCall("read", { path: "notes.txt" }).allowed).toBe(true);
+    }
+    expect(auditLines().every((line) => line["event"] === undefined)).toBe(true);
   });
 });
 
@@ -367,11 +420,15 @@ describe("pi extension adapter", () => {
 
 describe("environment-driven bridge", () => {
   const key = "CAIRN_SCOPE_POLICY";
+  const budgetKey = "CAIRN_TASK_MAX_TOOL_CALLS";
   const previous = process.env[key];
+  const previousBudget = process.env[budgetKey];
 
   afterEach(() => {
     if (previous === undefined) delete process.env[key];
     else process.env[key] = previous;
+    if (previousBudget === undefined) delete process.env[budgetKey];
+    else process.env[budgetKey] = previousBudget;
   });
 
   test("builds a gate from the worker policy", () => {
@@ -406,5 +463,21 @@ describe("environment-driven bridge", () => {
   test("refuses a malformed policy", () => {
     process.env[key] = JSON.stringify({ projectId: "p", taskId: "t", targets: [] });
     expect(() => createHostBridgeExtensionFromEnv()).toThrow("workspace");
+  });
+
+  test("validates the tool-call ceiling from the environment", () => {
+    process.env[key] = JSON.stringify({
+      projectId: "proj-1",
+      taskId: "task-1",
+      workspace,
+      sessionDir,
+      targets: ["127.0.0.1:8080"],
+    });
+    process.env[budgetKey] = "0";
+    expect(() => createHostBridgeExtensionFromEnv()).toThrow("CAIRN_TASK_MAX_TOOL_CALLS");
+    process.env[budgetKey] = "abc";
+    expect(() => createHostBridgeExtensionFromEnv()).toThrow("CAIRN_TASK_MAX_TOOL_CALLS");
+    process.env[budgetKey] = "12";
+    expect(() => createHostBridgeExtensionFromEnv()).not.toThrow();
   });
 });

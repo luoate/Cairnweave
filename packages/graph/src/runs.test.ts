@@ -11,6 +11,7 @@ import {
   createProject,
   finishRun,
   getFactMeta,
+  getProjectUsage,
   heartbeatIntent,
   listFactEvidence,
   listProjectRuns,
@@ -131,6 +132,74 @@ describe("runs", () => {
     start({ id: "run_002", taskId: "task-a", startedAt: "2026-01-02T03:00:01Z" });
     const runs = db.withConn((conn) => listProjectRuns(conn, projectId));
     expect(runs.map((run) => run.id)).toEqual(["run_002", "run_001"]);
+  });
+
+  test("persists solver usage and aggregates it per project", () => {
+    start();
+    db.withConn((conn) =>
+      finishRun(conn, "run_001", {
+        outcome: "success",
+        finishedAt: "2026-01-02T03:00:07Z",
+        durationMs: 7000,
+        exitCode: 0,
+        evidenceCount: 0,
+        usage: {
+          inputTokens: 100,
+          outputTokens: 20,
+          cacheReadTokens: 5,
+          cacheWriteTokens: 2,
+          totalTokens: 127,
+          costUsd: 0.25,
+        },
+      }),
+    );
+    start({ id: "run_002", taskId: "task-2" });
+    db.withConn((conn) =>
+      finishRun(conn, "run_002", {
+        outcome: "failed",
+        finishedAt: "2026-01-02T03:00:09Z",
+        durationMs: 2000,
+        exitCode: 1,
+        evidenceCount: 0,
+        usage: {
+          inputTokens: 10,
+          outputTokens: 3,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          totalTokens: 13,
+          costUsd: 0.125,
+        },
+      }),
+    );
+
+    const runs = db.withConn((conn) => listProjectRuns(conn, projectId));
+    expect(runs[0]).toMatchObject({
+      input_tokens: 100,
+      output_tokens: 20,
+      cache_read_tokens: 5,
+      cache_write_tokens: 2,
+      total_tokens: 127,
+      cost_usd: 0.25,
+    });
+    // A failed solve still burned tokens, so it stays in the project total.
+    expect(db.withConn((conn) => getProjectUsage(conn, projectId))).toEqual({
+      tokens: 140,
+      cost_usd: 0.375,
+    });
+  });
+
+  test("reports zero usage before any run finishes", () => {
+    start();
+    expect(db.withConn((conn) => getProjectUsage(conn, projectId))).toEqual({
+      tokens: 0,
+      cost_usd: 0,
+    });
+  });
+
+  test("404s usage for an unknown project", () => {
+    expect(() => db.withConn((conn) => getProjectUsage(conn, "proj_999"))).toThrow(
+      HttpError,
+    );
   });
 
   test("404s runs for an unknown project", () => {

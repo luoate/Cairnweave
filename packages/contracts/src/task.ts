@@ -54,6 +54,13 @@ export interface WorkerTask {
   /** Ask the solver to wrap up and emit its result before the hard kill. */
   readonly softDeadlineSeconds?: number;
   readonly hardDeadlineSeconds: number;
+  /**
+   * Maximum number of tool calls the Host Bridge allows for this task. Once exhausted,
+   * every further tool call is blocked but the worker can still emit its result. This is
+   * a best-effort cost guard, not a hard sandbox boundary (subagent processes count
+   * separately).
+   */
+  readonly maxToolCalls?: number;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -178,6 +185,11 @@ export function taskErrors(value: unknown): string[] {
     } else if (isPositiveInteger(hard) && soft >= hard) {
       errors.push("softDeadlineSeconds must be smaller than hardDeadlineSeconds");
     }
+  }
+
+  const maxToolCalls = value["maxToolCalls"];
+  if (maxToolCalls !== undefined && !isPositiveInteger(maxToolCalls)) {
+    errors.push("maxToolCalls must be a positive integer when present");
   }
 
   return errors;
