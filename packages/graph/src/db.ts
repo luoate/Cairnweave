@@ -216,6 +216,9 @@ CREATE TABLE IF NOT EXISTS strategist_state (
     last_fact_count INTEGER NOT NULL DEFAULT 0,
     last_hint_count INTEGER NOT NULL DEFAULT 0,
     last_open_intent_count INTEGER NOT NULL DEFAULT 0,
+    replan_requested_at TEXT,
+    replan_requested_by TEXT,
+    replan_reason TEXT,
     updated_at TEXT NOT NULL
 );
 
@@ -293,6 +296,7 @@ export function configureDatabase(path: string): CairnDatabase {
     ensureProjectColumns(conn);
     ensureRunColumns(conn);
     ensureIntentMetaColumns(conn);
+    ensureStrategistColumns(conn);
   });
   return database;
 }
@@ -344,6 +348,26 @@ function ensureIntentMetaColumns(conn: Database): void {
   );
   if (!columns.has("origin_run_id")) {
     conn.exec("ALTER TABLE intent_meta ADD COLUMN origin_run_id TEXT");
+  }
+}
+
+/**
+ * M14b adds the operator-requested replan marker. It lives beside the trigger watermarks
+ * so a request survives a control-plane restart and is cleared by the next reason outcome.
+ */
+function ensureStrategistColumns(conn: Database): void {
+  const columns = new Set(
+    all<{ name: string }>(conn, "PRAGMA table_info(strategist_state)").map((row) => row.name),
+  );
+  const additions = [
+    ["replan_requested_at", "TEXT"],
+    ["replan_requested_by", "TEXT"],
+    ["replan_reason", "TEXT"],
+  ] as const;
+  for (const [name, definition] of additions) {
+    if (!columns.has(name)) {
+      conn.exec(`ALTER TABLE strategist_state ADD COLUMN ${name} ${definition}`);
+    }
   }
 }
 

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  claimReason,
   concludeIntent,
   configureDatabase,
   createIntent,
@@ -52,6 +53,16 @@ function api(budget?: {
 
 function get(instance: Api, path: string): Promise<Response> {
   return instance.handle(new Request(`http://cairn.test${path}`));
+}
+
+function post(instance: Api, path: string, body?: unknown): Promise<Response> {
+  return instance.handle(
+    new Request(`http://cairn.test${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    }),
+  );
 }
 
 function addRun(id: string, kind: string, startedAt: string, tokens: number, cost: number): void {
@@ -198,6 +209,9 @@ describe("GET /projects/{id}/strategist", () => {
       last_fact_count: 2,
       last_hint_count: 0,
       last_open_intent_count: 1,
+      replan_requested_at: null,
+      replan_requested_by: null,
+      replan_reason: null,
       updated_at: "2026-01-02T04:00:00Z",
     });
     expect(body.budget["used_tokens"]).toBe(600);
@@ -283,5 +297,89 @@ describe("GET /projects/{id}/strategist", () => {
       new Request(`http://cairn.test/projects/${projectId}/strategist`, { method: "DELETE" }),
     );
     expect(del.status).toBe(405);
+  });
+});
+
+describe("POST /projects/{id}/replan", () => {
+  test("records a request and exposes it through GET", async () => {
+    const instance = api();
+    const response = await post(instance, `/projects/${projectId}/replan`, {
+      reason: "pivot to the admin panel",
+      requested_by: "alice",
+    });
+    expect(response.status).toBe(200);
+    const state = (await response.json()) as Record<string, unknown>;
+    expect(state).toMatchObject({
+      project_id: projectId,
+      replan_requested_by: "alice",
+      replan_reason: "pivot to the admin panel",
+    });
+    expect(state["replan_requested_at"]).not.toBeNull();
+
+    const body = (await (
+      await get(instance, `/projects/${projectId}/strategist`)
+    ).json()) as { state: Record<string, unknown> };
+    expect(body.state).toMatchObject({
+      replan_requested_at: state["replan_requested_at"],
+      replan_requested_by: "alice",
+      replan_reason: "pivot to the admin panel",
+    });
+  });
+
+  test("defaults an empty body to a human request without a reason", async () => {
+    const response = await post(api(), `/projects/${projectId}/replan`, {});
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      replan_requested_by: "human",
+      replan_reason: null,
+    });
+  });
+
+  test("replaces an earlier request instead of queueing duplicates", async () => {
+    const instance = api();
+    await post(instance, `/projects/${projectId}/replan`, { reason: "first" });
+    const second = await post(instance, `/projects/${projectId}/replan`, {
+      reason: "second",
+      requested_by: "bob",
+    });
+    expect(await second.json()).toMatchObject({
+      replan_requested_by: "bob",
+      replan_reason: "second",
+    });
+  });
+
+  test("404s for an unknown project", async () => {
+    const response = await post(api(), "/projects/nope/replan", {});
+    expect(response.status).toBe(404);
+  });
+
+  test("rejects non-active projects and an active reason lease", async () => {
+    const instance = api();
+    db.withConn((conn) =>
+      conn.query("UPDATE projects SET status = 'completed' WHERE id = ?").run(projectId),
+    );
+    expect((await post(instance, `/projects/${projectId}/replan`, {})).status).toBe(403);
+
+    db.withConn((conn) => {
+      conn.query("UPDATE projects SET status = 'active' WHERE id = ?").run(projectId);
+      claimReason(conn, projectId, "other-worker", "manual");
+    });
+    expect((await post(instance, `/projects/${projectId}/replan`, {})).status).toBe(409);
+  });
+
+  test("rejects malformed bodies and non-POST methods", async () => {
+    const instance = api();
+    for (const body of [
+      [],
+      { reason: 1 },
+      { requested_by: 1 },
+      { reason: "x".repeat(501) },
+      { requested_by: "x".repeat(129) },
+    ]) {
+      expect((await post(instance, `/projects/${projectId}/replan`, body)).status).toBe(422);
+    }
+
+    const getResponse = await get(instance, `/projects/${projectId}/replan`);
+    expect(getResponse.status).toBe(405);
   });
 });

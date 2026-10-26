@@ -30,6 +30,7 @@ import {
   listProjectRuns,
   recordIntentMeta,
   recordPendingConclude,
+  requestStrategistReplan,
   startRun,
   type CairnDatabase,
   type ProjectDetail,
@@ -903,6 +904,10 @@ describe("Strategist priority and project budgets", () => {
       );
       expect(meta).toHaveLength(2);
       expect(meta.every((entry) => entry.source === "strategist")).toBe(true);
+      expect(meta.map((entry) => entry.dedupe_key).sort()).toEqual([
+        "high-priority-direction",
+        "low-priority-direction",
+      ]);
 
       const reasonRun = db.withConn((conn) =>
         listProjectRuns(conn, project.project.id).find((run) => run.kind === "reason"),
@@ -926,6 +931,51 @@ describe("Strategist priority and project budgets", () => {
       expect(meta.find((entry) => entry.intent_id === low!.id)).toMatchObject({
         priority: 10,
         budget: null,
+      });
+      expect(detail.hints.map((hint) => hint.content)).toEqual([
+        "inspect the login flow",
+      ]);
+    },
+    30_000,
+  );
+
+  test(
+    "dedupes open intents and hints on an operator-requested replan",
+    async () => {
+      const project = createProjectRow(false);
+      const loop = metaReasonScheduler();
+      loop.tick();
+      await loop.waitForIdle();
+
+      db.withConn((conn) =>
+        requestStrategistReplan(conn, project.project.id, {
+          reason: "operator pivot",
+          requestedBy: "tester",
+        }),
+      );
+      loop.tick();
+      await loop.waitForIdle();
+
+      const runs = db.withConn((conn) =>
+        listProjectRuns(conn, project.project.id),
+      );
+      const reasonRuns = runs.filter((run) => run.kind === "reason");
+      expect(reasonRuns.map((run) => run.trigger)).toEqual([
+        "initial",
+        "manual_replan",
+      ]);
+      expect(reasonRuns.every((run) => run.outcome === "success")).toBe(true);
+
+      const detail = load(project.project.id);
+      expect(detail.intents.filter((intent) => intent.to === null)).toHaveLength(2);
+      expect(detail.hints).toHaveLength(1);
+      expect(
+        db.withConn((conn) => getStrategistState(conn, project.project.id)),
+      ).toMatchObject({
+        last_trigger: "manual_replan",
+        replan_requested_at: null,
+        replan_requested_by: null,
+        replan_reason: null,
       });
     },
     30_000,

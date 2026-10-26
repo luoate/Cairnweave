@@ -4,16 +4,17 @@
 skills / Observer）合并成**一个 Bun/TypeScript 代码库**，不再维护 Python ↔ TypeScript
 之间的进程桥、JSONL RPC 和 worker 适配器。
 
-状态：**M14a（可验证完成与多 Flag 门控）**；M0–M4、M5a–M5c、M6–M11、M12a、M12b、
-M12c、M13a、M13b、M14a 的计划项全部完成。Phase 1 的“本地看板 + Observer 提案 + 证据门 +
-单一写图者”闭环已具备；提案默认关闭。Phase 2 的触发持久化、意图优先级/预算、单项目
-token/成本与并发配额、只读慢层观测、逐 Fact 成本归因与因果链也已落地，并已用真实模型
-gate 核对用量记账、预算耗尽、慢层 API 与 `/cost` 的一致性，见 `docs/STRATEGIST.md`。
-Phase 3 的完成语义已收口：项目默认按证据验证，challenge 项目按外部挑战 API 的
-`flag_count` / `flag_got_count` 验证；worker 的 “complete” 只是声明，失败不会关项目。
-`cairn serve` 是可运行的 Cairn 兼容服务：SQLite schema、领域服务、全部五个路由、
-YAML/timeline 导出、静态 Web UI 均已就位，并用 Python Cairn 生成的 golden 做了逐字
-对照。进程内 scheduler、任务/结果文件 worker 协议、BreachWeave Solver 接入已在 M2
+状态：**M14b（慢层输出扩展与人工/资源触发的 Phase 2 补全）**；M0–M4、M5a–M5c、
+M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b 的计划项全部完成。Phase 1 的
+“本地看板 + Observer 提案 + 证据门 + 单一写图者”闭环已具备；提案默认关闭。Phase 2
+的触发持久化、意图优先级/预算、单项目 token/成本与并发配额、只读慢层观测、逐 Fact
+成本归因与因果链，以及 reason 的 Hint/去重输出、人工重规划与资源压力触发均已落地，并
+已用真实模型 gate 核对用量记账、预算耗尽、慢层 API 与 `/cost` 的一致性，见
+`docs/STRATEGIST.md`。Phase 3 的完成语义已收口：项目默认按证据验证，challenge 项目按
+外部挑战 API 的 `flag_count` / `flag_got_count` 验证；worker 的 “complete” 只是声明，
+失败不会关项目。`cairn serve` 是可运行的 Cairn 兼容服务：SQLite schema、领域服务、全部
+五个路由、YAML/timeline 导出、静态 Web UI 均已就位，并用 Python Cairn 生成的 golden
+做了逐字对照。进程内 scheduler、任务/结果文件 worker 协议、BreachWeave Solver 接入已在 M2
 完成。M3 增加：
 
 - `runtime.execution: container`：每项目一个长期容器，每个任务一次 `docker exec`；
@@ -319,6 +320,27 @@ M14a 增加（Phase 3 收口）：
   BreachWeave 入口也明确要求 `evidence_refs`，并提示不要写 flag 明文或凭据。
   详见 `docs/VERIFICATION.md`。
 
+M14b 增加（Phase 2 补全）：
+
+- **reason 输出扩展**：一次 reason 可同时返回 `intents` 与 `hints`，也可在仍有未结束
+  意图时只返回 `hints`。意图可带 `priority`（0–100，默认 50）、`budget`
+  （`max_seconds` / `max_tool_calls`）与 `dedupe_key`（≤128 字符）；控制面按未结束意图
+  的 dedupe key 跳过重复方向，按去空白后的内容跳过重复 Hint。`complete` 不能与
+  `intents` / `hints` 并存。
+- **prompt 扩展**：reason prompt 末尾追加 Strategist Output Extensions（输出示例、
+  priority/budget/dedupe 语义、Hint 不是证据、禁止写 flag/凭据）；启用预算时再附
+  Resource Budget（已结束 run 的 token/成本与上限）。默认 prompt 模板保持与 Python
+  Cairn 逐字一致，扩展只在运行时拼接。
+- **人工重规划**：`POST /projects/{id}/replan`（body 可省略；`reason` ≤500 字，
+  `requested_by` ≤128 字，默认 `human`）把请求持久化到 `strategist_state`。scheduler
+  把它当作 urgent `manual_replan` 触发，跳过冷却与小时配额，但仍受失败退避和
+  “有生产任务在跑”约束；成功或失败后自动清除。reason 租约已占用返回 409，非 active
+  项目返回 403。只读「慢层」页签新增“请求重规划”操作。
+- **资源压力触发**：`strategist.resource_pressure_ratio`（0–1，默认 `0` 关闭）。已结束
+  run 的 token 或成本用量达到配置比例时，以非 urgent 的
+  `resource_pressure:tokens:80%,cost_usd:90%` 触发一次 reason；同一压力区间不重复触发，
+  直到水位被其他触发覆盖。
+
 默认仍是确定性 fake solver，测试与离线运行不需要模型凭据。Observer 只接在
 `CAIRN_SOLVER=breachweave` 的真实 Solver 路径上，fake solver 会忽略它。
 
@@ -429,7 +451,7 @@ tools/vendor/            vendor 资产生成器
 runs/m13-baseline.json   最近一次真实模型基线报告（本地生成，不入库）
 docs/ARCHITECTURE.md     角色、数据所有权、时序、沙箱、失败语义
 docs/OBSERVER.md         Observer 实现、配置、权限、flush 语义与已知限制（M4c）
-docs/STRATEGIST.md       慢层触发、意图优先级/预算、用量记账、只读 API、成本基线与归因（M12a–M13b）
+docs/STRATEGIST.md       慢层触发、意图优先级/预算、Hint/去重、人工/资源触发、成本归因（M12a–M14b）
 docs/VERIFICATION.md     完成验证：策略、oracle、路由、失败语义与安全边界（M14a）
 docs/PORTING.md          Python 模块 → TS 模块映射与对照测试策略
 ```
@@ -826,9 +848,9 @@ M6 的跨进程恢复 gate 不调用模型：它先写下一台崩溃控制面�
 bun run tools/gate/m6-restart-gate.ts
 ```
 
-## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a，2026-10-26，Bun 1.4.4）
+## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b，2026-10-26，Bun 1.4.4）
 
-- `bun test`：**444 passed**（54 个文件），0 failed。
+- `bun test`：**470 passed**（54 个文件），0 failed。
 - `bun run typecheck`：`tsc --noEmit` 通过。
 - **HTTP 对照**：`api.golden.json` 的 60 步请求（成功路径、400/403/404/405/409、租约过期、
   删除级联、导出、路由错误）由 Python FastAPI + 固定时钟生成；TS 重放后状态码、content-type
@@ -842,8 +864,8 @@ bun run tools/gate/m6-restart-gate.ts
   容器模式缺少 `container`、prompt 组/占位符缺失均报错；`tasks.graph_slice` 的默认值
   （关闭，80/60）与非法 caps 均有断言；`tasks.evidence.min_bytes` 的默认值、`0` 关闭
   与负值/非整数拒绝也有覆盖；`retention` 四个字段的默认值、合法覆盖与
-  负值/非整数/非布尔拒绝同样有断言；`strategist` 的 8 个默认值、完整覆盖与
-  负数/类型/非对象拒绝也有断言。
+  负值/非整数/非布尔拒绝同样有断言；`strategist` 的 9 个默认值、完整覆盖与
+  负数/类型/非对象拒绝也有断言（含 `resource_pressure_ratio` 的 0–1 校验）。
 - **契约解析**：宽容 JSON 提取（整段、fence、前后散文、字符串内大括号、嵌套对象、
   先坏后好）与四个 payload 校验器覆盖 Cairn 的接受范围和错误文本。
 - **scheduler 端到端**：真实拉起 `cairn worker` 子进程（fake solver）。非 bootstrap 项目
@@ -1010,6 +1032,13 @@ bun run tools/gate/m6-restart-gate.ts
   oracle 抛错按任务失败；HTTP 测试覆盖 `/verify` 成功/子集/400/404/422、
   `/verification` 空状态与 404，并断言返回体不含 token。golden 仍逐字通过（固定时钟下
   创建项目不额外取时）。
+- **慢层输出扩展与人工/资源触发（M14b）**：契约测试覆盖 hints 裁剪/去空白、hints-only
+  （仍有未结束意图时）、`complete`+hints 拒绝、dedupe key 的空白/长度/类型校验；
+  scheduler 测试确认 Hint 落图并按内容去重、重复的 open dedupe key 被跳过（第二次
+  reason 不新增意图/提示）、`manual_replan` 为 urgent 且受失败退避与在跑任务约束、
+  资源压力在阈值处触发一次并受冷却约束；HTTP 测试覆盖 `/replan` 的成功/默认 body/
+  幂等覆盖/404/403/409/422/405 与 GET 回读；prompt 测试断言扩展段和 Resource Budget
+  数字；UI 测试断言唯一的显式写操作调用 `POST /replan`。默认 prompt golden 未变。
 
 golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定时钟、`TZ=UTC`）。
 重新生成方法与约束见 `docs/PORTING.md`。
@@ -1057,6 +1086,7 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M13a ✅ | 真实模型成本基线：用量旁路 → runs → API 核对、预算耗尽门禁、`startup.json` 凭据脱敏 | 396 passed / 48 files；真实模型 gate 33/33 + 预算模式 32/32（2026-10-26） |
 | M13b ✅ | 成本归因与因果链：`intent_meta.origin_run_id`、只读 `/cost`、逐 Fact/意图分摊与因果边、Alpine「成本」页签 | 405 passed / 50 files；真实模型 gate 44/44 + 预算模式 43/43（2026-10-26） |
 | M14a ✅ | 可验证完成：项目级 `evidence`/`challenge`/`off` 策略、证据/外部 Flag 计数 oracle、scheduler 完成门控、`/verify` 与 `/verification` | 444 passed / 54 files（2026-10-26） |
+| M14b ✅ | Phase 2 补全：reason 输出 Hint/priority/budget/dedupe、`POST /replan` 人工重规划、资源压力触发、慢层页签操作 | 470 passed / 54 files（2026-10-26） |
 
 ## 与 Phase 0 的关系
 

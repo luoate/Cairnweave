@@ -19,10 +19,18 @@ export interface ReasonIntentBudget {
   max_tool_calls?: number;
 }
 
+/** New intents plus optional strategic hints produced by one reason turn. */
+export interface ReasonPlan {
+  intents: JsonObject[];
+  hints: JsonObject[];
+}
+
 export type ReasonPayloadResult =
   | { kind: "rejected"; data: null }
   | { kind: "complete"; data: JsonObject }
-  | { kind: "intents"; data: JsonObject[] }
+  | { kind: "intents"; data: ReasonPlan }
+  /** Hints without intents; only valid while other open intents still exist. */
+  | { kind: "hints"; data: JsonObject[] }
   | { kind: "noop"; data: null };
 
 export interface BootstrapExecuteResult {
@@ -58,10 +66,14 @@ export function validateReasonPayload(
       intents = [singular];
     }
   }
+  const hints = validateReasonHints(data["hints"], maxIntents);
 
   if (complete !== undefined && complete !== null) {
     if (intents !== undefined && intents !== null) {
       throw new Error("complete and intents cannot coexist");
+    }
+    if (hints.length > 0) {
+      throw new Error("complete and hints cannot coexist");
     }
     if (!isObject(complete) || !hasOwn(complete, "from") || !hasOwn(complete, "description")) {
       throw new Error("invalid complete payload");
@@ -79,19 +91,28 @@ export function validateReasonPayload(
       }
       validateIntentPriority(intent["priority"], index);
       validateIntentBudget(intent["budget"], index);
+      validateDedupeKey(intent["dedupe_key"], index);
     });
     if (intents.length === 0 && openIntentsEmpty) {
       throw new Error("intents must not be empty when open_intents is empty");
     }
     const limited = intents.slice(0, maxIntents) as JsonObject[];
     if (limited.length === 0) {
-      return { kind: "noop", data: null };
+      if (openIntentsEmpty) {
+        throw new Error("intents is required when open_intents is empty");
+      }
+      return hints.length > 0
+        ? { kind: "hints", data: hints }
+        : { kind: "noop", data: null };
     }
-    return { kind: "intents", data: limited };
+    return { kind: "intents", data: { intents: limited, hints } };
   }
 
   if (openIntentsEmpty) {
     throw new Error("intents is required when open_intents is empty");
+  }
+  if (hints.length > 0) {
+    return { kind: "hints", data: hints };
   }
   return { kind: "noop", data: null };
 }
@@ -217,9 +238,15 @@ function looksLikeReasonData(payload: JsonObject): boolean {
   if (keysEqual(payload, ["intents"])) {
     return Array.isArray(payload["intents"]);
   }
+  if (keysEqual(payload, ["intents", "hints"])) {
+    return Array.isArray(payload["intents"]) && Array.isArray(payload["hints"]);
+  }
   if (keysEqual(payload, ["intent"])) {
     const intent = payload["intent"];
     return isObject(intent) && hasOwn(intent, "from") && hasOwn(intent, "description");
+  }
+  if (keysEqual(payload, ["hints"])) {
+    return Array.isArray(payload["hints"]);
   }
   return false;
 }
@@ -258,6 +285,47 @@ function validateIntentPriority(value: unknown, index: number): void {
   if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 100) {
     throw new Error(`intent priority at index ${index} must be an integer between 0 and 100`);
   }
+}
+
+/** Stable intent de-duplication keys are short identifiers, not prose. */
+const MAX_DEDUPE_KEY_CHARS = 128;
+
+function validateDedupeKey(value: unknown, index: number): void {
+  if (value === undefined || value === null) return;
+  if (typeof value !== "string") {
+    throw new Error(`intent dedupe_key at index ${index} must be a string`);
+  }
+  const trimmed = value.trim();
+  if (trimmed === "") {
+    throw new Error(`intent dedupe_key at index ${index} must not be empty`);
+  }
+  if (trimmed.length > MAX_DEDUPE_KEY_CHARS) {
+    throw new Error(
+      `intent dedupe_key at index ${index} must be at most ${MAX_DEDUPE_KEY_CHARS} characters`,
+    );
+  }
+}
+
+function validateReasonHints(value: unknown, maxHints: number): JsonObject[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) {
+    throw new Error("hints must be an array");
+  }
+  const hints = value.map((hint, index) => {
+    if (!isObject(hint)) {
+      throw new Error(`invalid hint at index ${index}`);
+    }
+    const extra = Object.keys(hint).filter((key) => key !== "content");
+    if (extra.length > 0) {
+      throw new Error(`unexpected hint key at index ${index}: ${extra[0]}`);
+    }
+    const content = hint["content"];
+    if (typeof content !== "string" || content.trim() === "") {
+      throw new Error(`hint content at index ${index} must not be empty`);
+    }
+    return { content: content.trim() };
+  });
+  return hints.slice(0, maxHints);
 }
 
 function validateIntentBudget(value: unknown, index: number): void {

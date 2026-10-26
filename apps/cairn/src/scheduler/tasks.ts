@@ -5,6 +5,7 @@
  */
 
 import {
+  DEFAULT_INTENT_PRIORITY,
   TASK_PROTOCOL_VERSION,
   type ScopePolicy,
   type TaskKind,
@@ -13,6 +14,7 @@ import {
 import type {
   Intent,
   IntentBudget,
+  IntentMeta,
   ProjectDetail,
   ProjectScope,
 } from "@cairn/graph";
@@ -97,10 +99,21 @@ export interface PrepareTaskInput {
   resumeFromHostSessionDir?: string;
   /** Optional intent-level limits stored in `intent_meta` (reason output only). */
   budget?: IntentBudget | null;
+  /** Reason only: sidecar metadata for open intents, used for dedupe visibility. */
+  intentMeta?: readonly IntentMeta[];
+  /** Reason only: finished-run usage and the configured per-project limits. */
+  projectBudget?: ProjectBudgetSnapshot;
   /** Test hook; otherwise resolved from config.local/container.workspace_root or cwd. */
   workspaceRoot?: string;
   /** Host -> worker path mapper. Identity in local mode. */
   pathMapper?: (hostPath: string) => string;
+}
+
+export interface ProjectBudgetSnapshot {
+  usedTokens: number;
+  usedCostUsd: number;
+  maxTokens: number;
+  maxCostUsd: number;
 }
 
 export function resolveWorkspaceRoot(
@@ -157,18 +170,29 @@ export function prepareTask(input: PrepareTaskInput): PreparedTask {
   const softDeadlineSeconds =
     kind === "conclude" ? undefined : softDeadline(config, hardDeadlineSeconds);
   const openIntents = project.intents.filter((intent) => intent.to === null);
+  const intentMeta = new Map(
+    (input.intentMeta ?? []).map((entry) => [entry.intent_id, entry]),
+  );
 
   mkdirSync(hostSessionDir, { recursive: true });
   writeFileSync(hostGraphSnapshotPath, input.exportYaml.trim(), "utf8");
 
   const basePrompt = renderTaskPrompt(config, project, kind, input.intent, {
     graphSnapshotPath: workerGraphSnapshotPath,
-    openIntents: openIntents.map((intent) => ({
-      id: intent.id,
-      from: intent.from,
-      description: intent.description,
-      worker: intent.worker,
-    })),
+    openIntents: openIntents.map((intent) => {
+      const meta = intentMeta.get(intent.id);
+      return {
+        id: intent.id,
+        from: intent.from,
+        description: intent.description,
+        worker: intent.worker,
+        priority: meta?.priority ?? DEFAULT_INTENT_PRIORITY,
+        budget: meta?.budget ?? null,
+        dedupe_key: meta?.dedupe_key ?? null,
+        source: meta?.source ?? null,
+      };
+    }),
+    ...(input.projectBudget === undefined ? {} : { projectBudget: input.projectBudget }),
   }, concludeOf);
   const prompt = withCompletionPolicy(
     artifactDir === undefined
@@ -448,6 +472,7 @@ function softDeadline(config: DispatchConfig, hard: number): number | undefined 
 interface PromptContext {
   graphSnapshotPath: string;
   openIntents: Record<string, unknown>[];
+  projectBudget?: ProjectBudgetSnapshot;
 }
 
 function withArtifactPolicy(prompt: string, artifactDir: string): string {
@@ -469,6 +494,51 @@ Saying "complete" is a claim, not proof. The control plane verifies the claim be
 `;
 }
 
+function withReasonOutputPolicy(
+  prompt: string,
+  budget: ProjectBudgetSnapshot | undefined,
+  maxIntents: number,
+): string {
+  const sections = [
+    `# Strategist Output Extensions
+A reason turn may return intents and hints together:
+\`\`\`json
+{"accepted": true, "data": {
+  "intents": [{
+    "from": ["f001"],
+    "description": "Verify the upload endpoint rejects traversal",
+    "priority": 80,
+    "budget": {"max_seconds": 600, "max_tool_calls": 40},
+    "dedupe_key": "upload-traversal"
+  }],
+  "hints": [{"content": "Authentication redirects to /login; start there."}]
+}}
+\`\`\`
+- \`priority\` is an integer from 0 to 100; omit it for the default 50. Higher priorities are explored first.
+- \`budget\` may contain positive integers \`max_seconds\` and/or \`max_tool_calls\`. It can only tighten the configured task timeout and tool ceiling.
+- \`dedupe_key\` is a stable identifier of at most 128 characters for one direction. Open intents above show their keys; do not propose an intent whose key is already open or whose direction is otherwise already covered.
+- \`hints\` are short strategic notes for later workers. They are not evidence and never justify completion. Do not repeat a hint already present in the graph YAML, and return at most ${maxIntents} hints.
+- Never put flag values, credentials, tokens or other secrets in an intent, hint or description.
+- \`complete\` cannot be combined with intents or hints.`,
+  ];
+  if (budget !== undefined) {
+    sections.push(`# Resource Budget
+Usage below counts finished runs; tasks still in flight have not reported yet.
+- tokens: ${budget.usedTokens}${budget.maxTokens > 0 ? ` / ${budget.maxTokens} limit (${percent(budget.usedTokens, budget.maxTokens)})` : " used; no token limit configured"}
+- cost_usd: ${budget.usedCostUsd}${budget.maxCostUsd > 0 ? ` / ${budget.maxCostUsd} limit (${percent(budget.usedCostUsd, budget.maxCostUsd)})` : " used; no cost limit configured"}
+When a limit is close, spend the remaining budget on the highest-value directions and set tighter intent budgets where appropriate.`);
+  }
+  return `${prompt.trimEnd()}
+
+${sections.join("\n\n")}
+`;
+}
+
+function percent(used: number, limit: number): string {
+  if (limit <= 0) return "0.0%";
+  return `${((used / limit) * 100).toFixed(1)}%`;
+}
+
 function renderTaskPrompt(
   config: DispatchConfig,
   project: ProjectDetail,
@@ -486,12 +556,17 @@ function renderTaskPrompt(
       const factIds = project.facts
         .map((fact) => fact.id)
         .filter((id) => id !== "goal");
-      return renderPrompt(loadPrompt(group, "reason.md"), {
+      const prompt = renderPrompt(loadPrompt(group, "reason.md"), {
         graph_yaml: graphYaml,
         fact_ids: formatFactIds(factIds),
         open_intents: formatOpenIntents(context.openIntents),
         max_intents: String(config.tasks.reason.maxIntents),
       });
+      return withReasonOutputPolicy(
+        prompt,
+        context.projectBudget,
+        config.tasks.reason.maxIntents,
+      );
     }
     case "explore": {
       if (intent === undefined) {

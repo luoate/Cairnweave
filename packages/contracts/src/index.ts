@@ -29,6 +29,7 @@ export {
   type BootstrapExecuteResult,
   type ReasonIntentBudget,
   type ReasonPayloadResult,
+  type ReasonPlan,
 } from "./payloads";
 
 export {

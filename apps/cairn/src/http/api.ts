@@ -47,6 +47,7 @@ import {
   parseHeartbeatRequest,
   parseReasonClaimRequest,
   parseReopenRequest,
+  parseReplanRequest,
   parseSettings,
   parseUpdateProjectStatusRequest,
   parseUpdateProjectTitleRequest,
@@ -54,6 +55,7 @@ import {
   recordFactMeta,
   releaseIntent,
   releaseReason,
+  requestStrategistReplan,
   utcnow,
   type AuditEntry,
   type CairnDatabase,
@@ -488,6 +490,20 @@ function buildRoutes(
       });
     }),
   );
+
+  // Manual slow-layer trigger (M14b): queue one reason turn and let the scheduler pick it
+  // up on the next idle tick. The request is persisted so it survives a restart.
+  route("POST", "/projects/{project_id}/replan", async ({ params, request }) => {
+    const body = parseReplanRequest(await readBody(request));
+    return db.withConn((conn) =>
+      json(
+        requestStrategistReplan(conn, params["project_id"]!, {
+          reason: body.reason,
+          requestedBy: body.requested_by,
+        }),
+      ),
+    );
+  });
 
   // Read-only cost attribution and causal chain (M13b): which run paid for each fact,
   // which run created its intent, and how runs/intents/facts connect.

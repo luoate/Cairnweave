@@ -176,6 +176,75 @@ describe("intent budgets", () => {
   });
 });
 
+describe("reason prompt extensions", () => {
+  test("documents priority, budget, dedupe, hints and resource usage", () => {
+    const project = projectFixture();
+    const prepared = prepareTask({
+      config: parseDispatchConfig(CONFIG),
+      project,
+      exportYaml: "project: p1\n",
+      kind: "reason",
+      intentMeta: [
+        {
+          project_id: "p1",
+          intent_id: "i1",
+          dedupe_key: "focus-direction",
+          source: "strategist",
+          proposal_id: null,
+          origin_run_id: "run-1",
+          priority: 90,
+          budget: { max_seconds: 20 },
+          created_at: "2026-01-01T00:00:00Z",
+        },
+        {
+          project_id: "p1",
+          intent_id: "i2",
+          dedupe_key: null,
+          source: "human",
+          proposal_id: null,
+          origin_run_id: null,
+          priority: null,
+          budget: null,
+          created_at: "2026-01-01T00:00:00Z",
+        },
+      ],
+      projectBudget: {
+        usedTokens: 800,
+        maxTokens: 1000,
+        usedCostUsd: 1.5,
+        maxCostUsd: 10,
+      },
+      scope: { targets: ["127.0.0.1:8080"] },
+      workspaceRoot: directory,
+    });
+
+    const prompt = prepared.task.prompt;
+    expect(prompt).toContain("# Strategist Output Extensions");
+    expect(prompt).toContain('"dedupe_key": "upload-traversal"');
+    expect(prompt).toContain("at most 3 hints");
+    expect(prompt).toContain('"dedupe_key": "focus-direction"');
+    expect(prompt).toContain('"priority": 90');
+    expect(prompt).toContain('"max_seconds": 20');
+    expect(prompt).toContain("# Resource Budget");
+    expect(prompt).toContain("tokens: 800 / 1000 limit (80.0%)");
+    expect(prompt).toContain("cost_usd: 1.5 / 10 limit (15.0%)");
+  });
+
+  test("omits the resource section when no budget snapshot is available", () => {
+    const prepared = prepareTask({
+      config: parseDispatchConfig(CONFIG),
+      project: projectFixture(),
+      exportYaml: "project: p1\n",
+      kind: "reason",
+      scope: { targets: ["127.0.0.1:8080"] },
+      workspaceRoot: directory,
+    });
+
+    expect(prepared.task.prompt).toContain("# Strategist Output Extensions");
+    expect(prepared.task.prompt).not.toContain("# Resource Budget");
+  });
+});
+
 describe("Observer task preparation", () => {
   test("writes a bounded context snapshot and env for an enabled explore task", () => {
     const project = projectFixture();

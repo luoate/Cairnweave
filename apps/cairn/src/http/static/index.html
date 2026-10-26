@@ -986,6 +986,26 @@
               </div>
             </section>
 
+            <!-- Manual replan -->
+            <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+              <div class="px-3 py-2.5 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between gap-2">
+                <span class="text-[11px] font-semibold text-slate-600">人工重规划</span>
+                <span class="text-[10px] text-slate-400" x-show="strategistPanel.data.state && strategistPanel.data.state.replan_requested_at"
+                  x-text="strategistPanel.data.state && strategistPanel.data.state.replan_requested_at ? formatDate(strategistPanel.data.state.replan_requested_at) : ''"></span>
+              </div>
+              <div class="p-3 space-y-2">
+                <p class="text-[11px] text-slate-500 break-words" x-show="strategistPanel.data.state && strategistPanel.data.state.replan_requested_at">
+                  已请求：<span class="text-slate-600" x-text="strategistPanel.data.state ? [strategistPanel.data.state.replan_requested_by, strategistPanel.data.state.replan_reason].filter(Boolean).join(' · ') : ''"></span>
+                </p>
+                <input type="text" maxlength="500" x-model="strategistPanel.replanReason" placeholder="重规划原因（可选）"
+                  class="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] text-slate-600 outline-none focus:border-brand-400" />
+                <button type="button" @click="requestStrategistReplan()" :disabled="strategistPanel.replanLoading"
+                  class="w-full rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-1.5 text-[11px] font-medium text-brand-600 hover:bg-brand-100 transition disabled:opacity-40"
+                  x-text="strategistPanel.replanLoading ? '提交中…' : '请求重规划'"></button>
+                <p class="text-[10px] text-slate-400">请求会在下一次调度时以 urgent 触发一次 reason；成功或失败后自动清除。</p>
+              </div>
+            </section>
+
             <!-- Open intents -->
             <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
               <div class="px-3 py-2.5 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between gap-2">
@@ -1998,6 +2018,8 @@ function cairnApp() {
       loading: false,
       error: '',
       loadedFor: '',
+      replanReason: '',
+      replanLoading: false,
     },
     auditPanel: {
       summaries: [],
@@ -2581,6 +2603,26 @@ function cairnApp() {
         if (this.selectedProjectId === projectId) this.strategistPanel.error = this.errorText(e);
       } finally {
         if (this.selectedProjectId === projectId) this.strategistPanel.loading = false;
+      }
+    },
+
+    async requestStrategistReplan() {
+      const projectId = this.selectedProjectId;
+      if (!projectId) return;
+      this.strategistPanel.replanLoading = true;
+      try {
+        const reason = (this.strategistPanel.replanReason || '').trim();
+        await this.api('POST', `/projects/${encodeURIComponent(projectId)}/replan`, {
+          requested_by: 'ui',
+          ...(reason ? { reason } : {}),
+        });
+        this.strategistPanel.replanReason = '';
+        this.showToast('已请求重规划');
+        await this.loadStrategist();
+      } catch (e) {
+        this.showToast(e.message, 'error');
+      } finally {
+        this.strategistPanel.replanLoading = false;
       }
     },
 

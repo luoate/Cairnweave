@@ -71,7 +71,7 @@ describe("validateReasonPayload", () => {
     );
     expect(result).toEqual({
       kind: "intents",
-      data: [{ from: ["f001"], description: "one" }],
+      data: { intents: [{ from: ["f001"], description: "one" }], hints: [] },
     });
   });
 
@@ -110,7 +110,7 @@ describe("validateReasonPayload", () => {
       ),
     ).toEqual({
       kind: "intents",
-      data: [{ from: ["f001"], description: "one" }],
+      data: { intents: [{ from: ["f001"], description: "one" }], hints: [] },
     });
   });
 
@@ -151,7 +151,10 @@ describe("validateReasonPayload", () => {
     };
     expect(
       validateReasonPayload({ accepted: true, data: { intents: [intent] } }, true, 3),
-    ).toEqual({ kind: "intents", data: [intent] });
+    ).toEqual({
+      kind: "intents",
+      data: { intents: [intent], hints: [] },
+    });
   });
 
   test("rejects an out-of-range or non-integer priority", () => {
@@ -189,6 +192,108 @@ describe("validateReasonPayload", () => {
           3,
         ),
       ).toThrow("budget");
+    }
+  });
+
+  test("accepts trimmed hints and caps them with max_intents", () => {
+    const result = validateReasonPayload(
+      {
+        accepted: true,
+        data: {
+          intents: [{ from: ["f001"], description: "one" }],
+          hints: [
+            { content: "  check the login flow  " },
+            { content: "inspect headers" },
+            { content: "third" },
+          ],
+        },
+      },
+      true,
+      2,
+    );
+    expect(result).toEqual({
+      kind: "intents",
+      data: {
+        intents: [{ from: ["f001"], description: "one" }],
+        hints: [{ content: "check the login flow" }, { content: "inspect headers" }],
+      },
+    });
+  });
+
+  test("accepts hints without intents only while other intents are open", () => {
+    expect(
+      validateReasonPayload(
+        { accepted: true, data: { hints: [{ content: "hint only" }] } },
+        false,
+        3,
+      ),
+    ).toEqual({ kind: "hints", data: [{ content: "hint only" }] });
+    expect(() =>
+      validateReasonPayload(
+        { accepted: true, data: { hints: [{ content: "hint only" }] } },
+        true,
+        3,
+      ),
+    ).toThrow("intents is required");
+  });
+
+  test("rejects malformed hints and complete+hints", () => {
+    for (const hints of ["one", [{}], [{ content: " " }], [{ content: "x", id: "h1" }]]) {
+      expect(() =>
+        validateReasonPayload(
+          { accepted: true, data: { intents: [{ from: ["f001"], description: "one" }], hints } },
+          true,
+          3,
+        ),
+      ).toThrow("hint");
+    }
+    expect(() =>
+      validateReasonPayload(
+        {
+          accepted: true,
+          data: {
+            complete: { from: ["f001"], description: "done" },
+            hints: [{ content: "not now" }],
+          },
+        },
+        false,
+        3,
+      ),
+    ).toThrow("cannot coexist");
+  });
+
+  test("validates optional intent dedupe keys", () => {
+    expect(
+      validateReasonPayload(
+        {
+          accepted: true,
+          data: {
+            intents: [
+              { from: ["f001"], description: "one", dedupe_key: "  login-flow  " },
+            ],
+          },
+        },
+        true,
+        3,
+      ),
+    ).toMatchObject({
+      kind: "intents",
+      data: {
+        intents: [{ dedupe_key: "  login-flow  " }],
+      },
+    });
+
+    for (const dedupe_key of ["", "   ", 7, "x".repeat(129)]) {
+      expect(() =>
+        validateReasonPayload(
+          {
+            accepted: true,
+            data: { intents: [{ from: ["f001"], description: "one", dedupe_key }] },
+          },
+          true,
+          3,
+        ),
+      ).toThrow("dedupe_key");
     }
   });
 });

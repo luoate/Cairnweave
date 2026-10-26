@@ -230,6 +230,8 @@ export interface StrategistConfig {
   staleIntentSeconds: number;
   /** Trigger after this long without a successful reason turn; 0 disables. */
   fallbackIntervalSeconds: number;
+  /** Trigger when finished-run token or cost usage reaches this fraction of its limit. */
+  resourcePressureRatio: number;
 }
 
 export const DEFAULT_STRATEGIST: StrategistConfig = {
@@ -241,6 +243,7 @@ export const DEFAULT_STRATEGIST: StrategistConfig = {
   zeroOutputThreshold: 3,
   staleIntentSeconds: 0,
   fallbackIntervalSeconds: 0,
+  resourcePressureRatio: 0,
 };
 
 /**
@@ -781,6 +784,12 @@ function parseStrategist(value: unknown): StrategistConfig {
     zeroOutputThreshold: intAt("zeroOutputThreshold"),
     staleIntentSeconds: intAt("staleIntentSeconds"),
     fallbackIntervalSeconds: intAt("fallbackIntervalSeconds"),
+    resourcePressureRatio: has(strategist, "resource_pressure_ratio")
+      ? unitInterval(
+          strategist["resource_pressure_ratio"],
+          "strategist.resource_pressure_ratio",
+        )
+      : DEFAULT_STRATEGIST.resourcePressureRatio,
   };
 }
 

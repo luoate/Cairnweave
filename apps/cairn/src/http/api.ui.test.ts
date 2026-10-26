@@ -49,7 +49,7 @@ describe("static operations UI", () => {
     expect(() => new Function(match![1]!)).not.toThrow();
   });
 
-  test("uses only read-only API routes for the operations panels", () => {
+  test("keeps operations panels read-only and exposes one explicit replan action", () => {
     const html = readFileSync(INDEX_PATH, "utf8");
     const appScript = html.match(/<script>\s*(function cairnApp\(\)[\s\S]*?)<\/script>/)![1]!;
     for (const method of [
@@ -69,6 +69,15 @@ describe("static operations UI", () => {
       expect(body).not.toMatch(/this\.api\('(POST|PUT|DELETE)'/);
     }
 
+    // The slow-layer panel has one explicit operator action; everything else stays GET.
+    const replanStart = appScript.indexOf("async requestStrategistReplan(");
+    expect(replanStart).toBeGreaterThan(-1);
+    const replanEnd = appScript.indexOf("\n    },", replanStart);
+    const replanBody = appScript.slice(replanStart, replanEnd);
+    expect(replanBody).toContain("this.api('POST'");
+    expect(replanBody).toContain("/replan`");
+    expect(replanBody).toContain("requested_by: 'ui'");
+
     // The operations loaders call the existing read-only routes.
     expect(appScript).toContain("/runs`");
     expect(appScript).toContain("/strategist?limit=20`");
@@ -81,6 +90,7 @@ describe("static operations UI", () => {
     expect(html).toContain("慢层");
     expect(html).toContain("单项目预算");
     expect(html).toContain("推理历史");
+    expect(html).toContain("请求重规划");
     expect(html).toContain("提案");
     expect(html).toContain("事实成本");
     expect(html).toContain("因果边");

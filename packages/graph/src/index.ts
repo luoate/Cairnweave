@@ -21,6 +21,7 @@ export {
   parseHeartbeatRequest,
   parseReasonClaimRequest,
   parseReopenRequest,
+  parseReplanRequest,
   parseSettings,
   parseUpdateProjectStatusRequest,
   parseUpdateProjectTitleRequest,
@@ -66,6 +67,7 @@ export {
   type ReasonClaimRequest,
   type ReopenRequest,
   type ReopenResponse,
+  type ReplanRequest,
   type Run,
   type RunOutcome,
   type StrategistRunSummary,
@@ -192,8 +194,10 @@ export {
   listRecentStrategistRuns,
   recordStrategistFailure,
   recordStrategistSuccess,
+  requestStrategistReplan,
   type RecordStrategistFailureInput,
   type RecordStrategistSuccessInput,
+  type RequestStrategistReplanInput,
 } from "./strategist";
 
 export {

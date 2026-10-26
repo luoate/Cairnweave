@@ -259,6 +259,10 @@ export interface StrategistState {
   last_fact_count: number;
   last_hint_count: number;
   last_open_intent_count: number;
+  /** Pending operator request; the next reason outcome clears it. */
+  replan_requested_at: string | null;
+  replan_requested_by: string | null;
+  replan_reason: string | null;
   updated_at: string;
 }
 
@@ -442,6 +446,14 @@ export interface UpdateProjectTitleRequest {
 export interface ReopenRequest {
   description: string;
   creator: string;
+}
+
+/** Operator request to run one Strategist turn even without a graph-delta trigger. */
+export interface ReplanRequest {
+  /** Free-form note shown to the operator; null when omitted. */
+  reason: string | null;
+  /** Who asked for the replan; defaults to "human" for hand-made requests. */
+  requested_by: string;
 }
 
 // --- Validation ---------------------------------------------------------------------------
@@ -818,5 +830,26 @@ export function parseReopenRequest(value: unknown): ReopenRequest {
   return {
     description: requiredString(body, "description"),
     creator: requiredString(body, "creator"),
+  };
+}
+
+export function parseReplanRequest(value: unknown): ReplanRequest {
+  const body = bodyRecord(value);
+  const reason = optionalString(body, "reason");
+  const requestedBy = optionalString(body, "requested_by");
+  if (reason !== null && reason.length > 500) {
+    invalid("string_too_long", ["body", "reason"], "String should have at most 500 characters", reason);
+  }
+  if (requestedBy !== null && requestedBy.length > 128) {
+    invalid(
+      "string_too_long",
+      ["body", "requested_by"],
+      "String should have at most 128 characters",
+      requestedBy,
+    );
+  }
+  return {
+    reason,
+    requested_by: requestedBy ?? "human",
   };
 }

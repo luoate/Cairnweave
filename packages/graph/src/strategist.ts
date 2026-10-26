@@ -10,8 +10,9 @@
 import type { Database } from "bun:sqlite";
 
 import { all, get, run } from "./db";
+import { HttpError } from "./errors";
 import type { StrategistRunSummary, StrategistState } from "./models";
-import { utcnow } from "./services";
+import { checkProjectActive, expireReasonLeases, utcnow } from "./services";
 
 interface StrategistStateRow {
   project_id: string;
@@ -23,6 +24,9 @@ interface StrategistStateRow {
   last_fact_count: number;
   last_hint_count: number;
   last_open_intent_count: number;
+  replan_requested_at: string | null;
+  replan_requested_by: string | null;
+  replan_reason: string | null;
   updated_at: string;
 }
 
@@ -55,6 +59,9 @@ export function getStrategistState(
     last_fact_count: row.last_fact_count,
     last_hint_count: row.last_hint_count,
     last_open_intent_count: row.last_open_intent_count,
+    replan_requested_at: row.replan_requested_at,
+    replan_requested_by: row.replan_requested_by,
+    replan_reason: row.replan_reason,
     updated_at: row.updated_at,
   };
 }
@@ -94,6 +101,9 @@ export function recordStrategistSuccess(
         last_fact_count = excluded.last_fact_count,
         last_hint_count = excluded.last_hint_count,
         last_open_intent_count = excluded.last_open_intent_count,
+        replan_requested_at = NULL,
+        replan_requested_by = NULL,
+        replan_reason = NULL,
         updated_at = excluded.updated_at
     `,
     input.projectId,
@@ -135,6 +145,9 @@ export function recordStrategistFailure(
         last_failure_at = excluded.last_failure_at,
         last_trigger = excluded.last_trigger,
         last_run_id = excluded.last_run_id,
+        replan_requested_at = NULL,
+        replan_requested_by = NULL,
+        replan_reason = NULL,
         updated_at = excluded.updated_at
     `,
     input.projectId,
@@ -144,6 +157,52 @@ export function recordStrategistFailure(
     input.runId,
     at,
   );
+}
+
+/**
+ * Marks a project for one operator-requested reason turn. The scheduler treats it as an
+ * urgent trigger; either success or failure of that attempt clears the marker.
+ */
+export interface RequestStrategistReplanInput {
+  reason: string | null;
+  requestedBy: string;
+  at?: string;
+}
+
+export function requestStrategistReplan(
+  conn: Database,
+  projectId: string,
+  input: RequestStrategistReplanInput,
+): StrategistState {
+  expireReasonLeases(conn, projectId);
+  const project = checkProjectActive(conn, projectId);
+  if (project.reason_worker !== null) {
+    throw new HttpError(409, "A reason task is already running");
+  }
+  const at = input.at ?? utcnow();
+  run(
+    conn,
+    `
+    INSERT INTO strategist_state
+        (project_id, replan_requested_at, replan_requested_by, replan_reason, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(project_id) DO UPDATE SET
+        replan_requested_at = excluded.replan_requested_at,
+        replan_requested_by = excluded.replan_requested_by,
+        replan_reason = excluded.replan_reason,
+        updated_at = excluded.updated_at
+    `,
+    projectId,
+    at,
+    input.requestedBy,
+    input.reason,
+    at,
+  );
+  const state = getStrategistState(conn, projectId);
+  if (state === null) {
+    throw new HttpError(404, "Project not found");
+  }
+  return state;
 }
 
 /**

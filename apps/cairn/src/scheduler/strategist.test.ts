@@ -69,6 +69,9 @@ function state(overrides: Partial<StrategistState> = {}): StrategistState {
     last_fact_count: 2,
     last_hint_count: 0,
     last_open_intent_count: 0,
+    replan_requested_at: null,
+    replan_requested_by: null,
+    replan_reason: null,
     updated_at: at(60),
     ...overrides,
   };
@@ -154,6 +157,34 @@ describe("Strategist trigger policy", () => {
     expect(
       evaluate({ state: null, runningProductiveTasks: 1 }),
     ).toMatchObject({ trigger: null, suppressed: "tasks_running" });
+  });
+
+  test("runs an operator replan urgently even when fast work is pending", () => {
+    expect(
+      evaluate({
+        project: project({ intents: [{ worker: null }] }),
+        state: state({ replan_requested_at: at(5) }),
+        reasonRunsLastHour: 12,
+        policy: { cooldownSeconds: 30, maxRunsPerHour: 12 },
+      }),
+    ).toMatchObject({ trigger: "manual_replan", urgent: true });
+
+    // The request never overrides a settled-graph or failure-backoff guard.
+    expect(
+      evaluate({
+        state: state({ replan_requested_at: at(5) }),
+        runningProductiveTasks: 1,
+      }),
+    ).toMatchObject({ trigger: null, suppressed: "tasks_running" });
+    expect(
+      evaluate({
+        state: state({
+          replan_requested_at: at(5),
+          last_failure_at: at(10),
+        }),
+        policy: { failureBackoffSeconds: 120 },
+      }),
+    ).toMatchObject({ trigger: null, suppressed: "failure_backoff" });
   });
 
   test("does nothing when the graph is unchanged", () => {
@@ -380,6 +411,90 @@ describe("Strategist trigger policy", () => {
         project: project({ facts: 3 }),
         runningProductiveTasks: 1,
         policy: { cooldownSeconds: 0 },
+      }),
+    ).toMatchObject({ trigger: null, suppressed: "tasks_running" });
+  });
+});
+
+describe("resource pressure", () => {
+  function budget(overrides: Partial<{
+    usedTokens: number;
+    usedCostUsd: number;
+    maxTokens: number;
+    maxCostUsd: number;
+  }> = {}) {
+    return {
+      usedTokens: 800,
+      usedCostUsd: 2,
+      maxTokens: 1000,
+      maxCostUsd: 10,
+      ...overrides,
+    };
+  }
+
+  test("is disabled by default and stays quiet below the threshold", () => {
+    expect(evaluate({ budget: budget() }).trigger).toBeNull();
+    expect(
+      evaluate({
+        budget: budget({ usedTokens: 799 }),
+        policy: { resourcePressureRatio: 0.8 },
+      }).trigger,
+    ).toBeNull();
+  });
+
+  test("triggers once usage crosses the configured fraction", () => {
+    expect(
+      evaluate({
+        budget: budget(),
+        policy: { resourcePressureRatio: 0.8 },
+      }),
+    ).toMatchObject({
+      trigger: "resource_pressure:tokens:80%",
+      urgent: false,
+    });
+  });
+
+  test("reports both token and cost dimensions", () => {
+    expect(
+      evaluate({
+        budget: budget({ usedTokens: 900, usedCostUsd: 9 }),
+        policy: { resourcePressureRatio: 0.75 },
+      }).trigger,
+    ).toBe("resource_pressure:tokens:90%,cost_usd:90%");
+  });
+
+  test("ignores unlimited dimensions", () => {
+    expect(
+      evaluate({
+        budget: budget({ maxTokens: 0 }),
+        policy: { resourcePressureRatio: 0.8 },
+      }).trigger,
+    ).toBeNull();
+  });
+
+  test("does not repeat during the same pressure episode", () => {
+    expect(
+      evaluate({
+        budget: budget({ usedTokens: 950 }),
+        state: state({ last_trigger: "resource_pressure:tokens:80%" }),
+        policy: { resourcePressureRatio: 0.8 },
+      }).trigger,
+    ).toBeNull();
+  });
+
+  test("is a normal trigger subject to cooldown and running tasks", () => {
+    expect(
+      evaluate({
+        budget: budget(),
+        state: state({ last_attempt_at: at(10) }),
+        policy: { resourcePressureRatio: 0.8, cooldownSeconds: 30 },
+      }),
+    ).toMatchObject({ trigger: null, suppressed: "cooldown" });
+    expect(
+      evaluate({
+        budget: budget(),
+        runningProductiveTasks: 1,
+        policy: { resourcePressureRatio: 0.8 },
       }),
     ).toMatchObject({ trigger: null, suppressed: "tasks_running" });
   });

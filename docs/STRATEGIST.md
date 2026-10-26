@@ -1,4 +1,4 @@
-# 慢层触发、调度预算、真实成本基线与归因（M12a + M12b + M12c + M13a + M13b，已实现）
+# 慢层触发、调度预算、输出扩展、真实成本基线与归因（M12a + M12b + M12c + M13a + M13b + M14b，已实现）
 
 `scheduler/reason` 是 Cairn 的 Strategist：它看全图，提出新方向或完成项目。M12a 把
 “什么时候跑 reason”从内存检查点改成**持久化水位 + 事件触发**，使控制面重启后不会对
@@ -20,6 +20,10 @@ M13b 在同样的旁路数据上增加逐 Fact/意图的成本归因与因果链
 意图”，把 run 用量分给直接产出，再沿 `intent → run → fact` 汇总；只读
 `GET /projects/{id}/cost` 与 Alpine“成本”页签负责展示。详见第 11 节。
 
+M14b 补齐 Phase 2 的策略能力：reason 可同时输出 Hint，意图可带稳定的 `dedupe_key`；
+prompt 在运行时追加输出与资源预算说明；`POST /projects/{id}/replan` 提供人工重规划；
+`strategist.resource_pressure_ratio` 在已结束用量接近上限时触发一次非紧急 reason。
+
 ## 1. 状态表
 
 `strategist_state` 是旁路表（`packages/graph/src/db.ts`），一行一个项目，随项目删除：
@@ -35,6 +39,9 @@ CREATE TABLE strategist_state (
     last_fact_count INTEGER NOT NULL DEFAULT 0,
     last_hint_count INTEGER NOT NULL DEFAULT 0,
     last_open_intent_count INTEGER NOT NULL DEFAULT 0,
+    replan_requested_at TEXT,
+    replan_requested_by TEXT,
+    replan_reason TEXT,
     updated_at TEXT NOT NULL
 );
 ```
@@ -47,8 +54,11 @@ CREATE TABLE strategist_state (
 - `last_fact_count` / `last_hint_count` / `last_open_intent_count`：该次成功时图的水位。
   只有成功才推进，失败保留旧值，因此重试仍能看到同一批未处理的 delta。
 - `last_trigger` / `last_run_id`：诊断用，直接对应 `runs.trigger` 与 `runs.id`。
+- `replan_requested_at` / `replan_requested_by` / `replan_reason`（M14b）：待处理的人工
+  重规划请求。由 `POST /replan` 写入，reason 成功或失败后清空；`cancelled` / `inactive`
+  不清空，请求会保留到下一次真正的 reason 结果。
 
-表不进入 YAML 导出、HTTP 图响应或 worker 契约；没有新增 HTTP 写路由。
+表不进入 YAML 导出、HTTP 图响应或 worker 契约；唯一的写路由是 `POST /replan`。
 
 ## 2. 触发判定顺序
 
@@ -58,25 +68,27 @@ CREATE TABLE strategist_state (
 | 顺序 | 触发 | 条件 | 紧急 |
 | --- | --- | --- | --- |
 | 1 | `failure_backoff` | `last_failure_at` 在 `failure_backoff_seconds` 内 | 抑制所有触发 |
-| 2 | `initial` | 没有成功水位，且没有未认领的 open intent | 是 |
-| 3 | `open_intents:N->0` | 上次成功时有 open intent，现在全部结束，且没有运行中的生产任务 | 是 |
-| 4 | `zero_output:K` | 自上次成功以来连续 K 个 bootstrap/explore/conclude run 没有产出 Fact | 否 |
-| 5 | `stale_intents:K` | 所有 open intent 都超过 `stale_intent_seconds` 未心跳，且都不在运行 | 否 |
-| 6 | `facts:x->y` / `hints:x->y` | Fact 或 Hint 增量达到阈值 | 否 |
-| 7 | `fallback:Ns` | 距上次成功超过 `fallback_interval_seconds`，且启用了该值 | 否 |
+| 2 | `manual_replan` | `replan_requested_at` 非空（人工请求） | 是 |
+| 3 | `initial` | 没有成功水位，且没有未认领的 open intent | 是 |
+| 4 | `open_intents:N->0` | 上次成功时有 open intent，现在全部结束，且没有运行中的生产任务 | 是 |
+| 5 | `zero_output:K` | 自上次成功以来连续 K 个 bootstrap/explore/conclude run 没有产出 Fact | 否 |
+| 6 | `stale_intents:K` | 所有 open intent 都超过 `stale_intent_seconds` 未心跳，且都不在运行 | 否 |
+| 7 | `facts:x->y` / `hints:x->y` | Fact 或 Hint 增量达到阈值 | 否 |
+| 8 | `resource_pressure:*` | 已结束 run 的 token/成本用量达到 `resource_pressure_ratio`，且上次触发不是同一压力区间 | 否 |
+| 9 | `fallback:Ns` | 距上次成功超过 `fallback_interval_seconds`，且启用了该值 | 否 |
 
 判定后的统一约束：
 
 - **任务静止**：任何非 `reason` 任务仍在运行时，一律返回
-  `suppressed: "tasks_running"`，包括 `initial`。慢层不分析移动中的图。
-- **失败退避**：在退避窗口内连 `initial` / `open_intents:N->0` 也不放行，避免崩溃后
-  每个 tick 重试。
+  `suppressed: "tasks_running"`，包括 `initial` 与 `manual_replan`。慢层不分析移动中的图。
+- **失败退避**：在退避窗口内连 `initial` / `open_intents:N->0` / `manual_replan` 也不
+  放行，避免崩溃后每个 tick 重试。
 - **冷却**：非紧急触发距 `last_attempt_at` 不足 `cooldown_seconds` 时返回
   `suppressed: "cooldown"`。
 - **小时配额**：非紧急触发在最近一小时 reason run 数达到 `max_runs_per_hour` 时返回
   `suppressed: "rate_limit"`。计数直接查 `runs`，重启不清零。
-- 紧急触发（`initial`、`open_intents:N->0`）绕过冷却与小时配额，但不绕过失败退避和
-  `tasks_running`。
+- 紧急触发（`manual_replan`、`initial`、`open_intents:N->0`）绕过冷却与小时配额，但不
+  绕过失败退避和 `tasks_running`。
 
 ### 为什么 `initial` 要让路给快层
 
@@ -107,15 +119,32 @@ Fact/Hint 仍会通过普通 delta 触发。
 intent 正在被本控制面执行时，不触发。该触发用于打破“意图无人认领但也没人建新方向”
 的停滞。`stale_intent_seconds: 0` 关闭。
 
+### 人工重规划
+
+`POST /projects/{id}/replan` 把 `reason` / `requested_by` 写入 `strategist_state`，下一次
+tick 以 urgent `manual_replan` 派发。它跳过冷却与小时配额，但仍等待生产任务结束，并受
+失败退避约束；reason 成功或失败后清除。请求是单项目级覆盖写，重复提交只保留最新一条。
+路由在 reason 租约已占用时返回 409，非 active 项目返回 403。
+
+### 资源压力
+
+`resource_pressure_ratio`（`[0,1]`，默认 `0` 关闭）只看**已结束** run 的用量：token 或
+成本任一达到 `max_*` 的配置比例时触发一次。触发串形如
+`resource_pressure:tokens:80%,cost_usd:90%`，按 1% 向下取整。它是普通（非紧急）触发，
+受冷却与小时配额约束，并且只在该压力区间触发一次：成功后 `last_trigger` 以
+`resource_pressure` 开头，直到另一个触发覆盖水位才允许再次触发。没有配置上限或对应
+上限为 `0` 的维度不参与判定。
+
 ## 3. 成功与失败的持久化
 
 `finish()` 对 kind=`reason` 的任务调用 `recordStrategistOutcome()`：
 
 - `success`：重新读取当前项目，写成功时间、attempt 时间、trigger、run id，以及当前
-  fact/hint/open-intent 数；清除 `last_failure_at`。
+  fact/hint/open-intent 数；清除 `last_failure_at` 与 `replan_*`。
 - `failed` / `rejected` / `unhealthy`：写 attempt 时间、failure 时间、trigger、run id，
-  **保留**上次成功的图水位。
-- `cancelled` / `inactive`：不写状态。取消或项目停用不是策略失败，不应触发退避。
+  **保留**上次成功的图水位，同时清除 `replan_*`。
+- `cancelled` / `inactive`：不写状态，也不清除人工重规划请求。取消或项目停用不是策略
+  失败，不应触发退避，也不应吞掉操作员的请求。
 - 状态写失败只记日志，绝不改变任务结果或退出码。
 
 成功的 noop 也推进水位：模型已经看过这张图，并在当时判断无需新方向。
@@ -132,6 +161,7 @@ strategist:
   zero_output_threshold: 3
   stale_intent_seconds: 0
   fallback_interval_seconds: 0
+  resource_pressure_ratio: 0.0
 ```
 
 | 字段 | 默认 | 说明 |
@@ -144,9 +174,11 @@ strategist:
 | `zero_output_threshold` | `3` | 连续零产出 run 阈值；`0` 关闭 |
 | `stale_intent_seconds` | `0` | 判定意图陈旧的秒数；`0` 关闭 |
 | `fallback_interval_seconds` | `0` | 空闲兜底间隔；`0` 关闭 |
+| `resource_pressure_ratio` | `0` | 已结束 token/成本用量触发比例（`[0,1]`）；`0` 关闭 |
 
-所有字段都是非负整数，非法值启动时以 `ConfigError` 拒绝。省略整个段即使用默认值。
-`initial`、成功后的首个 delta、失败退避等核心行为不受字段关闭影响。
+除 `resource_pressure_ratio` 是 `[0,1]` 的有限数外，其余字段都是非负整数；非法值启动时
+以 `ConfigError` 拒绝。省略整个段即使用默认值。`initial`、成功后的首个 delta、失败退避
+等核心行为不受字段关闭影响。
 
 ## 5. 与调度的关系
 
@@ -159,34 +191,67 @@ strategist:
 - 抑制日志按 `(project, reason)` 去重，每个抑制原因只打一次；一旦放行或原因变化会重新
   允许记录，避免每个 tick 刷屏。
 
-## 6. 意图优先级与意图级预算（M12b）
+## 6. 意图优先级、意图级预算与 reason 输出扩展（M12b + M14b）
 
-reason 的 intent 条目可以多带两个可选字段：
+reason 的 intent 条目可以多带三个可选字段：
 
 ```json
 {
   "from": ["f001"],
   "description": "验证上传接口的路径穿越",
   "priority": 90,
-  "budget": { "max_seconds": 600, "max_tool_calls": 40 }
+  "budget": { "max_seconds": 600, "max_tool_calls": 40 },
+  "dedupe_key": "upload-traversal"
 }
 ```
 
 - `priority`：`0..100` 的整数。省略时按 `50`（`DEFAULT_INTENT_PRIORITY`）处理。
 - `budget.max_seconds` / `budget.max_tool_calls`：正整数；至少出现一个，未知键拒绝。
-- 两个字段都由 `packages/contracts` 校验。非法条目会让整个 reason 结果被拒绝，而不是
+- `dedupe_key`：可选的稳定方向标识，去空白后 1–128 字符。控制面在创建前检查同一
+  项目内仍打开的意图；key 已存在时跳过该条并计为去重成功。
+- 三个字段都由 `packages/contracts` 校验。非法条目会让整个 reason 结果被拒绝，而不是
   静默忽略。
 
-落库位置是旁路表 `intent_meta`，不进入 YAML 导出或 Cairn 图响应：
+一次 reason 还可以同时返回 Hint：
 
-| 列 | M12b 写入 |
+```json
+{
+  "accepted": true,
+  "data": {
+    "intents": [{ "from": ["f001"], "description": "...", "dedupe_key": "a" }],
+    "hints": [{ "content": "认证会跳转到 /login，先从这里开始。" }]
+  }
+}
+```
+
+- `hints[].content` 去空白后必须非空；一次最多 `tasks.reason.max_intents` 条。
+- 已有未结束意图时，可以只返回 `hints`（不新增意图）；没有未结束意图时仍必须给出至少
+  一个 intent，避免慢层空转。
+- `complete` 不能与 `intents` 或 `hints` 并存。
+- Hint 只是给后续 worker 的策略提示，不是证据，不能用于完成验证；内容按去空白后的
+  文本精确去重。
+
+落库位置是旁路表 `intent_meta` 与图内 `hints`，不进入 YAML 导出之外的额外结构：
+
+| 列 / 目标 | M14b 写入 |
 | --- | --- |
 | `source` | `strategist` |
 | `priority` | 校验后的优先级，未提供时为 `50` |
 | `budget` | `{"max_seconds":...,"max_tool_calls":...}` 的 JSON 文本；未提供为 `NULL` |
+| `dedupe_key` | 校验后的 key；未提供为 `NULL` |
+| 图 `hints` | `createHint(creator=cairn-worker)`；与现有内容完全相同的条目跳过 |
 
 读取时会再次归一化：越界优先级、损坏 JSON、负数或未知预算字段都视为 `NULL`，避免旧
 数据或手工写入让调度器进入异常状态。
+
+### prompt 扩展
+
+默认 `reason.md` 模板保持与 Python Cairn 逐字一致（golden 测试锁定）。M14b 在渲染后
+追加 `# Strategist Output Extensions`，说明 intents+hints 的 JSON 形状、priority 范围、
+budget 只能收紧限制、dedupe key 的稳定性要求、Hint 不是证据以及禁止写 flag/凭据。
+配置了 token 或成本上限时再追加 `# Resource Budget`，列出已结束 run 的用量与上限；
+在途任务尚未上报，不参与该数字。open intent 上下文也带上 `priority` / `budget` /
+`dedupe_key` / `source`，模型可以据此避免重复方向。
 
 ### 派发顺序
 
@@ -276,7 +341,7 @@ worker 在 solver 结束（成功、失败、被拒绝都算）后，把主 solv
 - 读取侧只接受 session 目录内**普通、非符号链接、大小受限**（16 KiB）的 JSON 对象，
   非负整数计数与有限成本；否则视为“未上报”。
 
-## 9. 只读慢层 API 与 UI（M12c）
+## 9. 慢层 API 与 UI（M12c + M14b）
 
 ### 路由
 
@@ -286,8 +351,18 @@ GET /projects/{project_id}/strategist?limit=20
 
 - `limit` 只限制 `reason_runs` 的长度，默认 `20`，允许 `1..100`；非整数、越界或负数
   返回 `400`，不会静默截断。未知项目 `404`。
-- 只有 `GET`；`POST` / `PUT` / `DELETE` 由通用路由表返回 `405`。
+- GET 路由只读；`POST` / `PUT` / `DELETE` 由通用路由表返回 `405`。
 - 路由只读旁路表与图，不修改 `strategist_state`、`runs` 或 `intent_meta`。
+
+```http
+POST /projects/{project_id}/replan
+```
+
+- body 可省略或为 `{}`；`reason` 可选（≤500 字），`requested_by` 可选（≤128 字，默认
+  `human`）。返回更新后的 `state`。
+- 写入 `strategist_state.replan_*`，下一次调度按 urgent `manual_replan` 处理；reason
+  成功或失败后清除。未知项目 `404`；非 active 项目 `403`；reason 租约已占用 `409`；
+  形状非法 `400`、非法 JSON `422`。
 
 响应：
 
@@ -303,6 +378,9 @@ GET /projects/{project_id}/strategist?limit=20
     "last_fact_count": 4,
     "last_hint_count": 0,
     "last_open_intent_count": 2,
+    "replan_requested_at": null,
+    "replan_requested_by": null,
+    "replan_reason": null,
     "updated_at": "2026-10-26T03:00:00Z"
   },
   "budget": {
@@ -329,7 +407,8 @@ GET /projects/{project_id}/strategist?limit=20
       "concluded_at": null,
       "priority": 90,
       "budget": { "max_seconds": 600, "max_tool_calls": 40 },
-      "source": "strategist"
+      "source": "strategist",
+      "dedupe_key": "upload-traversal"
     }
   ],
   "reason_runs": []
@@ -338,10 +417,11 @@ GET /projects/{project_id}/strategist?limit=20
 
 字段语义：
 
-- `state`：`strategist_state` 原样返回；从未成功或失败过时为 `null`。
+- `state`：`strategist_state` 原样返回；从未成功或失败过时为 `null`。`replan_*` 是待处理
+  的人工重规划请求，`null` 表示没有请求。
 - `intents`：只含未结束意图（`to IS NULL`），包括已被认领、正在执行的任务。排序与
   快层派发一致：`priority DESC, created_at DESC, id DESC`。没有 `intent_meta` 的意图
-  使用默认优先级 `50`，`budget` / `source` 为 `null`。
+  使用默认优先级 `50`，`budget` / `source` / `dedupe_key` 为 `null`。
 - `reason_runs`：`kind='reason'` 的 run，最新在前，最多 `limit` 条；其他 kind 不出现。
 - `budget.used_tokens` / `used_cost_usd`：`getProjectUsage()` 对所有 run 的汇总，失败
   任务也计入（与调度门禁一致）。
@@ -361,11 +441,12 @@ GET /projects/{project_id}/strategist?limit=20
 - 单项目预算：已用/上限 token、成本、并发任务数，以及“Token 用尽 / 成本用尽 /
   并发已满”徽标；
 - 触发水位：最近成功/尝试/失败时间、最近触发串、fact/hint/open-intent 水位与 run id；
+- 人工重规划：可选原因输入框与“请求重规划”按钮；待处理请求显示请求人与原因；
 - 未结束意图：优先级徽标、来源事实、意图预算、来源与创建时间；
 - 推理历史：触发、结果、耗时、token、成本与 detail。
 
-页签只在选中时发一次 `GET`，刷新按钮重复同一请求；没有写操作。API 本身仍是未认证的
-只读面，容器或公网部署仍需网络层访问控制。
+页签只在选中时发一次 `GET`，刷新按钮重复同一请求；“请求重规划”是唯一显式写操作，
+提交后重新读取慢层状态。API 本身仍是未认证的，容器或公网部署仍需网络层访问控制。
 
 ## 10. 真实模型成本基线（M13a）
 
@@ -584,29 +665,35 @@ Alpine 侧边栏新增“成本”页签：顶部显示项目总量与归因完�
 ## 12. 测试覆盖
 
 - `packages/graph/src/strategist.test.ts`：状态缺失/成功水位/失败不清水位/新项目失败
-  不造假水位/项目级联；run 摘要的产 Fact 判定、reason 排除与滚动计数。
+  不造假水位/项目级联；run 摘要的产 Fact 判定、reason 排除与滚动计数；人工重规划写入
+  不移动水位、成功/失败清除、reason 租约 409 与非 active 403。
 - `apps/cairn/src/scheduler/strategist.test.ts`：initial、快层让路、delta 阈值、
   open-intent 清空与死循环保护、冷却、失败退避、小时配额、零产出重置、任务运行抑制、
-  陈旧意图、fallback。
+  陈旧意图、fallback；`manual_replan` 的 urgent/退避/在跑抑制，以及资源压力的阈值/
+  双维度/关闭/不重复/冷却。
 - `apps/cairn/src/scheduler/loop.test.ts`：成功状态落库且新 Scheduler 不重复 reason；
   失败的 reason 任务写入 backoff，下一次 tick 只记录抑制日志、不再派发。
 - `apps/cairn/src/config.test.ts`：默认值、完整覆盖与负数/类型/非对象拒绝，含
-  `budget` 默认值、解析与负数拒绝。
+  `budget` 默认值、解析与负数拒绝，以及 `resource_pressure_ratio` 的 0–1 校验。
 - `packages/contracts/src/parse.test.ts`：priority 范围/整数校验，budget 未知键、空
-  预算、非正整数字段拒绝，以及合法字段原样保留。
+  预算、非正整数字段拒绝，以及合法字段原样保留；M14b 增加 hints 去空白/裁剪/
+  hints-only 条件、`complete`+hints 拒绝与 dedupe key 的空白/长度/类型校验。
 - `packages/contracts/src/usage.test.ts` + `apps/cairn/src/scheduler/usage.test.ts`：
   usage 契约、负值/分数/非有限值拒绝、缺失/损坏/超大/目录型旁路拒绝。
 - `packages/graph/src/runs.test.ts`：用量持久化、失败任务仍计入、项目汇总、未知项目
   404。
-- `packages/graph/src/db.test.ts`：旧 `runs` 表增量迁移六个用量列并回填 0。
+- `packages/graph/src/db.test.ts`：旧 `runs` 表增量迁移六个用量列并回填 0；旧
+  `intent_meta` 自动补 `origin_run_id`（历史行保持 `null`）；旧 `strategist_state`
+  自动补 `replan_*` 三列。
 - `packages/graph/src/proposals.test.ts`：`intent_meta` 优先级/预算往返与损坏数据归一化，
   以及 `origin_run_id` 的默认 `null` 与往返。
 - `packages/graph/src/cost.test.ts`：run → 意图 → Fact 的两级分摊、整数余数、直接/编排/
   未归因对账、证据与来源事实、缺失来源时归因停在上层、零 run 项目与未知项目。
-- `packages/graph/src/db.test.ts`：旧 `intent_meta` 表自动补 `origin_run_id`，历史行
-  保持 `null`。
-- `apps/cairn/src/scheduler/tasks.test.ts`：`max_seconds` 收紧硬截止、不会延长，以及
-  `maxToolCalls` 写入任务。
+- `apps/cairn/src/scheduler/tasks.test.ts`：`max_seconds` 收紧硬截止、不会延长，
+  `maxToolCalls` 写入任务；reason prompt 含输出扩展、open intent 元数据与
+  Resource Budget 数字，无预算快照时省略该段。
+- `apps/cairn/src/scheduler/loop.test.ts`：Hint 落图并按内容去重、重复 open dedupe key
+  跳过（人工重规划后不新增意图/提示）、`manual_replan` 触发与标记清除。
 - `apps/cairn/src/host-bridge/bridge.test.ts`：工具上限拒绝、`tool_budget_exhausted`
   审计事件、未配置时不计数、环境变量校验。
 - `apps/cairn/src/scheduler/loop.test.ts`：reason 优先级/预算落库、reason 创建的意图
@@ -614,11 +701,13 @@ Alpine 侧边栏新增“成本”页签：顶部显示项目总量与归因完�
   pending conclude 绕过预算、按项目并发配额与继承 `runtime.max_project_workers`。
 - `apps/cairn/src/http/api.strategist.test.ts`：空状态与纯 HTTP 模式的 `null` limits、
   未结束意图的优先级排序与元数据、运行中/失败任务用量汇总、`reason_runs` 过滤与限制、
-  状态字段、404、非法 `limit`（0/101/小数/非数字/负数）以及非 GET 的 405。
+  状态字段、404、非法 `limit`（0/101/小数/非数字/负数）以及非 GET 的 405；M14b 增加
+  `/replan` 的成功/默认 body/覆盖写/404/403/409/422/405 与 GET 回读。
 - `apps/cairn/src/http/api.cost.test.ts`：空项目零报告、reason → explore → Fact 的
   总量/分类/归因/因果边、未知项目 404 与非 GET 405。
 - `apps/cairn/src/http/api.ui.test.ts`：慢层与成本页签存在、`loadStrategist` 带
-  `?limit=20`、`loadCost` 只发 GET、内联脚本仍可解析。
+  `?limit=20`、`loadCost` 只发 GET、`requestStrategistReplan` 是唯一显式 POST、
+  内联脚本仍可解析。
 - `packages/agent/src/solver/session.test.ts`：主 Solver 与子代理的 `startup.json`
   对 `authStorage` 中的密钥按字段名脱敏，不包含原文，且保留 `[REDACTED]` 标记。
 - `tools/gate/m13-cost-baseline.ts` 是真实模型 gate（不在 `bun test` 中）：默认模式
@@ -640,3 +729,9 @@ Alpine 侧边栏新增“成本”页签：顶部显示项目总量与归因完�
 - M13b 之前创建的意图没有 `origin_run_id`，其 reason 成本永久留在 `unattributed`；
   丢失的来源无法从现有数据反推。
 - 子代理/子会话仍不计入 `runs` 用量，因此归因与预算一样只覆盖主 solver 会话。
+- M14b 的 prompt 扩展尚未在真实模型上做 A/B；Hint 质量、`dedupe_key` 的稳定性与
+  “是否会过度合并不同方向”没有基线数据。
+- 人工重规划只有单项目级覆盖标记：没有排队、优先级、审批或操作审计；同一项目连续
+  提交只保留最后一条，取消/停用不会清除请求。
+- 资源压力默认关闭，阈值也只能按已结束 run 计算；在途任务可能让实际用量先越过阈值。
+  `resource_pressure_ratio` 的合适取值仍需真实长任务样本。

@@ -80,6 +80,7 @@ describe("dispatcher config", () => {
       zeroOutputThreshold: 3,
       staleIntentSeconds: 0,
       fallbackIntervalSeconds: 0,
+      resourcePressureRatio: 0,
     });
     expect(config.budget).toEqual({
       maxProjectTokens: 0,
@@ -164,6 +165,7 @@ describe("dispatcher config", () => {
   zero_output_threshold: 2
   stale_intent_seconds: 600
   fallback_interval_seconds: 900
+  resource_pressure_ratio: 0.8
 `,
     );
     expect(config.strategist).toEqual({
@@ -175,6 +177,7 @@ describe("dispatcher config", () => {
       zeroOutputThreshold: 2,
       staleIntentSeconds: 600,
       fallbackIntervalSeconds: 900,
+      resourcePressureRatio: 0.8,
     });
 
     expect(() => parse(BASE + "strategist: {cooldown_seconds: -1}\n")).toThrow(
@@ -182,6 +185,12 @@ describe("dispatcher config", () => {
     );
     expect(() => parse(BASE + 'strategist: {max_runs_per_hour: "4"}\n')).toThrow(
       "strategist.max_runs_per_hour must be a non-negative integer",
+    );
+    expect(() => parse(BASE + "strategist: {resource_pressure_ratio: 1.5}\n")).toThrow(
+      "strategist.resource_pressure_ratio must be a number between 0 and 1",
+    );
+    expect(() => parse(BASE + "strategist: {resource_pressure_ratio: -0.1}\n")).toThrow(
+      "strategist.resource_pressure_ratio must be a number between 0 and 1",
     );
     expect(() => parse(BASE + "strategist: []\n")).toThrow(
       "strategist must be an object",

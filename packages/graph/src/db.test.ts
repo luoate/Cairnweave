@@ -179,6 +179,50 @@ describe("legacy migrations", () => {
     expect(row).toEqual({ origin_run_id: null });
   });
 
+  test("adds replan columns to a legacy strategist_state table", () => {
+    const directory = mkdtempSync(join(tmpdir(), "cairn-legacy-"));
+    directories.push(directory);
+    const path = join(directory, "legacy-strategist.db");
+    const legacy = new Database(path, { create: true });
+    legacy.exec(`
+      CREATE TABLE strategist_state (
+          project_id TEXT PRIMARY KEY,
+          last_success_at TEXT,
+          last_attempt_at TEXT,
+          last_failure_at TEXT,
+          last_trigger TEXT,
+          last_run_id TEXT,
+          last_fact_count INTEGER NOT NULL DEFAULT 0,
+          last_hint_count INTEGER NOT NULL DEFAULT 0,
+          last_open_intent_count INTEGER NOT NULL DEFAULT 0,
+          updated_at TEXT NOT NULL
+      )
+    `);
+    legacy
+      .query(
+        "INSERT INTO strategist_state (project_id, updated_at) VALUES (?, ?)",
+      )
+      .run("proj_001", "2026-01-01T00:00:00Z");
+    legacy.close();
+
+    const database = configureDatabase(path);
+    const row = database.withConn((conn) =>
+      get<{
+        replan_requested_at: string | null;
+        replan_requested_by: string | null;
+        replan_reason: string | null;
+      }>(
+        conn,
+        "SELECT replan_requested_at, replan_requested_by, replan_reason FROM strategist_state WHERE project_id = 'proj_001'",
+      ),
+    );
+    expect(row).toEqual({
+      replan_requested_at: null,
+      replan_requested_by: null,
+      replan_reason: null,
+    });
+  });
+
   test("maps the intermediate bootstrap_mode column to bootstrap_enabled", () => {
     const directory = mkdtempSync(join(tmpdir(), "cairn-legacy-"));
     directories.push(directory);

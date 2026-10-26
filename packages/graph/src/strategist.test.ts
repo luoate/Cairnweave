@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  claimReason,
   concludeIntent,
   configureDatabase,
   countReasonRunsSince,
@@ -14,6 +15,7 @@ import {
   listRecentStrategistRuns,
   recordStrategistFailure,
   recordStrategistSuccess,
+  requestStrategistReplan,
   startRun,
   type CairnDatabase,
 } from "./index";
@@ -111,6 +113,9 @@ describe("Strategist state", () => {
       last_fact_count: 2,
       last_hint_count: 1,
       last_open_intent_count: 3,
+      replan_requested_at: null,
+      replan_requested_by: null,
+      replan_reason: null,
     });
   });
 
@@ -168,6 +173,92 @@ describe("Strategist state", () => {
       conn.query("DELETE FROM projects WHERE id = ?").run(projectId),
     );
     expect(db.withConn((conn) => getStrategistState(conn, projectId))).toBeNull();
+  });
+});
+
+describe("Strategist replan requests", () => {
+  function request(
+    overrides: Partial<{
+      reason: string | null;
+      requestedBy: string;
+      at: string;
+    }> = {},
+  ) {
+    return db.withConn((conn) =>
+      requestStrategistReplan(conn, projectId, {
+        reason: "new direction",
+        requestedBy: "operator",
+        at: "2026-01-01T00:05:00Z",
+        ...overrides,
+      }),
+    );
+  }
+
+  test("stores a request without moving the success watermarks", () => {
+    success();
+    expect(request()).toMatchObject({
+      project_id: projectId,
+      last_success_at: "2026-01-01T00:00:10Z",
+      last_attempt_at: "2026-01-01T00:00:10Z",
+      replan_requested_at: "2026-01-01T00:05:00Z",
+      replan_requested_by: "operator",
+      replan_reason: "new direction",
+    });
+  });
+
+  test("creates a row for a project that has never reasoned", () => {
+    expect(request({ reason: null })).toMatchObject({
+      last_success_at: null,
+      last_fact_count: 0,
+      last_hint_count: 0,
+      last_open_intent_count: 0,
+      replan_requested_at: "2026-01-01T00:05:00Z",
+      replan_requested_by: "operator",
+      replan_reason: null,
+    });
+  });
+
+  test("clears the request after either a success or a failure", () => {
+    request();
+    success("2026-01-01T00:06:00Z");
+    expect(
+      db.withConn((conn) => getStrategistState(conn, projectId)),
+    ).toMatchObject({
+      replan_requested_at: null,
+      replan_requested_by: null,
+      replan_reason: null,
+    });
+
+    request({ at: "2026-01-01T00:07:00Z" });
+    db.withConn((conn) =>
+      recordStrategistFailure(conn, {
+        projectId,
+        runId: "run-reason-2",
+        trigger: "manual_replan",
+        at: "2026-01-01T00:08:00Z",
+      }),
+    );
+    expect(
+      db.withConn((conn) => getStrategistState(conn, projectId)),
+    ).toMatchObject({
+      last_failure_at: "2026-01-01T00:08:00Z",
+      replan_requested_at: null,
+      replan_requested_by: null,
+      replan_reason: null,
+    });
+  });
+
+  test("rejects a request while a reason task holds the lease", () => {
+    db.withConn((conn) => claimReason(conn, projectId, "observer", "manual"));
+    expect(() => request()).toThrow("A reason task is already running");
+    expect(db.withConn((conn) => getStrategistState(conn, projectId))).toBeNull();
+  });
+
+  test("rejects a request for a non-active project", () => {
+    db.withConn((conn) =>
+      conn.query("UPDATE projects SET status = 'completed' WHERE id = ?").run(projectId),
+    );
+    expect(() => request()).toThrow("Project is completed");
   });
 });
 

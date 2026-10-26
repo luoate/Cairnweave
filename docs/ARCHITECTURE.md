@@ -1,4 +1,4 @@
-# 架构（M14a 更新）
+# 架构（M14b 更新）
 
 本文固定合并后的角色边界、数据所有权和失败语义。实现以本文为准；需要改动时先改本文并
 记录原因。
@@ -73,7 +73,11 @@ token 上限耗尽后停止派发；同时修复 `startup.json` 把认证存储�
 项目可选择 `evidence`（默认）/ `challenge` / `off`；scheduler 在关项目前检查证据或
 外部挑战 API 的 `flag_count` / `flag_got_count`，失败只推迟完成并写
 `verification_checks`。flag 明文与 token 不进入配置、任务文件、日志或数据库。详见
-`docs/VERIFICATION.md`。
+`docs/VERIFICATION.md`。M14b 已落地：reason 输出增加 `hints`、意图 `dedupe_key` 与
+runtime prompt 扩展（priority/budget/dedupe/Hint 语义）；`POST /projects/{id}/replan`
+把人工重规划持久化到 `strategist_state` 并作为 urgent 触发，`strategist` 配置新增
+`resource_pressure_ratio` 以在用量接近上限时触发一次非紧急 reason。默认 prompt 模板、
+图模型与 YAML 导出不变。详见 `docs/STRATEGIST.md`。
 
 ## 1. 范围
 
@@ -164,9 +168,10 @@ scheduler 与 HTTP API 共用 `packages/graph/src/commands.ts` 的命令，不�
      `creator=dispatcher.bootstrap` 的意图）；否则也走慢层求值器（没有成功水位时为
      `initial`，且必须没有未认领的 open intent、没有生产任务在跑）；
    - 没有 reason 在跑时，慢层求值器按持久化水位和事件决定 trigger；顺序为失败退避、
-     `initial`、`open_intents:N->0`、零产出连续 run、陈旧意图、`facts:x->y` /
-     `hints:x->y`、fallback。非紧急触发还受冷却与滚动一小时配额约束；任何生产任务
-     在跑时统一抑制（`tasks_running`）；
+     `manual_replan`（人工请求，urgent）、`initial`、`open_intents:N->0`、零产出连续
+     run、陈旧意图、`facts:x->y` / `hints:x->y`、`resource_pressure:*`、fallback。
+     人工与 initial/open-empty 触发跳过冷却与滚动一小时配额；其余触发受两者约束。
+     任何生产任务在跑时统一抑制（`tasks_running`），人工请求也不能越过；
    - 没有 reason 触发时，取最新的未认领、非 bootstrap 意图 → explore。
 3. 认领前先调用 `runtime.ensureProject(projectId, hostWorkspace)`：本地模式创建工作区，
    容器模式在没有可用容器时创建它。返回 false（例如 Docker 不可用）时**跳过该项目的
@@ -219,8 +224,9 @@ scheduler 与 HTTP API 共用 `packages/graph/src/commands.ts` 的命令，不�
    `evidence_refs` 只要有任一条非法，本任务按失败处理、不写图（explore/bootstrap 仍可走
    conclude 回退）。校验通过后：
    - reason：`complete` → 先调用完成 oracle（M14a；见 §4.2），通过才关项目，失败则释放
-     reason 租约并保持项目 active；intents → 以 `creator=cairn-worker` 创建意图；
-     noop → 成功。payload 校验在控制面按实时图状态做；
+     reason 租约并保持项目 active；intents → 先写 `hints`（按去空白内容去重），再以
+     `creator=cairn-worker` 创建意图（带 `dedupe_key` 时跳过已打开的同一方向）；
+     hints-only → 只写 Hint 并成功；noop → 成功。payload 校验在控制面按实时图状态做；
    - explore：`accepted:false` → 释放意图；否则 conclude 意图产生 Fact，并写
      `fact_meta`（`run_id`、证据引用与状态）；
    - bootstrap：conclude 意图产生 Fact（同样写 `fact_meta`），再调用 oracle；通过才用
@@ -452,10 +458,12 @@ stderr 归档到 `sessionDir/{stdout,stderr}.log`。需要 UI 实时进度时再
   未完整送达，不参与哈希链，也不影响 `audit_events` 的补写。
 - `strategist_state(project_id, last_success_at, last_attempt_at, last_failure_at,
   last_trigger, last_run_id, last_fact_count, last_hint_count, last_open_intent_count,
-  updated_at)`（M12a），主键 `project_id`，外键指向项目并级联删除。reason 成功时写入
-  时间、trigger/run 与当时的 Fact/Hint/open-intent 水位，并清除 failure；失败只写
-  attempt/failure/trigger/run，保留旧水位；`cancelled`/`inactive` 不写。表只服务调度，
-  不进入 YAML、HTTP 图响应或 worker 契约；没有新增路由。
+  replan_requested_at, replan_requested_by, replan_reason, updated_at)`（M12a，M14b 补
+  三列），主键 `project_id`，外键指向项目并级联删除。reason 成功时写入时间、trigger/run
+  与当时的 Fact/Hint/open-intent 水位，并清除 failure 与 replan 标记；失败只写
+  attempt/failure/trigger/run，保留旧水位，同样清除 replan 标记；`cancelled`/`inactive`
+  不写。replan 三列由 `POST /replan` 写入，旧库自动补列。表只服务调度，不进入 YAML、
+  HTTP 图响应或 worker 契约。
 - `intent_meta(project_id, intent_id, dedupe_key, source, proposal_id, origin_run_id,
   priority, budget, created_at)`，主键 `(project_id, intent_id)`，外键指向项目并级联
   删除。M11 用它存提案去重键；M12b 起 reason 创建的意图写 `source='strategist'`、
@@ -480,6 +488,11 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
   `priority DESC, created_at DESC, id DESC` 排序并附带 `priority` / `budget` /
   `source`；`reason_runs` 只含 `kind='reason'`，最新在前。`limit` 默认 20、范围
   1–100，非法值 400；未知项目 404；只有 GET。不修改任何状态。
+- `POST /projects/{id}/replan`（M14b）→ `{reason?, requested_by?}`，body 可省略；
+  `reason` ≤500 字、`requested_by` ≤128 字（默认 `human`）。把请求写入
+  `strategist_state.replan_*`，scheduler 在下一次派发时按 urgent `manual_replan` 处理，
+  reason 成功或失败后清除。返回更新后的 state。未知项目 404；非 active 项目 403；
+  reason 租约正在被占用 409；body 形状非法 400、非法 JSON 422。
 - `GET /projects/{id}/cost`（M13b，只读）→
   `{project_id, totals, by_kind, attribution, facts, intents, runs, edges}`。总量、
   分类与每个 run 的用量来自 `runs`；Fact/意图成本由 `packages/graph/src/cost.ts` 分摊：
@@ -531,6 +544,7 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
 - `Strategist`（慢层）读取 `GET /projects/{id}/strategist?limit=20`，显示单项目
   token/成本/并发用量与上限、耗尽徽标、最近成功/尝试/失败水位与触发串、按优先级排序的
   未结束意图（含意图预算）以及最近 20 次 reason run。纯 HTTP 模式下上限显示为未配置。
+  面板内的“请求重规划”是唯一显式写操作，调用 `POST /replan` 后重新读取；其他数据仍只读。
 - `Audit` 读取汇总与选举 task 的链详情，并同时读取 `stream-lost`。汇总按 `last_at`
   最新在前；链详情显示 `chain_ok/broken_at/root_hash`、逐条 allow/block 与原始事件；
   stream loss 以独立卡片显示 `reason/delivered/pending`。从 Runs 跳到尚无账本事件的
@@ -729,6 +743,8 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
   `zero_output_threshold`、`stale_intent_seconds`、`fallback_interval_seconds`，全部为
   非负整数。默认依次为 `1/1/30/120/12/3/0/0`；`0` 关闭对应维度（`min_new_facts` 与
   `min_new_hints` 同时为 `0` 时只剩 initial/open-empty/零产出/陈旧/fallback 等事件）。
+  M14b 增加 `resource_pressure_ratio`（`[0,1]`，默认 `0` 关闭）：已结束 run 的 token
+  或成本用量达到该比例时触发一次非紧急 `resource_pressure:*`，同一压力区间不重复。
   该段只影响 reason 何时派发，不改变图、任务契约或 worker 环境。
 - `budget` 是新增的可选段（M12b）：`max_project_tokens` 与 `max_project_tasks` 为非负
   整数，`max_project_cost_usd` 为非负有限数，默认全为 `0`。token/成本 `0` 关闭门禁；
@@ -942,4 +958,7 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
     在途预留。是否把子代理用量汇总进项目账本，待定。M13b 的 `/cost` 只能做**平均分摊**：
     一个 reason run 创建多个意图、或一个 explore run 产出多个 Fact 时，无法知道真实归属；
     M13b 之前的意图没有 `origin_run_id`，其编排成本永久未归因。分摊保证总量守恒，但不是
-    逐 token 计量，也不能作为对外计费凭证。
+    逐 token 计量，也不能作为对外计费凭证。M14b 补上了 reason 的 Hint/去重输出、人工
+    重规划与资源压力触发；仍未解决：Prompt 扩展尚未在真实模型上做 A/B，Hint 质量与
+    dedupe key 的稳定性没有基线；`resource_pressure_ratio` 默认关闭，触发阈值需要按长
+    任务样本调整；人工重规划只有单项目级标记，没有排队、审批或原因审计。

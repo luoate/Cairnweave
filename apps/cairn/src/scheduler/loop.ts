@@ -24,10 +24,13 @@ import {
   completeProject,
   concludeIntent,
   countReasonRunsSince,
+  createHint,
   createIntent,
   deletePendingConclude,
   exportProjectSliceYaml,
   exportProjectYaml,
+  findHintByContent,
+  findOpenIntentByDedupeKey,
   finishRun,
   getIntentMeta,
   getPendingConclude,
@@ -771,6 +774,22 @@ export class Scheduler {
           intent === undefined
             ? null
             : (getIntentMeta(conn, projectId, intent.id)?.budget ?? null);
+        // Reason sees open-intent dedupe keys and the project's finished-run spend so it
+        // can plan under the same budget the dispatch gate enforces.
+        const openIntentMeta =
+          kind === "reason" ? listProjectIntentMeta(conn, projectId) : undefined;
+        const projectBudget =
+          kind === "reason"
+            ? (() => {
+                const usage = getProjectUsage(conn, projectId);
+                return {
+                  usedTokens: usage.tokens,
+                  usedCostUsd: usage.cost_usd,
+                  maxTokens: this.config.budget.maxProjectTokens,
+                  maxCostUsd: this.config.budget.maxProjectCostUsd,
+                };
+              })()
+            : undefined;
         const prepared = prepareTask({
           config: this.config,
           project,
@@ -784,6 +803,8 @@ export class Scheduler {
                 resumeFromHostSessionDir: pending.hostSessionDir,
               }),
           ...(intentBudget === null ? {} : { budget: intentBudget }),
+          ...(openIntentMeta === undefined ? {} : { intentMeta: openIntentMeta }),
+          ...(projectBudget === undefined ? {} : { projectBudget }),
           scope,
           workspaceRoot: this.workspaceRoot,
           pathMapper: (hostPath) => this.runtime.mapPath(hostPath),
@@ -1149,6 +1170,10 @@ export class Scheduler {
         return "rejected";
       case "noop":
         return "success";
+      case "hints": {
+        this.applyReasonHints(conn, running.projectId, validated.data);
+        return "success";
+      }
       case "complete": {
         const from = requireFactIds(validated.data["from"]);
         const description = requireText(validated.data["description"]);
@@ -1169,10 +1194,24 @@ export class Scheduler {
         return "success";
       }
       case "intents": {
+        const hintsCreated = this.applyReasonHints(
+          conn,
+          running.projectId,
+          validated.data.hints,
+        );
         let created = 0;
-        for (const entry of validated.data) {
+        let deduped = 0;
+        for (const entry of validated.data.intents) {
           const from = requireFactIds(entry["from"]);
           const description = requireText(entry["description"]);
+          const dedupeKey = dedupeKeyOf(entry["dedupe_key"]);
+          if (
+            dedupeKey !== null &&
+            findOpenIntentByDedupeKey(conn, running.projectId, dedupeKey) !== null
+          ) {
+            deduped += 1;
+            continue;
+          }
           try {
             const intent = createIntent(conn, running.projectId, {
               from,
@@ -1186,6 +1225,7 @@ export class Scheduler {
               intentId: intent.id,
               source: "strategist",
               originRunId: running.runId,
+              dedupeKey,
               priority: intentPriorityOf(entry["priority"]),
               budget: budget === null ? null : JSON.stringify(budget),
             });
@@ -1195,9 +1235,27 @@ export class Scheduler {
             throw error;
           }
         }
-        return created > 0 ? "success" : "failed";
+        return created > 0 || hintsCreated > 0 || deduped > 0
+          ? "success"
+          : "failed";
       }
     }
+  }
+
+  /** Adds strategy hints, skipping exact duplicates already present in the project. */
+  private applyReasonHints(
+    conn: Database,
+    projectId: string,
+    hints: readonly Record<string, unknown>[],
+  ): number {
+    let created = 0;
+    for (const hint of hints) {
+      const content = requireText(hint["content"]);
+      if (findHintByContent(conn, projectId, content) !== null) continue;
+      createHint(conn, projectId, { content, creator: WORKER_NAME });
+      created += 1;
+    }
+    return created;
   }
 
   private applyExplore(
@@ -1750,6 +1808,12 @@ export class Scheduler {
       state: ReturnType<typeof getStrategistState>;
       recentRuns: ReturnType<typeof listRecentStrategistRuns>;
       reasonRunsLastHour: number;
+      budget?: {
+        usedTokens: number;
+        usedCostUsd: number;
+        maxTokens: number;
+        maxCostUsd: number;
+      };
     };
     try {
       snapshot = this.db.withConn((conn) => {
@@ -1758,6 +1822,11 @@ export class Scheduler {
           policy.zeroOutputThreshold > 0
             ? Math.max(policy.zeroOutputThreshold, 10)
             : 0;
+        const pressureEnabled =
+          policy.resourcePressureRatio > 0 &&
+          (this.config.budget.maxProjectTokens > 0 ||
+            this.config.budget.maxProjectCostUsd > 0);
+        const usage = pressureEnabled ? getProjectUsage(conn, projectId) : null;
         return {
           state: getStrategistState(conn, projectId),
           recentRuns:
@@ -1766,6 +1835,16 @@ export class Scheduler {
             policy.maxRunsPerHour > 0
               ? countReasonRunsSince(conn, projectId, since)
               : 0,
+          ...(usage === null
+            ? {}
+            : {
+                budget: {
+                  usedTokens: usage.tokens,
+                  usedCostUsd: usage.cost_usd,
+                  maxTokens: this.config.budget.maxProjectTokens,
+                  maxCostUsd: this.config.budget.maxProjectCostUsd,
+                },
+              }),
         };
       });
     } catch (error) {
@@ -1782,6 +1861,7 @@ export class Scheduler {
       reasonRunsLastHour: snapshot.reasonRunsLastHour,
       runningProductiveTasks: runningTasks.length,
       runningIntentIds,
+      ...(snapshot.budget === undefined ? {} : { budget: snapshot.budget }),
       now,
       policy,
     });
@@ -2034,6 +2114,12 @@ function intentPriorityOf(value: unknown): number {
     value <= 100
     ? value
     : DEFAULT_INTENT_PRIORITY;
+}
+
+function dedupeKeyOf(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const key = value.trim();
+  return key === "" ? null : key;
 }
 
 function intentBudgetOf(value: unknown): ReasonIntentBudget | null {

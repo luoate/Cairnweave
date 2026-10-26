@@ -45,8 +45,17 @@ export interface EvaluateStrategistInput {
   /** Running bootstrap/explore/conclude tasks for this project. */
   runningProductiveTasks: number;
   runningIntentIds: ReadonlySet<string>;
+  /** Finished-run usage plus configured token/cost limits, when available. */
+  budget?: StrategistBudgetUsage;
   now: Date;
   policy: StrategistConfig;
+}
+
+export interface StrategistBudgetUsage {
+  usedTokens: number;
+  usedCostUsd: number;
+  maxTokens: number;
+  maxCostUsd: number;
 }
 
 export function evaluateStrategistTrigger(
@@ -97,6 +106,14 @@ export function evaluateStrategistTrigger(
     }
   }
 
+  // An operator request outranks graph-delta and idle triggers. It still waits for
+  // running productive tasks and for the failure backoff above.
+  const replanRequested =
+    state?.replan_requested_at !== null && state?.replan_requested_at !== undefined;
+  const manualTrigger = replanRequested
+    ? evaluation("manual_replan", true)
+    : null;
+
   // The first reason turn seeds directions. If an unclaimed direction is already
   // waiting, let the fast layer explore it first; reason runs once the graph settles.
   const unseenInitial = state === null || state.last_success_at === null;
@@ -110,7 +127,7 @@ export function evaluateStrategistTrigger(
         intent.creator === "dispatcher.bootstrap"
       ),
   );
-  if (unseenInitial && fastWorkPending) {
+  if (manualTrigger === null && unseenInitial && fastWorkPending) {
     return evaluation(null, false);
   }
   const initial = unseenInitial;
@@ -132,7 +149,7 @@ export function evaluateStrategistTrigger(
       )
     : null;
 
-  let candidate = initialTrigger ?? openEmptyTrigger;
+  let candidate = manualTrigger ?? initialTrigger ?? openEmptyTrigger;
   if (candidate === null) {
     if (
       policy.zeroOutputThreshold > 0 &&
@@ -158,10 +175,19 @@ export function evaluateStrategistTrigger(
           .join(","),
         false,
       );
-    } else if (policy.fallbackIntervalSeconds > 0 && lastSuccess !== null) {
-      const elapsed = elapsedSeconds(now, lastSuccess);
-      if (elapsed !== null && elapsed >= policy.fallbackIntervalSeconds) {
-        candidate = evaluation(`fallback:${Math.floor(elapsed)}s`, false);
+    } else {
+      const pressure = resourcePressureTrigger(
+        input.budget,
+        policy.resourcePressureRatio,
+        state?.last_trigger ?? null,
+      );
+      if (pressure !== null) {
+        candidate = evaluation(pressure, false);
+      } else if (policy.fallbackIntervalSeconds > 0 && lastSuccess !== null) {
+        const elapsed = elapsedSeconds(now, lastSuccess);
+        if (elapsed !== null && elapsed >= policy.fallbackIntervalSeconds) {
+          candidate = evaluation(`fallback:${Math.floor(elapsed)}s`, false);
+        }
       }
     }
   }
@@ -197,6 +223,35 @@ export function evaluateStrategistTrigger(
 
 function delta(current: number, previous: number): number {
   return Math.max(0, current - previous);
+}
+
+/**
+ * Fires once per pressure episode. After a pressure-triggered reason turn the watermark's
+ * `last_trigger` starts with `resource_pressure`, so an unchanged over-threshold project
+ * is not re-reasoned on every tick. A different trigger (for example new facts) clears the
+ * suppression naturally by replacing the watermark.
+ */
+function resourcePressureTrigger(
+  budget: StrategistBudgetUsage | undefined,
+  threshold: number,
+  lastTrigger: string | null,
+): string | null {
+  if (budget === undefined || threshold <= 0) return null;
+  if (lastTrigger !== null && lastTrigger.startsWith("resource_pressure")) return null;
+  const hits: string[] = [];
+  if (budget.maxTokens > 0) {
+    const ratio = budget.usedTokens / budget.maxTokens;
+    if (ratio >= threshold) hits.push(`tokens:${percent(ratio)}`);
+  }
+  if (budget.maxCostUsd > 0) {
+    const ratio = budget.usedCostUsd / budget.maxCostUsd;
+    if (ratio >= threshold) hits.push(`cost_usd:${percent(ratio)}`);
+  }
+  return hits.length === 0 ? null : `resource_pressure:${hits.join(",")}`;
+}
+
+function percent(ratio: number): string {
+  return `${Math.min(100, Math.floor(ratio * 100))}%`;
 }
 
 /** Newest-first runs: stop at the first fact-producing run or the last success watermark. */

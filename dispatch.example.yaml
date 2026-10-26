@@ -167,6 +167,8 @@ retention:
 #   zero_output_threshold: 3      # consecutive fact-less explore/conclude runs
 #   stale_intent_seconds: 0       # all open intents stale for this long; 0 disables
 #   fallback_interval_seconds: 0  # idle fallback since the last success; 0 disables
+#   resource_pressure_ratio: 0.0  # reason when finished token/cost usage reaches this
+#                                 # fraction of a budget limit (0..1); 0 disables
 
 # Optional per-project budget policy (M12b). This is a default for every project, not a
 # shared global pool. Token and cost limits are checked against finished runs only: tasks
