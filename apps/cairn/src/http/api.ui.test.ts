@@ -102,6 +102,7 @@ describe("static operations UI", () => {
     expect(html).toContain("因果边");
     expect(html).toContain("按 Worker");
     expect(html).toContain("按模型");
+    expect(html).toContain("按 Profile");
     expect(html).toContain("成功率");
     expect(html).toContain("全部归因");
     expect(html).toContain("仅演练");

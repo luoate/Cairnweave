@@ -9,6 +9,9 @@
 
 export const TASK_PROTOCOL_VERSION = 1 as const;
 
+export const MAX_WORKER_PROFILE_LENGTH = 64;
+export const MAX_WORKER_MODEL_PREF_LENGTH = 128;
+
 export type TaskKind = "bootstrap" | "reason" | "explore" | "conclude";
 
 const TASK_KINDS: readonly TaskKind[] = ["bootstrap", "reason", "explore", "conclude"];
@@ -61,6 +64,16 @@ export interface WorkerTask {
    * separately).
    */
   readonly maxToolCalls?: number;
+  /**
+   * Staffed dispatch profile selected by the scheduler (`worker_profiles[].id`). Present
+   * only when stats-driven selection is enabled; recorded on the run for per-profile stats.
+   */
+  readonly workerProfile?: string;
+  /**
+   * model-prefs.json entry the solver should use for this task. Overrides the prompt
+   * frontmatter model; present only with a selected worker profile.
+   */
+  readonly model?: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -190,6 +203,30 @@ export function taskErrors(value: unknown): string[] {
   const maxToolCalls = value["maxToolCalls"];
   if (maxToolCalls !== undefined && !isPositiveInteger(maxToolCalls)) {
     errors.push("maxToolCalls must be a positive integer when present");
+  }
+
+  const workerProfile = value["workerProfile"];
+  if (
+    workerProfile !== undefined &&
+    (!isNonEmptyString(workerProfile) ||
+      workerProfile.length > MAX_WORKER_PROFILE_LENGTH ||
+      /[\u0000-\u001f\u007f]/.test(workerProfile))
+  ) {
+    errors.push(
+      `workerProfile must be a non-empty string of at most ${MAX_WORKER_PROFILE_LENGTH} characters without control characters`,
+    );
+  }
+
+  const model = value["model"];
+  if (
+    model !== undefined &&
+    (!isNonEmptyString(model) ||
+      model.length > MAX_WORKER_MODEL_PREF_LENGTH ||
+      /[\u0000-\u001f\u007f]/.test(model))
+  ) {
+    errors.push(
+      `model must be a non-empty string of at most ${MAX_WORKER_MODEL_PREF_LENGTH} characters without control characters`,
+    );
   }
 
   return errors;

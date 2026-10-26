@@ -111,6 +111,8 @@ export interface Run {
   kind: string;
   intent_id: string | null;
   worker: string;
+  /** Dispatch profile id (M15a); null when selection is disabled. */
+  worker_profile: string | null;
   /** Solver-session `provider/model-id`; null when the worker could not report one. */
   model: string | null;
   trigger: string | null;
@@ -279,11 +281,17 @@ export interface ModelRunStats extends RunStatsGroup {
   model: string | null;
 }
 
+export interface ProfileRunStats extends RunStatsGroup {
+  worker_profile: string;
+}
+
 export interface ProjectRunStatsReport {
   project_id: string;
   totals: RunStatsGroup;
   by_worker: WorkerRunStats[];
   by_model: ModelRunStats[];
+  /** Runs dispatched in prompt mode (no profile) are excluded. */
+  by_profile: ProfileRunStats[];
 }
 
 /**

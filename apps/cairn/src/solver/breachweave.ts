@@ -97,6 +97,7 @@ export class BreachWeaveSolver implements Solver {
           promptName: PROMPT_NAME,
           task: solverText(task),
           ...(resumeSessionFile === undefined ? {} : { resumeSessionFile }),
+          ...(task.model === undefined ? {} : { model: task.model }),
         });
         session = created.session;
         observer = created.observer;

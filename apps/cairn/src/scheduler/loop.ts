@@ -41,6 +41,7 @@ import {
   hasPendingConclude,
   heartbeatIntent,
   isPendingConcludeSession,
+  buildProfileRunStats,
   listAllPendingConcludes,
   listProjectIntentMeta,
   listProjects,
@@ -85,6 +86,7 @@ import { collectEvidence, type EvidenceCollection } from "./evidence";
 import { ingestAuditStreamLoss, ingestTaskAudit } from "./audit";
 import { ingestTaskProposals, reviewPendingProposals } from "./proposals";
 import { scanSessionDirs, selectSessionsForRemoval } from "./retention";
+import { selectWorkerProfile } from "./selection";
 import { evaluateStrategistTrigger } from "./strategist";
 import { readTaskUsage } from "./usage";
 import {
@@ -146,6 +148,8 @@ interface PendingConclude {
   intentId: string;
   of: ConcludeOf;
   hostSessionDir: string;
+  /** Profile of the failed task; the conclude turn reuses it when it still exists. */
+  workerProfile?: string;
 }
 
 interface RunningTask {
@@ -159,6 +163,8 @@ interface RunningTask {
   concludeOf?: ConcludeOf;
   /** Conclude only: host-side session directory of the failed task being resumed. */
   resumeSessionDir?: string;
+  /** Dispatch profile selected for this attempt; absent in prompt mode. */
+  workerProfile?: string;
   openIntentsEmpty: boolean;
   /** Reason only: the trigger that produced this task, persisted on success/failure. */
   trigger?: string;
@@ -790,12 +796,19 @@ export class Scheduler {
                 };
               })()
             : undefined;
+        const profile = selectWorkerProfile(
+          this.config.workerProfiles,
+          this.config.workerSelection,
+          buildProfileRunStats(conn),
+          pending?.workerProfile,
+        );
         const prepared = prepareTask({
           config: this.config,
           project,
           exportYaml,
           kind,
           ...(intent === undefined ? {} : { intent }),
+          ...(profile === null ? {} : { workerProfile: profile }),
           ...(pending === undefined
             ? {}
             : {
@@ -819,6 +832,7 @@ export class Scheduler {
           kind,
           intentId: intent?.id ?? null,
           worker: WORKER_NAME,
+          workerProfile: profile?.id ?? null,
           trigger: trigger ?? null,
           startedAt: utcnow(),
           session: workspaceReference(prepared.hostWorkspace, prepared.hostSessionDir),
@@ -854,7 +868,11 @@ export class Scheduler {
       this.releaseBestEffort({ projectId, kind, intentId: intent?.id });
       return false;
     }
-    this.log(`dispatched ${kind} project=${projectId}${intent ? ` intent=${intent.id}` : ""}`);
+    const profile = started.prepared.task.workerProfile;
+    this.log(
+      `dispatched ${kind} project=${projectId}${intent ? ` intent=${intent.id}` : ""}` +
+        `${profile === undefined ? "" : ` profile=${profile}`}`,
+    );
     return true;
   }
 
@@ -920,6 +938,9 @@ export class Scheduler {
       ...(intentId === undefined ? {} : { intentId }),
       ...(concludeOf === undefined ? {} : { concludeOf }),
       ...(resumeSessionDir === undefined ? {} : { resumeSessionDir }),
+      ...(task.workerProfile === undefined
+        ? {}
+        : { workerProfile: task.workerProfile }),
       openIntentsEmpty: prepared.openIntentsEmpty,
       ...(trigger === undefined ? {} : { trigger }),
       sessionDir: prepared.hostSessionDir,
@@ -1727,7 +1748,15 @@ export class Scheduler {
     try {
       alreadyQueued = this.db.withConn((conn) => {
         if (hasPendingConclude(conn, projectId, intentId)) return true;
-        recordPendingConclude(conn, { projectId, intentId, phase: kind, session });
+        recordPendingConclude(conn, {
+          projectId,
+          intentId,
+          phase: kind,
+          session,
+          ...(running.workerProfile === undefined
+            ? {}
+            : { workerProfile: running.workerProfile }),
+        });
         return false;
       });
     } catch (error) {
@@ -1757,6 +1786,7 @@ export class Scheduler {
       intentId: row.intent_id,
       of: row.phase,
       hostSessionDir: this.pendingHostSession(row),
+      ...(row.worker_profile === null ? {} : { workerProfile: row.worker_profile }),
     };
   }
 

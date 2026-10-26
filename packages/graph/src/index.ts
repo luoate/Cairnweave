@@ -61,6 +61,7 @@ export {
   type CausalEdge,
   type CausalEdgeKind,
   type ModelRunStats,
+  type ProfileRunStats,
   type ProjectRunStatsReport,
   type RunStatsGroup,
   type WorkerRunStats,
@@ -149,10 +150,11 @@ export {
   type RecordFactMetaInput,
   type RunUsage,
   type StartRunInput,
+  listAllRuns,
 } from "./runs";
 
 export { buildProjectCostReport } from "./cost";
-export { buildProjectRunStats } from "./stats";
+export { buildProfileRunStats, buildProjectRunStats } from "./stats";
 
 export {
   listFactEvidence,

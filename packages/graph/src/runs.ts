@@ -16,6 +16,7 @@ export interface StartRunInput {
   kind: string;
   intentId?: string | null;
   worker: string;
+  workerProfile?: string | null;
   trigger?: string | null;
   startedAt: string;
   session?: string | null;
@@ -25,8 +26,10 @@ export function startRun(conn: Database, input: StartRunInput): void {
   runSql(
     conn,
     `
-    INSERT INTO runs (id, project_id, task_id, kind, intent_id, worker, trigger, started_at, session)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO runs
+        (id, project_id, task_id, kind, intent_id, worker, worker_profile, trigger,
+         started_at, session)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     input.id,
     input.projectId,
@@ -34,6 +37,7 @@ export function startRun(conn: Database, input: StartRunInput): void {
     input.kind,
     input.intentId ?? null,
     input.worker,
+    input.workerProfile ?? null,
     input.trigger ?? null,
     input.startedAt,
     input.session ?? null,
@@ -121,6 +125,11 @@ export function listProjectRuns(conn: Database, projectId: string): Run[] {
   return rows.map(runFromRow);
 }
 
+/** Cross-project history used by stats-driven worker selection. */
+export function listAllRuns(conn: Database): Run[] {
+  return all<RunRow>(conn, "SELECT * FROM runs ORDER BY started_at, id").map(runFromRow);
+}
+
 export interface RecordFactMetaInput {
   projectId: string;
   factId: string;
@@ -190,6 +199,7 @@ interface RunRow {
   kind: string;
   intent_id: string | null;
   worker: string;
+  worker_profile: string | null;
   model: string | null;
   trigger: string | null;
   outcome: string | null;
@@ -225,6 +235,7 @@ function runFromRow(row: RunRow): Run {
     kind: row.kind,
     intent_id: row.intent_id,
     worker: row.worker,
+    worker_profile: row.worker_profile,
     model: row.model,
     trigger: row.trigger,
     outcome: row.outcome === null ? null : (row.outcome as RunOutcome),

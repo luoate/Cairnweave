@@ -103,10 +103,18 @@ export interface PrepareTaskInput {
   intentMeta?: readonly IntentMeta[];
   /** Reason only: finished-run usage and the configured per-project limits. */
   projectBudget?: ProjectBudgetSnapshot;
+  /** Profile selected for this dispatch; absent in prompt-mode deployments. */
+  workerProfile?: PreparedWorkerProfile;
   /** Test hook; otherwise resolved from config.local/container.workspace_root or cwd. */
   workspaceRoot?: string;
   /** Host -> worker path mapper. Identity in local mode. */
   pathMapper?: (hostPath: string) => string;
+}
+
+export interface PreparedWorkerProfile {
+  id: string;
+  /** model-prefs.json entry name. */
+  model: string;
 }
 
 export interface ProjectBudgetSnapshot {
@@ -241,6 +249,12 @@ export function prepareTask(input: PrepareTaskInput): PreparedTask {
     ...(input.budget?.max_tool_calls === undefined
       ? {}
       : { maxToolCalls: input.budget.max_tool_calls }),
+    ...(input.workerProfile === undefined
+      ? {}
+      : {
+          workerProfile: input.workerProfile.id,
+          model: input.workerProfile.model,
+        }),
   };
 
   const observer = prepareObserver(config, project, kind, task, scope, {

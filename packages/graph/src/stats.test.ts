@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import {
   HttpError,
+  buildProfileRunStats,
   buildProjectRunStats,
   configureDatabase,
   createProject,
@@ -41,6 +42,7 @@ afterEach(() => {
 interface RunInput {
   id: string;
   worker: string;
+  workerProfile?: string | null;
   model: string | null;
   startedAt: string;
   outcome: RunOutcome | null;
@@ -50,14 +52,15 @@ interface RunInput {
   evidenceCount?: number;
 }
 
-function record(input: RunInput): void {
+function record(input: RunInput, project = projectId): void {
   db.withConn((conn) => {
     startRun(conn, {
       id: input.id,
-      projectId,
+      projectId: project,
       taskId: `task-${input.id}`,
       kind: "explore",
       worker: input.worker,
+      workerProfile: input.workerProfile ?? null,
       startedAt: input.startedAt,
     });
     if (input.outcome === null) return;
@@ -96,6 +99,7 @@ describe("project run statistics", () => {
       },
       by_worker: [],
       by_model: [],
+      by_profile: [],
     });
   });
 
@@ -103,6 +107,7 @@ describe("project run statistics", () => {
     record({
       id: "run_001",
       worker: "cairn-worker",
+      workerProfile: "alpha",
       model: "gateway/deepseek-flash",
       startedAt: "2026-01-02T03:00:00Z",
       outcome: "success",
@@ -114,6 +119,7 @@ describe("project run statistics", () => {
     record({
       id: "run_002",
       worker: "cairn-worker",
+      workerProfile: "alpha",
       model: "gateway/deepseek-flash",
       startedAt: "2026-01-02T03:01:00Z",
       outcome: "failed",
@@ -131,6 +137,7 @@ describe("project run statistics", () => {
     record({
       id: "run_004",
       worker: "other-worker",
+      workerProfile: "beta",
       model: "gateway/other",
       startedAt: "2026-01-02T03:03:00Z",
       outcome: "rejected",
@@ -198,6 +205,68 @@ describe("project run statistics", () => {
       success_rate: null,
       avg_duration_ms: null,
     });
+
+    // Untagged runs are excluded; profiles are sorted by id.
+    expect(report.by_profile.map((row) => row.worker_profile)).toEqual([
+      "alpha",
+      "beta",
+    ]);
+    expect(report.by_profile[0]).toMatchObject({
+      runs: 2,
+      finished: 2,
+      succeeded: 1,
+      failed: 1,
+      success_rate: 0.5,
+      tokens: 140,
+      avg_duration_ms: 4500,
+    });
+    expect(report.by_profile[1]).toMatchObject({
+      runs: 1,
+      finished: 1,
+      rejected: 1,
+      success_rate: 0,
+      tokens: 5,
+    });
+  });
+
+  test("aggregates profile history across projects for selection", () => {
+    const otherProject = db.withConn(
+      (conn) =>
+        createProject(conn, {
+          title: "other",
+          origin: "origin",
+          goal: "goal",
+          hints: null,
+          bootstrap_enabled: false,
+          scope: { targets: ["127.0.0.1:8080"] },
+        }).project.id,
+    );
+    record({
+      id: "run_001",
+      worker: "cairn-worker",
+      workerProfile: "alpha",
+      model: null,
+      startedAt: "2026-01-02T03:00:00Z",
+      outcome: "failed",
+      tokens: 10,
+    });
+    record(
+      {
+        id: "run_002",
+        worker: "cairn-worker",
+        workerProfile: "beta",
+        model: null,
+        startedAt: "2026-01-02T03:01:00Z",
+        outcome: "success",
+        tokens: 20,
+      },
+      otherProject,
+    );
+
+    const rows = db.withConn((conn) => buildProfileRunStats(conn));
+    expect(rows.map((row) => row.worker_profile)).toEqual(["alpha", "beta"]);
+    expect(rows[0]).toMatchObject({ finished: 1, failed: 1, success_rate: 0 });
+    expect(rows[1]).toMatchObject({ finished: 1, succeeded: 1, success_rate: 1 });
   });
 
   test("404s for an unknown project", () => {

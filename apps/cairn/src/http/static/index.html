@@ -903,6 +903,10 @@
                   <span class="uppercase tracking-wide shrink-0" x-text="runKindLabel(run.kind)"></span>
                   <span class="shrink-0">·</span>
                   <span class="truncate" x-text="run.worker"></span>
+                  <template x-if="run.worker_profile">
+                    <span class="shrink-0">·</span>
+                  </template>
+                  <span x-show="run.worker_profile" class="truncate text-brand-600" x-text="run.worker_profile"></span>
                 </div>
               </div>
               <span class="shrink-0 rounded-full border px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide"
@@ -1710,7 +1714,7 @@
               <span class="px-1.5 py-0.5 rounded-full border border-slate-200 bg-white text-[9px] font-medium uppercase tracking-wide text-slate-400">只读</span>
             </div>
             <p class="mt-1 text-xs text-slate-500"
-              x-text="statsPanel.data ? `${statsPanel.data.totals.runs} 次运行 · 成功 ${statsPanel.data.totals.succeeded} / 结束 ${statsPanel.data.totals.finished}` : 'Worker 与模型表现'"></p>
+              x-text="statsPanel.data ? `${statsPanel.data.totals.runs} 次运行 · 成功 ${statsPanel.data.totals.succeeded} / 结束 ${statsPanel.data.totals.finished}` : 'Worker、模型与 Profile 表现'"></p>
           </div>
           <button type="button" @click="loadStats()" :disabled="statsPanel.loading" title="刷新统计" aria-label="刷新统计"
             class="h-7 w-7 shrink-0 rounded-lg border border-slate-200 bg-white text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition disabled:opacity-40 inline-flex items-center justify-center">
@@ -1735,7 +1739,7 @@
         <template x-if="!statsPanel.loading && !statsPanel.error && statsPanel.loadedFor && statsPanel.data && statsPanel.data.totals.runs === 0">
           <div class="rounded-2xl border border-dashed border-slate-200 bg-white/80 px-4 py-10 text-center shadow-sm">
             <p class="text-sm text-slate-400">暂无运行记录</p>
-            <p class="mt-1 text-xs text-slate-300">任务完成后，这里会按 Worker 与模型汇总成功率、用量和耗时。</p>
+            <p class="mt-1 text-xs text-slate-300">任务完成后，这里会按 Worker、模型与 Profile 汇总成功率、用量和耗时。</p>
           </div>
         </template>
 
@@ -1790,6 +1794,32 @@
                   <article class="rounded-xl border border-slate-100 bg-slate-50/50 px-2.5 py-2 space-y-1.5">
                     <div class="flex items-center justify-between gap-2">
                       <span class="font-mono text-[10px] text-slate-600 truncate" x-text="row.model || '未记录模型'"></span>
+                      <span class="shrink-0 rounded-full border border-slate-200 bg-white px-1.5 py-0.5 text-[9px] text-slate-500" x-text="statsRateLabel(row)"></span>
+                    </div>
+                    <div class="grid grid-cols-3 gap-x-2 text-[10px]">
+                      <div><span class="text-slate-400">运行</span><div class="text-slate-500 tabular-nums" x-text="`${row.succeeded}/${row.finished} · ${row.runs}`"></div></div>
+                      <div><span class="text-slate-400">Token</span><div class="text-slate-500 tabular-nums" x-text="formatNumber(row.tokens)"></div></div>
+                      <div><span class="text-slate-400">成本</span><div class="text-slate-500 tabular-nums" x-text="strategistCostText(row.cost_usd)"></div></div>
+                    </div>
+                    <div class="text-[10px] text-slate-400" x-text="`平均耗时 ${statsAvgDurationLabel(row.avg_duration_ms)} · 最近启动 ${row.last_started_at || '—'}`"></div>
+                  </article>
+                </template>
+              </div>
+            </section>
+
+            <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+              <div class="px-3 py-2.5 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between gap-2">
+                <span class="text-[11px] font-semibold text-slate-600">按 Profile</span>
+                <span class="text-[10px] text-slate-400" x-text="`${(statsPanel.data.by_profile || []).length} 个`"></span>
+              </div>
+              <div class="p-3 space-y-2">
+                <template x-if="!(statsPanel.data.by_profile || []).length">
+                  <p class="text-[10px] text-slate-400">暂无 Profile 记录（当前可能为 prompt 模式）。</p>
+                </template>
+                <template x-for="row in (statsPanel.data.by_profile || [])" :key="row.worker_profile">
+                  <article class="rounded-xl border border-slate-100 bg-slate-50/50 px-2.5 py-2 space-y-1.5">
+                    <div class="flex items-center justify-between gap-2">
+                      <span class="font-mono text-[10px] text-slate-600 truncate" x-text="row.worker_profile"></span>
                       <span class="shrink-0 rounded-full border border-slate-200 bg-white px-1.5 py-0.5 text-[9px] text-slate-500" x-text="statsRateLabel(row)"></span>
                     </div>
                     <div class="grid grid-cols-3 gap-x-2 text-[10px]">

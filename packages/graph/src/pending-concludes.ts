@@ -19,6 +19,8 @@ export interface PendingConcludeRow {
   intent_id: string;
   phase: PendingConcludePhase;
   session: string;
+  /** Dispatch profile of the failed task; null for prompt-mode or legacy rows. */
+  worker_profile: string | null;
   created_at: string;
 }
 
@@ -27,6 +29,7 @@ export interface RecordPendingConcludeInput {
   intentId: string;
   phase: PendingConcludePhase;
   session: string;
+  workerProfile?: string | null;
   createdAt?: string;
 }
 
@@ -39,12 +42,13 @@ export function recordPendingConclude(
   run(
     conn,
     `INSERT OR IGNORE INTO pending_concludes
-        (project_id, intent_id, phase, session, created_at)
-     VALUES (?, ?, ?, ?, ?)`,
+        (project_id, intent_id, phase, session, worker_profile, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
     input.projectId,
     input.intentId,
     input.phase,
     input.session,
+    input.workerProfile ?? null,
     input.createdAt ?? utcnow(),
   );
 }
@@ -73,7 +77,7 @@ export function getPendingConclude(
   getProjectOr404(conn, projectId);
   return get<PendingConcludeRow>(
     conn,
-    `SELECT project_id, intent_id, phase, session, created_at
+    `SELECT project_id, intent_id, phase, session, worker_profile, created_at
      FROM pending_concludes
      WHERE project_id = ?
      ORDER BY created_at, intent_id
@@ -89,7 +93,7 @@ export function listPendingConcludes(
   getProjectOr404(conn, projectId);
   return all<PendingConcludeRow>(
     conn,
-    `SELECT project_id, intent_id, phase, session, created_at
+    `SELECT project_id, intent_id, phase, session, worker_profile, created_at
      FROM pending_concludes
      WHERE project_id = ?
      ORDER BY created_at, intent_id`,
@@ -101,7 +105,7 @@ export function listPendingConcludes(
 export function listAllPendingConcludes(conn: Database): PendingConcludeRow[] {
   return all<PendingConcludeRow>(
     conn,
-    `SELECT project_id, intent_id, phase, session, created_at
+    `SELECT project_id, intent_id, phase, session, worker_profile, created_at
      FROM pending_concludes
      ORDER BY project_id, created_at, intent_id`,
   );

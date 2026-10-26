@@ -49,6 +49,21 @@ describe("worker task contract", () => {
     expect(messages({ ...rest, kind: "conclude" })).toContain("intentId");
   });
 
+  test("accepts and validates an optional worker profile and model override", () => {
+    expect(
+      taskErrors({ ...validTask(), workerProfile: "fast", model: "cairn-worker" }),
+    ).toEqual([]);
+    expect(messages({ ...validTask(), workerProfile: "" })).toContain(
+      "workerProfile must be a non-empty string",
+    );
+    expect(messages({ ...validTask(), model: "x".repeat(129) })).toContain(
+      "model must be a non-empty string",
+    );
+    expect(messages({ ...validTask(), model: "bad\nmodel" })).toContain(
+      "model must be a non-empty string",
+    );
+  });
+
   test("requires a resumed session only on conclude tasks", () => {
     const { intentId: _intentId, ...rest } = validTask();
     expect(taskErrors({

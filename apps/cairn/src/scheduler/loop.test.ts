@@ -219,6 +219,23 @@ function usageScheduler(): Scheduler {
   });
 }
 
+function profileScheduler(): Scheduler {
+  return new Scheduler({
+    db,
+    config: parseDispatchConfig({
+      ...CONFIG,
+      worker_profiles: [
+        { id: "fast", model: "cairn-worker" },
+        { id: "deep", model: "deep-reasoner" },
+      ],
+      worker_selection: { mode: "stats", min_runs: 1 },
+    }),
+    workspaceRoot: join(directory, "workspace"),
+    log: (message) => logs.push(message),
+    leaseIntervalMs: 500,
+  });
+}
+
 function budgetScheduler(budget: {
   max_project_tokens?: number;
   max_project_cost_usd?: number;
@@ -285,6 +302,25 @@ describe("scheduler with the fake solver", () => {
       expect(exploreIntents).toHaveLength(2);
       expect(exploreIntents.every((intent) => intent.concluded_at !== null)).toBe(true);
       expect(loop.runningCount).toBe(0);
+    },
+    30_000,
+  );
+
+  test(
+    "selects worker profiles from stats and records them on runs",
+    async () => {
+      const project = createProjectRow(false);
+      const loop = profileScheduler();
+      await loop.runUntilIdle();
+
+      const runs = db.withConn((conn) => listProjectRuns(conn, project.project.id));
+      expect(runs.length).toBeGreaterThanOrEqual(3);
+      // min_runs=1 forces one sample per profile before exploitation; config order wins
+      // the first dispatch and the second profile is explored next.
+      expect(runs[0]!.worker_profile).toBe("fast");
+      expect(new Set(runs.map((run) => run.worker_profile))).toEqual(
+        new Set(["fast", "deep"]),
+      );
     },
     30_000,
   );

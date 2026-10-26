@@ -4,8 +4,8 @@
 skills / Observer）合并成**一个 Bun/TypeScript 代码库**，不再维护 Python ↔ TypeScript
 之间的进程桥、JSONL RPC 和 worker 适配器。
 
-状态：**M14d（逐 Worker/模型运行统计）**；M0–M4、M5a–M5c、
-M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d 的计划项全部完成。Phase 1 的
+状态：**M15a（Worker Profile 与统计驱动选择）**；M0–M4、M5a–M5c、
+M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a 的计划项全部完成。Phase 1 的
 “本地看板 + Observer 提案 + 证据门 + 单一写图者”闭环已具备；提案默认关闭。Phase 2
 的触发持久化、意图优先级/预算、单项目 token/成本与并发配额、只读慢层观测、逐 Fact
 成本归因与因果链，以及 reason 的 Hint/去重输出、人工重规划与资源压力触发均已落地，并
@@ -14,8 +14,10 @@ M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d 的计�
 外部挑战 API 的 `flag_count` / `flag_got_count` 验证；worker 的 “complete” 只是声明，
 失败不会关项目。M14c 起 `runs` 记录真实 Solver 的模型标签（来自 `usage.json`），
 UI 的 Fact 详情可沿 `run_id` 下钻到产出 run 与该任务的工具调用审计。M14d 增加只读
-`/stats` 与「统计」页签，按 Worker 和模型汇总成功/失败、Token、成本与耗时，为 Phase 4
-的统计驱动选择提供数据。
+`/stats` 与「统计」页签，按 Worker 和模型汇总成功/失败、Token、成本与耗时。M15a 把它
+接回派发：命名 worker profile 映射到 model-prefs，`worker_selection.mode: stats` 先按
+配置顺序采样、再按历史成功率（Token/成本打破平局）选择，运行 model 与 profile 一并
+落到 task 与 `runs`。
 `cairn serve` 是可运行的 Cairn 兼容服务：SQLite schema、领域服务、全部
 五个路由、YAML/timeline 导出、静态 Web UI 均已就位，并用 Python Cairn 生成的 golden
 做了逐字对照。进程内 scheduler、任务/结果文件 worker 协议、BreachWeave Solver 接入已在 M2
@@ -371,6 +373,27 @@ M14d 增加（逐 Worker/模型统计）：
 - **已知边界**：统计按项目隔离；`model` 只随 `usage.json` 在任务结束时落库，所以在跑
   任务暂时归入“未记录模型”，被硬杀的任务也没有模型。当前 `worker` 仍固定为
   `cairn-worker`，统计只提供数据，尚未改变派发。
+
+M15a 增加（Worker Profile 与统计驱动选择）：
+
+- **命名 Profile**：`worker_profiles` 是 `{id, model}` 列表，`model` 指向
+  `model-prefs.json` 条目；id 限 `[A-Za-z0-9][A-Za-z0-9._-]*` 且唯一。凭据仍只在
+  agent 配置里，派发表只写 profile id 与模型名。
+- **模型覆盖贯通**：scheduler 把选中的 profile 写进 `task.json` 的 `workerProfile` /
+  `model`；worker 用 `model` 覆盖 prompt frontmatter 的模型，不再要求为每个 profile
+  复制一份 prompt。`runs.worker_profile` 由 M15a 迁移补齐，prompt 模式与旧行为保持
+  `NULL`。
+- **选择策略**：`worker_selection.mode: prompt`（默认）完全保持原行为；`stats` 先按
+  配置顺序采样，直到每个 profile 有 `min_runs` 个已结束 run，然后取成功率最高者，
+  依次用“每结束 run 的 Token 更少”“成本更低”“配置顺序靠前”打破平局。失败的
+  explore 排队的 conclude 会复用该任务的 profile（仍配置时），避免用另一个模型接管
+  原会话。
+- **观察**：`GET /stats` 新增 `by_profile`，只统计打过 profile 的 run；「统计」页签
+  新增“按 Profile”卡片，prompt 模式下为空。
+- **验证**：配置测试覆盖默认值、解析与非法 id/重复/缺 model/`stats` 无 profile；
+  契约测试覆盖 task 字段；图测试覆盖迁移、回读与跨项目 profile 聚合；选择单测覆盖
+  采样、利用与全部平局规则；scheduler 集成测试确认前几个任务按配置顺序采样并落到
+  run；HTTP/UI 测试覆盖 `by_profile` 与页签文案。
 
 默认仍是确定性 fake solver，测试与离线运行不需要模型凭据。Observer 只接在
 `CAIRN_SOLVER=breachweave` 的真实 Solver 路径上，fake solver 会忽略它。
@@ -879,9 +902,9 @@ M6 的跨进程恢复 gate 不调用模型：它先写下一台崩溃控制面�
 bun run tools/gate/m6-restart-gate.ts
 ```
 
-## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d，2026-10-26，Bun 1.4.4）
+## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a，2026-10-26，Bun 1.4.4）
 
-- `bun test`：**482 passed**（56 个文件），0 failed。
+- `bun test`：**495 passed**（57 个文件），0 failed。
 - `bun run typecheck`：`tsc --noEmit` 通过。
 - **HTTP 对照**：`api.golden.json` 的 60 步请求（成功路径、400/403/404/405/409、租约过期、
   删除级联、导出、路由错误）由 Python FastAPI + 固定时钟生成；TS 重放后状态码、content-type
@@ -1081,6 +1104,12 @@ bun run tools/gate/m6-restart-gate.ts
   `/stats` 的聚合结果、404 与 POST 405；UI 测试断言「统计」页签、`loadStats` 仅发
   GET，且页面含“按 Worker/按模型/成功率”。浏览器实测 5 个 run 的总览与两张分组卡片，
   控制台无 JS 错误。
+- **Worker Profile 与统计选择（M15a）**：配置测试覆盖默认 `prompt` 模式、合法/非法
+  profile 与 `stats` 缺少 profile 的拒绝；契约测试覆盖 `workerProfile`/`model` 的
+  空白、超长与控制字符；图测试覆盖 `worker_profile` 迁移、回读与跨项目聚合；选择单测
+  逐条覆盖采样顺序、成功率/Token/成本/配置顺序平局和 preferred profile；scheduler
+  集成测试确认 `runs.worker_profile` 与任务字段一致；HTTP/UI 测试覆盖 `by_profile`
+  与“按 Profile”卡片。
 
 golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定时钟、`TZ=UTC`）。
 重新生成方法与约束见 `docs/PORTING.md`。
@@ -1131,6 +1160,7 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M14b ✅ | Phase 2 补全：reason 输出 Hint/priority/budget/dedupe、`POST /replan` 人工重规划、资源压力触发、慢层页签操作 | 470 passed / 54 files（2026-10-26） |
 | M14c ✅ | 可观测性补链：`usage.json` → `runs.model`、Fact 详情溯源到产出 run 与该任务工具调用审计 | 477 passed / 55 files；浏览器实测下钻（2026-10-26） |
 | M14d ✅ | 逐 Worker/模型统计：`GET /stats` 汇总成功率、Token、成本与耗时，新增只读「统计」页签 | 482 passed / 56 files；浏览器实测（2026-10-26） |
+| M15a ✅ | Phase 4 起点：`worker_profiles` 映射 model-prefs、任务级模型覆盖、`runs.worker_profile`、先采样后利用的统计驱动派发、`by_profile` 统计与「按 Profile」卡片 | 495 passed / 57 files（2026-10-26） |
 
 ## 与 Phase 0 的关系
 

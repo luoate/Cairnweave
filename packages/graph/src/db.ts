@@ -113,6 +113,7 @@ CREATE TABLE IF NOT EXISTS runs (
     kind TEXT NOT NULL,
     intent_id TEXT,
     worker TEXT NOT NULL,
+    worker_profile TEXT,
     model TEXT,
     trigger TEXT,
     outcome TEXT,
@@ -160,6 +161,7 @@ CREATE TABLE IF NOT EXISTS pending_concludes (
     intent_id TEXT NOT NULL,
     phase TEXT NOT NULL,
     session TEXT NOT NULL,
+    worker_profile TEXT,
     created_at TEXT NOT NULL,
     PRIMARY KEY (project_id, intent_id)
 );
@@ -296,6 +298,7 @@ export function configureDatabase(path: string): CairnDatabase {
     conn.exec(SCHEMA);
     ensureProjectColumns(conn);
     ensureRunColumns(conn);
+    ensurePendingConcludeColumns(conn);
     ensureIntentMetaColumns(conn);
     ensureStrategistColumns(conn);
   });
@@ -333,11 +336,24 @@ function ensureRunColumns(conn: Database): void {
     ["total_tokens", "INTEGER NOT NULL DEFAULT 0"],
     ["cost_usd", "REAL NOT NULL DEFAULT 0"],
     ["model", "TEXT"],
+    ["worker_profile", "TEXT"],
   ] as const;
   for (const [name, definition] of additions) {
     if (!columns.has(name)) {
       conn.exec(`ALTER TABLE runs ADD COLUMN ${name} ${definition}`);
     }
+  }
+}
+
+/** M15a keeps the failed task's profile so a queued conclude reuses the same model. */
+function ensurePendingConcludeColumns(conn: Database): void {
+  const columns = new Set(
+    all<{ name: string }>(conn, "PRAGMA table_info(pending_concludes)").map(
+      (row) => row.name,
+    ),
+  );
+  if (!columns.has("worker_profile")) {
+    conn.exec("ALTER TABLE pending_concludes ADD COLUMN worker_profile TEXT");
   }
 }
 

@@ -181,6 +181,22 @@ retention:
 #   max_project_cost_usd: 0     # provider-reported USD total; 0 off
 #   max_project_tasks: 0        # per-project concurrency; 0 inherits max_project_workers
 
+# Optional worker profiles and stats-driven selection (M15a). A profile maps a stable id
+# to an entry in the agent's model-prefs.json. In "prompt" mode (default) the task keeps
+# the prompt frontmatter model and runs are not tagged. In "stats" mode the scheduler
+# samples every profile in config order until each has min_runs finished runs, then picks
+# the highest success rate, breaking ties by fewer tokens per finished run, lower cost,
+# then config order. A queued conclude reuses the failed task's profile while it is still
+# configured. The chosen id and model go into task.json and runs.worker_profile/model.
+# worker_profiles:
+#   - id: fast
+#     model: gateway/deepseek-flash
+#   - id: deep
+#     model: gateway/deepseek-pro
+# worker_selection:
+#   mode: prompt                # prompt | stats
+#   min_runs: 3
+
 # Completion verification (M14a). The policy is chosen per project at creation time
 # (`verification.kind`: challenge | evidence | off); this section only configures how a
 # challenge project reaches the external verifier. The two values below are environment

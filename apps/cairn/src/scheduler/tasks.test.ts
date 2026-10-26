@@ -176,6 +176,47 @@ describe("intent budgets", () => {
   });
 });
 
+describe("worker profile dispatch", () => {
+  test("stamps the selected profile and model on task.json", () => {
+    const project = projectFixture();
+    const prepared = prepareTask({
+      config: parseDispatchConfig(CONFIG),
+      project,
+      exportYaml: "project: p1\n",
+      kind: "explore",
+      intent: project.intents[0]!,
+      scope: { targets: ["127.0.0.1:8080"] },
+      workerProfile: { id: "fast", model: "cairn-worker" },
+      workspaceRoot: directory,
+    });
+
+    expect(prepared.task.workerProfile).toBe("fast");
+    expect(prepared.task.model).toBe("cairn-worker");
+    const written = JSON.parse(readFileSync(prepared.taskPath, "utf8")) as {
+      workerProfile?: string;
+      model?: string;
+    };
+    expect(written.workerProfile).toBe("fast");
+    expect(written.model).toBe("cairn-worker");
+  });
+
+  test("leaves the prompt model in charge when no profile is selected", () => {
+    const project = projectFixture();
+    const prepared = prepareTask({
+      config: parseDispatchConfig(CONFIG),
+      project,
+      exportYaml: "project: p1\n",
+      kind: "explore",
+      intent: project.intents[0]!,
+      scope: { targets: ["127.0.0.1:8080"] },
+      workspaceRoot: directory,
+    });
+
+    expect(prepared.task.workerProfile).toBeUndefined();
+    expect(prepared.task.model).toBeUndefined();
+  });
+});
+
 describe("reason prompt extensions", () => {
   test("documents priority, budget, dedupe, hints and resource usage", () => {
     const project = projectFixture();

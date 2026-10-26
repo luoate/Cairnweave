@@ -82,7 +82,10 @@ runtime prompt 扩展（priority/budget/dedupe/Hint 语义）；`POST /projects/
 `GET /runs` 暴露该列，UI 选中 Fact 后可沿 `run_id` 跳到产出 run 的模型/任务与该任务的
 工具调用审计。没有用量的任务（含 fake solver、硬杀）保持 `null`。M14d 已落地：只读
 `GET /projects/{id}/stats` 按 worker 与 model 汇总 runs 的 outcome、用量和耗时，静态 UI
-增加「统计」页签；它只读旁路数据，不改变图模型、YAML 导出或调度。
+增加「统计」页签；它只读旁路数据，不改变图模型、YAML 导出或调度。M15a 已落地：
+`worker_profiles` 把稳定 id 映射到 model-prefs 条目，`worker_selection.mode: stats`
+按历史 `runs.worker_profile` 采样后选择模型，并把 profile/model 写入 task.json 与
+`runs`；prompt 模式保持原行为。
 
 ## 1. 范围
 
@@ -438,9 +441,11 @@ stderr 归档到 `sessionDir/{stdout,stderr}.log`。需要 UI 实时进度时再
 
 - `runs(id, project_id, task_id, kind, intent_id, worker, trigger, outcome, exit_code,
   started_at, finished_at, duration_ms, session, evidence_count, detail, input_tokens,
-  output_tokens, cache_read_tokens, cache_write_tokens, total_tokens, cost_usd, model)`，
+  output_tokens, cache_read_tokens, cache_write_tokens, total_tokens, cost_usd, model,
+  worker_profile)`，
   按 `(project_id, started_at)` 建索引；项目删除时级联删除。六个用量列由 M12b 增量迁移
-  补齐，旧行为 0；`model` 由 M14c 迁移补齐，旧行与没有用量的任务为 `NULL`。失败任务
+  补齐，旧行为 0；`model` 由 M14c 迁移补齐，旧行与没有用量的任务为 `NULL`；
+  `worker_profile` 由 M15a 迁移补齐，prompt 模式与未做选择的任务为 `NULL`。失败任务
   的用量同样保留。
 - `fact_meta(fact_id, project_id, run_id, evidence_refs, evidence_status, created_at)`，
   主键 `(fact_id, project_id)`，外键指向 Fact 并级联删除。`evidence_refs` 以 JSON 数组
@@ -448,10 +453,11 @@ stderr 归档到 `sessionDir/{stdout,stderr}.log`。需要 UI 实时进度时再
 - `fact_evidence(project_id, fact_id, path, size, sha256, created_at)`，主键
   `(project_id, fact_id, path)`，外键指向 Fact 并级联删除。路径是写入时规范化后的
   工作区相对路径；只存摘要，不存内容。
-- `pending_concludes(project_id, intent_id, phase, session, created_at)`，主键
-  `(project_id, intent_id)`，外键指向项目并级联删除。`phase` 是 `bootstrap |
+- `pending_concludes(project_id, intent_id, phase, session, worker_profile, created_at)`，
+  主键 `(project_id, intent_id)`，外键指向项目并级联删除。`phase` 是 `bootstrap |
   explore`；`session` 是失败任务的工作区相对会话目录，重启后由当前 workspace root
-  重建宿主路径。插入是幂等的：同一 intent 重复失败不会重置已排队的 phase。
+  重建宿主路径。M15a 补的 `worker_profile` 让 conclude 在同名 profile 仍配置时复用
+  失败任务的模型。插入是幂等的：同一 intent 重复失败不会重置已排队的 phase。
 - `audit_events(project_id, task_id, seq, event, prev_hash, hash, created_at)`，主键
   `(project_id, task_id, seq)`，外键指向项目并级联删除。`event` 是规范化后的单行
   JSON 文本；哈希输入为 `project_id\ntask_id\nseq\nprev_hash\nevent`，每个 task 的
@@ -486,12 +492,14 @@ stderr 归档到 `sessionDir/{stdout,stderr}.log`。需要 UI 实时进度时再
 
 HTTP（除实时追加外均为只读，均在控制面进程内直接查库）：
 
-- `GET /projects/{id}/runs` → run 数组，按 `started_at, id` 排序；每行含六个用量列与
-  `model`（无记录时为 `null`）；未知项目 404。
-- `GET /projects/{id}/stats`（M14d，只读）→ `{project_id, totals, by_worker, by_model}`。
+- `GET /projects/{id}/runs` → run 数组，按 `started_at, id` 排序；每行含六个用量列、
+  `model` 与 `worker_profile`（无记录时为 `null`）；未知项目 404。
+- `GET /projects/{id}/stats`（M14d/M15a，只读）→
+  `{project_id, totals, by_worker, by_model, by_profile}`。
   每组统计运行数、运行中/已结束、各 outcome 计数、`success_rate`（成功 ÷ 已结束，
   无结束运行为 `null`）、Token、成本、平均耗时、证据数与最近启动时间；`by_model`
-  把没有模型的运行归入 `model: null` 并排在最后。未知项目 404；只有 GET。
+  把没有模型的运行归入 `model: null` 并排在最后；`by_profile` 只含打过
+  `worker_profile` 的运行。未知项目 404；只有 GET。
 - `GET /projects/{id}/strategist?limit=20`（M12c，只读）→
   `{state, budget, intents, reason_runs}`。`state` 为 `strategist_state` 或 `null`；
   `budget` 含 `used_tokens` / `used_cost_usd` / `running_tasks`、配置上限（纯 HTTP
@@ -550,8 +558,8 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
   `GET /` 与 `/static/*` 直接提供，没有构建/打包步骤。页签分两行：原有
   `Detail / Hints / Log`，以及运维页签 `Runs / Strategist / Audit / Evidence /
   Proposals / Cost`。
-- `Runs` 读取 `GET /projects/{id}/runs`，按最新在前显示 kind、worker、模型、outcome、
-  退出码、时长、evidence 数量和 detail；每行可跳到该 task 的 Audit。
+- `Runs` 读取 `GET /projects/{id}/runs`，按最新在前显示 kind、worker、profile、模型、
+  outcome、退出码、时长、evidence 数量和 detail；每行可跳到该 task 的 Audit。
 - Fact 详情（M14c）在单选时读取 `GET /facts/{id}/meta`，用 `run_id` 从已加载或补取的
   runs 中定位产出 run，显示模型与 task id；“查看工具调用”复用 Audit 页签。多选或
   origin/goal 不发起溯源请求。
@@ -566,9 +574,10 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
 - `Evidence` 通过 Fact 下拉选择后并发读取 meta 与 evidence，显示 sidecar 的
   `provided/missing/legacy`、写入时 `size/sha256` 与实时 `status/current_*`。没有
   workspace root 时沿用 API 的 `unverified` 语义。
-- `Stats`（统计，M14d）读取 `GET /projects/{id}/stats`，显示项目总览与按 Worker、
-  按模型两张分组卡片：运行数、成功/结束、成功率、Token、成本、平均耗时和最近启动。
-  `model: null` 显示为“未记录模型”；没有结束运行的组显示“无结束运行”而不是 0%。
+- `Stats`（统计，M14d/M15a）读取 `GET /projects/{id}/stats`，显示项目总览与按 Worker、
+  按模型、按 Profile 三组卡片：运行数、成功/结束、成功率、Token、成本、平均耗时和最近
+  启动。`model: null` 显示为“未记录模型”；`by_profile` 只在统计驱动选择启用后有数据；
+  没有结束运行的组显示“无结束运行”而不是 0%。
 - `Cost`（成本，M13b）读取 `GET /projects/{id}/cost`，显示项目总量与归因完整性、
   按 run kind 汇总、逐 Fact 的直付/编排成本及产出/创建 run、逐意图的执行与创建成本、
   因果边和每个 run 的直接产出。它不把意图合计与 Fact 合计相加。
@@ -768,6 +777,15 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
   `max_project_tasks` 为 `0` 时继承 `runtime.max_project_workers`，非零值仍会与全局
   `runtime.max_workers` 取较小值。token/成本按项目已结束 run 汇总，只拦截新的
   bootstrap/reason/explore，不拦截 pending conclude；在途任务未上报前可能超预算。
+- `worker_profiles` 与 `worker_selection` 是新增的可选段（M15a）：profiles 是
+  `{id, model}` 数组，id 匹配 `[A-Za-z0-9][A-Za-z0-9._-]*`（≤64）且唯一，model 是
+  model-prefs 条目名（≤128）；selection 的 `mode` 为 `prompt | stats`（默认 `prompt`），
+  `min_runs` 是非负整数（默认 `3`）。`stats` 模式必须至少有一个 profile。scheduler
+  把选中的 `workerProfile` / `model` 写入 `task.json`，并按 profile id/模型记录
+  `runs`；`prompt` 模式完全保持旧行为。选择读取跨项目 `runs.worker_profile` 历史：
+  先按配置顺序采样到每个 profile 有 `min_runs` 个已结束 run，再按成功率选择，平局依次
+  比较每结束 run 的 Token、成本与配置顺序；排队的 conclude 复用失败任务的 profile。
+  凭据仍只在 agent 配置中，派发表只出现 id 与模型名。
 - `verification` 是新增的可选段（M14a）：`challenge.base_url_env` /
   `challenge.agent_token_env` 是**环境变量名**（默认 `TCH_CHALLENGE_API_BASE_URL` /
   `TCH_CHALLENGE_AGENT_TOKEN`），`challenge.timeout_ms` 是正整数（默认 `5000`）。
@@ -787,7 +805,9 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
 - `serve --config` 在容器模式启动时检查 Docker，并先把内置 prompts/skills 释放到
   agent 配置目录，再以只读方式挂载进容器；容器内跳过写入内置 prompts/skills 的逻辑。
 - 模型与凭据：沿用 BreachWeave 的 `~/.tch-agent/config`（`models.json`、`auth.json`、
-  `model-prefs.json`、`provider-prefs.json`）与 prompt frontmatter 的 `model`。本地模式由
+  `model-prefs.json`、`provider-prefs.json`）与 prompt frontmatter 的 `model`。M15a 起
+  启用 `worker_profiles` 时，任务里的 `model` 覆盖 prompt frontmatter 的选择，但仍
+  解析到同一个 model-prefs 文件；没有任务级 `model` 时保持原行为。本地模式由
   worker 在启动真实 Solver 前补齐内置 prompts/skills；容器模式由控制面在挂载前补齐，容器
   内因 `CAIRN_AGENT_CONFIG_READONLY=1` 跳过写入。`CAIRN_AGENT_CONFIG_DIR` 可覆盖配置目录
   （测试用）。API key 只存在于 `auth.json`；上游 SDK 要求自定义 provider 在 `models.json`
@@ -984,4 +1004,7 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
     模型也未单独标注。M14d 补上了只读逐 Worker/模型统计（成功率、outcome、Token、
     成本、平均耗时）与「统计」页签；仍未解决：统计按项目隔离，在跑任务的 model 尚为
     空，worker 仍固定为 `cairn-worker`，成功率的“结束”包含拒绝/取消/不健康，且统计
-    尚未用于派发选择或跨项目汇总。
+    尚未用于派发选择或跨项目汇总。M15a 已把 profile 统计接回派发：先采样后利用，
+    平局按 Token、成本、配置顺序打破，conclude 复用失败任务的 profile；仍未解决：
+    选择只会在 `stats` 模式下发生，冷启动样本少时退化为配置顺序，成功率未按任务难度
+    或项目类型分层，且没有 epsilon 探索/衰减，长期可能锁死在早期略优的 profile。

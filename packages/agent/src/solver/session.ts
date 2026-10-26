@@ -188,7 +188,7 @@ export async function createSolverSession(init: SolverInitPayload): Promise<Solv
         // rtkRewriteExtension(),
     ]
 
-    const sessionOpts = await config.resolvePromptSession(init.promptName, extensions)
+    const sessionOpts = await config.resolvePromptSession(init.promptName, extensions, init.model)
     if (!sessionOpts) {
         throw new Error(`prompt not found: ${init.promptName}`)
     }

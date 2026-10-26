@@ -1066,13 +1066,15 @@ export class ConfigManager {
     async resolvePromptSession(
         promptName: string,
         extensions?: Array<ExtensionFactory | PromptSessionExtensionLike | undefined>,
+        modelPrefOverride?: string,
     ): Promise<CreateAgentSessionOptions | undefined> {
         const prompt = await prompts.loadPrompt(this.dir, promptName)
         if (!prompt) return undefined
         if (prompt.meta.disabled === true) return undefined
 
-        // 1) 解析模型与思考等级
-        const promptModelPrefId = typeof prompt.meta.model === "string" ? prompt.meta.model.trim() : ""
+        // 1) 解析模型与思考等级。调度器选择的 worker profile 可以覆盖 prompt 声明的模型。
+        const overrideModelPrefId = typeof modelPrefOverride === "string" ? modelPrefOverride.trim() : ""
+        const promptModelPrefId = overrideModelPrefId || (typeof prompt.meta.model === "string" ? prompt.meta.model.trim() : "")
         let resolvedPromptModel: { model: Model<Api>; thinkingLevel?: ThinkingLevel } | undefined
         if (promptModelPrefId) {
             try {

@@ -87,6 +87,8 @@ describe("dispatcher config", () => {
       maxProjectCostUsd: 0,
       maxProjectTasks: 0,
     });
+    expect(config.workerProfiles).toEqual([]);
+    expect(config.workerSelection).toEqual({ mode: "prompt", minRuns: 3 });
     expect(config.verification).toEqual({
       challenge: {
         baseUrlEnv: "TCH_CHALLENGE_API_BASE_URL",
@@ -419,6 +421,26 @@ common_env:
     });
   });
 
+  test("parses worker profiles and stats selection", () => {
+    const config = parse(
+      BASE +
+        `worker_profiles:
+  - id: fast
+    model: cairn-worker
+  - id: deep
+    model: deep-reasoner
+worker_selection:
+  mode: stats
+  min_runs: 2
+`,
+    );
+    expect(config.workerProfiles).toEqual([
+      { id: "fast", model: "cairn-worker" },
+      { id: "deep", model: "deep-reasoner" },
+    ]);
+    expect(config.workerSelection).toEqual({ mode: "stats", minRuns: 2 });
+  });
+
   test("scopes artifacts by default only for concurrent project workers", () => {
     expect(parse(BASE).worker.scopedArtifacts).toBe(false);
     expect(
@@ -537,6 +559,36 @@ describe("config validation", () => {
     expect(() => parse(BASE + "worker: {scoped_artifacts: yes}\n")).toThrow(
       "worker.scoped_artifacts must be a boolean",
     );
+  });
+
+  test("validates worker profiles and selection", () => {
+    expect(() => parse(BASE + "worker_profiles: {}\n")).toThrow(
+      "worker_profiles must be an array",
+    );
+    expect(() =>
+      parse(BASE + "worker_profiles: [{id: '', model: m}]\n"),
+    ).toThrow("worker_profiles[0].id must not be empty");
+    expect(() =>
+      parse(BASE + "worker_profiles: [{id: 'bad id', model: m}]\n"),
+    ).toThrow("worker_profiles[0].id must be at most");
+    expect(() =>
+      parse(
+        BASE +
+          "worker_profiles: [{id: dup, model: a}, {id: dup, model: b}]\n",
+      ),
+    ).toThrow('duplicates profile "dup"');
+    expect(() =>
+      parse(BASE + "worker_profiles: [{id: fast}]\n"),
+    ).toThrow("worker_profiles[0].model is required");
+    expect(() =>
+      parse(BASE + "worker_selection: {mode: stats}\n"),
+    ).toThrow("stats requires at least one worker_profiles entry");
+    expect(() =>
+      parse(BASE + "worker_selection: {mode: random}\n"),
+    ).toThrow("worker_selection.mode must be one of: prompt, stats");
+    expect(() =>
+      parse(BASE + "worker_selection: {min_runs: -1}\n"),
+    ).toThrow("worker_selection.min_runs must be a non-negative integer");
   });
 
   test("validates common_env values", () => {

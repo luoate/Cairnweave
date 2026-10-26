@@ -9,6 +9,8 @@ export interface SolverInitPayload {
     challengeId?: string
     /** Absolute path of a persisted session JSONL to continue instead of a new session. */
     resumeSessionFile?: string
+    /** model-prefs.json entry selected by the scheduler; overrides the prompt model. */
+    model?: string
 }
 
 // ── RPC types (mirrored from pi-coding-agent rpc-types.ts) ──

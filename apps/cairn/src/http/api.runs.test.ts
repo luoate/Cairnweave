@@ -88,6 +88,7 @@ describe("GET /projects/{id}/runs", () => {
         kind: "explore",
         intent_id: "i001",
         worker: "cairn-worker",
+        worker_profile: null,
         model: "gateway/deepseek-flash",
         trigger: null,
         outcome: "success",
@@ -123,6 +124,7 @@ describe("GET /projects/{id}/stats", () => {
         taskId: "explore-1",
         kind: "explore",
         worker: "cairn-worker",
+        workerProfile: "alpha",
         startedAt: "2026-01-02T03:00:00Z",
       });
       finishRun(conn, "run_001", {
@@ -155,6 +157,7 @@ describe("GET /projects/{id}/stats", () => {
       totals: Record<string, unknown>;
       by_worker: Array<Record<string, unknown>>;
       by_model: Array<Record<string, unknown>>;
+      by_profile: Array<Record<string, unknown>>;
     };
     expect(body.totals).toMatchObject({
       runs: 2,
@@ -177,6 +180,12 @@ describe("GET /projects/{id}/stats", () => {
       model: "gateway/deepseek-flash",
       runs: 2,
       success_rate: 0.5,
+    });
+    expect(body.by_profile).toHaveLength(1);
+    expect(body.by_profile[0]).toMatchObject({
+      worker_profile: "alpha",
+      runs: 1,
+      success_rate: 1,
     });
   });
 

@@ -11,12 +11,13 @@ import type { Database } from "bun:sqlite";
 
 import type {
   ModelRunStats,
+  ProfileRunStats,
   ProjectRunStatsReport,
   Run,
   RunStatsGroup,
   WorkerRunStats,
 } from "./models";
-import { listProjectRuns } from "./runs";
+import { listAllRuns, listProjectRuns } from "./runs";
 
 interface MutableGroup {
   runs: number;
@@ -41,11 +42,15 @@ export function buildProjectRunStats(conn: Database, projectId: string): Project
   const totals = emptyGroup();
   const workers = new Map<string, MutableGroup>();
   const models = new Map<string, MutableGroup>();
+  const profiles = new Map<string, MutableGroup>();
 
   for (const run of runs) {
     addRun(totals, run);
     addRun(groupFor(workers, run.worker), run);
     addRun(groupFor(models, run.model ?? ""), run);
+    if (run.worker_profile !== null) {
+      addRun(groupFor(profiles, run.worker_profile), run);
+    }
   }
 
   return {
@@ -60,7 +65,30 @@ export function buildProjectRunStats(conn: Database, projectId: string): Project
         ...finishGroup(group),
       }))
       .sort(compareModels),
+    by_profile: finishProfiles(profiles),
   };
+}
+
+/**
+ * Cross-project profile history. Selection uses it as the sample set; untagged prompt-mode
+ * runs are excluded because they cannot inform a profile choice.
+ */
+export function buildProfileRunStats(conn: Database): ProfileRunStats[] {
+  const profiles = new Map<string, MutableGroup>();
+  for (const run of listAllRuns(conn)) {
+    if (run.worker_profile === null) continue;
+    addRun(groupFor(profiles, run.worker_profile), run);
+  }
+  return finishProfiles(profiles);
+}
+
+function finishProfiles(groups: Map<string, MutableGroup>): ProfileRunStats[] {
+  return [...groups.entries()]
+    .map(([worker_profile, group]): ProfileRunStats => ({
+      worker_profile,
+      ...finishGroup(group),
+    }))
+    .sort((left, right) => left.worker_profile.localeCompare(right.worker_profile));
 }
 
 function emptyGroup(): MutableGroup {

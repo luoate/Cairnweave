@@ -270,6 +270,40 @@ export const DEFAULT_BUDGET: BudgetConfig = {
   maxProjectTasks: 0,
 };
 
+export type WorkerSelectionMode = "prompt" | "stats";
+
+/**
+ * A named dispatch profile. The merged runtime has one worker implementation, so a
+ * profile currently selects only the model-prefs entry the solver should use. The id is
+ * recorded on every run and is the key for per-profile statistics.
+ */
+export interface WorkerProfileConfig {
+  id: string;
+  /** model-prefs.json entry name (for example `cairn-worker`). */
+  model: string;
+}
+
+/**
+ * How dispatch picks a worker profile. `prompt` keeps the model declared in the prompt
+ * frontmatter and leaves runs untagged. `stats` samples every profile up to `min_runs`
+ * finished runs, then always picks the observed best performer.
+ */
+export interface WorkerSelectionConfig {
+  mode: WorkerSelectionMode;
+  /** Finished runs a profile needs before it is eligible for exploitation. */
+  minRuns: number;
+}
+
+export const DEFAULT_WORKER_SELECTION: WorkerSelectionConfig = {
+  mode: "prompt",
+  minRuns: 3,
+};
+
+export const WORKER_SELECTION_MODES: readonly WorkerSelectionMode[] = ["prompt", "stats"];
+
+export const MAX_WORKER_PROFILE_ID_LENGTH = 64;
+export const MAX_WORKER_MODEL_PREF_LENGTH = 128;
+
 export const OBSERVER_TASK_KINDS: readonly ObserverTaskKind[] = [
   "bootstrap",
   "reason",
@@ -342,6 +376,8 @@ export interface DispatchConfig {
   proposals: ProposalsConfig;
   strategist: StrategistConfig;
   budget: BudgetConfig;
+  workerProfiles: WorkerProfileConfig[];
+  workerSelection: WorkerSelectionConfig;
 }
 
 export interface ConfigOptions {
@@ -371,6 +407,8 @@ const TOP_LEVEL_KEYS = new Set([
   "proposals",
   "strategist",
   "budget",
+  "worker_profiles",
+  "worker_selection",
 ]);
 
 type Mapping = Record<string, unknown>;
@@ -808,6 +846,54 @@ function parseBudget(value: unknown): BudgetConfig {
   };
 }
 
+const WORKER_PROFILE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+function parseWorkerProfiles(value: unknown): WorkerProfileConfig[] {
+  if (!Array.isArray(value)) {
+    throw new ConfigError("worker_profiles must be an array");
+  }
+  const seen = new Set<string>();
+  return value.map((item, index) => {
+    const path = `worker_profiles[${index}]`;
+    const profile = recordAt(item, path);
+    const id = stringAt(requiredValue(profile, "id", path), `${path}.id`);
+    if (
+      id.length > MAX_WORKER_PROFILE_ID_LENGTH ||
+      !WORKER_PROFILE_ID_PATTERN.test(id)
+    ) {
+      throw new ConfigError(
+        `${path}.id must be at most ${MAX_WORKER_PROFILE_ID_LENGTH} characters of letters, digits, dot, underscore or dash`,
+      );
+    }
+    if (seen.has(id)) {
+      throw new ConfigError(`${path}.id duplicates profile "${id}"`);
+    }
+    seen.add(id);
+    const model = stringAt(requiredValue(profile, "model", path), `${path}.model`);
+    if (
+      model.length > MAX_WORKER_MODEL_PREF_LENGTH ||
+      /[\u0000-\u001f\u007f]/.test(model)
+    ) {
+      throw new ConfigError(
+        `${path}.model must be at most ${MAX_WORKER_MODEL_PREF_LENGTH} characters without control characters`,
+      );
+    }
+    return { id, model };
+  });
+}
+
+function parseWorkerSelection(value: unknown): WorkerSelectionConfig {
+  const selection = recordAt(value, "worker_selection");
+  return {
+    mode: has(selection, "mode")
+      ? oneOf(selection["mode"], "worker_selection.mode", WORKER_SELECTION_MODES)
+      : DEFAULT_WORKER_SELECTION.mode,
+    minRuns: has(selection, "min_runs")
+      ? nonNegativeInt(selection["min_runs"], "worker_selection.min_runs")
+      : DEFAULT_WORKER_SELECTION.minRuns,
+  };
+}
+
 function parseWorker(value: unknown, scopedArtifactsDefault: boolean): WorkerRunnerConfig {
   const worker = recordAt(value, "worker");
   let softDeadlineRatio = 0.8;
@@ -906,6 +992,18 @@ export function parseDispatchConfig(value: unknown, options: ConfigOptions = {})
     ? parseBudget(root["budget"])
     : { ...DEFAULT_BUDGET };
 
+  const workerProfiles = has(root, "worker_profiles")
+    ? parseWorkerProfiles(root["worker_profiles"])
+    : [];
+  const workerSelection = has(root, "worker_selection")
+    ? parseWorkerSelection(root["worker_selection"])
+    : { ...DEFAULT_WORKER_SELECTION };
+  if (workerSelection.mode === "stats" && workerProfiles.length === 0) {
+    throw new ConfigError(
+      "worker_selection.mode stats requires at least one worker_profiles entry",
+    );
+  }
+
   try {
     validatePromptResources(runtime.promptGroup, options.promptsRoot);
   } catch (error) {
@@ -927,6 +1025,8 @@ export function parseDispatchConfig(value: unknown, options: ConfigOptions = {})
     proposals,
     strategist,
     budget,
+    workerProfiles,
+    workerSelection,
   };
 }
 

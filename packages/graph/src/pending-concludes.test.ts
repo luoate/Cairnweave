@@ -64,6 +64,7 @@ describe("pending concludes", () => {
         intent_id: "i001",
         phase: "bootstrap",
         session: ".cairn/sessions/explore-1",
+        worker_profile: null,
         created_at: "2026-01-02T03:00:01Z",
       },
       {
@@ -71,6 +72,7 @@ describe("pending concludes", () => {
         intent_id: "i002",
         phase: "explore",
         session: ".cairn/sessions/explore-2",
+        worker_profile: null,
         created_at: "2026-01-02T03:00:02Z",
       },
     ]);
@@ -88,6 +90,14 @@ describe("pending concludes", () => {
       intent_id: "i001",
       phase: "explore",
       session: ".cairn/sessions/explore-1",
+    });
+  });
+
+  test("keeps the dispatch profile for the conclude turn", () => {
+    queue({ workerProfile: "alpha" });
+    expect(db.withConn((conn) => listPendingConcludes(conn, projectId))[0]).toMatchObject({
+      intent_id: "i001",
+      worker_profile: "alpha",
     });
   });
 
