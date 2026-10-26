@@ -73,6 +73,29 @@ CREATE TABLE IF NOT EXISTS project_scopes (
     notes TEXT
 );
 
+CREATE TABLE IF NOT EXISTS project_verification (
+    project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    challenge_code TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS verification_checks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    ok INTEGER NOT NULL,
+    detail TEXT NOT NULL,
+    challenge_code TEXT,
+    flag_count INTEGER,
+    flag_got_count INTEGER,
+    evidence_refs TEXT NOT NULL DEFAULT '[]',
+    checked_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS verification_checks_project
+    ON verification_checks(project_id, checked_at);
+
 CREATE TABLE IF NOT EXISTS project_artifacts (
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     path TEXT NOT NULL,

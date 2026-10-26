@@ -19,9 +19,11 @@ import {
   getAuditStreamLoss,
   getCompletionIntentOr409,
   getFactMeta,
+  getLatestVerificationCheck,
   getProjectDetail,
   getProjectOr404,
   getProjectUsage,
+  getProjectVerification,
   getStrategistState,
   getTaskAudit,
   heartbeatIntent,
@@ -61,9 +63,10 @@ import {
 import { resolve, sep } from "node:path";
 
 import type { AuditTokenRegistry } from "../audit-stream/tokens";
-import type { BudgetConfig } from "../config";
+import { DEFAULT_VERIFICATION, type BudgetConfig } from "../config";
 import { verifyEvidenceFiles } from "../scheduler/evidence";
 import { projectWorkspace } from "../scheduler/tasks";
+import { VerificationService } from "../verification/oracle";
 
 export interface ApiOptions {
   db: CairnDatabase;
@@ -81,6 +84,8 @@ export interface ApiOptions {
    * strategist view still reports recorded usage but returns null limits.
    */
   budget?: BudgetConfig;
+  /** Completion oracle; defaults to the evidence policy and env-based challenge config. */
+  verification?: VerificationService;
 }
 
 export interface Api {
@@ -111,6 +116,26 @@ function json(value: unknown, status = 200): Response {
 
 function text(value: string): Response {
   return new Response(value, { headers: { "content-type": "text/plain; charset=utf-8" } });
+}
+
+function parseVerifyFacts(value: unknown): string[] | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new HttpError(400, "verification body must be a JSON object");
+  }
+  const facts = (value as Record<string, unknown>)["facts"];
+  if (facts === undefined || facts === null) return undefined;
+  if (!Array.isArray(facts) || facts.length === 0) {
+    throw new HttpError(400, "verification facts must be a non-empty array of fact ids");
+  }
+  return facts.map((fact, index) => {
+    if (typeof fact !== "string" || fact.trim() === "") {
+      throw new HttpError(
+        400,
+        `verification facts[${index}] must be a non-empty string`,
+      );
+    }
+    return fact.trim();
+  });
 }
 
 async function readBody(request: Request, maxBytes?: number): Promise<unknown> {
@@ -222,7 +247,9 @@ function parseAuditStreamBody(value: unknown): AuditEntry[] {
 
 export function createApi(options: ApiOptions): Api {
   const { db, staticDir, workspaceRoot, auditTokens, budget } = options;
-  const routes = buildRoutes(db, workspaceRoot, auditTokens, budget);
+  const verification =
+    options.verification ?? new VerificationService(db, DEFAULT_VERIFICATION);
+  const routes = buildRoutes(db, workspaceRoot, auditTokens, budget, verification);
 
   async function handle(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -322,8 +349,10 @@ function buildRoutes(
   workspaceRoot?: string,
   auditTokens?: AuditTokenRegistry,
   budget?: BudgetConfig,
+  verification?: VerificationService,
 ): Route[] {
   const routes: Route[] = [];
+  const oracle = verification ?? new VerificationService(db, DEFAULT_VERIFICATION);
 
   function route(method: string, template: string, handler: RouteHandler): void {
     const keys: string[] = [];
@@ -645,6 +674,25 @@ function buildRoutes(
       json(completeProject(conn, params["project_id"]!, body)),
     );
   });
+
+  route("POST", "/projects/{project_id}/verify", async ({ params, request }) => {
+    const facts = parseVerifyFacts(await readBody(request));
+    const outcome = await oracle.verify(
+      params["project_id"]!,
+      facts === undefined ? {} : { facts },
+    );
+    return json(outcome);
+  });
+
+  route("GET", "/projects/{project_id}/verification", ({ params }) =>
+    db.withConn((conn) => {
+      const projectId = params["project_id"]!;
+      return json({
+        policy: getProjectVerification(conn, projectId),
+        latest: getLatestVerificationCheck(conn, projectId),
+      });
+    }),
+  );
 
   route("POST", "/projects/{project_id}/reopen", async ({ params, request }) => {
     const body = parseReopenRequest(await readBody(request));

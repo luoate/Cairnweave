@@ -4,11 +4,13 @@
 skills / Observer）合并成**一个 Bun/TypeScript 代码库**，不再维护 Python ↔ TypeScript
 之间的进程桥、JSONL RPC 和 worker 适配器。
 
-状态：**M13b（成本归因与因果链完成）**；M0–M4、M5a–M5c、M6–M11、M12a、M12b、
-M12c、M13a、M13b 的计划项全部完成。Phase 1 的“本地看板 + Observer 提案 + 证据门 + 单一
-写图者”闭环已具备；提案默认关闭。Phase 2 的触发持久化、意图优先级/预算、单项目 token/
-成本与并发配额、只读慢层观测、逐 Fact 成本归因与因果链也已落地，并已用真实模型 gate
-核对用量记账、预算耗尽、慢层 API 与 `/cost` 的一致性，见 `docs/STRATEGIST.md`。
+状态：**M14a（可验证完成与多 Flag 门控）**；M0–M4、M5a–M5c、M6–M11、M12a、M12b、
+M12c、M13a、M13b、M14a 的计划项全部完成。Phase 1 的“本地看板 + Observer 提案 + 证据门 +
+单一写图者”闭环已具备；提案默认关闭。Phase 2 的触发持久化、意图优先级/预算、单项目
+token/成本与并发配额、只读慢层观测、逐 Fact 成本归因与因果链也已落地，并已用真实模型
+gate 核对用量记账、预算耗尽、慢层 API 与 `/cost` 的一致性，见 `docs/STRATEGIST.md`。
+Phase 3 的完成语义已收口：项目默认按证据验证，challenge 项目按外部挑战 API 的
+`flag_count` / `flag_got_count` 验证；worker 的 “complete” 只是声明，失败不会关项目。
 `cairn serve` 是可运行的 Cairn 兼容服务：SQLite schema、领域服务、全部五个路由、
 YAML/timeline 导出、静态 Web UI 均已就位，并用 Python Cairn 生成的 golden 做了逐字
 对照。进程内 scheduler、任务/结果文件 worker 协议、BreachWeave Solver 接入已在 M2
@@ -294,6 +296,29 @@ M13b 增加：
   `by_kind` 和 `runs` 行一致、`attributed + unattributed = total`、动态 Fact 有直付
   归属且能回溯创建意图的 run、所有因果边只引用已记录节点，并确认 POST 被拒绝。
 
+M14a 增加（Phase 3 收口）：
+
+- **完成不再由模型自证**：项目创建时可选 `verification.kind`：`challenge`（外部挑战
+  API 计分）、`evidence`（默认）、`off`。worker 返回的 `complete` 只是声明；scheduler
+  在写完成前调用 oracle。验证失败时 reason 释放租约、项目保持 active，bootstrap 仍
+  保留已产出的 Fact 但推迟完成；每次判定写入 `verification_checks`。手工
+  `POST /projects/{id}/complete` 仍是显式的操作员覆盖。
+- **challenge oracle**：从 `data.challenges[]` 按 `code` 读取 `flag_count` /
+  `flag_got_count`，只有 `flag_got_count >= flag_count > 0` 才通过。基址与 Agent-Token
+  只按**环境变量名**读取（默认 `TCH_CHALLENGE_API_BASE_URL` /
+  `TCH_CHALLENGE_AGENT_TOKEN`，可在 `verification.challenge` 改名）；配置、任务文件、
+  日志和数据库只保存计数，不保存 flag 明文或 token。
+- **evidence oracle**：reason 的 `complete.from` 中每个 Fact 必须有
+  `fact_meta.evidence_status = provided` 且至少一条 `fact_evidence`；bootstrap 用任务级
+  `evidence_refs` 校验（它的 Fact 在同一事务里新建）。缺少证据的完成声明被拒绝，并
+  记录缺口。
+- **只读查询与手动复核**：`GET /projects/{id}/verification` 返回策略与最近一次检查；
+  `POST /projects/{id}/verify` 可手动重跑（可带 `facts` 子集）。两种策略的判定都会入
+  `verification_checks`。
+- **prompt 契约**：每个任务的 prompt 末尾追加 Completion Verification 段；
+  BreachWeave 入口也明确要求 `evidence_refs`，并提示不要写 flag 明文或凭据。
+  详见 `docs/VERIFICATION.md`。
+
 默认仍是确定性 fake solver，测试与离线运行不需要模型凭据。Observer 只接在
 `CAIRN_SOLVER=breachweave` 的真实 Solver 路径上，fake solver 会忽略它。
 
@@ -354,6 +379,7 @@ apps/cairn/src/
   scheduler/strategist.ts 慢层触发求值（水位、事件、退避、冷却、小时配额）
   scheduler/retention.ts session 目录扫描、age/count 选择与受保护路径判定
   scheduler/audit.ts     有界读取 audit.jsonl 并导入控制面账本
+  verification/oracle.ts 完成 oracle：evidence / challenge / off 与检查历史
   runtime/types.ts       scheduler ↔ 沙箱接口（local / container）
   runtime/local.ts       本地子进程 runtime
   runtime/docker.ts      每项目容器、docker exec、任务级终止、清理
@@ -381,6 +407,7 @@ packages/graph/          schema、领域模型、服务、命令、导出、YAML
   src/pending-concludes.ts 跨重启的 conclude 队列
   src/proposals.ts      proposals / intent_meta 旁路表与去重查询
   src/strategist.ts     strategist_state 水位与 reason run 摘要/计数
+  src/verification.ts   项目验证策略与 verification_checks 旁路表
   src/audit.ts           控制面审计账本：哈希链、查询与断链校验
   src/export.ts          YAML、timeline 与图切片导出
   src/yaml.ts            PyYAML 兼容的 block-style 发射器
@@ -403,6 +430,7 @@ runs/m13-baseline.json   最近一次真实模型基线报告（本地生成，�
 docs/ARCHITECTURE.md     角色、数据所有权、时序、沙箱、失败语义
 docs/OBSERVER.md         Observer 实现、配置、权限、flush 语义与已知限制（M4c）
 docs/STRATEGIST.md       慢层触发、意图优先级/预算、用量记账、只读 API、成本基线与归因（M12a–M13b）
+docs/VERIFICATION.md     完成验证：策略、oracle、路由、失败语义与安全边界（M14a）
 docs/PORTING.md          Python 模块 → TS 模块映射与对照测试策略
 ```
 
@@ -798,9 +826,9 @@ M6 的跨进程恢复 gate 不调用模型：它先写下一台崩溃控制面�
 bun run tools/gate/m6-restart-gate.ts
 ```
 
-## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b，2026-10-26，Bun 1.4.4）
+## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a，2026-10-26，Bun 1.4.4）
 
-- `bun test`：**405 passed**（50 个文件），0 failed。
+- `bun test`：**444 passed**（54 个文件），0 failed。
 - `bun run typecheck`：`tsc --noEmit` 通过。
 - **HTTP 对照**：`api.golden.json` 的 60 步请求（成功路径、400/403/404/405/409、租约过期、
   删除级联、导出、路由错误）由 Python FastAPI + 固定时钟生成；TS 重放后状态码、content-type
@@ -974,6 +1002,14 @@ bun run tools/gate/m6-restart-gate.ts
   创建的意图落库创建 run。HTTP/UI 测试覆盖 `/cost` 的零状态、完整归因、404/405，以及
   “成本”页签与 `loadCost` 只发 GET。M13a gate 同时校验 `/cost` 与 run 行一致、归因
   可对账、因果边只引用已知节点，并拒绝 POST。
+- **完成验证（M14a）**：图侧测试覆盖默认 `evidence`、创建时选择 `challenge`、upsert
+  清理旧 challenge code、检查历史顺序/limit 与请求校验；oracle 测试覆盖证据齐全/缺失、
+  显式 Fact 子集、空事实集、bootstrap 任务级证据、`off`，以及 challenge 的全 Flag/部分
+  Flag、环境缺失、网络/HTTP/信封错误、缺失挑战、非法计数、零 Flag 和无 code；scheduler
+  测试确认拒绝后项目保持 active、bootstrap 保留 Fact、部分 Flag 不完成、全 Flag 完成、
+  oracle 抛错按任务失败；HTTP 测试覆盖 `/verify` 成功/子集/400/404/422、
+  `/verification` 空状态与 404，并断言返回体不含 token。golden 仍逐字通过（固定时钟下
+  创建项目不额外取时）。
 
 golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定时钟、`TZ=UTC`）。
 重新生成方法与约束见 `docs/PORTING.md`。
@@ -1020,6 +1056,7 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M12c ✅ | 慢层只读观测：`GET /strategist` 状态/预算/意图/推理历史 + Alpine「慢层」页签 | 394 passed / 47 files（2026-10-26） |
 | M13a ✅ | 真实模型成本基线：用量旁路 → runs → API 核对、预算耗尽门禁、`startup.json` 凭据脱敏 | 396 passed / 48 files；真实模型 gate 33/33 + 预算模式 32/32（2026-10-26） |
 | M13b ✅ | 成本归因与因果链：`intent_meta.origin_run_id`、只读 `/cost`、逐 Fact/意图分摊与因果边、Alpine「成本」页签 | 405 passed / 50 files；真实模型 gate 44/44 + 预算模式 43/43（2026-10-26） |
+| M14a ✅ | 可验证完成：项目级 `evidence`/`challenge`/`off` 策略、证据/外部 Flag 计数 oracle、scheduler 完成门控、`/verify` 与 `/verification` | 444 passed / 54 files（2026-10-26） |
 
 ## 与 Phase 0 的关系
 

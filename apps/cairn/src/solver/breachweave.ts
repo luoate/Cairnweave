@@ -178,11 +178,13 @@ function solverText(task: WorkerTask): string {
   const scope = `Authorized scope (hard limit): ${task.scope.targets.join(", ")}${notes}.
 Only interact with these targets. Anything outside this list is out of scope; do not
 attempt it.`;
-  const evidence = `Evidence contract: the final JSON envelope may carry "evidence_refs" at
-the top level, an array of paths relative to the workspace (for example
-"artifacts/scan.log") for files you created that support the reported fact. Use paths
+  const evidence = `Evidence contract: completion is verified, so every fact you report must
+cite file evidence. Put an "evidence_refs" array at the top level of the final JSON
+envelope; each entry is a path relative to the workspace (for example
+"artifacts/scan.log") for a file you created that supports the reported fact. Use paths
 inside the workspace only; the control plane rejects absolute paths, parent traversal,
-symlinks and missing files. Omit the field when you have no file evidence.`;
+symlinks and missing files. A fact without evidence will not be accepted as proof of
+completion. Never write flag values or credentials into evidence files or output.`;
   return `${scope}\n\n${evidence}\n\n${task.prompt}`;
 }
 

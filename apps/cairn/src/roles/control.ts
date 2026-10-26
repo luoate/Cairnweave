@@ -7,11 +7,17 @@ import {
 import { join } from "node:path";
 
 import { AuditTokenRegistry } from "../audit-stream/tokens";
-import { ConfigError, loadDispatchConfig, type DispatchConfig } from "../config";
+import {
+  ConfigError,
+  DEFAULT_VERIFICATION,
+  loadDispatchConfig,
+  type DispatchConfig,
+} from "../config";
 import { createApi } from "../http/api";
 import { checkDocker, resolveAgentConfigDir } from "../runtime";
 import { Scheduler } from "../scheduler/loop";
 import { resolveWorkspaceRoot } from "../scheduler/tasks";
+import { VerificationService } from "../verification/oracle";
 
 const USAGE = `usage: cairn serve [options]
 
@@ -110,9 +116,14 @@ export async function runControl(args: readonly string[]): Promise<number> {
   // One registry is shared by the API (verification) and the scheduler (minting/revoke).
   // The write route only exists when the operator opted into live streaming.
   const auditTokens = new AuditTokenRegistry();
+  const verification = new VerificationService(
+    db,
+    config?.verification ?? DEFAULT_VERIFICATION,
+  );
   const api = createApi({
     db,
     staticDir,
+    verification,
     ...(config === null
       ? {}
       : { workspaceRoot: resolveWorkspaceRoot(config), budget: config.budget }),
@@ -131,6 +142,7 @@ export async function runControl(args: readonly string[]): Promise<number> {
       scheduler = new Scheduler({
         db,
         config,
+        verification,
         auditTokens,
         auditStreamUrl: resolveAuditStreamUrl(config, {
           hostname: server.hostname ?? host,

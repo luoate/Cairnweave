@@ -28,6 +28,7 @@ import type {
   ProjectScopeInput,
   ProjectSummary,
 } from "./models";
+import { setProjectVerification } from "./verification";
 import {
   buildIntents,
   checkProjectActive,
@@ -142,6 +143,7 @@ export function createProject(
   if (body.scope !== null) {
     setProjectScope(conn, projectId, body.scope);
   }
+  setProjectVerification(conn, projectId, body.verification ?? { kind: "evidence" }, now);
 
   return {
     project: {

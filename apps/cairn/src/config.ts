@@ -151,6 +151,30 @@ export const DEFAULT_AUDIT_STREAM: AuditStreamConfig = {
   url: null,
 };
 
+/**
+ * Completion verification. The policy is chosen per project when it is created
+ * (`challenge`, `evidence`, or `off`); this section only says how the control plane
+ * reaches the external challenge service for `challenge` projects. Credentials are read
+ * from the named environment variables at verification time and never stored here.
+ */
+export interface ChallengeVerifierConfig {
+  baseUrlEnv: string;
+  agentTokenEnv: string;
+  timeoutMs: number;
+}
+
+export interface VerificationConfig {
+  challenge: ChallengeVerifierConfig;
+}
+
+export const DEFAULT_VERIFICATION: VerificationConfig = {
+  challenge: {
+    baseUrlEnv: "TCH_CHALLENGE_API_BASE_URL",
+    agentTokenEnv: "TCH_CHALLENGE_AGENT_TOKEN",
+    timeoutMs: 5000,
+  },
+};
+
 export type ProposalMode = "off" | "dry_run" | "apply";
 export type ProposalKindConfig = "fact" | "intent" | "hint";
 
@@ -311,6 +335,7 @@ export interface DispatchConfig {
   observer: ObserverConfig;
   retention: RetentionConfig;
   auditStream: AuditStreamConfig;
+  verification: VerificationConfig;
   proposals: ProposalsConfig;
   strategist: StrategistConfig;
   budget: BudgetConfig;
@@ -339,6 +364,7 @@ const TOP_LEVEL_KEYS = new Set([
   "observer",
   "retention",
   "audit_stream",
+  "verification",
   "proposals",
   "strategist",
   "budget",
@@ -662,6 +688,28 @@ function parseAuditStream(value: unknown): AuditStreamConfig {
   };
 }
 
+function parseVerification(value: unknown): VerificationConfig {
+  const root = recordAt(value, "verification");
+  const defaults = DEFAULT_VERIFICATION.challenge;
+  if (!has(root, "challenge")) {
+    return { challenge: { ...defaults } };
+  }
+  const challenge = recordAt(root["challenge"], "verification.challenge");
+  return {
+    challenge: {
+      baseUrlEnv: has(challenge, "base_url_env")
+        ? requiredString(challenge, "base_url_env", "verification.challenge")
+        : defaults.baseUrlEnv,
+      agentTokenEnv: has(challenge, "agent_token_env")
+        ? requiredString(challenge, "agent_token_env", "verification.challenge")
+        : defaults.agentTokenEnv,
+      timeoutMs: has(challenge, "timeout_ms")
+        ? requiredPositiveInt(challenge, "timeout_ms", "verification.challenge")
+        : defaults.timeoutMs,
+    },
+  };
+}
+
 function parseProposalKinds(value: unknown): ProposalKindConfig[] {
   if (!Array.isArray(value)) {
     throw new ConfigError("proposals.allow_kinds must be an array of proposal kinds");
@@ -833,6 +881,10 @@ export function parseDispatchConfig(value: unknown, options: ConfigOptions = {})
     ? parseAuditStream(root["audit_stream"])
     : { ...DEFAULT_AUDIT_STREAM };
 
+  const verification = has(root, "verification")
+    ? parseVerification(root["verification"])
+    : { challenge: { ...DEFAULT_VERIFICATION.challenge } };
+
   const proposals = has(root, "proposals")
     ? parseProposals(root["proposals"])
     : { ...DEFAULT_PROPOSALS, allowKinds: [...DEFAULT_PROPOSALS.allowKinds] };
@@ -862,6 +914,7 @@ export function parseDispatchConfig(value: unknown, options: ConfigOptions = {})
     observer,
     retention,
     auditStream,
+    verification,
     proposals,
     strategist,
     budget,

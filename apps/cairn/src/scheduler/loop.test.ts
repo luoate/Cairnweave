@@ -89,7 +89,11 @@ afterEach(() => {
   rmSync(directory, { recursive: true, force: true });
 });
 
-function createProjectRow(bootstrapEnabled: boolean, scope = SCOPE): ProjectDetail {
+function createProjectRow(
+  bootstrapEnabled: boolean,
+  scope = SCOPE,
+  verification?: { kind: "challenge" | "evidence" | "off"; challenge_code?: string | null },
+): ProjectDetail {
   return db.withConn((conn) =>
     createProject(conn, {
       title: `scheduler-${bootstrapEnabled}`,
@@ -98,6 +102,7 @@ function createProjectRow(bootstrapEnabled: boolean, scope = SCOPE): ProjectDeta
       bootstrap_enabled: bootstrapEnabled,
       hints: null,
       scope,
+      ...(verification === undefined ? {} : { verification }),
     }),
   );
 }
@@ -405,7 +410,9 @@ describe("scheduler with the fake solver", () => {
   test(
     "runs two same-project tasks concurrently with scoped artifacts",
     async () => {
-      const project = createProjectRow(false);
+      // The fixture completes from the seed origin fact, which carries no evidence to
+      // verify. Completion gating has dedicated coverage; keep this test about overlap.
+      const project = createProjectRow(false, SCOPE, { kind: "off" });
       const first = db.withConn((conn) =>
         createIntent(conn, project.project.id, {
           from: ["origin"],

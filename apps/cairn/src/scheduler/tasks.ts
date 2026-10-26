@@ -170,10 +170,11 @@ export function prepareTask(input: PrepareTaskInput): PreparedTask {
       worker: intent.worker,
     })),
   }, concludeOf);
-  const prompt =
+  const prompt = withCompletionPolicy(
     artifactDir === undefined
       ? basePrompt
-      : withArtifactPolicy(basePrompt, artifactDir);
+      : withArtifactPolicy(basePrompt, artifactDir),
+  );
 
   const mapScopePath = (hostPath: string): string | null => {
     try {
@@ -454,6 +455,17 @@ function withArtifactPolicy(prompt: string, artifactDir: string): string {
 
 # Artifact Policy
 This project may run multiple tasks at the same time. Write every durable artifact (logs, scripts, payloads, captured output) under \`${artifactDir}/\` relative to the workspace. Do not write to the \`artifacts/\` root or another task's directory; reads elsewhere in the workspace remain allowed. Reference these files in \`evidence_refs\` as \`${artifactDir}/...\`.
+`;
+}
+
+function withCompletionPolicy(prompt: string): string {
+  return `${prompt.trimEnd()}
+
+# Completion Verification
+Saying "complete" is a claim, not proof. The control plane verifies the claim before it marks the project completed, and a rejected claim leaves the project active.
+- Every fact that justifies completion must have at least one recorded file evidence entry. Put those paths in the result envelope's top-level \`evidence_refs\` array; descriptions alone are not evidence.
+- Challenge-backed projects are checked against the external challenge service's flag counters. Never paste flag values or credentials into descriptions, evidence files, task output or logs.
+- If verification fails, keep working and collect the missing evidence instead of repeating the same completion claim.
 `;
 }
 

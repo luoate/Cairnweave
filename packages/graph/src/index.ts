@@ -47,6 +47,10 @@ export {
   type ProjectReason,
   type ProjectStatus,
   type ProjectSummary,
+  type ProjectVerification,
+  type ProjectVerificationInput,
+  type VerificationCheck,
+  type VerificationKind,
   type ProjectCostReport,
   type CostAttribution,
   type CostFact,
@@ -218,6 +222,16 @@ export {
 } from "./audit-stream";
 
 export { hashFileSha256 } from "./hashing";
+
+export {
+  DEFAULT_VERIFICATION_KIND,
+  getLatestVerificationCheck,
+  getProjectVerification,
+  listVerificationChecks,
+  recordVerificationCheck,
+  setProjectVerification,
+  type RecordVerificationCheckInput,
+} from "./verification";
 
 export {
   getProjectArtifact,

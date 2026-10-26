@@ -1,4 +1,4 @@
-# 架构（M13b 更新）
+# 架构（M14a 更新）
 
 本文固定合并后的角色边界、数据所有权和失败语义。实现以本文为准；需要改动时先改本文并
 记录原因。
@@ -69,7 +69,11 @@ token 上限耗尽后停止派发；同时修复 `startup.json` 把认证存储�
 增加 `origin_run_id`，只读 `GET /projects/{id}/cost` 把每个 run 的用量分摊给直接产出
 （创建的意图 + 产出的事实），再沿意图把创建成本分给 Fact，并输出因果边；静态 UI 增加
 “成本”页签。它只读旁路数据，不改 Cairn 图、YAML 导出或 worker 契约。详见
-`docs/STRATEGIST.md` 第 11 节。
+`docs/STRATEGIST.md` 第 11 节。M14a 已落地：完成验证从模型自证改为控制面 oracle。
+项目可选择 `evidence`（默认）/ `challenge` / `off`；scheduler 在关项目前检查证据或
+外部挑战 API 的 `flag_count` / `flag_got_count`，失败只推迟完成并写
+`verification_checks`。flag 明文与 token 不进入配置、任务文件、日志或数据库。详见
+`docs/VERIFICATION.md`。
 
 ## 1. 范围
 
@@ -129,7 +133,7 @@ scheduler 与 HTTP API 共用 `packages/graph/src/commands.ts` 的命令，不�
 | 数据 | 写入者 | 读取者 | 位置 |
 | --- | --- | --- | --- |
 | SQLite（projects/facts/intents/hints/settings/project_scopes/project_artifacts） | 控制面 | 控制面 | 控制面主机 |
-| SQLite 旁路表（`runs` / `fact_meta` / `fact_evidence` / `pending_concludes` / `audit_events` / `audit_stream_lost` / `proposals` / `intent_meta` / `strategist_state`） | 控制面（不进入图模型与 YAML） | 控制面 | 控制面主机 |
+| SQLite 旁路表（`runs` / `fact_meta` / `fact_evidence` / `pending_concludes` / `audit_events` / `audit_stream_lost` / `proposals` / `intent_meta` / `strategist_state` / `project_verification` / `verification_checks`） | 控制面（不进入图模型与 YAML） | 控制面 | 控制面主机 |
 | `graph.yaml` 快照 | 控制面 | worker | 项目工作区/容器内绝对路径 |
 | `task.json` | 控制面 | worker | `sessionDir` |
 | `result.json` | worker（临时文件 + rename 原子写） | 控制面 | `sessionDir` |
@@ -214,11 +218,13 @@ scheduler 与 HTTP API 共用 `packages/graph/src/commands.ts` 的命令，不�
 9. 应用结果（同一事务）。写图前先校验证据（见 §4.1）：reason 不要求证据；其余 kind 的
    `evidence_refs` 只要有任一条非法，本任务按失败处理、不写图（explore/bootstrap 仍可走
    conclude 回退）。校验通过后：
-   - reason：`complete` → 关项目；intents → 以 `creator=cairn-worker` 创建意图；
+   - reason：`complete` → 先调用完成 oracle（M14a；见 §4.2），通过才关项目，失败则释放
+     reason 租约并保持项目 active；intents → 以 `creator=cairn-worker` 创建意图；
      noop → 成功。payload 校验在控制面按实时图状态做；
    - explore：`accepted:false` → 释放意图；否则 conclude 意图产生 Fact，并写
      `fact_meta`（`run_id`、证据引用与状态）；
-   - bootstrap：conclude 意图产生 Fact（同样写 `fact_meta`），再用该 Fact 完成项目；
+   - bootstrap：conclude 意图产生 Fact（同样写 `fact_meta`），再调用 oracle；通过才用
+     该 Fact 完成项目，失败则保留 Fact、项目继续 active；
    - conclude：bootstrap conclude 只接受 fact-only payload 并结束 bootstrap 意图，
      **不**完成项目（下一个 reason 再判断）；explore conclude 接受普通 description，
      写 Fact 并结束该意图；`accepted:false` → 释放意图。
@@ -313,6 +319,24 @@ M5a/M5b 只增加旁路数据，不改图模型、YAML 导出和既有 HTTP 响�
   `evidence_status`（`provided | missing | legacy`）。M5a 之前存在或经 HTTP 手工创建的
   Fact 没有行，读取时合成 `legacy` 视图，不批量回填。
 
+### 完成 oracle（M14a）
+
+完成验证只在应用 `complete` 声明时发生；oracle 的网络调用在 `withConn` 事务之外，
+判定结果随后单独写入 `verification_checks`。
+
+- **策略**：`project_verification.kind` 为 `evidence`（默认）/ `challenge` / `off`；
+  创建项目时可指定，旧项目无行时合成 `evidence`。策略不进入图模型或 YAML。
+- **evidence**：reason 检查 `data.complete.from` 的每个 Fact 的 `fact_meta` 与
+  `fact_evidence`；bootstrap 因为 Fact 在同一事务里创建，改用任务级
+  `evidence_refs`。无任何非种子 Fact 时失败。
+- **challenge**：`GET <base_url>/api/challenges`，`Agent-Token` 取自环境变量；
+  按 `challenge_code` 匹配，要求 `flag_count > 0` 且 `flag_got_count >= flag_count`。
+  环境缺失、网络/超时、非 2xx、非法 JSON、`code != 0`、形状错误一律失败。
+  **只保存计数，不保存 flag 明文或 token。**
+- **失败**：reason 释放租约并保持 active；bootstrap 保留 Fact、推迟完成；oracle 抛错
+  按任务失败处理。手工 `POST /complete` 仍是操作员覆盖，不经过 oracle。
+- 详见 `docs/VERIFICATION.md`。
+
 ## 5. 内部契约
 
 ### 5.1 `task.json`
@@ -397,7 +421,7 @@ stderr 归档到 `sessionDir/{stdout,stderr}.log`。需要 UI 实时进度时再
   一样由控制面从 SQLite 读取。
 - 索引失败只记日志，不影响任务结果；下一次扫描会重建。
 
-### 5.6 旁路表：runs、fact_meta、fact_evidence、pending_concludes、audit_events、audit_stream_lost、intent_meta 与 strategist_state
+### 5.6 旁路表：runs、fact_meta、fact_evidence、pending_concludes、audit_events、audit_stream_lost、intent_meta、strategist_state 与 verification
 
 这些表都在 `packages/graph/src/db.ts` 中创建，既不属于图导出，也不参与任何既有命令：
 
@@ -438,6 +462,13 @@ stderr 归档到 `sessionDir/{stdout,stderr}.log`。需要 UI 实时进度时再
   `priority`（默认 50）与 `budget` JSON；M13b 起 reason 和已应用提案写
   `origin_run_id`，旧库自动补列且历史行保持 `NULL`。读取时归一化非法优先级/预算为
   `NULL`。不进入图模型、YAML 或 HTTP 图响应。
+- `project_verification(project_id, kind, challenge_code, created_at)`（M14a），主键
+  `project_id`，外键指向项目并级联删除。`kind` 为 `challenge | evidence | off`；
+  没有行时读取合成 `evidence`，不改旧项目。
+- `verification_checks(id, project_id, kind, ok, detail, challenge_code, flag_count,
+  flag_got_count, evidence_refs, checked_at)`（M14a），按 `(project_id, checked_at)`
+  建索引，项目删除时级联删除。每次 oracle 调用（含失败与 `off`）追加一行；
+  `evidence_refs` 以 JSON 数组存储，`challenge_code` 是外部挑战的标识，不是 flag。
 
 HTTP（除实时追加外均为只读，均在控制面进程内直接查库）：
 
@@ -458,6 +489,12 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
   `run:` / `intent:` / `fact:`，kind 为 `created_intent` / `executed_by` /
   `produced_fact` / `source_fact` / `concluded_fact`。未知项目 404；只有 GET，
   其他方法 405；不修改任何状态。
+- `POST /projects/{id}/verify`（M14a）→ 手动运行完成 oracle，body 可省略或为 `{}`；
+  `{"facts": [...]}` 限定检查子集。返回 `{project_id, kind, ok, detail,
+  challenge_code, flag_count, flag_got_count, evidence_refs, checked_at, check}`。
+  未知项目 404；body 形状非法 400；非法 JSON 422。会追加一行 `verification_checks`。
+- `GET /projects/{id}/verification`（M14a，只读）→ `{policy, latest}`。`policy` 对
+  无行项目合成默认 `evidence`；`latest` 为最近一次检查或 `null`。未知项目 404。
 - `GET /projects/{id}/facts/{fact_id}/meta` → 单条 meta；Fact 存在但没有 sidecar 行时
   返回合成的 `legacy` 记录，未知 Fact 404。响应形状与既有 API 一致，直接是 JSON 对象，
   不加信封。
@@ -698,6 +735,10 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
   `max_project_tasks` 为 `0` 时继承 `runtime.max_project_workers`，非零值仍会与全局
   `runtime.max_workers` 取较小值。token/成本按项目已结束 run 汇总，只拦截新的
   bootstrap/reason/explore，不拦截 pending conclude；在途任务未上报前可能超预算。
+- `verification` 是新增的可选段（M14a）：`challenge.base_url_env` /
+  `challenge.agent_token_env` 是**环境变量名**（默认 `TCH_CHALLENGE_API_BASE_URL` /
+  `TCH_CHALLENGE_AGENT_TOKEN`），`challenge.timeout_ms` 是正整数（默认 `5000`）。
+  配置里不保存地址或 token 的值；缺省使用默认名，非法值以 `ConfigError` 拒绝。
 - `audit_stream` 是新增的可选段（M9，默认关闭）：`enabled`（布尔，默认 `false`）、
   `url`（可选的 http(s) 地址）。启用后 scheduler 才签发 bearer token 并注入 worker；
   本地模式在 `url` 缺省时使用实际监听的 loopback 地址，容器模式必须显式配置。缺省值

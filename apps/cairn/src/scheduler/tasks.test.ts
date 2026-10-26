@@ -140,6 +140,23 @@ describe("intent budgets", () => {
     expect(prepared.task.maxToolCalls).toBe(7);
   });
 
+  test("appends the completion verification policy to the prompt", () => {
+    const project = projectFixture();
+    const prepared = prepareTask({
+      config: parseDispatchConfig(CONFIG),
+      project,
+      exportYaml: "project: p1\n",
+      kind: "explore",
+      intent: project.intents[0]!,
+      scope: { targets: ["127.0.0.1:8080"] },
+      workspaceRoot: directory,
+    });
+
+    expect(prepared.task.prompt).toContain("# Completion Verification");
+    expect(prepared.task.prompt).toContain("evidence_refs");
+    expect(prepared.task.prompt).toContain("flag values or credentials");
+  });
+
   test("never extends the configured task timeout", () => {
     const project = projectFixture();
     const prepared = prepareTask({

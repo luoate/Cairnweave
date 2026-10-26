@@ -179,6 +179,17 @@ retention:
 #   max_project_cost_usd: 0     # provider-reported USD total; 0 off
 #   max_project_tasks: 0        # per-project concurrency; 0 inherits max_project_workers
 
+# Completion verification (M14a). The policy is chosen per project at creation time
+# (`verification.kind`: challenge | evidence | off); this section only configures how a
+# challenge project reaches the external verifier. The two values below are environment
+# variable NAMES, never tokens or URLs. The oracle stores flag counts only; flag values
+# and the Agent-Token must never appear in this file, task.json, result.json or logs.
+# verification:
+#   challenge:
+#     base_url_env: TCH_CHALLENGE_API_BASE_URL
+#     agent_token_env: TCH_CHALLENGE_AGENT_TOKEN
+#     timeout_ms: 5000
+
 # Environment variables passed to every worker process. They are not written
 # into task.json. Prefer ~/.tch-agent/config/auth.json for model credentials;
 # do not put secrets in this file.

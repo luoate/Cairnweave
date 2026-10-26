@@ -70,6 +70,11 @@ import { join, relative, sep } from "node:path";
 
 import type { AuditTokenRegistry } from "../audit-stream/tokens";
 import type { DispatchConfig } from "../config";
+import {
+  VerificationService,
+  type VerificationOptions,
+  type VerificationOutcome,
+} from "../verification/oracle";
 import { createRuntime, type RuntimeBackend, type WorkerProcess } from "../runtime";
 import { environmentSnapshot } from "../runtime/types";
 import { latestSolverSessionFile } from "../solver/session-file";
@@ -121,6 +126,8 @@ export interface SchedulerOptions {
   auditStreamUrl?: string | null;
   /** Test hook: clock used by the Strategist trigger policy. */
   now?: () => Date;
+  /** Completion oracle; defaults to the configured challenge/evidence policy. */
+  verification?: VerificationService;
 }
 
 interface AuditStreamTarget {
@@ -175,6 +182,7 @@ export class Scheduler {
   private readonly log: (message: string) => void;
   private readonly leaseIntervalMs: number;
   private readonly auditStream: AuditStreamTarget | null;
+  private readonly verification: VerificationService;
   private readonly now: () => Date;
 
   private readonly running = new Map<string, RunningTask>();
@@ -199,6 +207,8 @@ export class Scheduler {
       });
     this.leaseIntervalMs =
       options.leaseIntervalMs ?? this.config.runtime.interval * 1000;
+    this.verification =
+      options.verification ?? new VerificationService(this.db, this.config.verification);
 
     const url =
       options.auditStreamUrl === undefined
@@ -999,7 +1009,7 @@ export class Scheduler {
         return;
       }
 
-      const outcome = this.applyResult(running, result);
+      const outcome = await this.applyResult(running, result);
       this.finish(running, outcome, running.detail);
     } catch (error) {
       this.log(`task supervision crashed task=${task.taskId}: ${describe(error)}`);
@@ -1040,7 +1050,10 @@ export class Scheduler {
     }
   }
 
-  private applyResult(running: RunningTask, result: TaskResult): TaskOutcome {
+  private async applyResult(
+    running: RunningTask,
+    result: TaskResult,
+  ): Promise<TaskOutcome> {
     if (!result.accepted) {
       this.releaseOwnedLease(running);
       return "rejected";
@@ -1066,17 +1079,39 @@ export class Scheduler {
     }
     running.evidenceCount = evidence.refs.length;
 
+    // A completion claim is verified before any graph write. The oracle is allowed to
+    // call the challenge service, so it runs outside the graph transaction; a failure
+    // leaves the project active instead of recording a model-declared completion.
+    const claim = completionClaim(running, result, evidence);
+    let verification: VerificationOutcome | null = null;
+    if (claim !== null) {
+      try {
+        verification = await this.verification.verify(running.projectId, claim);
+      } catch (error) {
+        running.detail = `completion verification failed: ${describe(error)}`;
+        this.log(`verification error task=${running.taskId}: ${describe(error)}`);
+        this.failRunning(running, "verification error");
+        return "failed";
+      }
+      if (!verification.ok) {
+        this.log(
+          `completion not verified task=${running.taskId} kind=${verification.kind} detail=${verification.detail}`,
+        );
+        running.detail = `completion not verified: ${verification.detail}`;
+      }
+    }
+
     try {
       return this.db.withConn((conn) => {
         switch (running.kind) {
           case "reason": {
-            return this.applyReason(conn, running, result.data);
+            return this.applyReason(conn, running, result.data, verification);
           }
           case "explore": {
             return this.applyExplore(conn, running, result.data, evidence);
           }
           case "bootstrap": {
-            return this.applyBootstrap(conn, running, result.data, evidence);
+            return this.applyBootstrap(conn, running, result.data, evidence, verification);
           }
           case "conclude": {
             return this.applyConclude(conn, running, result.data, evidence);
@@ -1101,6 +1136,7 @@ export class Scheduler {
     conn: Database,
     running: RunningTask,
     data: Record<string, unknown>,
+    verification: VerificationOutcome | null,
   ): TaskOutcome {
     const validated = validateReasonPayload(
       { accepted: true, data },
@@ -1116,6 +1152,15 @@ export class Scheduler {
       case "complete": {
         const from = requireFactIds(validated.data["from"]);
         const description = requireText(validated.data["description"]);
+        // `completionClaim` verified the same fact set before the transaction. A missing
+        // outcome here means the claim shape changed under us; fail closed.
+        if (verification === null || !verification.ok) {
+          releaseReason(conn, running.projectId, WORKER_NAME);
+          this.log(
+            `completion deferred project=${running.projectId}: ${verification?.detail ?? "no verification result"}`,
+          );
+          return "rejected";
+        }
         completeProject(conn, running.projectId, {
           from,
           description,
@@ -1226,6 +1271,7 @@ export class Scheduler {
     running: RunningTask,
     data: Record<string, unknown>,
     evidence: EvidenceCollection,
+    verification: VerificationOutcome | null,
   ): TaskOutcome {
     if (running.intentId === undefined) return "failed";
     const validated = validateBootstrapExecutePayload({ accepted: true, data });
@@ -1247,6 +1293,14 @@ export class Scheduler {
         evidenceFiles: evidence.files,
       },
     );
+    // The bootstrap fact is worth keeping even when verification fails; the project stays
+    // active and a later reason turn can close it once the oracle agrees.
+    if (verification === null || !verification.ok) {
+      this.log(
+        `bootstrap completion deferred project=${running.projectId}: ${verification?.detail ?? "no verification result"}`,
+      );
+      return "success";
+    }
     try {
       completeProject(conn, running.projectId, {
         from: [conclude.fact.id],
@@ -1997,6 +2051,45 @@ function intentBudgetOf(value: unknown): ReasonIntentBudget | null {
     budget.max_tool_calls = calls;
   }
   return Object.keys(budget).length === 0 ? null : budget;
+}
+
+/**
+ * Recognizes the two task kinds that can close a project and describes what the oracle
+ * must verify. Malformed claims return null here; the normal payload validation in the
+ * apply step reports the real error.
+ */
+function completionClaim(
+  running: RunningTask,
+  result: TaskResult,
+  evidence: EvidenceCollection,
+): VerificationOptions | null {
+  if (!result.accepted) return null;
+  if (running.kind === "bootstrap") {
+    return {
+      taskEvidence: { status: evidence.status, refs: evidence.refs },
+    };
+  }
+  if (running.kind !== "reason") return null;
+
+  let payload: Record<string, unknown> = result.data;
+  const nested = asRecord(payload["data"]);
+  if (payload["accepted"] === true && nested !== null) {
+    payload = nested;
+  }
+  const complete = asRecord(payload["complete"]);
+  if (complete === null) return null;
+  const from = complete["from"];
+  if (!Array.isArray(from) || from.length === 0) return null;
+  if (from.some((factId) => typeof factId !== "string" || factId.trim() === "")) {
+    return null;
+  }
+  return { facts: from.map((factId) => (factId as string).trim()) };
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
 }
 
 function requireFactIds(value: unknown): string[] {

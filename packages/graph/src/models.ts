@@ -356,6 +356,38 @@ export interface ProjectScopeInput {
   notes?: string;
 }
 
+export type VerificationKind = "challenge" | "evidence" | "off";
+
+/**
+ * Per-project completion policy. `challenge` defers to the external challenge service's
+ * flag counters, `evidence` requires recorded evidence on the completing facts, and
+ * `off` keeps the legacy "the model said so" behavior for imported/legacy projects.
+ */
+export interface ProjectVerification {
+  project_id: string;
+  kind: VerificationKind;
+  challenge_code: string | null;
+  created_at: string;
+}
+
+export interface ProjectVerificationInput {
+  kind: VerificationKind;
+  challenge_code?: string | null;
+}
+
+export interface VerificationCheck {
+  id: number;
+  project_id: string;
+  kind: VerificationKind;
+  ok: boolean;
+  detail: string;
+  challenge_code: string | null;
+  flag_count: number | null;
+  flag_got_count: number | null;
+  evidence_refs: string[];
+  checked_at: string;
+}
+
 export interface CreateProjectRequest {
   title: string;
   origin: string;
@@ -363,6 +395,8 @@ export interface CreateProjectRequest {
   bootstrap_enabled: boolean;
   hints: CreateHintInline[] | null;
   scope: ProjectScopeInput | null;
+  /** Omitted by older callers; `createProject` defaults to `evidence`. */
+  verification?: ProjectVerificationInput | null;
 }
 
 export interface CreateHintRequest {
@@ -604,6 +638,69 @@ function optionalProjectScope(body: Body): ProjectScopeInput | null {
     : { targets, notes: notes as string };
 }
 
+function optionalProjectVerification(body: Body): ProjectVerificationInput | null {
+  if (!has(body, "verification") || body["verification"] === null) {
+    return null;
+  }
+  const raw = body["verification"];
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    invalid(
+      "model_attributes_type",
+      ["body", "verification"],
+      "Input should be a valid dictionary or object to extract fields from",
+      raw,
+    );
+  }
+  const record = raw as Body;
+  const kind = record["kind"];
+  if (kind !== "challenge" && kind !== "evidence" && kind !== "off") {
+    invalid(
+      "literal_error",
+      ["body", "verification", "kind"],
+      "Input should be 'challenge', 'evidence' or 'off'",
+      kind,
+    );
+  }
+  const rawCode = record["challenge_code"];
+  if (rawCode !== undefined && rawCode !== null && typeof rawCode !== "string") {
+    invalid(
+      "string_type",
+      ["body", "verification", "challenge_code"],
+      "Input should be a valid string",
+      rawCode,
+    );
+  }
+  const code = typeof rawCode === "string" ? rawCode.trim() : "";
+  if (kind === "challenge") {
+    if (code === "") {
+      invalid(
+        "value_error",
+        ["body", "verification", "challenge_code"],
+        "Value error, challenge verification requires a non-empty challenge_code",
+        rawCode,
+      );
+    }
+    if (code.length > 200) {
+      invalid(
+        "string_too_long",
+        ["body", "verification", "challenge_code"],
+        "String should have at most 200 characters",
+        rawCode,
+      );
+    }
+    return { kind, challenge_code: code };
+  }
+  if (code !== "") {
+    invalid(
+      "value_error",
+      ["body", "verification", "challenge_code"],
+      `Value error, challenge_code is only valid for challenge verification`,
+      rawCode,
+    );
+  }
+  return { kind };
+}
+
 export function parseCreateProjectRequest(value: unknown): CreateProjectRequest {
   const body = bodyRecord(value);
   const title = requiredString(body, "title");
@@ -642,6 +739,7 @@ export function parseCreateProjectRequest(value: unknown): CreateProjectRequest 
     bootstrap_enabled,
     hints,
     scope: optionalProjectScope(body),
+    verification: optionalProjectVerification(body),
   };
 }
 

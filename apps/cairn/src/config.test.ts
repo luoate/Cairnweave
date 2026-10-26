@@ -86,6 +86,42 @@ describe("dispatcher config", () => {
       maxProjectCostUsd: 0,
       maxProjectTasks: 0,
     });
+    expect(config.verification).toEqual({
+      challenge: {
+        baseUrlEnv: "TCH_CHALLENGE_API_BASE_URL",
+        agentTokenEnv: "TCH_CHALLENGE_AGENT_TOKEN",
+        timeoutMs: 5000,
+      },
+    });
+  });
+
+  test("parses the challenge verifier environment names", () => {
+    const config = parse(
+      BASE +
+        `verification:
+  challenge:
+    base_url_env: CUSTOM_BASE_URL
+    agent_token_env: CUSTOM_AGENT_TOKEN
+    timeout_ms: 1500
+`,
+    );
+    expect(config.verification.challenge).toEqual({
+      baseUrlEnv: "CUSTOM_BASE_URL",
+      agentTokenEnv: "CUSTOM_AGENT_TOKEN",
+      timeoutMs: 1500,
+    });
+  });
+
+  test("rejects an invalid verification timeout", () => {
+    expect(() =>
+      parse(
+        BASE +
+          `verification:
+  challenge:
+    timeout_ms: 0
+`,
+      ),
+    ).toThrow("verification.challenge.timeout_ms");
   });
 
   test("parses per-project budget policy", () => {
