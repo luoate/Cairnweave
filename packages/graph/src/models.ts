@@ -248,6 +248,45 @@ export interface ProjectCostReport {
 }
 
 /**
+ * One worker or model bucket of run outcomes (M14d). `success_rate` is
+ * `succeeded / finished` and is null while no run has finished, so a bucket with only
+ * running tasks never reports a misleading zero.
+ */
+export interface RunStatsGroup {
+  runs: number;
+  running: number;
+  finished: number;
+  succeeded: number;
+  failed: number;
+  rejected: number;
+  cancelled: number;
+  unhealthy: number;
+  inactive: number;
+  success_rate: number | null;
+  tokens: number;
+  cost_usd: number;
+  avg_duration_ms: number | null;
+  evidence_count: number;
+  last_started_at: string | null;
+}
+
+export interface WorkerRunStats extends RunStatsGroup {
+  worker: string;
+}
+
+export interface ModelRunStats extends RunStatsGroup {
+  /** Null groups runs whose solver never reported a model. */
+  model: string | null;
+}
+
+export interface ProjectRunStatsReport {
+  project_id: string;
+  totals: RunStatsGroup;
+  by_worker: WorkerRunStats[];
+  by_model: ModelRunStats[];
+}
+
+/**
  * Persisted slow-layer watermarks. `last_*_count` describe the graph after the last
  * successful reason turn; failures only advance the attempt/failure timestamps.
  */

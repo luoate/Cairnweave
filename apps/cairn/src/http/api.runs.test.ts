@@ -114,6 +114,85 @@ describe("GET /projects/{id}/runs", () => {
   });
 });
 
+describe("GET /projects/{id}/stats", () => {
+  test("aggregates outcomes and usage by worker and model", async () => {
+    db.withConn((conn) => {
+      startRun(conn, {
+        id: "run_001",
+        projectId,
+        taskId: "explore-1",
+        kind: "explore",
+        worker: "cairn-worker",
+        startedAt: "2026-01-02T03:00:00Z",
+      });
+      finishRun(conn, "run_001", {
+        outcome: "success",
+        finishedAt: "2026-01-02T03:00:05Z",
+        durationMs: 5000,
+        model: "gateway/deepseek-flash",
+        usage: { totalTokens: 100, costUsd: 0.5 },
+      });
+      startRun(conn, {
+        id: "run_002",
+        projectId,
+        taskId: "explore-2",
+        kind: "explore",
+        worker: "cairn-worker",
+        startedAt: "2026-01-02T03:01:00Z",
+      });
+      finishRun(conn, "run_002", {
+        outcome: "failed",
+        finishedAt: "2026-01-02T03:01:02Z",
+        durationMs: 2000,
+        model: "gateway/deepseek-flash",
+        usage: { totalTokens: 20, costUsd: 0.1 },
+      });
+    });
+
+    const response = await get(`/projects/${projectId}/stats`);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      totals: Record<string, unknown>;
+      by_worker: Array<Record<string, unknown>>;
+      by_model: Array<Record<string, unknown>>;
+    };
+    expect(body.totals).toMatchObject({
+      runs: 2,
+      finished: 2,
+      succeeded: 1,
+      failed: 1,
+      success_rate: 0.5,
+      tokens: 120,
+      cost_usd: 0.6,
+      avg_duration_ms: 3500,
+    });
+    expect(body.by_worker).toHaveLength(1);
+    expect(body.by_worker[0]).toMatchObject({
+      worker: "cairn-worker",
+      runs: 2,
+      success_rate: 0.5,
+    });
+    expect(body.by_model).toHaveLength(1);
+    expect(body.by_model[0]).toMatchObject({
+      model: "gateway/deepseek-flash",
+      runs: 2,
+      success_rate: 0.5,
+    });
+  });
+
+  test("404s for an unknown project and rejects writes", async () => {
+    expect((await get("/projects/nope/stats")).status).toBe(404);
+    const post = await api.handle(
+      new Request(`http://cairn.test/projects/${projectId}/stats`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}),
+      }),
+    );
+    expect(post.status).toBe(405);
+  });
+});
+
 describe("fact -> run -> audit drill-down", () => {
   test("walks a produced fact to its run model and that task's tool calls", async () => {
     const factId = db.withConn((conn) => {

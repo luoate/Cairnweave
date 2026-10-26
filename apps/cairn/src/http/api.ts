@@ -5,6 +5,7 @@ import {
   all,
   appendTaskAudit,
   buildProjectCostReport,
+  buildProjectRunStats,
   checkProjectCompleted,
   checkProjectHintWritable,
   claimReason,
@@ -410,6 +411,11 @@ function buildRoutes(
 
   route("GET", "/projects/{project_id}/runs", ({ params }) =>
     db.withConn((conn) => json(listProjectRuns(conn, params["project_id"]!))),
+  );
+
+  // Read-only per-worker/model outcome and usage statistics (M14d).
+  route("GET", "/projects/{project_id}/stats", ({ params }) =>
+    db.withConn((conn) => json(buildProjectRunStats(conn, params["project_id"]!))),
   );
 
   // Read-only slow-layer view (M12c): persisted trigger watermarks, the effective

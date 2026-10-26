@@ -60,6 +60,10 @@ export {
   type CostRun,
   type CausalEdge,
   type CausalEdgeKind,
+  type ModelRunStats,
+  type ProjectRunStatsReport,
+  type RunStatsGroup,
+  type WorkerRunStats,
   type Proposal,
   type ProposalKind,
   type ProposalSource,
@@ -148,6 +152,7 @@ export {
 } from "./runs";
 
 export { buildProjectCostReport } from "./cost";
+export { buildProjectRunStats } from "./stats";
 
 export {
   listFactEvidence,

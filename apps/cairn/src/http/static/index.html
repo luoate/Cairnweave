@@ -586,7 +586,7 @@
           <button @click="selectSideTab('log')" class="px-2 py-2.5 text-[11px] font-medium transition border-b-2"
             :class="sideTab === 'log' ? 'text-brand-600 border-brand-500' : 'text-slate-400 border-transparent hover:text-slate-600'">日志</button>
         </div>
-        <div class="grid grid-cols-6 border-t border-slate-100 bg-slate-50/60">
+        <div class="grid grid-cols-7 border-t border-slate-100 bg-slate-50/60">
           <button @click="selectSideTab('runs')" class="px-2 py-2 text-[11px] font-medium transition border-b-2"
             :class="sideTab === 'runs' ? 'text-brand-600 border-brand-500 bg-white' : 'text-slate-400 border-transparent hover:text-slate-600'">
             运行 <span class="ml-0.5 text-[10px] opacity-60" x-show="runsPanel.loadedFor && runsPanel.items.length" x-text="runsPanel.items.length"></span>
@@ -608,6 +608,10 @@
           <button @click="selectSideTab('cost')" class="px-2 py-2 text-[11px] font-medium transition border-b-2"
             :class="sideTab === 'cost' ? 'text-brand-600 border-brand-500 bg-white' : 'text-slate-400 border-transparent hover:text-slate-600'">
             成本 <span class="ml-0.5 text-[10px] opacity-60" x-show="costPanel.data && costPanel.data.runs.length" x-text="costPanel.data ? costPanel.data.runs.length : ''"></span>
+          </button>
+          <button @click="selectSideTab('stats')" class="px-2 py-2 text-[11px] font-medium transition border-b-2"
+            :class="sideTab === 'stats' ? 'text-brand-600 border-brand-500 bg-white' : 'text-slate-400 border-transparent hover:text-slate-600'">
+            统计 <span class="ml-0.5 text-[10px] opacity-60" x-show="statsPanel.data && statsPanel.data.totals.runs" x-text="statsPanel.data ? statsPanel.data.totals.runs : ''"></span>
           </button>
         </div>
       </div>
@@ -1696,6 +1700,111 @@
           </div>
         </template>
       </div>
+
+      <!-- Per-worker/model run statistics (read-only, M14d) -->
+      <div x-show="sideTab === 'stats'" class="flex-1 overflow-y-auto p-3 space-y-3 bg-slate-50/30">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <div class="flex items-center gap-1.5">
+              <span class="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">统计</span>
+              <span class="px-1.5 py-0.5 rounded-full border border-slate-200 bg-white text-[9px] font-medium uppercase tracking-wide text-slate-400">只读</span>
+            </div>
+            <p class="mt-1 text-xs text-slate-500"
+              x-text="statsPanel.data ? `${statsPanel.data.totals.runs} 次运行 · 成功 ${statsPanel.data.totals.succeeded} / 结束 ${statsPanel.data.totals.finished}` : 'Worker 与模型表现'"></p>
+          </div>
+          <button type="button" @click="loadStats()" :disabled="statsPanel.loading" title="刷新统计" aria-label="刷新统计"
+            class="h-7 w-7 shrink-0 rounded-lg border border-slate-200 bg-white text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition disabled:opacity-40 inline-flex items-center justify-center">
+            <svg class="w-3.5 h-3.5" :class="{ 'animate-spin': statsPanel.loading }" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5"/><path d="M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5"/></svg>
+          </button>
+        </div>
+
+        <template x-if="statsPanel.error">
+          <div class="rounded-xl border border-rose-200 bg-rose-50/80 px-3 py-2.5">
+            <p class="text-[11px] text-rose-600 break-words" x-text="statsPanel.error"></p>
+            <button type="button" @click="loadStats()" class="mt-1.5 text-[11px] font-medium text-rose-600 hover:text-rose-700">重试</button>
+          </div>
+        </template>
+
+        <template x-if="statsPanel.loading && !statsPanel.data">
+          <div class="space-y-2 animate-pulse">
+            <div class="h-28 rounded-2xl border border-slate-200 bg-white"></div>
+            <div class="h-40 rounded-2xl border border-slate-200 bg-white"></div>
+          </div>
+        </template>
+
+        <template x-if="!statsPanel.loading && !statsPanel.error && statsPanel.loadedFor && statsPanel.data && statsPanel.data.totals.runs === 0">
+          <div class="rounded-2xl border border-dashed border-slate-200 bg-white/80 px-4 py-10 text-center shadow-sm">
+            <p class="text-sm text-slate-400">暂无运行记录</p>
+            <p class="mt-1 text-xs text-slate-300">任务完成后，这里会按 Worker 与模型汇总成功率、用量和耗时。</p>
+          </div>
+        </template>
+
+        <template x-if="statsPanel.data && statsPanel.data.totals.runs > 0">
+          <div class="space-y-3">
+            <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+              <div class="px-3 py-2.5 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between gap-2">
+                <span class="text-[11px] font-semibold text-slate-600">项目总览</span>
+                <span class="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[9px] font-semibold text-slate-500"
+                  x-text="`成功率 ${statsRateLabel(statsPanel.data.totals)}`"></span>
+              </div>
+              <div class="p-3 grid grid-cols-3 gap-x-3 gap-y-2 text-[11px]">
+                <div><span class="text-slate-400">运行</span><div class="text-slate-600 tabular-nums" x-text="statsPanel.data.totals.runs"></div></div>
+                <div><span class="text-slate-400">成功 / 结束</span><div class="text-slate-600 tabular-nums" x-text="`${statsPanel.data.totals.succeeded} / ${statsPanel.data.totals.finished}`"></div></div>
+                <div><span class="text-slate-400">运行中</span><div class="text-slate-600 tabular-nums" x-text="statsPanel.data.totals.running"></div></div>
+                <div><span class="text-slate-400">Token</span><div class="text-slate-600 tabular-nums" x-text="formatNumber(statsPanel.data.totals.tokens)"></div></div>
+                <div><span class="text-slate-400">成本</span><div class="text-slate-600 tabular-nums" x-text="strategistCostText(statsPanel.data.totals.cost_usd)"></div></div>
+                <div><span class="text-slate-400">平均耗时</span><div class="text-slate-600" x-text="statsAvgDurationLabel(statsPanel.data.totals.avg_duration_ms)"></div></div>
+              </div>
+            </section>
+
+            <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+              <div class="px-3 py-2.5 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between gap-2">
+                <span class="text-[11px] font-semibold text-slate-600">按 Worker</span>
+                <span class="text-[10px] text-slate-400" x-text="`${statsPanel.data.by_worker.length} 个`"></span>
+              </div>
+              <div class="p-3 space-y-2">
+                <template x-for="row in statsPanel.data.by_worker" :key="row.worker">
+                  <article class="rounded-xl border border-slate-100 bg-slate-50/50 px-2.5 py-2 space-y-1.5">
+                    <div class="flex items-center justify-between gap-2">
+                      <span class="font-mono text-[10px] text-slate-600 truncate" x-text="row.worker"></span>
+                      <span class="shrink-0 rounded-full border border-slate-200 bg-white px-1.5 py-0.5 text-[9px] text-slate-500" x-text="statsRateLabel(row)"></span>
+                    </div>
+                    <div class="grid grid-cols-3 gap-x-2 text-[10px]">
+                      <div><span class="text-slate-400">运行</span><div class="text-slate-500 tabular-nums" x-text="`${row.succeeded}/${row.finished} · ${row.runs}`"></div></div>
+                      <div><span class="text-slate-400">Token</span><div class="text-slate-500 tabular-nums" x-text="formatNumber(row.tokens)"></div></div>
+                      <div><span class="text-slate-400">成本</span><div class="text-slate-500 tabular-nums" x-text="strategistCostText(row.cost_usd)"></div></div>
+                    </div>
+                    <div class="text-[10px] text-slate-400" x-text="`平均耗时 ${statsAvgDurationLabel(row.avg_duration_ms)} · 最近启动 ${row.last_started_at || '—'}`"></div>
+                  </article>
+                </template>
+              </div>
+            </section>
+
+            <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+              <div class="px-3 py-2.5 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between gap-2">
+                <span class="text-[11px] font-semibold text-slate-600">按模型</span>
+                <span class="text-[10px] text-slate-400" x-text="`${statsPanel.data.by_model.length} 个`"></span>
+              </div>
+              <div class="p-3 space-y-2">
+                <template x-for="row in statsPanel.data.by_model" :key="row.model || 'unrecorded'">
+                  <article class="rounded-xl border border-slate-100 bg-slate-50/50 px-2.5 py-2 space-y-1.5">
+                    <div class="flex items-center justify-between gap-2">
+                      <span class="font-mono text-[10px] text-slate-600 truncate" x-text="row.model || '未记录模型'"></span>
+                      <span class="shrink-0 rounded-full border border-slate-200 bg-white px-1.5 py-0.5 text-[9px] text-slate-500" x-text="statsRateLabel(row)"></span>
+                    </div>
+                    <div class="grid grid-cols-3 gap-x-2 text-[10px]">
+                      <div><span class="text-slate-400">运行</span><div class="text-slate-500 tabular-nums" x-text="`${row.succeeded}/${row.finished} · ${row.runs}`"></div></div>
+                      <div><span class="text-slate-400">Token</span><div class="text-slate-500 tabular-nums" x-text="formatNumber(row.tokens)"></div></div>
+                      <div><span class="text-slate-400">成本</span><div class="text-slate-500 tabular-nums" x-text="strategistCostText(row.cost_usd)"></div></div>
+                    </div>
+                    <div class="text-[10px] text-slate-400" x-text="`平均耗时 ${statsAvgDurationLabel(row.avg_duration_ms)} · 最近启动 ${row.last_started_at || '—'}`"></div>
+                  </article>
+                </template>
+              </div>
+            </section>
+          </div>
+        </template>
+      </div>
     </div>
   </div>
 </div>
@@ -2093,6 +2202,12 @@ function cairnApp() {
       loadedFor: '',
     },
     costPanel: {
+      data: null,
+      loading: false,
+      error: '',
+      loadedFor: '',
+    },
+    statsPanel: {
       data: null,
       loading: false,
       error: '',
@@ -2606,10 +2721,11 @@ function cairnApp() {
       this.evidencePanel = { factId: '', meta: null, files: [], loading: false, error: '', loadedFor: '' };
       this.proposalsPanel = { items: [], loading: false, error: '', loadedFor: '' };
       this.costPanel = { data: null, loading: false, error: '', loadedFor: '' };
+      this.statsPanel = { data: null, loading: false, error: '', loadedFor: '' };
     },
 
     selectSideTab(tab) {
-      if (!['detail', 'hints', 'log', 'runs', 'strategist', 'audit', 'evidence', 'proposals', 'cost'].includes(tab)) return;
+      if (!['detail', 'hints', 'log', 'runs', 'strategist', 'audit', 'evidence', 'proposals', 'cost', 'stats'].includes(tab)) return;
       this.sideTab = tab;
       this.loadActiveOpsTab();
     },
@@ -2621,6 +2737,7 @@ function cairnApp() {
       else if (this.sideTab === 'evidence') this.loadEvidence();
       else if (this.sideTab === 'proposals') this.loadProposals();
       else if (this.sideTab === 'cost') this.loadCost();
+      else if (this.sideTab === 'stats') this.loadStats();
     },
 
     async loadRuns() {
@@ -2744,6 +2861,23 @@ function cairnApp() {
         if (this.selectedProjectId === projectId) this.costPanel.error = this.errorText(e);
       } finally {
         if (this.selectedProjectId === projectId) this.costPanel.loading = false;
+      }
+    },
+
+    async loadStats() {
+      const projectId = this.selectedProjectId;
+      if (!projectId) return;
+      this.statsPanel.loading = true;
+      this.statsPanel.error = '';
+      try {
+        const data = await this.api('GET', `/projects/${encodeURIComponent(projectId)}/stats`);
+        if (this.selectedProjectId !== projectId) return;
+        this.statsPanel.data = data && typeof data === 'object' ? data : null;
+        this.statsPanel.loadedFor = projectId;
+      } catch (e) {
+        if (this.selectedProjectId === projectId) this.statsPanel.error = this.errorText(e);
+      } finally {
+        if (this.selectedProjectId === projectId) this.statsPanel.loading = false;
       }
     },
 
@@ -2972,6 +3106,15 @@ function cairnApp() {
       const current = `$${Number(used || 0).toFixed(4)}`;
       const cap = Number(limit);
       return cap > 0 ? `${current} / $${cap.toFixed(4)}` : current;
+    },
+
+    statsRateLabel(row) {
+      if (row?.success_rate === null || row?.success_rate === undefined) return '无结束运行';
+      return `${(Number(row.success_rate) * 100).toFixed(1)}%`;
+    },
+
+    statsAvgDurationLabel(ms) {
+      return ms === null || ms === undefined ? '—' : this.formatDurationMs(ms);
     },
 
     costFactRows() {

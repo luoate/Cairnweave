@@ -4,8 +4,8 @@
 skills / Observer）合并成**一个 Bun/TypeScript 代码库**，不再维护 Python ↔ TypeScript
 之间的进程桥、JSONL RPC 和 worker 适配器。
 
-状态：**M14c（runs 记录模型与 Fact→run→tool-call 溯源下钻）**；M0–M4、M5a–M5c、
-M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c 的计划项全部完成。Phase 1 的
+状态：**M14d（逐 Worker/模型运行统计）**；M0–M4、M5a–M5c、
+M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d 的计划项全部完成。Phase 1 的
 “本地看板 + Observer 提案 + 证据门 + 单一写图者”闭环已具备；提案默认关闭。Phase 2
 的触发持久化、意图优先级/预算、单项目 token/成本与并发配额、只读慢层观测、逐 Fact
 成本归因与因果链，以及 reason 的 Hint/去重输出、人工重规划与资源压力触发均已落地，并
@@ -13,7 +13,9 @@ M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c 的计划项全
 `docs/STRATEGIST.md`。Phase 3 的完成语义已收口：项目默认按证据验证，challenge 项目按
 外部挑战 API 的 `flag_count` / `flag_got_count` 验证；worker 的 “complete” 只是声明，
 失败不会关项目。M14c 起 `runs` 记录真实 Solver 的模型标签（来自 `usage.json`），
-UI 的 Fact 详情可沿 `run_id` 下钻到产出 run 与该任务的工具调用审计。
+UI 的 Fact 详情可沿 `run_id` 下钻到产出 run 与该任务的工具调用审计。M14d 增加只读
+`/stats` 与「统计」页签，按 Worker 和模型汇总成功/失败、Token、成本与耗时，为 Phase 4
+的统计驱动选择提供数据。
 `cairn serve` 是可运行的 Cairn 兼容服务：SQLite schema、领域服务、全部
 五个路由、YAML/timeline 导出、静态 Web UI 均已就位，并用 Python Cairn 生成的 golden
 做了逐字对照。进程内 scheduler、任务/结果文件 worker 协议、BreachWeave Solver 接入已在 M2
@@ -356,6 +358,19 @@ M14c 增加（可观测性补链）：
 - **验证**：新增契约、图迁移/回读、solver 模型格式化、scheduler 用量、HTTP 下钻链路
   与 UI GET-only 测试；并在浏览器中实测选中 Fact 后显示 run/model/task、点击后看到
   该任务的 read/grep/bash 审计事件（`chain_ok: true`）。
+
+M14d 增加（逐 Worker/模型统计）：
+
+- **只读统计路由**：`GET /projects/{id}/stats` 从 `runs` 旁路表汇总 `totals`、
+  `by_worker` 与 `by_model`。每组包含运行数、运行中、已结束、成功/失败/拒绝/取消/
+  不健康/未激活计数、`success_rate`（成功 ÷ 已结束；没有结束运行时为 `null`）、
+  Token、成本、平均耗时、证据数与最近启动时间。未知项目 404，只有 GET。
+- **「统计」页签**：Alpine UI 新增只读页签，显示项目总览与按 Worker、按模型两张分组
+  卡片。模型为 `null` 的运行归入“未记录模型”，不会被当成 0% 成功率；若该组有拒绝或
+  失败运行，成功率仍按已结束运行计算。
+- **已知边界**：统计按项目隔离；`model` 只随 `usage.json` 在任务结束时落库，所以在跑
+  任务暂时归入“未记录模型”，被硬杀的任务也没有模型。当前 `worker` 仍固定为
+  `cairn-worker`，统计只提供数据，尚未改变派发。
 
 默认仍是确定性 fake solver，测试与离线运行不需要模型凭据。Observer 只接在
 `CAIRN_SOLVER=breachweave` 的真实 Solver 路径上，fake solver 会忽略它。
@@ -864,9 +879,9 @@ M6 的跨进程恢复 gate 不调用模型：它先写下一台崩溃控制面�
 bun run tools/gate/m6-restart-gate.ts
 ```
 
-## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c，2026-10-26，Bun 1.4.4）
+## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d，2026-10-26，Bun 1.4.4）
 
-- `bun test`：**477 passed**（55 个文件），0 failed。
+- `bun test`：**482 passed**（56 个文件），0 failed。
 - `bun run typecheck`：`tsc --noEmit` 通过。
 - **HTTP 对照**：`api.golden.json` 的 60 步请求（成功路径、400/403/404/405/409、租约过期、
   删除级联、导出、路由错误）由 Python FastAPI + 固定时钟生成；TS 重放后状态码、content-type
@@ -1061,6 +1076,11 @@ bun run tools/gate/m6-restart-gate.ts
   落到 run；HTTP 测试覆盖 `/runs` 的 model 字段，以及 fact meta → run → task audit
   的完整下钻；UI 测试断言 `loadFactTrace` 只发 GET 且页面含“溯源/查看工具调用”。
   浏览器实测选中 `f001` 后显示 run/model/task，点击后审计面板显示该任务的工具事件。
+- **逐 Worker/模型统计（M14d）**：图侧测试覆盖空项目、按 worker/model 分组的成功/
+  失败/拒绝/运行中计数、成功率与平均值、`null` 模型桶和未知项目；HTTP 测试覆盖
+  `/stats` 的聚合结果、404 与 POST 405；UI 测试断言「统计」页签、`loadStats` 仅发
+  GET，且页面含“按 Worker/按模型/成功率”。浏览器实测 5 个 run 的总览与两张分组卡片，
+  控制台无 JS 错误。
 
 golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定时钟、`TZ=UTC`）。
 重新生成方法与约束见 `docs/PORTING.md`。
@@ -1110,6 +1130,7 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M14a ✅ | 可验证完成：项目级 `evidence`/`challenge`/`off` 策略、证据/外部 Flag 计数 oracle、scheduler 完成门控、`/verify` 与 `/verification` | 444 passed / 54 files（2026-10-26） |
 | M14b ✅ | Phase 2 补全：reason 输出 Hint/priority/budget/dedupe、`POST /replan` 人工重规划、资源压力触发、慢层页签操作 | 470 passed / 54 files（2026-10-26） |
 | M14c ✅ | 可观测性补链：`usage.json` → `runs.model`、Fact 详情溯源到产出 run 与该任务工具调用审计 | 477 passed / 55 files；浏览器实测下钻（2026-10-26） |
+| M14d ✅ | 逐 Worker/模型统计：`GET /stats` 汇总成功率、Token、成本与耗时，新增只读「统计」页签 | 482 passed / 56 files；浏览器实测（2026-10-26） |
 
 ## 与 Phase 0 的关系
 

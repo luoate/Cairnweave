@@ -80,7 +80,9 @@ runtime prompt 扩展（priority/budget/dedupe/Hint 语义）；`POST /projects/
 图模型与 YAML 导出不变。详见 `docs/STRATEGIST.md`。M14c 已落地：`usage.json` 可选
 `model`（`provider/model-id`），worker 从真实 Solver 会话读取并随用量写入 `runs.model`；
 `GET /runs` 暴露该列，UI 选中 Fact 后可沿 `run_id` 跳到产出 run 的模型/任务与该任务的
-工具调用审计。没有用量的任务（含 fake solver、硬杀）保持 `null`。
+工具调用审计。没有用量的任务（含 fake solver、硬杀）保持 `null`。M14d 已落地：只读
+`GET /projects/{id}/stats` 按 worker 与 model 汇总 runs 的 outcome、用量和耗时，静态 UI
+增加「统计」页签；它只读旁路数据，不改变图模型、YAML 导出或调度。
 
 ## 1. 范围
 
@@ -486,6 +488,10 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
 
 - `GET /projects/{id}/runs` → run 数组，按 `started_at, id` 排序；每行含六个用量列与
   `model`（无记录时为 `null`）；未知项目 404。
+- `GET /projects/{id}/stats`（M14d，只读）→ `{project_id, totals, by_worker, by_model}`。
+  每组统计运行数、运行中/已结束、各 outcome 计数、`success_rate`（成功 ÷ 已结束，
+  无结束运行为 `null`）、Token、成本、平均耗时、证据数与最近启动时间；`by_model`
+  把没有模型的运行归入 `model: null` 并排在最后。未知项目 404；只有 GET。
 - `GET /projects/{id}/strategist?limit=20`（M12c，只读）→
   `{state, budget, intents, reason_runs}`。`state` 为 `strategist_state` 或 `null`；
   `budget` 含 `used_tokens` / `used_cost_usd` / `running_tasks`、配置上限（纯 HTTP
@@ -560,6 +566,9 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
 - `Evidence` 通过 Fact 下拉选择后并发读取 meta 与 evidence，显示 sidecar 的
   `provided/missing/legacy`、写入时 `size/sha256` 与实时 `status/current_*`。没有
   workspace root 时沿用 API 的 `unverified` 语义。
+- `Stats`（统计，M14d）读取 `GET /projects/{id}/stats`，显示项目总览与按 Worker、
+  按模型两张分组卡片：运行数、成功/结束、成功率、Token、成本、平均耗时和最近启动。
+  `model: null` 显示为“未记录模型”；没有结束运行的组显示“无结束运行”而不是 0%。
 - `Cost`（成本，M13b）读取 `GET /projects/{id}/cost`，显示项目总量与归因完整性、
   按 run kind 汇总、逐 Fact 的直付/编排成本及产出/创建 run、逐意图的执行与创建成本、
   因果边和每个 run 的直接产出。它不把意图合计与 Fact 合计相加。
@@ -972,5 +981,7 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
     任务样本调整；人工重规划只有单项目级标记，没有排队、审批或原因审计。M14c 补上了
     `runs.model` 与 Fact→run→工具调用的 UI 下钻；仍未解决：model 只随 `usage.json`
     落库，fake solver、没有用量或被硬杀的任务为 `null`，conclude 是否应继承失败任务的
-    模型也未单独标注；逐 Worker/模型统计尚未实现，UI 只能单个 Fact 追溯，不能按模型
-    汇总成本与成功率。
+    模型也未单独标注。M14d 补上了只读逐 Worker/模型统计（成功率、outcome、Token、
+    成本、平均耗时）与「统计」页签；仍未解决：统计按项目隔离，在跑任务的 model 尚为
+    空，worker 仍固定为 `cairn-worker`，成功率的“结束”包含拒绝/取消/不健康，且统计
+    尚未用于派发选择或跨项目汇总。

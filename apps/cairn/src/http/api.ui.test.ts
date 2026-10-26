@@ -37,6 +37,7 @@ describe("static operations UI", () => {
     expect(html).toContain("selectSideTab('evidence')");
     expect(html).toContain("selectSideTab('proposals')");
     expect(html).toContain("selectSideTab('cost')");
+    expect(html).toContain("selectSideTab('stats')");
 
     const favicon = await api.handle(new Request("http://cairn.test/static/favicon.svg"));
     expect(favicon.status).toBe(200);
@@ -61,6 +62,7 @@ describe("static operations UI", () => {
       "loadEvidenceFact",
       "loadProposals",
       "loadCost",
+      "loadStats",
     ]) {
       const start = appScript.indexOf(`async ${method}(`);
       expect(start).toBeGreaterThan(-1);
@@ -90,6 +92,7 @@ describe("static operations UI", () => {
     expect(appScript).toContain("/evidence`");
     expect(appScript).toContain("/proposals`");
     expect(appScript).toContain("/cost`");
+    expect(appScript).toContain("/stats`");
     expect(html).toContain("慢层");
     expect(html).toContain("单项目预算");
     expect(html).toContain("推理历史");
@@ -97,6 +100,9 @@ describe("static operations UI", () => {
     expect(html).toContain("提案");
     expect(html).toContain("事实成本");
     expect(html).toContain("因果边");
+    expect(html).toContain("按 Worker");
+    expect(html).toContain("按模型");
+    expect(html).toContain("成功率");
     expect(html).toContain("全部归因");
     expect(html).toContain("仅演练");
     expect(html).toContain("只读");
