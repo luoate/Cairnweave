@@ -128,9 +128,10 @@ describe("legacy migrations", () => {
         cache_write_tokens: number;
         total_tokens: number;
         cost_usd: number;
+        model: string | null;
       }>(
         conn,
-        "SELECT input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, total_tokens, cost_usd FROM runs WHERE id = 'run_001'",
+        "SELECT input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, total_tokens, cost_usd, model FROM runs WHERE id = 'run_001'",
       ),
     );
     expect(row).toEqual({
@@ -140,6 +141,7 @@ describe("legacy migrations", () => {
       cache_write_tokens: 0,
       total_tokens: 0,
       cost_usd: 0,
+      model: null,
     });
   });
 

@@ -14,11 +14,15 @@ export interface TaskUsage {
   readonly cache_write_tokens: number;
   readonly total_tokens: number;
   readonly cost_usd: number;
+  /** Optional `provider/model-id` that produced these counters (M14c). */
+  readonly model?: string;
 }
 
 export const TASK_USAGE_FILE = "usage.json";
 /** Bounds the worker-written sidecar; legitimate records are a few hundred bytes. */
 export const MAX_TASK_USAGE_BYTES = 16 * 1024;
+/** Model identifiers are diagnostic labels, not free-form text. */
+export const MAX_TASK_MODEL_LENGTH = 200;
 
 function isNonNegativeInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 0;
@@ -47,6 +51,16 @@ export function taskUsageErrors(value: unknown): string[] {
   }
   if (!isNonNegativeNumber(record["cost_usd"])) {
     errors.push("cost_usd must be a non-negative number");
+  }
+  const model = record["model"];
+  if (
+    model !== undefined &&
+    (typeof model !== "string" ||
+      model.trim() === "" ||
+      model.length > MAX_TASK_MODEL_LENGTH ||
+      /[\u0000-\u001f\u007f]/.test(model))
+  ) {
+    errors.push("model must be a non-empty string without control characters");
   }
   return errors;
 }

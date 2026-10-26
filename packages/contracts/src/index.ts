@@ -33,6 +33,7 @@ export {
 } from "./payloads";
 
 export {
+  MAX_TASK_MODEL_LENGTH,
   MAX_TASK_USAGE_BYTES,
   TASK_USAGE_FILE,
   isTaskUsage,

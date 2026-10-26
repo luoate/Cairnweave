@@ -54,6 +54,7 @@ describe("static operations UI", () => {
     const appScript = html.match(/<script>\s*(function cairnApp\(\)[\s\S]*?)<\/script>/)![1]!;
     for (const method of [
       "loadRuns",
+      "loadFactTrace",
       "loadStrategist",
       "loadAudit",
       "loadAuditTask",
@@ -80,7 +81,9 @@ describe("static operations UI", () => {
 
     // The operations loaders call the existing read-only routes.
     expect(appScript).toContain("/runs`");
+    expect(appScript).toContain("/facts/");
     expect(appScript).toContain("/strategist?limit=20`");
+    expect(appScript).toContain("/meta`");
     expect(appScript).toContain("/audit`");
     expect(appScript).toContain("/stream-lost`");
     expect(appScript).toContain("/meta`");
@@ -97,6 +100,8 @@ describe("static operations UI", () => {
     expect(html).toContain("全部归因");
     expect(html).toContain("仅演练");
     expect(html).toContain("只读");
+    expect(html).toContain("溯源");
+    expect(html).toContain("查看工具调用");
     expect(html).toContain("新建项目");
   });
 });

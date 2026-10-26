@@ -10,6 +10,7 @@ import {
   createProject,
   finishRun,
   heartbeatIntent,
+  recordTaskAudit,
   startRun,
   type CairnDatabase,
 } from "@cairn/graph";
@@ -65,6 +66,7 @@ describe("GET /projects/{id}/runs", () => {
         durationMs: 5000,
         exitCode: 0,
         evidenceCount: 1,
+        model: "gateway/deepseek-flash",
         usage: {
           inputTokens: 120,
           outputTokens: 30,
@@ -86,6 +88,7 @@ describe("GET /projects/{id}/runs", () => {
         kind: "explore",
         intent_id: "i001",
         worker: "cairn-worker",
+        model: "gateway/deepseek-flash",
         trigger: null,
         outcome: "success",
         exit_code: 0,
@@ -108,6 +111,73 @@ describe("GET /projects/{id}/runs", () => {
   test("404s for an unknown project", async () => {
     const response = await get("/projects/nope/runs");
     expect(response.status).toBe(404);
+  });
+});
+
+describe("fact -> run -> audit drill-down", () => {
+  test("walks a produced fact to its run model and that task's tool calls", async () => {
+    const factId = db.withConn((conn) => {
+      const intent = createIntent(conn, projectId, {
+        from: ["origin"],
+        description: "drill",
+        creator: "tester",
+        worker: null,
+      });
+      heartbeatIntent(conn, projectId, intent.id, "cairn-worker");
+      startRun(conn, {
+        id: "run_001",
+        projectId,
+        taskId: "explore-1",
+        kind: "explore",
+        intentId: intent.id,
+        worker: "cairn-worker",
+        startedAt: "2026-01-02T03:00:00Z",
+      });
+      finishRun(conn, "run_001", {
+        outcome: "success",
+        finishedAt: "2026-01-02T03:00:05Z",
+        durationMs: 5000,
+        exitCode: 0,
+        model: "gateway/deepseek-flash",
+        evidenceCount: 0,
+      });
+      recordTaskAudit(conn, {
+        projectId,
+        taskId: "explore-1",
+        events: [
+          { decision: "allow", tool: "bash" },
+          { decision: "block", tool: "write" },
+        ],
+        createdAt: "2026-01-02T03:00:05Z",
+      });
+      return concludeIntent(conn, projectId, intent.id, "cairn-worker", "found", {
+        runId: "run_001",
+        evidenceRefs: [],
+        evidenceStatus: "missing",
+      }).fact.id;
+    });
+
+    const meta = (await (await get(`/projects/${projectId}/facts/${factId}/meta`)).json()) as {
+      run_id: string | null;
+    };
+    expect(meta.run_id).toBe("run_001");
+
+    const runs = (await (await get(`/projects/${projectId}/runs`)).json()) as Array<{
+      id: string;
+      task_id: string;
+      model: string | null;
+    }>;
+    const run = runs.find((item) => item.id === meta.run_id);
+    expect(run).toMatchObject({
+      task_id: "explore-1",
+      model: "gateway/deepseek-flash",
+    });
+
+    const audit = (await (
+      await get(`/projects/${projectId}/audit/${run!.task_id}`)
+    ).json()) as { chain_ok: boolean; events: Array<{ event: { tool?: string } }> };
+    expect(audit.chain_ok).toBe(true);
+    expect(audit.events.map((row) => row.event.tool)).toEqual(["bash", "write"]);
   });
 });
 

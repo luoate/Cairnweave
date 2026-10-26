@@ -1052,6 +1052,7 @@ describe("Strategist priority and project budgets", () => {
         cache_read_tokens: 10,
         cache_write_tokens: 5,
         cost_usd: 0.25,
+        model: "gateway/deepseek-flash",
       });
 
       const gated = budgetScheduler({ max_project_tokens: 165 });

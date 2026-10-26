@@ -111,6 +111,8 @@ export interface Run {
   kind: string;
   intent_id: string | null;
   worker: string;
+  /** Solver-session `provider/model-id`; null when the worker could not report one. */
+  model: string | null;
   trigger: string | null;
   outcome: RunOutcome | null;
   exit_code: number | null;

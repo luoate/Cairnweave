@@ -1651,6 +1651,7 @@ export class Scheduler {
           exitCode,
           evidenceCount,
           detail,
+          model: usage?.model ?? null,
           usage:
             usage === null
               ? null

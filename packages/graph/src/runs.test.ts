@@ -124,6 +124,7 @@ describe("runs", () => {
       exit_code: 0,
       duration_ms: 7000,
       evidence_count: 1,
+      model: null,
     });
   });
 
@@ -143,6 +144,7 @@ describe("runs", () => {
         durationMs: 7000,
         exitCode: 0,
         evidenceCount: 0,
+        model: "gateway/deepseek-flash",
         usage: {
           inputTokens: 100,
           outputTokens: 20,
@@ -180,7 +182,9 @@ describe("runs", () => {
       cache_write_tokens: 2,
       total_tokens: 127,
       cost_usd: 0.25,
+      model: "gateway/deepseek-flash",
     });
+    expect(runs[1]?.model).toBeNull();
     // A failed solve still burned tokens, so it stays in the project total.
     expect(db.withConn((conn) => getProjectUsage(conn, projectId))).toEqual({
       tokens: 140,

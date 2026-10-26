@@ -113,6 +113,7 @@ CREATE TABLE IF NOT EXISTS runs (
     kind TEXT NOT NULL,
     intent_id TEXT,
     worker TEXT NOT NULL,
+    model TEXT,
     trigger TEXT,
     outcome TEXT,
     exit_code INTEGER,
@@ -316,8 +317,9 @@ function ensureProjectColumns(conn: Database): void {
 }
 
 /**
- * M12b adds usage counters to `runs`. `CREATE TABLE IF NOT EXISTS` does not alter an
- * existing table, so apply the same additive migration pattern as `projects`.
+ * M12b adds usage counters and M14c the solver model to `runs`. `CREATE TABLE IF NOT
+ * EXISTS` does not alter an existing table, so apply the same additive migration pattern
+ * as `projects`.
  */
 function ensureRunColumns(conn: Database): void {
   const columns = new Set(
@@ -330,6 +332,7 @@ function ensureRunColumns(conn: Database): void {
     ["cache_write_tokens", "INTEGER NOT NULL DEFAULT 0"],
     ["total_tokens", "INTEGER NOT NULL DEFAULT 0"],
     ["cost_usd", "REAL NOT NULL DEFAULT 0"],
+    ["model", "TEXT"],
   ] as const;
   for (const [name, definition] of additions) {
     if (!columns.has(name)) {

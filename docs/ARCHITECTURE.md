@@ -77,7 +77,10 @@ token 上限耗尽后停止派发；同时修复 `startup.json` 把认证存储�
 runtime prompt 扩展（priority/budget/dedupe/Hint 语义）；`POST /projects/{id}/replan`
 把人工重规划持久化到 `strategist_state` 并作为 urgent 触发，`strategist` 配置新增
 `resource_pressure_ratio` 以在用量接近上限时触发一次非紧急 reason。默认 prompt 模板、
-图模型与 YAML 导出不变。详见 `docs/STRATEGIST.md`。
+图模型与 YAML 导出不变。详见 `docs/STRATEGIST.md`。M14c 已落地：`usage.json` 可选
+`model`（`provider/model-id`），worker 从真实 Solver 会话读取并随用量写入 `runs.model`；
+`GET /runs` 暴露该列，UI 选中 Fact 后可沿 `run_id` 跳到产出 run 的模型/任务与该任务的
+工具调用审计。没有用量的任务（含 fake solver、硬杀）保持 `null`。
 
 ## 1. 范围
 
@@ -433,9 +436,10 @@ stderr 归档到 `sessionDir/{stdout,stderr}.log`。需要 UI 实时进度时再
 
 - `runs(id, project_id, task_id, kind, intent_id, worker, trigger, outcome, exit_code,
   started_at, finished_at, duration_ms, session, evidence_count, detail, input_tokens,
-  output_tokens, cache_read_tokens, cache_write_tokens, total_tokens, cost_usd)`，按
-  `(project_id, started_at)` 建索引；项目删除时级联删除。六个用量列由 M12b 增量迁移
-  补齐，旧行为 0；失败任务的用量同样保留。
+  output_tokens, cache_read_tokens, cache_write_tokens, total_tokens, cost_usd, model)`，
+  按 `(project_id, started_at)` 建索引；项目删除时级联删除。六个用量列由 M12b 增量迁移
+  补齐，旧行为 0；`model` 由 M14c 迁移补齐，旧行与没有用量的任务为 `NULL`。失败任务
+  的用量同样保留。
 - `fact_meta(fact_id, project_id, run_id, evidence_refs, evidence_status, created_at)`，
   主键 `(fact_id, project_id)`，外键指向 Fact 并级联删除。`evidence_refs` 以 JSON 数组
   存储。`evidence_status` 为 `provided | missing | legacy`。
@@ -480,7 +484,8 @@ stderr 归档到 `sessionDir/{stdout,stderr}.log`。需要 UI 实时进度时再
 
 HTTP（除实时追加外均为只读，均在控制面进程内直接查库）：
 
-- `GET /projects/{id}/runs` → run 数组，按 `started_at, id` 排序；未知项目 404。
+- `GET /projects/{id}/runs` → run 数组，按 `started_at, id` 排序；每行含六个用量列与
+  `model`（无记录时为 `null`）；未知项目 404。
 - `GET /projects/{id}/strategist?limit=20`（M12c，只读）→
   `{state, budget, intents, reason_runs}`。`state` 为 `strategist_state` 或 `null`；
   `budget` 含 `used_tokens` / `used_cost_usd` / `running_tasks`、配置上限（纯 HTTP
@@ -539,8 +544,11 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
   `GET /` 与 `/static/*` 直接提供，没有构建/打包步骤。页签分两行：原有
   `Detail / Hints / Log`，以及运维页签 `Runs / Strategist / Audit / Evidence /
   Proposals / Cost`。
-- `Runs` 读取 `GET /projects/{id}/runs`，按最新在前显示 kind、worker、outcome、退出码、
-  时长、evidence 数量和 detail；每行可跳到该 task 的 Audit。
+- `Runs` 读取 `GET /projects/{id}/runs`，按最新在前显示 kind、worker、模型、outcome、
+  退出码、时长、evidence 数量和 detail；每行可跳到该 task 的 Audit。
+- Fact 详情（M14c）在单选时读取 `GET /facts/{id}/meta`，用 `run_id` 从已加载或补取的
+  runs 中定位产出 run，显示模型与 task id；“查看工具调用”复用 Audit 页签。多选或
+  origin/goal 不发起溯源请求。
 - `Strategist`（慢层）读取 `GET /projects/{id}/strategist?limit=20`，显示单项目
   token/成本/并发用量与上限、耗尽徽标、最近成功/尝试/失败水位与触发串、按优先级排序的
   未结束意图（含意图预算）以及最近 20 次 reason run。纯 HTTP 模式下上限显示为未配置。
@@ -961,4 +969,8 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
     逐 token 计量，也不能作为对外计费凭证。M14b 补上了 reason 的 Hint/去重输出、人工
     重规划与资源压力触发；仍未解决：Prompt 扩展尚未在真实模型上做 A/B，Hint 质量与
     dedupe key 的稳定性没有基线；`resource_pressure_ratio` 默认关闭，触发阈值需要按长
-    任务样本调整；人工重规划只有单项目级标记，没有排队、审批或原因审计。
+    任务样本调整；人工重规划只有单项目级标记，没有排队、审批或原因审计。M14c 补上了
+    `runs.model` 与 Fact→run→工具调用的 UI 下钻；仍未解决：model 只随 `usage.json`
+    落库，fake solver、没有用量或被硬杀的任务为 `null`，conclude 是否应继承失败任务的
+    模型也未单独标注；逐 Worker/模型统计尚未实现，UI 只能单个 Fact 追溯，不能按模型
+    汇总成本与成功率。

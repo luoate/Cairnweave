@@ -23,4 +23,6 @@ export interface Solver {
    * worker writes it so failed tasks still count against the project's token budget).
    */
   getLastUsage?(): SolverUsage | null;
+  /** Solver-session `provider/model-id`, when the solver can observe one (M14c). */
+  getLastModel?(): string | null;
 }

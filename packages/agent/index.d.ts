@@ -28,6 +28,8 @@ export interface AgentSessionStats {
 }
 
 export interface AgentSession {
+  /** Current model, once the session has resolved one. */
+  readonly model?: { provider: string; id: string };
   prompt(
     text: string,
     options?: { expandPromptTemplates?: boolean; source?: string },

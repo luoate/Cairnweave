@@ -707,6 +707,41 @@
                     <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">结束时间</span><span class="text-slate-600 text-right break-words" x-text="formatTime(selectedFactProducingIntent().concluded_at || selectedFactProducingIntent().created_at)"></span></div>
                   </div>
                 </template>
+                <template x-if="selectedFactId() !== 'origin' && selectedFactId() !== 'goal'">
+                  <div class="pt-4 border-t border-slate-100 space-y-2">
+                    <div class="flex items-center justify-between gap-2">
+                      <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest">溯源</p>
+                      <span class="rounded-full border border-slate-200 px-1.5 py-0.5 text-[9px] text-slate-400">只读</span>
+                    </div>
+                    <template x-if="factTrace.factId === selectedFactId() && factTrace.loading">
+                      <p class="text-[11px] text-slate-400">加载运行记录…</p>
+                    </template>
+                    <template x-if="factTrace.factId === selectedFactId() && factTrace.error">
+                      <p class="text-[11px] text-rose-600 break-words" x-text="factTrace.error"></p>
+                    </template>
+                    <template x-if="factTrace.factId === selectedFactId() && !factTrace.loading && !factTrace.error">
+                      <div class="space-y-2">
+                        <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">运行</span><span class="font-mono text-slate-600 text-right break-all" x-text="(factTrace.meta && factTrace.meta.run_id) || '—'"></span></div>
+                        <template x-if="factTrace.run">
+                          <div class="space-y-2">
+                            <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">模型</span><span class="font-mono text-slate-600 text-right break-all" x-text="factTrace.run.model || '—'"></span></div>
+                            <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">任务</span><span class="font-mono text-slate-600 text-right break-all" x-text="factTrace.run.task_id"></span></div>
+                            <button type="button" @click="openAuditForTask(factTrace.run.task_id)"
+                              class="w-full rounded-lg border border-brand-200 px-2 py-1 text-[10px] font-medium text-brand-600 hover:bg-brand-50 transition">
+                              查看工具调用 →
+                            </button>
+                          </div>
+                        </template>
+                        <template x-if="!factTrace.run">
+                          <p class="text-[11px] text-slate-400" x-text="factTrace.meta && factTrace.meta.run_id ? '运行记录不可用' : '没有产出运行（历史或人工结论）'"></p>
+                        </template>
+                      </div>
+                    </template>
+                    <template x-if="factTrace.factId !== selectedFactId()">
+                      <p class="text-[11px] text-slate-400">加载运行记录…</p>
+                    </template>
+                  </div>
+                </template>
               </div>
             </div>
           </section>
@@ -875,6 +910,7 @@
                 <div><span class="text-slate-400">耗时</span><div class="text-slate-600" x-text="runDurationLabel(run)"></div></div>
                 <div><span class="text-slate-400">退出码</span><div class="text-slate-600" x-text="runExitLabel(run)"></div></div>
                 <div><span class="text-slate-400">证据</span><div class="text-slate-600" x-text="`${run.evidence_count} 个文件`"></div></div>
+                <div class="col-span-2"><span class="text-slate-400">模型</span><div class="font-mono text-slate-600 break-all" x-text="run.model || '—'"></div></div>
               </div>
               <div class="flex items-start justify-between gap-2 text-[11px]">
                 <div class="min-w-0">
@@ -2013,6 +2049,13 @@ function cairnApp() {
       error: '',
       loadedFor: '',
     },
+    factTrace: {
+      factId: '',
+      loading: false,
+      error: '',
+      meta: null,
+      run: null,
+    },
     strategistPanel: {
       data: null,
       loading: false,
@@ -2537,7 +2580,15 @@ function cairnApp() {
 
     resetOpsPanels() {
       this.runsPanel = { items: [], loading: false, error: '', loadedFor: '' };
-      this.strategistPanel = { data: null, loading: false, error: '', loadedFor: '' };
+      this.factTrace = { factId: '', loading: false, error: '', meta: null, run: null };
+      this.strategistPanel = {
+        data: null,
+        loading: false,
+        error: '',
+        loadedFor: '',
+        replanReason: '',
+        replanLoading: false,
+      };
       this.auditPanel = {
         summaries: [],
         loading: false,
@@ -2586,6 +2637,42 @@ function cairnApp() {
         if (this.selectedProjectId === projectId) this.runsPanel.error = this.errorText(e);
       } finally {
         if (this.selectedProjectId === projectId) this.runsPanel.loading = false;
+      }
+    },
+
+    async loadFactTrace(factId) {
+      const projectId = this.selectedProjectId;
+      const traceable = Boolean(factId) && factId !== 'origin' && factId !== 'goal';
+      if (!projectId || !traceable) {
+        this.factTrace = { factId: '', loading: false, error: '', meta: null, run: null };
+        return;
+      }
+      this.factTrace = { factId, loading: true, error: '', meta: null, run: null };
+      const encodedProject = encodeURIComponent(projectId);
+      const encodedFact = encodeURIComponent(factId);
+      try {
+        const meta = await this.api('GET', `/projects/${encodedProject}/facts/${encodedFact}/meta`);
+        let run = null;
+        if (meta && typeof meta.run_id === 'string' && meta.run_id) {
+          let runs = this.runsPanel.loadedFor === projectId ? this.runsPanel.items : null;
+          if (runs === null) {
+            const fetched = await this.api('GET', `/projects/${encodedProject}/runs`);
+            runs = Array.isArray(fetched) ? [...fetched].reverse() : [];
+          }
+          run = runs.find(item => item.id === meta.run_id) || null;
+        }
+        if (this.selectedProjectId !== projectId || this.factTrace.factId !== factId) return;
+        this.factTrace = { factId, loading: false, error: '', meta, run };
+      } catch (e) {
+        if (this.selectedProjectId === projectId && this.factTrace.factId === factId) {
+          this.factTrace = {
+            factId,
+            loading: false,
+            error: this.errorText(e),
+            meta: null,
+            run: null,
+          };
+        }
       }
     },
 
@@ -4124,6 +4211,7 @@ function cairnApp() {
     clearGraphSelection(preserveTimeline = false) {
       this.selectedNode = null;
       this.selectedFacts = [];
+      this.factTrace = { factId: '', loading: false, error: '', meta: null, run: null };
       if (!preserveTimeline) this.selectedTimelineEntryId = null;
       if (this.cy) this.cy.elements().removeClass('highlight focus faded selected-fact');
     },
@@ -4148,6 +4236,8 @@ function cairnApp() {
         this.selectedFacts.push(fid);
         this.selectedNode = { type:'fact', id: fid };
       }
+      if (this.selectedFacts.length === 1) this.loadFactTrace(this.selectedFacts[0]);
+      else this.loadFactTrace('');
       this.refreshGraphDecorations();
     },
 
@@ -4163,6 +4253,8 @@ function cairnApp() {
       if (this.selectedNode?.type === 'fact' && this.selectedNode.id === fid) {
         this.selectedNode = { type:'fact', id: this.selectedFacts[this.selectedFacts.length - 1] };
       }
+      if (this.selectedFacts.length === 1) this.loadFactTrace(this.selectedFacts[0]);
+      else this.loadFactTrace('');
       this.refreshGraphDecorations();
     },
 
@@ -4203,6 +4295,7 @@ function cairnApp() {
       this.selectedFacts = [];
       this.selectedTimelineEntryId = null;
       this.selectedNode = { type:'intent', id: intentId };
+      this.loadFactTrace('');
       this.applyLineageHighlightForIntent(intentId);
     },
 
@@ -4213,9 +4306,11 @@ function cairnApp() {
       this.selectedTimelineEntryId = null;
       this.selectedNode = { type:'fact', id: factId };
       if (this.selectedFacts.length > 1) {
+        this.loadFactTrace('');
         this.applyMultiFactSelectionHighlight();
         return;
       }
+      this.loadFactTrace(factId);
       this.applyLineageHighlightForFact(factId);
     },
 

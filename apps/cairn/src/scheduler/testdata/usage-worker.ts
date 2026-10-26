@@ -26,6 +26,7 @@ writeFileSync(
     cache_write_tokens: 5,
     total_tokens: 165,
     cost_usd: 0.25,
+    model: "gateway/deepseek-flash",
   }),
   "utf8",
 );

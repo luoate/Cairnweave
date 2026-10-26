@@ -27,6 +27,7 @@ const STEER_MESSAGE =
 export class BreachWeaveSolver implements Solver {
   readonly name = PROMPT_NAME;
   private lastUsage: SolverUsage | null = null;
+  private lastModel: string | null = null;
 
   constructor(
     private readonly configDir: string | undefined = process.env["CAIRN_AGENT_CONFIG_DIR"],
@@ -36,8 +37,13 @@ export class BreachWeaveSolver implements Solver {
     return this.lastUsage;
   }
 
+  getLastModel(): string | null {
+    return this.lastModel;
+  }
+
   async solve(task: WorkerTask): Promise<string> {
     this.lastUsage = null;
+    this.lastModel = null;
     // Released once per config directory; existing user files are never overwritten.
     const agent = await import("@cairn/agent");
     const sourceConfigDir = this.configDir ?? agent.DEFAULT_CONFIG_DIR;
@@ -94,6 +100,7 @@ export class BreachWeaveSolver implements Solver {
         });
         session = created.session;
         observer = created.observer;
+        this.lastModel = modelLabel(session.model);
       } catch (error) {
         throw new Error(
           `BreachWeave session failed (check the model config in ${configDir}): ${describe(error)}`,
@@ -130,6 +137,8 @@ export class BreachWeaveSolver implements Solver {
         } catch {
           this.lastUsage = null;
         }
+        // A resumed or steered session may have selected a different model.
+        this.lastModel = modelLabel(session.model) ?? this.lastModel;
         session.dispose();
       }
     } finally {
@@ -217,6 +226,15 @@ function usageFromStats(stats: {
 
 function nonNegative(value: number): number {
   return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+/** Stable `provider/model-id` label used for runs.model; null when the session has none. */
+export function modelLabel(model: { provider?: unknown; id?: unknown } | undefined): string | null {
+  if (model === undefined || model === null) return null;
+  const provider = typeof model.provider === "string" ? model.provider.trim() : "";
+  const id = typeof model.id === "string" ? model.id.trim() : "";
+  if (id === "") return null;
+  return provider === "" ? id : `${provider}/${id}`;
 }
 
 function safeId(value: string): string {

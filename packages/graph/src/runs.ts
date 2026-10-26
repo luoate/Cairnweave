@@ -57,6 +57,8 @@ export interface FinishRunInput {
   evidenceCount?: number;
   detail?: string | null;
   usage?: RunUsage | null;
+  /** Solver-session `provider/model-id` reported alongside usage (M14c). */
+  model?: string | null;
 }
 
 export function finishRun(conn: Database, runId: string, input: FinishRunInput): void {
@@ -67,7 +69,7 @@ export function finishRun(conn: Database, runId: string, input: FinishRunInput):
     UPDATE runs
     SET outcome = ?, finished_at = ?, duration_ms = ?, exit_code = ?, evidence_count = ?,
         detail = ?, input_tokens = ?, output_tokens = ?, cache_read_tokens = ?,
-        cache_write_tokens = ?, total_tokens = ?, cost_usd = ?
+        cache_write_tokens = ?, total_tokens = ?, cost_usd = ?, model = ?
     WHERE id = ?
     `,
     input.outcome,
@@ -82,6 +84,7 @@ export function finishRun(conn: Database, runId: string, input: FinishRunInput):
     usage.cacheWriteTokens ?? 0,
     usage.totalTokens ?? 0,
     usage.costUsd ?? 0,
+    input.model ?? null,
     runId,
   );
 }
@@ -187,6 +190,7 @@ interface RunRow {
   kind: string;
   intent_id: string | null;
   worker: string;
+  model: string | null;
   trigger: string | null;
   outcome: string | null;
   exit_code: number | null;
@@ -221,6 +225,7 @@ function runFromRow(row: RunRow): Run {
     kind: row.kind,
     intent_id: row.intent_id,
     worker: row.worker,
+    model: row.model,
     trigger: row.trigger,
     outcome: row.outcome === null ? null : (row.outcome as RunOutcome),
     exit_code: row.exit_code,

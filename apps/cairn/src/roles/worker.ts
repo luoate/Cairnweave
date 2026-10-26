@@ -85,7 +85,7 @@ export async function runWorker(args: readonly string[]): Promise<number> {
     await flushHostBridgeAudit();
     // Usage is a sidecar so a solver failure or a rejected answer still counts against
     // the project's token/cost budget. It never changes the task outcome.
-    writeUsage(task, solver.getLastUsage?.() ?? null);
+    writeUsage(task, solver.getLastUsage?.() ?? null, solver.getLastModel?.() ?? null);
   }
 
   let result: TaskResult;
@@ -151,7 +151,7 @@ function normalizeResult(payload: Record<string, unknown>): TaskResult {
   return result;
 }
 
-function writeUsage(task: WorkerTask, usage: SolverUsage | null): void {
+function writeUsage(task: WorkerTask, usage: SolverUsage | null, model: string | null): void {
   if (usage === null) return;
   const mapped: TaskUsage = {
     input_tokens: usage.inputTokens,
@@ -160,6 +160,7 @@ function writeUsage(task: WorkerTask, usage: SolverUsage | null): void {
     cache_write_tokens: usage.cacheWriteTokens,
     total_tokens: usage.totalTokens,
     cost_usd: usage.costUsd,
+    ...(model === null || model === "" ? {} : { model }),
   };
   const errors = taskUsageErrors(mapped);
   if (errors.length > 0) {

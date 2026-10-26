@@ -4,15 +4,17 @@
 skills / Observer）合并成**一个 Bun/TypeScript 代码库**，不再维护 Python ↔ TypeScript
 之间的进程桥、JSONL RPC 和 worker 适配器。
 
-状态：**M14b（慢层输出扩展与人工/资源触发的 Phase 2 补全）**；M0–M4、M5a–M5c、
-M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b 的计划项全部完成。Phase 1 的
+状态：**M14c（runs 记录模型与 Fact→run→tool-call 溯源下钻）**；M0–M4、M5a–M5c、
+M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c 的计划项全部完成。Phase 1 的
 “本地看板 + Observer 提案 + 证据门 + 单一写图者”闭环已具备；提案默认关闭。Phase 2
 的触发持久化、意图优先级/预算、单项目 token/成本与并发配额、只读慢层观测、逐 Fact
 成本归因与因果链，以及 reason 的 Hint/去重输出、人工重规划与资源压力触发均已落地，并
 已用真实模型 gate 核对用量记账、预算耗尽、慢层 API 与 `/cost` 的一致性，见
 `docs/STRATEGIST.md`。Phase 3 的完成语义已收口：项目默认按证据验证，challenge 项目按
 外部挑战 API 的 `flag_count` / `flag_got_count` 验证；worker 的 “complete” 只是声明，
-失败不会关项目。`cairn serve` 是可运行的 Cairn 兼容服务：SQLite schema、领域服务、全部
+失败不会关项目。M14c 起 `runs` 记录真实 Solver 的模型标签（来自 `usage.json`），
+UI 的 Fact 详情可沿 `run_id` 下钻到产出 run 与该任务的工具调用审计。
+`cairn serve` 是可运行的 Cairn 兼容服务：SQLite schema、领域服务、全部
 五个路由、YAML/timeline 导出、静态 Web UI 均已就位，并用 Python Cairn 生成的 golden
 做了逐字对照。进程内 scheduler、任务/结果文件 worker 协议、BreachWeave Solver 接入已在 M2
 完成。M3 增加：
@@ -340,6 +342,20 @@ M14b 增加（Phase 2 补全）：
   run 的 token 或成本用量达到配置比例时，以非 urgent 的
   `resource_pressure:tokens:80%,cost_usd:90%` 触发一次 reason；同一压力区间不重复触发，
   直到水位被其他触发覆盖。
+
+M14c 增加（可观测性补链）：
+
+- **runs 记录模型**：`usage.json` 新增可选 `model`（`provider/model-id`，≤200 字符，
+  拒绝空白与控制字符）。BreachWeave worker 从真实 Solver 会话读取模型，只在写出用量
+  时一并落到 `runs.model`；fake solver、没有用量的任务和被硬杀的任务保持 `null`。
+  `GET /runs`、成本归因与 UI 直接读这一列，不改图模型、YAML 导出或既有响应。
+- **Fact → run → 工具调用下钻**：选中单个 Fact 时，UI 用
+  `GET /facts/{id}/meta` 的 `run_id` 定位产出 run（优先复用已加载的 runs，否则补一次
+  GET），显示 run、模型与 task id；“查看工具调用”把审计页签切到该 task 的链式事件。
+  多选或选择 origin/goal 时清空溯源。新增调用全部是 GET。
+- **验证**：新增契约、图迁移/回读、solver 模型格式化、scheduler 用量、HTTP 下钻链路
+  与 UI GET-only 测试；并在浏览器中实测选中 Fact 后显示 run/model/task、点击后看到
+  该任务的 read/grep/bash 审计事件（`chain_ok: true`）。
 
 默认仍是确定性 fake solver，测试与离线运行不需要模型凭据。Observer 只接在
 `CAIRN_SOLVER=breachweave` 的真实 Solver 路径上，fake solver 会忽略它。
@@ -848,9 +864,9 @@ M6 的跨进程恢复 gate 不调用模型：它先写下一台崩溃控制面�
 bun run tools/gate/m6-restart-gate.ts
 ```
 
-## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b，2026-10-26，Bun 1.4.4）
+## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c，2026-10-26，Bun 1.4.4）
 
-- `bun test`：**470 passed**（54 个文件），0 failed。
+- `bun test`：**477 passed**（55 个文件），0 failed。
 - `bun run typecheck`：`tsc --noEmit` 通过。
 - **HTTP 对照**：`api.golden.json` 的 60 步请求（成功路径、400/403/404/405/409、租约过期、
   删除级联、导出、路由错误）由 Python FastAPI + 固定时钟生成；TS 重放后状态码、content-type
@@ -1039,6 +1055,12 @@ bun run tools/gate/m6-restart-gate.ts
   资源压力在阈值处触发一次并受冷却约束；HTTP 测试覆盖 `/replan` 的成功/默认 body/
   幂等覆盖/404/403/409/422/405 与 GET 回读；prompt 测试断言扩展段和 Resource Budget
   数字；UI 测试断言唯一的显式写操作调用 `POST /replan`。默认 prompt golden 未变。
+- **运行模型与溯源下钻（M14c）**：契约测试覆盖 `model` 的合法值、空白、控制字符与
+  超长拒绝；图侧测试覆盖 `runs.model` 默认 `null`、写入回读与旧库迁移；solver 测试
+  覆盖 `provider/id` 组合、缺 provider 回退与空值；scheduler 测试确认用量里的 model
+  落到 run；HTTP 测试覆盖 `/runs` 的 model 字段，以及 fact meta → run → task audit
+  的完整下钻；UI 测试断言 `loadFactTrace` 只发 GET 且页面含“溯源/查看工具调用”。
+  浏览器实测选中 `f001` 后显示 run/model/task，点击后审计面板显示该任务的工具事件。
 
 golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定时钟、`TZ=UTC`）。
 重新生成方法与约束见 `docs/PORTING.md`。
@@ -1087,6 +1109,7 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M13b ✅ | 成本归因与因果链：`intent_meta.origin_run_id`、只读 `/cost`、逐 Fact/意图分摊与因果边、Alpine「成本」页签 | 405 passed / 50 files；真实模型 gate 44/44 + 预算模式 43/43（2026-10-26） |
 | M14a ✅ | 可验证完成：项目级 `evidence`/`challenge`/`off` 策略、证据/外部 Flag 计数 oracle、scheduler 完成门控、`/verify` 与 `/verification` | 444 passed / 54 files（2026-10-26） |
 | M14b ✅ | Phase 2 补全：reason 输出 Hint/priority/budget/dedupe、`POST /replan` 人工重规划、资源压力触发、慢层页签操作 | 470 passed / 54 files（2026-10-26） |
+| M14c ✅ | 可观测性补链：`usage.json` → `runs.model`、Fact 详情溯源到产出 run 与该任务工具调用审计 | 477 passed / 55 files；浏览器实测下钻（2026-10-26） |
 
 ## 与 Phase 0 的关系
 

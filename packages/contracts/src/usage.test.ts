@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 
-import { isTaskUsage, parseTaskUsageJson, taskUsageErrors } from "./index";
+import {
+  MAX_TASK_MODEL_LENGTH,
+  isTaskUsage,
+  parseTaskUsageJson,
+  taskUsageErrors,
+} from "./index";
 
 const VALID = {
   input_tokens: 120,
@@ -29,6 +34,18 @@ describe("task usage sidecar", () => {
         cost_usd: 0,
       }),
     ).toBe(true);
+  });
+
+  test("accepts an optional model label", () => {
+    const withModel = { ...VALID, model: "gateway/deepseek-flash" };
+    expect(taskUsageErrors(withModel)).toEqual([]);
+    expect(parseTaskUsageJson(JSON.stringify(withModel))).toEqual(withModel);
+  });
+
+  test("rejects malformed model labels", () => {
+    for (const model of ["", "   ", "gateway/line\nbreak", "x".repeat(MAX_TASK_MODEL_LENGTH + 1)]) {
+      expect(taskUsageErrors({ ...VALID, model }).join()).toContain("model");
+    }
   });
 
   test("rejects negative, fractional and non-finite counters", () => {
