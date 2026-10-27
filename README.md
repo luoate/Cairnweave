@@ -6,8 +6,8 @@
 skills / Observer）合并成**一个 Bun/TypeScript 代码库**，不再维护 Python ↔ TypeScript
 之间的进程桥、JSONL RPC 和 worker 适配器。
 
-状态：**M17c（表单与弹窗一致性）**；M0–M4、M5a–M5c、
-M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M17a、M17b、M17c 的计划项全部完成。Phase 1 的
+状态：**M17d（详情/图交互一致性）**；M0–M4、M5a–M5c、
+M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M17a、M17b、M17c、M17d 的计划项全部完成。Phase 1 的
 “本地看板 + Observer 提案 + 证据门 + 单一写图者”闭环已具备；提案默认关闭。Phase 2
 的触发持久化、意图优先级/预算、单项目 token/成本与并发配额、只读慢层观测、逐 Fact
 成本归因与因果链，以及 reason 的 Hint/去重输出、人工重规划与资源压力触发均已落地，并
@@ -61,6 +61,11 @@ M17c 统一表单与弹窗：13 个 overlay 共用一个模态栈，Esc 只关�
 错误项；所有写操作在请求期间禁用按钮并显示“…中…”，重复点击不再重复提交。停止项目与
 “停止全部”不再直接发 PATCH，先弹出二次确认，说明已认领意图会被释放，取消或点背景不改
 状态。以上仍只影响静态 UI，HTTP 契约、图与调度语义不变。
+M17d 对齐详情与图的交互：项目卡片可用 Tab 到达并用 Enter/Space 打开（卡片内按钮不会
+冒泡触发），进入项目后焦点落到图视图标题，返回列表时焦点回到来源卡片、卡片已被删除则
+回到搜索框，返回按钮补齐可访问名称；图视图在无弹窗、焦点不在输入控件时按 Esc 清除选择，
+多选详情面板显示“已选 N 个事实”并提供“清空选择”；图页头的删除入口与列表统一走
+`deleteProjectById`，不再依赖当前选中状态推断标题。
 `cairn serve` 是可运行的 Cairn 兼容服务：SQLite schema、领域服务、全部
 五个路由、YAML/timeline 导出、静态 Web UI 均已就位，并用 Python Cairn 生成的 golden
 做了逐字对照。进程内 scheduler、任务/结果文件 worker 协议、BreachWeave Solver 接入已在 M2
@@ -1089,9 +1094,9 @@ M6 的跨进程恢复 gate 不调用模型：它先写下一台崩溃控制面�
 bun run tools/gate/m6-restart-gate.ts
 ```
 
-## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a + M17a + M17b + M17c，2026-10-28，Bun 1.4.4）
+## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a + M17a + M17b + M17c + M17d，2026-10-28，Bun 1.4.4）
 
-- `bun test`：**578 passed**（64 个文件），0 failed。
+- `bun test`：**582 passed**（64 个文件），0 failed。
 - `bun run typecheck`：`tsc --noEmit` 通过。
 - **HTTP 对照**：`api.golden.json` 的 60 步请求（成功路径、400/403/404/405/409、租约过期、
   删除级联、导出、路由错误）由 Python FastAPI + 固定时钟生成；TS 重放后状态码、content-type
@@ -1333,6 +1338,13 @@ bun run tools/gate/m6-restart-gate.ts
   `data-autofocus`、互为 body 直接子节点（漏掉一个 `</div>` 会把后续弹窗嵌进前一个，
   从而永不显示），并断言停止入口只走确认弹窗。浏览器实测 Esc/Tab 回环与回焦、背景点击
   取消、行内校验与聚焦第一个错误项、提交中禁用、停止单个/全部确认与恢复项目免确认。
+- **详情/图交互一致性（M17d）**：单测校验返回列表时按项目 ID 找到来源卡片并聚焦、卡片
+  不存在时回落到搜索框、离开列表后放弃残留焦点；Esc 处理器只在图视图、无弹窗、焦点不在
+  输入控件且确有选择时清除选择，输入法组合中与空选择时不拦截。UI 静态测试断言卡片带
+  `role="button"`/`tabindex="0"`/Enter-Space 处理（`.self` 避免内部按钮冒泡）、图标题
+  可聚焦且返回按钮有可访问名称、多选面板有唯一“清空选择”入口，并断言删除入口只剩
+  `deleteProjectById`。浏览器实测 Enter/Space 打开项目、进入后聚焦标题、返回后回焦卡片、
+  Esc 清除选择与清空按钮、弹窗打开时 Esc 只关弹窗而不清选择。
 
 golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定时钟、`TZ=UTC`）。
 重新生成方法与约束见 `docs/PORTING.md`。
@@ -1394,6 +1406,7 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M17a ✅ | 前端 P0：新建项目强制授权范围并随 `scope` 提交；`GET/PUT /projects/{id}/scope`；`GET /projects` 增加 `has_scope`；列表“未授权”徽章与详情范围卡片支持补配/修改 | 556 passed / 64 files（2026-10-27）；浏览器实测创建、编辑与补配 |
 | M17b ✅ | 列表与轮询：搜索标题/ID/状态、可点击状态筛选、三种排序与 `localStorage` 记忆；页面隐藏暂停轮询、可见即刷新、失败 5s→60s 退避；列表/项目错误横幅与重试、最后更新时间；侧栏页签横向滚动并按项目记忆 | 558 passed / 64 files（2026-10-27）；浏览器实测筛选、错误横幅与页签恢复 |
 | M17c ✅ | 表单与弹窗一致性：13 个 overlay 共用模态栈（Esc 关最上层、Tab 焦点陷阱、关闭回焦、显示后重试 autofocus）；新建/范围/重命名/设置逐字段行内校验并聚焦首个错误；写操作提交期间禁用并显示进度；停止单个与“停止全部”改为二次确认 | 578 passed / 64 files（2026-10-28）；浏览器实测 Esc/Tab/回焦、校验、确认与背景取消 |
+| M17d ✅ | 详情/图交互一致性：项目卡片键盘可达（Tab + Enter/Space，内部按钮不冒泡）；进入项目聚焦图标题、返回列表回焦来源卡片（缺失回落搜索框）；返回按钮补可访问名称；图视图 Esc 清除选择、多选面板“已选 N 个事实/清空选择”；图页头删除统一走 `deleteProjectById` | 582 passed / 64 files（2026-10-28）；浏览器实测 Enter/Space 打开、标题/卡片回焦、Esc 与清空按钮、弹窗内 Esc 不清选择 |
 
 ## 与 Phase 0 的关系
 

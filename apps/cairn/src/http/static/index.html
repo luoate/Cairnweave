@@ -303,7 +303,7 @@
       <div class="flex flex-wrap items-center gap-2">
         <div class="relative min-w-[12rem] flex-1">
           <svg class="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2"/></svg>
-          <input x-ref="listSearch" x-model="listQuery" @keydown.escape="listQuery = ''" type="search"
+          <input x-ref="listSearch" data-list-search x-model="listQuery" @keydown.escape="listQuery = ''" type="search"
             placeholder="搜索标题、ID 或状态（按 / 聚焦）"
             class="h-8 w-full rounded-lg border border-slate-200 bg-white pl-8 pr-3 text-xs text-slate-600 placeholder:text-slate-300 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100">
         </div>
@@ -349,8 +349,11 @@
 
     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
       <template x-for="p in visibleProjects()" :key="p.id">
-        <div @click="openProject(p.id)"
-          class="group h-full flex flex-col bg-white rounded-2xl border border-slate-200/60 p-5 cursor-pointer transition-all duration-200 hover:shadow-lg hover:shadow-slate-200/50 hover:border-slate-300 hover:-translate-y-0.5">
+        <div x-bind:data-project-card="p.id" @click="openProject(p.id)"
+          @keydown.enter.self.prevent="openProject(p.id)"
+          @keydown.space.self.prevent="openProject(p.id)"
+          role="button" tabindex="0"
+          class="group h-full flex flex-col bg-white rounded-2xl border border-slate-200/60 p-5 cursor-pointer transition-all duration-200 hover:shadow-lg hover:shadow-slate-200/50 hover:border-slate-300 hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-300 focus-visible:ring-offset-2">
           <div class="flex items-start justify-between mb-3">
             <span class="text-[11px] font-mono text-slate-400 tracking-wide" x-text="p.id"></span>
             <div class="flex items-center gap-1.5 shrink-0">
@@ -467,12 +470,13 @@
 <template x-if="view === 'graph'">
 <div class="flex-1 flex flex-col overflow-hidden">
   <header class="bg-white/80 backdrop-blur border-b border-slate-200/60 px-4 py-2.5 flex items-center gap-3 shrink-0 z-20">
-    <button @click="backToList()" class="p-1.5 rounded-lg hover:bg-slate-100 transition text-slate-400 hover:text-slate-600">
+    <button @click="backToList()" class="p-1.5 rounded-lg hover:bg-slate-100 transition text-slate-400 hover:text-slate-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
+      title="返回项目列表" aria-label="返回项目列表">
       <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M15 19l-7-7 7-7"/></svg>
     </button>
     <div class="title-action-trigger flex items-center gap-2 min-w-0">
       <span class="text-[11px] font-mono text-slate-400" x-text="project.project.id"></span>
-      <h2 class="text-[15px] font-semibold text-slate-700 truncate" x-text="project.project.title"></h2>
+      <h2 id="graphHeading" tabindex="-1" class="text-[15px] font-semibold text-slate-700 truncate focus:outline-none" x-text="project.project.title"></h2>
       <button x-show="!replay.active" @click="openRenameProject(project.project.id, project.project.title)"
         class="title-action-button inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-400 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-600 focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400"
         title="重命名项目"
@@ -537,7 +541,7 @@
           重新打开
         </button>
       </template>
-      <button x-show="!replay.active" @click="deleteProject()" class="px-2.5 py-1 rounded-lg border border-rose-200 text-xs text-rose-500 hover:bg-rose-50 hover:text-rose-600 transition flex items-center gap-1.5">
+      <button x-show="!replay.active" @click="deleteProjectById(project.project.id, project.project.title)" class="px-2.5 py-1 rounded-lg border border-rose-200 text-xs text-rose-500 hover:bg-rose-50 hover:text-rose-600 transition flex items-center gap-1.5">
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4.75A1.75 1.75 0 0 1 9.75 3h4.5A1.75 1.75 0 0 1 16 4.75V6"/><path d="M19 6l-.63 11.338A2 2 0 0 1 16.37 19.5H7.63a2 2 0 0 1-1.997-2.162L5 6"/><path d="M10 10.5v5"/><path d="M14 10.5v5"/></svg>
         删除
       </button>
@@ -740,11 +744,16 @@
         <template x-if="!selectedNode">
           <div class="rounded-2xl border border-dashed border-slate-200 bg-white/80 px-5 py-10 text-center shadow-sm">
             <p class="text-sm text-slate-400">点击节点或连线</p>
-            <p class="text-xs text-slate-300 mt-1">按住 Shift 点击可多选</p>
+            <p class="text-xs text-slate-300 mt-1">按住 Shift 点击可多选，Esc 清除选择</p>
           </div>
         </template>
         <template x-if="selectedNode && selectedNode.type === 'fact' && selectedFacts.length > 1">
           <div class="space-y-3">
+            <div class="flex items-center justify-between gap-2 px-1">
+              <span class="text-[11px] text-slate-400">已选 <span class="font-semibold tabular-nums text-slate-600" x-text="selectedFacts.length"></span> 个事实</span>
+              <button type="button" @click="clearSelection()"
+                class="rounded-lg border border-slate-200 px-2 py-0.5 text-[10px] font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition">清空选择</button>
+            </div>
             <template x-for="fact in selectedFactRecords()" :key="fact.id">
               <article class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
                 <div class="px-4 py-3 border-b border-slate-100 bg-slate-50/80">
@@ -2682,6 +2691,7 @@ function cairnApp() {
         this.schedulePoll();
       };
       this._listShortcut = (event) => {
+        if (this.handleGraphEscape(event)) return;
         if (event.key !== '/' || event.ctrlKey || event.metaKey || event.altKey) return;
         if (this.view !== 'list') return;
         const target = event.target;
@@ -3258,18 +3268,14 @@ function cairnApp() {
     },
 
     // Alpine flips x-show one tick after x-effect, so a hidden target swallows focus().
-    focusModalContent(name, element, retries = 8) {
+    focusAfterRender(resolve, isActive, retries = 8) {
       const schedule = (run) => (typeof requestAnimationFrame === 'function' ? requestAnimationFrame(run) : setTimeout(run, 0));
       let remaining = retries;
       const attempt = () => {
-        if (!this.modalOrder.includes(name)) return;
-        const root = element || this.modalElement(name);
-        if (!root || typeof root.querySelector !== 'function') return;
-        const target =
-          root.querySelector('[data-autofocus]') ||
-          root.querySelector('input:not([type="hidden"]), textarea, select, button');
+        if (!isActive()) return;
+        const target = resolve();
         if (!target || typeof target.focus !== 'function') return;
-        target.focus();
+        target.focus({ preventScroll: true });
         const laidOut = typeof target.getBoundingClientRect !== 'function' || target.getBoundingClientRect().width > 0;
         if (!laidOut && remaining > 0) {
           remaining -= 1;
@@ -3277,6 +3283,48 @@ function cairnApp() {
         }
       };
       schedule(attempt);
+    },
+
+    focusModalContent(name, element, retries = 8) {
+      this.focusAfterRender(() => {
+        const root = element || this.modalElement(name);
+        if (!root || typeof root.querySelector !== 'function') return null;
+        return (
+          root.querySelector('[data-autofocus]') ||
+          root.querySelector('input:not([type="hidden"]), textarea, select, button')
+        );
+      }, () => this.modalOrder.includes(name), retries);
+    },
+
+    focusGraphHeading(retries = 8) {
+      this.focusAfterRender(
+        () => (typeof document !== 'undefined' && typeof document.getElementById === 'function' ? document.getElementById('graphHeading') : null),
+        () => this.view === 'graph',
+        retries,
+      );
+    },
+
+    focusListProject(projectId, retries = 8) {
+      this.focusAfterRender(() => {
+        if (typeof document === 'undefined' || typeof document.querySelectorAll !== 'function') return null;
+        for (const card of document.querySelectorAll('[data-project-card]')) {
+          if (card && typeof card.getAttribute === 'function' && card.getAttribute('data-project-card') === projectId) return card;
+        }
+        return typeof document.querySelector === 'function' ? document.querySelector('[data-list-search]') : null;
+      }, () => this.view === 'list', retries);
+    },
+
+    handleGraphEscape(event) {
+      if (!event || event.key !== 'Escape' || event.isComposing) return false;
+      if (this.view !== 'graph' || this.modalOrder.length > 0) return false;
+      if (!this.selectedNode && this.selectedFacts.length === 0) return false;
+      const target = event.target;
+      const tag = target && target.tagName ? String(target.tagName).toUpperCase() : '';
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) || (target && target.isContentEditable)) return false;
+      event.preventDefault();
+      event.stopPropagation();
+      this.clearGraphSelection(false);
+      return true;
     },
 
     modalClosers() {
@@ -3365,11 +3413,6 @@ function cairnApp() {
       } catch (e) {
         this.showToast(e.message, 'error');
       }
-    },
-
-    deleteProject() {
-      if (!this.selectedProjectId) return;
-      this.requestDeleteProject(this.selectedProjectId, this.project?.project?.title || '');
     },
 
     deleteProjectById(projectId, projectTitle = '') {
@@ -4668,6 +4711,7 @@ function cairnApp() {
       await this.loadProject(id);
       await this.loadProjectScope(id);
       this.view = 'graph';
+      this.focusGraphHeading();
       if (this.opsTabs().includes(this.sideTab)) this.loadActiveOpsTab();
       if (location.hash !== `#/projects/${id}`) location.hash = `/projects/${id}`;
       this.$nextTick(() => {
@@ -4683,6 +4727,7 @@ function cairnApp() {
     },
 
     backToList(fromRoute) {
+      const returningId = this.selectedProjectId;
       if (this.replay.active) {
         this.stopReplayTimer();
         this.replay.active = false;
@@ -4709,7 +4754,10 @@ function cairnApp() {
       this.teardownAutoFit();
       if (this.cy) { this.cy.destroy(); this.cy = null; }
       if (!fromRoute) location.hash = '/';
-      this.loadProjects().then(() => this.restoreProjectListScroll());
+      this.loadProjects().then(() => {
+        this.restoreProjectListScroll();
+        if (returningId) this.focusListProject(returningId);
+      });
     },
 
     async refreshCurrentView({ quiet = true } = {}) {

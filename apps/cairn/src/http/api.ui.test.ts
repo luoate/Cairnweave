@@ -645,3 +645,118 @@ describe("dangerous action confirmation", () => {
     expect(html).toContain("confirmDangerousAction()");
   });
 });
+
+describe("detail and graph interaction parity", () => {
+  test("makes list cards keyboard-operable and names the graph anchors", () => {
+    const html = readFileSync(INDEX_PATH, "utf8");
+    expect(html).toContain('x-bind:data-project-card="p.id"');
+    expect(html).toContain('@keydown.enter.self.prevent="openProject(p.id)"');
+    expect(html).toContain('@keydown.space.self.prevent="openProject(p.id)"');
+    expect(html).toContain('role="button" tabindex="0"');
+    expect(html).toContain("data-list-search");
+    expect(html).toContain('id="graphHeading" tabindex="-1"');
+    expect(html).toContain('aria-label="返回项目列表"');
+    expect(html).toContain("if (this.handleGraphEscape(event)) return;");
+  });
+
+  test("focuses the originating card on return and falls back to search", async () => {
+    const tick = (ms = 40) => new Promise((resolve) => setTimeout(resolve, ms));
+    const hadDocument = "document" in globalThis;
+    const focused: string[] = [];
+    const card = (id: string) => ({
+      getAttribute: (name: string) => (name === "data-project-card" ? id : null),
+      focus: () => focused.push(`card:${id}`),
+    });
+    const search = { focus: () => focused.push("search") };
+    try {
+      (globalThis as any).document = {
+        querySelectorAll: () => [card("proj_a"), card("proj_b")],
+        querySelector: () => search,
+      };
+      const app = loadState();
+      app.view = "list";
+
+      app.focusListProject("proj_b");
+      await tick();
+      expect(focused).toEqual(["card:proj_b"]);
+
+      // A deleted project has no card left, so focus lands on the search field.
+      focused.length = 0;
+      app.focusListProject("proj_gone");
+      await tick();
+      expect(focused).toEqual(["search"]);
+
+      // Leaving the list view abandons the pending focus move.
+      focused.length = 0;
+      app.view = "graph";
+      app.focusListProject("proj_a");
+      await tick();
+      expect(focused).toEqual([]);
+    } finally {
+      if (!hadDocument) delete (globalThis as any).document;
+    }
+  });
+
+  test("clears the graph selection with Escape outside modals and form fields", () => {
+    const app = loadState();
+    const arm = () => {
+      app.view = "graph";
+      app.modalOrder = [];
+      app.selectedNode = { type: "fact", id: "f1" };
+      app.selectedFacts = ["f1"];
+      app.sideTab = "log";
+      app.selectedTimelineEntryId = "t1";
+    };
+    const escape = (overrides: Record<string, unknown> = {}) => {
+      const event: any = {
+        key: "Escape",
+        target: { tagName: "DIV" },
+        prevented: false,
+        stopped: false,
+        preventDefault: () => { event.prevented = true; },
+        stopPropagation: () => { event.stopped = true; },
+        ...overrides,
+      };
+      return event;
+    };
+
+    arm();
+    const event = escape();
+    expect(app.handleGraphEscape(event)).toBe(true);
+    expect(event.prevented).toBe(true);
+    expect(app.selectedNode).toBe(null);
+    expect(app.selectedFacts).toEqual([]);
+    expect(app.selectedTimelineEntryId).toBe(null);
+
+    // An empty selection leaves Escape untouched.
+    expect(app.handleGraphEscape(escape())).toBe(false);
+
+    arm();
+    app.modalOrder = ["hint"];
+    const inModal = escape();
+    expect(app.handleGraphEscape(inModal)).toBe(false);
+    expect(inModal.prevented).toBe(false);
+    expect(app.selectedFacts).toEqual(["f1"]);
+
+    arm();
+    app.view = "list";
+    expect(app.handleGraphEscape(escape())).toBe(false);
+
+    arm();
+    expect(app.handleGraphEscape(escape({ target: { tagName: "INPUT" } }))).toBe(false);
+    expect(app.handleGraphEscape(escape({ target: { tagName: "div", isContentEditable: true } }))).toBe(false);
+
+    arm();
+    expect(app.handleGraphEscape(escape({ isComposing: true }))).toBe(false);
+    expect(app.handleGraphEscape(escape({ key: "Enter" }))).toBe(false);
+    expect(app.selectedFacts).toEqual(["f1"]);
+  });
+
+  test("offers one clear-selection entry point and one delete entry point", () => {
+    const html = readFileSync(INDEX_PATH, "utf8");
+    expect(html).toContain('@click="clearSelection()"');
+    expect(html).toContain("Esc 清除选择");
+    expect(html).toContain('@click="deleteProjectById(project.project.id, project.project.title)"');
+    expect(html).not.toContain("deleteProject()");
+  });
+});

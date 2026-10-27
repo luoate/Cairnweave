@@ -1,4 +1,4 @@
-# 架构（M17c 更新）
+# 架构（M17d 更新）
 
 本文固定合并后的角色边界、数据所有权和失败语义。实现以本文为准；需要改动时先改本文并
 记录原因。
@@ -114,6 +114,12 @@ overlay 由 `syncModal` 维护同一个模态栈，Esc 只关最上层（输入�
 最上层内回焦、关闭后把焦点还给触发元素，autofocus 按帧重试直到该层真正完成布局（上限
 8 帧，因为 Alpine 在 `x-effect` 之后一拍才应用 `x-show`）；写操作在请求期间禁用按钮并
 显示进度，行内校验取代静默失败；停止单个项目与“停止全部”改为先确认再发 PATCH。
+M17d 对齐详情与图的交互：列表卡片成为可聚焦的 `role="button"`，Enter/Space 打开项目且
+卡片内按钮不冒泡；打开项目后焦点落在图视图标题，返回列表时按 `data-project-card` 找到
+来源卡片并聚焦（已删除则回落到搜索框），两者复用同一个“布局完成后按帧重试”的焦点
+助手，因为视图切换同样由 `x-show` 延迟一拍。图视图在无弹窗、焦点不在输入控件时按 Esc
+清除选择；多选详情面板显示已选数量并提供“清空选择”；图页头删除改为显式传 id/标题的
+`deleteProjectById`，不再从选中状态推断。
 以上都只影响静态 UI，不改变 HTTP 契约、图或调度语义。
 
 ## 1. 范围
@@ -614,6 +620,12 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
   `modalClosers()`，请求进行中拒绝关闭）与 Tab 焦点陷阱。新增弹窗时必须保持 overlay 的
   `</div>` 平衡——漏一个闭合标签会把之后的弹窗嵌进它，父层 `x-show` 为假时子弹窗即使
   自己为真也拿不到布局与焦点。
+- 视图切换与选择态（M17d）：列表卡片带 `data-project-card`、`role="button"` 与
+  `tabindex="0"`，Enter/Space 用 `.self` 修饰避免内部按钮冒泡；`openProject` 聚焦
+  `#graphHeading`，`backToList` 记录离开的项目并回焦对应卡片。`focusAfterRender` 是
+  M17c autofocus 的泛化版本，供模态层、图标题与列表卡片共用。`handleGraphEscape` 挂在
+  全局 `keydown` 的首位，只有图视图、`modalOrder` 为空、焦点不在 `INPUT/TEXTAREA/SELECT`
+  或可编辑区域、且确有选择时才清除，避免与弹窗 Esc 和输入框自带行为冲突。
 - `Runs` 读取 `GET /projects/{id}/runs`，按最新在前显示 kind、worker、profile、模型、
   outcome、退出码、时长、evidence 数量和 detail；每行可跳到该 task 的 Audit。
 - Fact 详情（M14c）在单选时读取 `GET /facts/{id}/meta`，用 `run_id` 从已加载或补取的
