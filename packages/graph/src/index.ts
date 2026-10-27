@@ -37,6 +37,8 @@ export {
   type Fact,
   type FactEvidenceFile,
   type FactMeta,
+  type FactSupersession,
+  type ProjectSupersedeSummary,
   type ProjectScopeInput,
   type HeartbeatRequest,
   type Hint,
@@ -155,6 +157,14 @@ export {
 
 export { buildProjectCostReport } from "./cost";
 export { buildProfileRunStats, buildProjectRunStats } from "./stats";
+export {
+  MAX_SUPERSEDES,
+  MAX_SUPERSEDE_ID_CHARS,
+  buildProjectSupersedeSummary,
+  findSupersedingFact,
+  listFactSupersessions,
+  parseSupersededIds,
+} from "./supersedes";
 
 export {
   listFactEvidence,

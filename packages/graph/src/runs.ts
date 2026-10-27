@@ -8,6 +8,7 @@ import type { Database } from "bun:sqlite";
 import { all, get, run as runSql } from "./db";
 import type { EvidenceStatus, FactMeta, Run, RunOutcome } from "./models";
 import { getProjectOr404, utcnow } from "./services";
+import { findSupersedingFact, parseSupersededIds } from "./supersedes";
 
 export interface StartRunInput {
   id: string;
@@ -136,6 +137,7 @@ export interface RecordFactMetaInput {
   runId?: string | null;
   evidenceRefs?: readonly string[];
   evidenceStatus: "provided" | "missing";
+  supersedes?: readonly string[];
   createdAt?: string;
 }
 
@@ -144,14 +146,15 @@ export function recordFactMeta(conn: Database, input: RecordFactMetaInput): void
     conn,
     `
     INSERT OR REPLACE INTO fact_meta
-        (fact_id, project_id, run_id, evidence_refs, evidence_status, created_at)
-    VALUES (?, ?, ?, ?, ?, ?)
+        (fact_id, project_id, run_id, evidence_refs, evidence_status, supersedes, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
     `,
     input.factId,
     input.projectId,
     input.runId ?? null,
     JSON.stringify([...(input.evidenceRefs ?? [])]),
     input.evidenceStatus,
+    JSON.stringify([...(input.supersedes ?? [])]),
     input.createdAt ?? utcnow(),
   );
 }
@@ -186,10 +189,12 @@ export function getFactMeta(
       run_id: null,
       evidence_refs: [],
       evidence_status: "legacy",
+      supersedes: [],
+      superseded_by: findSupersedingFact(conn, projectId, factId),
       created_at: null,
     };
   }
-  return factMetaFromRow(row);
+  return factMetaFromRow(conn, projectId, row);
 }
 
 interface RunRow {
@@ -224,6 +229,7 @@ interface FactMetaRow {
   run_id: string | null;
   evidence_refs: string;
   evidence_status: string;
+  supersedes: string;
   created_at: string;
 }
 
@@ -255,12 +261,18 @@ function runFromRow(row: RunRow): Run {
   };
 }
 
-function factMetaFromRow(row: FactMetaRow): FactMeta {
+function factMetaFromRow(
+  conn: Database,
+  projectId: string,
+  row: FactMetaRow,
+): FactMeta {
   return {
     fact_id: row.fact_id,
     run_id: row.run_id,
     evidence_refs: parseEvidenceRefs(row.evidence_refs),
     evidence_status: row.evidence_status as EvidenceStatus,
+    supersedes: parseSupersededIds(row.supersedes),
+    superseded_by: findSupersedingFact(conn, projectId, row.fact_id),
     created_at: row.created_at,
   };
 }

@@ -18,6 +18,7 @@ import {
   findFactByDescription,
   findHintByContent,
   findOpenIntentByDedupeKey,
+  listFactSupersessions,
   listPendingProposals,
   recordIntentMeta,
   recordProposalDecision,
@@ -42,6 +43,7 @@ const MAX_DEDUPE_KEY_CHARS = 128;
 const MAX_FROM_FACTS = 20;
 const MAX_EVIDENCE_REFS = 20;
 const MAX_EVIDENCE_REF_CHARS = 512;
+const MAX_SUPERSEDES = 20;
 const OBSERVER_CREATOR = "observer";
 
 export interface ProposalIngestInput {
@@ -350,6 +352,7 @@ function reviewFact(
 ): { status: "applied" | "rejected" | "duplicate" | "dry_run"; reason: string | null; appliedId: string | null } {
   const description = textField(payload, "description");
   const from = factIdField(payload, "from");
+  const supersedes = optionalFactIdField(payload, "supersedes", MAX_SUPERSEDES);
 
   const existing = findFactByDescription(conn, proposal.project_id, description);
   if (existing !== null) {
@@ -369,6 +372,28 @@ function reviewFact(
 
   validateFactsExist(conn, proposal.project_id, from);
   validateGoalNotInSources(from);
+  if (supersedes.includes("origin") || supersedes.includes("goal")) {
+    return { status: "rejected", reason: "supersede_origin_or_goal", appliedId: null };
+  }
+  try {
+    validateFactsExist(conn, proposal.project_id, supersedes);
+  } catch (error) {
+    if (error instanceof HttpError && error.status === 404) {
+      return { status: "rejected", reason: "supersede_target_missing", appliedId: null };
+    }
+    throw error;
+  }
+  const alreadyReplaced = new Set(
+    listFactSupersessions(conn, proposal.project_id).map((edge) => edge.fact_id),
+  );
+  const replaced = supersedes.find((factId) => alreadyReplaced.has(factId));
+  if (replaced !== undefined) {
+    return {
+      status: "rejected",
+      reason: `fact_already_superseded: ${replaced}`,
+      appliedId: null,
+    };
+  }
 
   if (config.proposals.requireEvidenceForFact && proposal.evidence_refs.length === 0) {
     return { status: "rejected", reason: "evidence_required", appliedId: null };
@@ -414,6 +439,7 @@ function reviewFact(
       evidenceRefs: evidence.refs,
       evidenceStatus: evidence.status,
       evidenceFiles: evidence.files,
+      ...(supersedes.length === 0 ? {} : { supersedes }),
     },
   );
   return { status: "applied", reason: null, appliedId: concluded.fact.id };
@@ -472,6 +498,15 @@ function parseCandidate(raw: string, config: DispatchConfig): ParseResult {
   });
   if ("reason" in evidence) return { reason: `evidence_refs: ${evidence.reason}` };
 
+  const supersedes = stringList(payloadRecord["supersedes"], {
+    maxItems: MAX_SUPERSEDES,
+    maxChars: 64,
+  });
+  if ("reason" in supersedes) return { reason: `supersedes: ${supersedes.reason}` };
+  if (kind !== "fact" && supersedes.items.length > 0) {
+    return { reason: "supersedes is only allowed for facts" };
+  }
+
   if (kind === "hint") {
     const content = text(payloadRecord["content"], MAX_TEXT_CHARS);
     if ("reason" in content) return { reason: `content: ${content.reason}` };
@@ -505,6 +540,9 @@ function parseCandidate(raw: string, config: DispatchConfig): ParseResult {
         description: description.text,
         from: from.items,
         confidence: confidence ?? 1,
+        ...(kind === "fact" && supersedes.items.length > 0
+          ? { supersedes: supersedes.items }
+          : {}),
       },
       dedupeKey: dedupeKey.value,
       evidenceRefs: evidence.items,
@@ -522,6 +560,16 @@ function factIdField(payload: Record<string, unknown>, field: string): string[] 
   const result = stringList(payload[field], { maxItems: MAX_FROM_FACTS, maxChars: 64 });
   if ("reason" in result) throw new Error(`${field}: ${result.reason}`);
   if (result.items.length === 0) throw new Error(`${field} must not be empty`);
+  return result.items;
+}
+
+function optionalFactIdField(
+  payload: Record<string, unknown>,
+  field: string,
+  maxItems: number,
+): string[] {
+  const result = stringList(payload[field], { maxItems, maxChars: 64 });
+  if ("reason" in result) throw new Error(`${field}: ${result.reason}`);
   return result.items;
 }
 

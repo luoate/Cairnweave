@@ -16,6 +16,7 @@ const MAX_DEDUPE_KEY_CHARS = 128
 const MAX_FROM_FACTS = 20
 const MAX_EVIDENCE_REFS = 20
 const MAX_EVIDENCE_REF_CHARS = 512
+const MAX_SUPERSEDES = 20
 
 const proposalKindParam = Type.Union([
     Type.Literal("fact"),
@@ -35,6 +36,8 @@ const proposeGraphChangeParams = Type.Object({
     dedupe_key: Type.Optional(Type.String()),
     /** Workspace-relative evidence files (required for facts when configured). */
     evidence_refs: Type.Optional(Type.Array(Type.String())),
+    /** Fact only: older fact ids this conclusion replaces. */
+    supersedes: Type.Optional(Type.Array(Type.String())),
     confidence: Type.Optional(Type.Number({ minimum: 0, maximum: 1 })),
 })
 
@@ -120,8 +123,12 @@ export function buildProposalCandidate(
     let payload: Record<string, unknown>
     let dedupeKey: string | null = null
     let evidenceRefs: string[] = []
+    let supersedes: string[] = []
 
     if (input.kind === "hint") {
+        if (input.supersedes !== undefined && input.supersedes.length > 0) {
+            throw new ProposalRejected("supersedes is only allowed for fact proposals")
+        }
         const content = requireText(input.content, "content", MAX_TEXT_CHARS)
         dedupeKey = optionalDedupeKey(input.dedupe_key)
         payload = { content, confidence }
@@ -141,7 +148,21 @@ export function buildProposalCandidate(
             maxItems: MAX_EVIDENCE_REFS,
             maxChars: MAX_EVIDENCE_REF_CHARS,
         })
-        payload = { description, from, confidence }
+        if (input.kind === "fact") {
+            supersedes = stringList(input.supersedes, "supersedes", {
+                required: false,
+                maxItems: MAX_SUPERSEDES,
+                maxChars: 64,
+            })
+        } else if (input.supersedes !== undefined && input.supersedes.length > 0) {
+            throw new ProposalRejected("supersedes is only allowed for fact proposals")
+        }
+        payload = {
+            description,
+            from,
+            confidence,
+            ...(supersedes.length === 0 ? {} : { supersedes }),
+        }
     }
 
     const createdAt = (options.now?.() ?? new Date()).toISOString()

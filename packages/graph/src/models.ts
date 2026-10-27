@@ -66,7 +66,26 @@ export interface FactMeta {
   run_id: string | null;
   evidence_refs: string[];
   evidence_status: EvidenceStatus;
+  /** Older facts this fact replaces; only the control plane writes this list. */
+  supersedes: string[];
+  /** The fact that replaced this one, if any. Derived from other rows' `supersedes`. */
+  superseded_by: string | null;
   created_at: string | null;
+}
+
+/** One direct supersede edge, resolved to descriptions for display and export. */
+export interface FactSupersession {
+  fact_id: string;
+  description: string;
+  superseded_by: string;
+  superseded_by_description: string;
+  created_at: string;
+}
+
+export interface ProjectSupersedeSummary {
+  project_id: string;
+  facts: { total: number; current: number; superseded: number };
+  supersessions: FactSupersession[];
 }
 
 /** Content digest recorded when a fact's evidence was accepted (no content is stored). */

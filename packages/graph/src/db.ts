@@ -140,6 +140,7 @@ CREATE TABLE IF NOT EXISTS fact_meta (
     run_id TEXT,
     evidence_refs TEXT NOT NULL DEFAULT '[]',
     evidence_status TEXT NOT NULL DEFAULT 'missing',
+    supersedes TEXT NOT NULL DEFAULT '[]',
     created_at TEXT NOT NULL,
     PRIMARY KEY (fact_id, project_id),
     FOREIGN KEY (fact_id, project_id) REFERENCES facts(id, project_id) ON DELETE CASCADE
@@ -298,6 +299,7 @@ export function configureDatabase(path: string): CairnDatabase {
     conn.exec(SCHEMA);
     ensureProjectColumns(conn);
     ensureRunColumns(conn);
+    ensureFactMetaColumns(conn);
     ensurePendingConcludeColumns(conn);
     ensureIntentMetaColumns(conn);
     ensureStrategistColumns(conn);
@@ -354,6 +356,16 @@ function ensurePendingConcludeColumns(conn: Database): void {
   );
   if (!columns.has("worker_profile")) {
     conn.exec("ALTER TABLE pending_concludes ADD COLUMN worker_profile TEXT");
+  }
+}
+
+/** M15b records which older facts a new fact replaces without touching the graph. */
+function ensureFactMetaColumns(conn: Database): void {
+  const columns = new Set(
+    all<{ name: string }>(conn, "PRAGMA table_info(fact_meta)").map((row) => row.name),
+  );
+  if (!columns.has("supersedes")) {
+    conn.exec("ALTER TABLE fact_meta ADD COLUMN supersedes TEXT NOT NULL DEFAULT '[]'");
   }
 }
 

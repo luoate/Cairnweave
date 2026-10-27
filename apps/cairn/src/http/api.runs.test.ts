@@ -305,6 +305,8 @@ describe("GET /projects/{id}/facts/{fact_id}/meta", () => {
       evidence_refs: [],
       evidence_status: "legacy",
       created_at: null,
+      supersedes: [],
+      superseded_by: null,
     });
   });
 

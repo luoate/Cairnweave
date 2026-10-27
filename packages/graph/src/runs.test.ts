@@ -224,6 +224,8 @@ describe("fact metadata", () => {
       evidence_refs: ["artifacts/probe.txt"],
       evidence_status: "provided",
       created_at: expect.any(String),
+      supersedes: [],
+      superseded_by: null,
     });
   });
 
@@ -245,6 +247,8 @@ describe("fact metadata", () => {
       evidence_refs: [],
       evidence_status: "legacy",
       created_at: null,
+      supersedes: [],
+      superseded_by: null,
     });
   });
 

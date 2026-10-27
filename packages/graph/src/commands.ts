@@ -401,6 +401,8 @@ export interface FactEvidence {
   evidenceRefs?: readonly string[];
   evidenceStatus?: "provided" | "missing";
   evidenceFiles?: readonly FactEvidenceFileInput[];
+  /** Older facts replaced by this one; only control-plane proposal review sets it. */
+  supersedes?: readonly string[];
 }
 
 export function concludeIntent(
@@ -430,6 +432,7 @@ export function concludeIntent(
     runId: evidence?.runId ?? null,
     evidenceRefs: evidence?.evidenceRefs ?? [],
     evidenceStatus: evidence?.evidenceStatus ?? "missing",
+    supersedes: evidence?.supersedes ?? [],
     createdAt: now,
   });
   if (evidence?.evidenceFiles !== undefined && evidence.evidenceFiles.length > 0) {
