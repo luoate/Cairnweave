@@ -6,6 +6,7 @@ import {
   appendTaskAudit,
   buildProjectCostReport,
   buildProjectRunStats,
+  buildProjectSupersedeSummary,
   checkProjectCompleted,
   checkProjectHintWritable,
   claimReason,
@@ -453,6 +454,12 @@ function buildRoutes(
   // Read-only per-worker/model outcome and usage statistics (M14d).
   route("GET", "/projects/{project_id}/stats", ({ params }) =>
     db.withConn((conn) => json(buildProjectRunStats(conn, params["project_id"]!))),
+  );
+
+  // Read-only supersede view (M15b): current/superseded counts and direct edges.
+  // The graph itself remains append-only; this route never writes.
+  route("GET", "/projects/{project_id}/supersedes", ({ params }) =>
+    db.withConn((conn) => json(buildProjectSupersedeSummary(conn, params["project_id"]!))),
   );
 
   // Read-only slow-layer view (M12c): persisted trigger watermarks, the effective

@@ -127,6 +127,63 @@ describe("sidecar proposal candidates", () => {
         );
         expect(candidate["evidence_refs"]).toEqual([]);
     });
+
+    test("passes supersede targets through on fact proposals", () => {
+        const candidate = buildProposalCandidate(
+            {
+                kind: "fact",
+                description: "port is 8080",
+                from: ["origin"],
+                evidence_refs: ["notes/port.txt"],
+                supersedes: ["f001", "f002"],
+            },
+            options(),
+        );
+        expect(candidate["payload"]).toEqual({
+            description: "port is 8080",
+            from: ["origin"],
+            confidence: 1,
+            supersedes: ["f001", "f002"],
+        });
+    });
+
+    test("rejects supersedes on non-fact proposals", () => {
+        expect(() =>
+            buildProposalCandidate(
+                { kind: "hint", content: "check admin", supersedes: ["f001"] },
+                options(),
+            ),
+        ).toThrow("supersedes is only allowed for fact proposals");
+
+        expect(() =>
+            buildProposalCandidate(
+                {
+                    kind: "intent",
+                    description: "probe admin",
+                    from: ["origin"],
+                    dedupe_key: "probe-admin",
+                    evidence_refs: [],
+                    supersedes: ["f001"],
+                },
+                options(),
+            ),
+        ).toThrow("supersedes is only allowed for fact proposals");
+    });
+
+    test("caps supersede targets", () => {
+        expect(() =>
+            buildProposalCandidate(
+                {
+                    kind: "fact",
+                    description: "too many targets",
+                    from: ["origin"],
+                    evidence_refs: ["notes/a.txt"],
+                    supersedes: Array.from({ length: 21 }, (_, index) => `f${index}`),
+                },
+                options(),
+            ),
+        ).toThrow("supersedes must contain at most 20 items");
+    });
 });
 
 describe("sidecar proposal files", () => {

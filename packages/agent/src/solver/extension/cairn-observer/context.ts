@@ -206,6 +206,7 @@ export function buildCairnObserverPrompt(
             "## Graph Proposals",
             "- 只有出现值得进入 Cairn 图的 durable 结论时，才调用 `propose_graph_change`。",
             "- `fact` 必须引用已有 fact id 和真实 evidence 文件；`intent` 必须给出稳定的 `dedupe_key`；`hint` 要短且可复用。",
+            "- 新结论推翻旧 fact 时，在 `fact` 提案里用 `supersedes` 列出被取代的 fact id（不要重复提交一条几乎相同的 fact）；被取代的 fact 不能再用于完成项目。",
             "- 提案只是候选：控制面会做证据、去重与范围校验，可能拒绝或标为重复，不代表已写入图。",
             "- 不要提交 flag、凭据、完整工具输出、临时路径或题面复述。",
         )

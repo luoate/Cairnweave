@@ -4,8 +4,8 @@
 skills / Observer）合并成**一个 Bun/TypeScript 代码库**，不再维护 Python ↔ TypeScript
 之间的进程桥、JSONL RPC 和 worker 适配器。
 
-状态：**M15a（Worker Profile 与统计驱动选择）**；M0–M4、M5a–M5c、
-M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a 的计划项全部完成。Phase 1 的
+状态：**M15b（Fact 取代链）**；M0–M4、M5a–M5c、
+M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b 的计划项全部完成。Phase 1 的
 “本地看板 + Observer 提案 + 证据门 + 单一写图者”闭环已具备；提案默认关闭。Phase 2
 的触发持久化、意图优先级/预算、单项目 token/成本与并发配额、只读慢层观测、逐 Fact
 成本归因与因果链，以及 reason 的 Hint/去重输出、人工重规划与资源压力触发均已落地，并
@@ -19,7 +19,10 @@ UI 的 Fact 详情可沿 `run_id` 下钻到产出 run 与该任务的工具调�
 配置顺序采样、再按历史成功率（Token/成本打破平局）选择，运行 model 与 profile 一并
 落到 task 与 `runs`。M14a 的完成判定随后收紧：证据必须来自 run 且带 `evidence_refs`，
 challenge 计数严格相等，默认策略由 `verification.evidence_enforcement` 决定，手工
-`/complete` 可选 operator token。
+`/complete` 可选 operator token。M15b 在不动图的前提下增加 Fact 取代链：Observer 的
+fact 提案可用 `supersedes` 声明它取代哪些旧结论，控制面校验后写入
+`fact_meta.supersedes`，读取时推导 `superseded_by`；完成 oracle 拒绝引用已被取代的
+Fact，只读 `GET /projects/{id}/supersedes` 给出当前/被取代计数与边。
 `cairn serve` 是可运行的 Cairn 兼容服务：SQLite schema、领域服务、全部
 五个路由、YAML/timeline 导出、静态 Web UI 均已就位，并用 Python Cairn 生成的 golden
 做了逐字对照。进程内 scheduler、任务/结果文件 worker 协议、BreachWeave Solver 接入已在 M2
@@ -408,6 +411,21 @@ M15a 增加（Worker Profile 与统计驱动选择）：
   契约测试覆盖 task 字段；图测试覆盖迁移、回读与跨项目 profile 聚合；选择单测覆盖
   采样、利用与全部平局规则；scheduler 集成测试确认前几个任务按配置顺序采样并落到
   run；HTTP/UI 测试覆盖 `by_profile` 与页签文案。
+
+M15b 增加（Fact 取代链）：
+
+- **只追加的取代关系**：新 Fact 不修改旧 Fact；`fact_meta.supersedes` 记录它取代
+  哪些旧 Fact，反向 `superseded_by` 在读取时推导。未知/自指/重复目标被忽略；同一目标
+  被多次取代时按 `created_at` 取最新，时间相同按取代者 id 决定，结果稳定。
+- **写入与校验**：只有 Observer 的 `fact` 提案可带 `supersedes`（≤20 个、每个 ≤64
+  字符）；控制面拒绝取代 `origin`/`goal`、目标不存在、目标已被取代，避免链式二次替换。
+- **完成语义**：evidence oracle 拒绝引用已被取代 Fact 的完成声明（`fact was superseded
+  by fXXX`），旧结论不能关闭项目。
+- **观察**：只读 `GET /projects/{id}/supersedes` 返回当前/被取代计数与边；
+  Fact meta 同时暴露 `supersedes` 与 `superseded_by`。
+- **验证**：图测试覆盖反向边、重复目标取最新、平局规则、未知/自指忽略与计数；提案
+  测试覆盖正常写入与四类拒绝；Observer 候选测试覆盖 fact 透传、非 fact 拒绝与上限；
+  oracle 测试确认旧 Fact 不能完成；HTTP 测试覆盖响应、404 与只能 GET。
 
 默认仍是确定性 fake solver，测试与离线运行不需要模型凭据。Observer 只接在
 `CAIRN_SOLVER=breachweave` 的真实 Solver 路径上，fake solver 会忽略它。
@@ -916,7 +934,7 @@ M6 的跨进程恢复 gate 不调用模型：它先写下一台崩溃控制面�
 bun run tools/gate/m6-restart-gate.ts
 ```
 
-## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a，2026-10-26，Bun 1.4.4）
+## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b，2026-10-27，Bun 1.4.4）
 
 - `bun test`：**495 passed**（57 个文件），0 failed。
 - `bun run typecheck`：`tsc --noEmit` 通过。
@@ -1176,6 +1194,7 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M14d ✅ | 逐 Worker/模型统计：`GET /stats` 汇总成功率、Token、成本与耗时，新增只读「统计」页签 | 482 passed / 56 files；浏览器实测（2026-10-26） |
 | M15a ✅ | Phase 4 起点：`worker_profiles` 映射 model-prefs、任务级模型覆盖、`runs.worker_profile`、先采样后利用的统计驱动派发、`by_profile` 统计与「按 Profile」卡片 | 495 passed / 57 files（2026-10-26） |
 | M14a 收口 ✅ | 完成判定收紧：证据 Fact 必须关联 run、challenge 计数严格相等、`verification.evidence_enforcement` 默认开关、`/complete` 可选 operator token、模型把 `evidence_refs` 写进 `data` 时由 worker 提升、gate 断言完成时证据覆盖 | 509 passed / 58 files（2026-10-26） |
+| M15b ✅ | Fact 取代链：`fact_meta.supersedes` 只追加边、反向 `superseded_by` 推导、Observer fact 提案校验（种子/不存在/已取代）、完成 oracle 拒绝旧 Fact、只读 `GET /projects/{id}/supersedes` | 529 passed / 60 files（2026-10-27） |
 
 ## 与 Phase 0 的关系
 

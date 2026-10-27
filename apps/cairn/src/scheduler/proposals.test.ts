@@ -359,6 +359,140 @@ describe("proposal review", () => {
     expect(files![0]!.sha256).toMatch(/^[a-f0-9]{64}$/);
   });
 
+  test("applies a superseding fact and records both directions", () => {
+    mkdirSync(join(workspace, "notes"), { recursive: true });
+    writeFileSync(join(workspace, "notes", "port.txt"), "port 8080\n", "utf8");
+    writeCandidate(
+      "fact-old.json",
+      candidate({
+        kind: "fact",
+        payload: { description: "the service listens on port 80", from: ["origin"] },
+        evidenceRefs: ["notes/port.txt"],
+      }),
+    );
+    expect(ingest().ingested).toBe(1);
+    expect(review()).toMatchObject({ applied: 1, rejected: 0 });
+    const older = proposals().find((proposal) => proposal.status === "applied")!;
+
+    writeCandidate(
+      "fact-new.json",
+      candidate({
+        kind: "fact",
+        payload: {
+          description: "the service listens on port 8080",
+          from: ["origin"],
+          supersedes: [older.applied_id!],
+        },
+        evidenceRefs: ["notes/port.txt"],
+      }),
+    );
+    expect(ingest().ingested).toBe(1);
+    expect(review()).toMatchObject({ applied: 1, rejected: 0 });
+    const newer = proposals().find(
+      (proposal) => proposal.status === "applied" && proposal.id !== older.id,
+    )!;
+
+    const olderMeta = db.withConn((conn) => getFactMeta(conn, projectId, older.applied_id!));
+    const newerMeta = db.withConn((conn) => getFactMeta(conn, projectId, newer.applied_id!));
+    expect(olderMeta?.superseded_by).toBe(newer.applied_id);
+    expect(newerMeta?.supersedes).toEqual([older.applied_id!]);
+  });
+
+  test("rejects superseding a seed fact", () => {
+    writeCandidate(
+      "fact-seed.json",
+      candidate({
+        kind: "fact",
+        payload: { description: "replace origin", from: ["origin"], supersedes: ["origin"] },
+      }),
+    );
+    expect(ingest().ingested).toBe(1);
+    expect(review()).toMatchObject({ applied: 0, rejected: 1 });
+    expect(proposals()[0]?.decision_reason).toBe("supersede_origin_or_goal");
+  });
+
+  test("rejects superseding a missing fact", () => {
+    writeCandidate(
+      "fact-missing-target.json",
+      candidate({
+        kind: "fact",
+        payload: { description: "replace nothing", from: ["origin"], supersedes: ["f999"] },
+      }),
+    );
+    expect(ingest().ingested).toBe(1);
+    expect(review()).toMatchObject({ applied: 0, rejected: 1 });
+    expect(proposals()[0]?.decision_reason).toBe("supersede_target_missing");
+  });
+
+  test("rejects superseding a fact that was already replaced", () => {
+    mkdirSync(join(workspace, "notes"), { recursive: true });
+    writeFileSync(join(workspace, "notes", "state.txt"), "state\n", "utf8");
+    writeCandidate(
+      "fact-a.json",
+      candidate({
+        kind: "fact",
+        payload: { description: "state is old", from: ["origin"] },
+        evidenceRefs: ["notes/state.txt"],
+      }),
+    );
+    ingest();
+    review();
+    const older = proposals().find((proposal) => proposal.status === "applied")!;
+
+    writeCandidate(
+      "fact-b.json",
+      candidate({
+        kind: "fact",
+        payload: {
+          description: "state is new",
+          from: ["origin"],
+          supersedes: [older.applied_id!],
+        },
+        evidenceRefs: ["notes/state.txt"],
+      }),
+    );
+    ingest();
+    review();
+
+    writeCandidate(
+      "fact-c.json",
+      candidate({
+        kind: "fact",
+        payload: {
+          description: "state is newer",
+          from: ["origin"],
+          supersedes: [older.applied_id!],
+        },
+        evidenceRefs: ["notes/state.txt"],
+      }),
+    );
+    ingest();
+    expect(review()).toMatchObject({ applied: 0, rejected: 1 });
+    const rejected = proposals().find(
+      (proposal) =>
+        proposal.status === "rejected" &&
+        proposal.payload.description === "state is newer",
+    );
+    expect(rejected?.decision_reason).toBe(
+      `fact_already_superseded: ${older.applied_id}`,
+    );
+  });
+
+  test("rejects supersedes on non-fact proposals", () => {
+    writeCandidate(
+      "hint-supersedes.json",
+      candidate({
+        kind: "hint",
+        payload: { content: "check /admin", supersedes: ["origin"] },
+      }),
+    );
+    const result = ingest();
+    expect(result.ingested).toBe(0);
+    expect(result.skipped).toBe(1);
+    expect(result.issues.join(" ")).toContain("supersedes is only allowed for facts");
+    expect(proposals()).toEqual([]);
+  });
+
   test("rejects facts without accepted evidence", () => {
     writeCandidate(
       "missing.json",

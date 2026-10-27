@@ -198,6 +198,7 @@ return answer;
 | `from` | fact/intent | 来源 Fact id 数组（去重、最多 20 个）；intent 不能以 goal 为源 |
 | `dedupe_key` | intent | 最多 128 字符；intent 必须提供 |
 | `evidence_refs` | fact | 工作区相对路径，最多 20 个、每个 512 字符；默认 fact 必须提供 |
+| `supersedes` | 否 | 仅 fact：本结论取代的旧 Fact id，最多 20 个、每个 64 字符；控制面拒绝种子 Fact、不存在的目标与已被取代的目标 |
 | `confidence` | 否 | `[0, 1]`；缺省视为 1，低于配置阈值时拒绝 |
 
 工具把归一化后的内容写成 `<proposals-dir>/<uuid>.json`：

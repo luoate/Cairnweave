@@ -38,6 +38,8 @@ reason 释放租约、项目保持 active；bootstrap 保留已产出的 Fact，
   （只有它们是种子 Fact 时仍失败）。每个非种子 Fact 必须存在、关联到一次 run
   （`fact_meta.run_id` 非空）、证据状态为 `provided`、`fact_meta.evidence_refs`
   非空，且 `fact_evidence` 至少一行。任一缺口都会失败并列出 Fact 与原因。
+- 已被取代的 Fact（`fact_meta.superseded_by` 非空，见 M15b）不能用于完成声明：
+  oracle 会以 `fact was superseded by fXXX` 失败，要求引用当前 Fact 而不是旧结论。
 - bootstrap：它要完成的 Fact 与结论在同一事务里创建，外层看不到；因此用任务级
   `evidence_refs` 校验，要求 `evidence_status=provided` 且至少一条引用。
 - 显式 `POST /verify` 可带 `facts` 子集；不带时检查全部非 `origin`/`goal` Fact。

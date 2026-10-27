@@ -204,6 +204,12 @@ export class VerificationService {
           gaps.push({ factId, reason: "fact does not exist" });
           continue;
         }
+        // Superseded facts stay in the append-only graph but must not justify
+        // completion; the model should cite the replacement instead.
+        if (meta.superseded_by !== null) {
+          gaps.push({ factId, reason: `fact was superseded by ${meta.superseded_by}` });
+          continue;
+        }
         const files = listFactEvidence(conn, projectId, factId);
         if (meta.evidence_status !== "provided") {
           gaps.push({ factId, reason: `evidence status is ${meta.evidence_status}` });

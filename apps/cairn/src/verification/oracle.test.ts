@@ -50,7 +50,11 @@ function createRow(
 
 function addFact(
   projectId: string,
-  options: { evidence: boolean; status?: "provided" | "missing" } = { evidence: true },
+  options: {
+    evidence: boolean;
+    status?: "provided" | "missing";
+    supersedes?: readonly string[];
+  } = { evidence: true },
 ): string {
   return db.withConn((conn) => {
     const intent = createIntent(conn, projectId, {
@@ -60,6 +64,8 @@ function addFact(
       worker: null,
     });
     heartbeatIntent(conn, projectId, intent.id, WORKER);
+    const supersedes =
+      options.supersedes === undefined ? {} : { supersedes: options.supersedes };
     const evidence = options.evidence
       ? {
           runId: "run_001",
@@ -72,8 +78,9 @@ function addFact(
               sha256: createHash("sha256").update(CONTENT).digest("hex"),
             },
           ],
+          ...supersedes,
         }
-      : { evidenceStatus: options.status ?? ("missing" as const) };
+      : { evidenceStatus: options.status ?? ("missing" as const), ...supersedes };
     return concludeIntent(conn, projectId, intent.id, WORKER, "found", evidence).fact.id;
   });
 }
@@ -119,6 +126,24 @@ describe("evidence verification", () => {
     expect(outcome.detail).toContain(factId);
     expect(outcome.detail).toContain("evidence status is missing");
     expect(outcome.check.ok).toBe(false);
+  });
+
+  test("fails when completion cites a superseded fact", async () => {
+    const projectId = createRow();
+    const older = addFact(projectId);
+    const newer = addFact(projectId, { evidence: true, supersedes: [older] });
+
+    const stale = await service().verify(projectId, { facts: [older] });
+    expect(stale.ok).toBe(false);
+    expect(stale.detail).toContain(older);
+    expect(stale.detail).toContain(`fact was superseded by ${newer}`);
+
+    const mixed = await service().verify(projectId, { facts: [older, newer] });
+    expect(mixed.ok).toBe(false);
+    expect(mixed.detail).toContain(`fact was superseded by ${newer}`);
+
+    const current = await service().verify(projectId, { facts: [newer] });
+    expect(current.ok).toBe(true);
   });
 
   test("fails when explicitly completing from a fact without evidence", async () => {

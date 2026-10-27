@@ -455,9 +455,10 @@ stderr 归档到 `sessionDir/{stdout,stderr}.log`。需要 UI 实时进度时再
   补齐，旧行为 0；`model` 由 M14c 迁移补齐，旧行与没有用量的任务为 `NULL`；
   `worker_profile` 由 M15a 迁移补齐，prompt 模式与未做选择的任务为 `NULL`。失败任务
   的用量同样保留。
-- `fact_meta(fact_id, project_id, run_id, evidence_refs, evidence_status, created_at)`，
-  主键 `(fact_id, project_id)`，外键指向 Fact 并级联删除。`evidence_refs` 以 JSON 数组
-  存储。`evidence_status` 为 `provided | missing | legacy`。
+- `fact_meta(fact_id, project_id, run_id, evidence_refs, evidence_status, supersedes,
+  created_at)`，主键 `(fact_id, project_id)`，外键指向 Fact 并级联删除。`evidence_refs`
+  与 `supersedes` 以 JSON 数组存储。`evidence_status` 为 `provided | missing | legacy`。
+  `supersedes` 由 M15b 迁移补齐，旧行为 `[]`（见 §5.7）。
 - `fact_evidence(project_id, fact_id, path, size, sha256, created_at)`，主键
   `(project_id, fact_id, path)`，外键指向 Fact 并级联删除。路径是写入时规范化后的
   工作区相对路径；只存摘要，不存内容。
@@ -508,6 +509,10 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
   无结束运行为 `null`）、Token、成本、平均耗时、证据数与最近启动时间；`by_model`
   把没有模型的运行归入 `model: null` 并排在最后；`by_profile` 只含打过
   `worker_profile` 的运行。未知项目 404；只有 GET。
+- `GET /projects/{id}/supersedes`（M15b，只读）→
+  `{project_id, facts: {total, current, superseded}, supersessions}`。`supersessions`
+  每条含 `fact_id`、`description`、`superseded_by`、`superseded_by_description`、
+  `created_at`，按被取代 Fact id 排序；未知项目 404；只有 GET，其他方法 405。
 - `GET /projects/{id}/strategist?limit=20`（M12c，只读）→
   `{state, budget, intents, reason_runs}`。`state` 为 `strategist_state` 或 `null`；
   `budget` 含 `used_tokens` / `used_cost_usd` / `running_tasks`、配置上限（纯 HTTP
@@ -632,7 +637,29 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
   控制面崩溃导致未执行 `finish` 的任务不会自动补导；其 session 目录可能在后续
   retention 中被删除。
 
-### 5.7 session 保留与启动对账（M6）
+### 5.7 Fact 取代链（M15b）
+
+图仍然只追加：新 Fact 不修改、不删除旧 Fact，取代关系只存在于旁路。
+
+- `fact_meta.supersedes` 记录“本 Fact 取代了哪些旧 Fact id”；反向的 `superseded_by`
+  在读取时从其他行推导，不落库。未知 id、自指与重复项在读取时忽略；同一目标被多个
+  新 Fact 取代时取 `created_at` 最新的一条，时间相同按取代者 id 决定，保证结果稳定。
+- **写入路径**：只有 Observer 的 `fact` 提案可以带 `supersedes`（最多 20 个、每个
+  ≤64 字符），由控制面在审批时校验并写入；任务结果与手工 conclude 不接受该字段。
+- **审批校验**：不能取代 `origin` / `goal`（前提不是可替换结论）；目标必须存在
+  （`supersede_target_missing`）；已经存在取代边的事实不能再次被取代
+  （`fact_already_superseded`）。因此边不会形成链式二次替换。
+- **完成判定**：evidence oracle 拒绝引用已被取代 Fact 的完成声明（detail 为
+  `fact was superseded by fXXX`），完成声明必须引用当前 Fact；这防止模型用旧结论
+  关闭项目。
+- **只读视图**：`GET /projects/{id}/supersedes` 返回 `{project_id, facts: {total,
+  current, superseded}, supersessions}`；`current = total - superseded`，统计包含种子
+  Fact。`GET /projects/{id}/facts/{fact_id}` 的 `meta` 也带 `supersedes` 与
+  `superseded_by`。
+- **边界**：取代不改变意图、提示词、timeline 或 YAML 导出；`GET /projects/{id}` 仍
+  返回全部 Fact（追加语义）。取代链只在项目内生效，不支持跨项目引用。
+
+### 5.8 session 保留与启动对账（M6）
 
 scheduler 的 housekeeping sweep 由 `scheduler/retention.ts` 与 `loop.ts` 共同实现：
 
