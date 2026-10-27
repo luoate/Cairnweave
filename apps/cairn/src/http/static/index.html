@@ -244,23 +244,35 @@
       <span class="font-semibold text-slate-700 tracking-tight">Cairn</span>
     </div>
     <div class="flex-1"></div>
-    <div class="flex items-center gap-3 text-[11px] text-slate-400">
-      <span class="inline-flex items-center gap-1.5 shrink-0" title="全部项目">
-        <span class="font-medium uppercase tracking-[0.12em] text-slate-400">全部</span>
-        <span class="font-semibold text-slate-600 tabular-nums" x-text="projects.length"></span>
-      </span>
-      <span class="inline-flex items-center gap-1.5 shrink-0" title="进行中的项目">
+    <div class="flex items-center gap-1 text-[11px] text-slate-400">
+      <button type="button" @click="setListStatusFilter('all')" :aria-pressed="listStatusFilter === 'all'"
+        class="inline-flex items-center gap-1.5 shrink-0 rounded-lg border px-2 py-1 transition"
+        :class="listStatusFilter === 'all' ? 'border-slate-300 bg-white text-slate-700 shadow-sm' : 'border-transparent text-slate-400 hover:text-slate-600'"
+        title="筛选：全部项目">
+        <span class="font-medium uppercase tracking-[0.12em]">全部</span>
+        <span class="font-semibold tabular-nums" x-text="projects.length"></span>
+      </button>
+      <button type="button" @click="setListStatusFilter('active')" :aria-pressed="listStatusFilter === 'active'"
+        class="inline-flex items-center gap-1.5 shrink-0 rounded-lg border px-2 py-1 transition"
+        :class="listStatusFilter === 'active' ? 'border-teal-200 bg-teal-50 text-teal-700' : 'border-transparent text-slate-400 hover:text-slate-600'"
+        title="筛选：进行中的项目">
         <span class="h-1.5 w-1.5 rounded-full bg-teal-500"></span>
-        <span class="font-semibold text-teal-700 tabular-nums" x-text="countProjectsByStatus('active')"></span>
-      </span>
-      <span class="inline-flex items-center gap-1.5 shrink-0" title="已停止的项目">
+        <span class="font-semibold tabular-nums" x-text="countProjectsByStatus('active')"></span>
+      </button>
+      <button type="button" @click="setListStatusFilter('stopped')" :aria-pressed="listStatusFilter === 'stopped'"
+        class="inline-flex items-center gap-1.5 shrink-0 rounded-lg border px-2 py-1 transition"
+        :class="listStatusFilter === 'stopped' ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-transparent text-slate-400 hover:text-slate-600'"
+        title="筛选：已停止的项目">
         <span class="h-1.5 w-1.5 rounded-full bg-amber-500"></span>
-        <span class="font-semibold text-amber-700 tabular-nums" x-text="countProjectsByStatus('stopped')"></span>
-      </span>
-      <span class="inline-flex items-center gap-1.5 shrink-0" title="已完成的项目">
+        <span class="font-semibold tabular-nums" x-text="countProjectsByStatus('stopped')"></span>
+      </button>
+      <button type="button" @click="setListStatusFilter('completed')" :aria-pressed="listStatusFilter === 'completed'"
+        class="inline-flex items-center gap-1.5 shrink-0 rounded-lg border px-2 py-1 transition"
+        :class="listStatusFilter === 'completed' ? 'border-slate-300 bg-slate-100 text-slate-700' : 'border-transparent text-slate-400 hover:text-slate-600'"
+        title="筛选：已完成的项目">
         <span class="h-1.5 w-1.5 rounded-full bg-slate-400"></span>
-        <span class="font-semibold text-slate-600 tabular-nums" x-text="countProjectsByStatus('completed')"></span>
-      </span>
+        <span class="font-semibold tabular-nums" x-text="countProjectsByStatus('completed')"></span>
+      </button>
       <button type="button"
         @click="stopAllActiveProjects()"
         :disabled="!hasActiveProjects() || isStoppingAllProjects"
@@ -287,16 +299,56 @@
   </header>
 
   <div x-ref="projectListScroll" @scroll.passive="rememberProjectListScroll()" class="flex-1 overflow-y-auto p-4">
+    <div class="sticky top-0 z-10 -mx-4 -mt-4 mb-3 border-b border-slate-200/60 bg-slate-50/95 px-4 py-2 backdrop-blur">
+      <div class="flex flex-wrap items-center gap-2">
+        <div class="relative min-w-[12rem] flex-1">
+          <svg class="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2"/></svg>
+          <input x-ref="listSearch" x-model="listQuery" @keydown.escape="listQuery = ''" type="search"
+            placeholder="搜索标题、ID 或状态（按 / 聚焦）"
+            class="h-8 w-full rounded-lg border border-slate-200 bg-white pl-8 pr-3 text-xs text-slate-600 placeholder:text-slate-300 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100">
+        </div>
+        <select x-model="listSort" @change="saveListPrefs()"
+          class="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-600 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100"
+          title="项目排序">
+          <option value="created_desc">最新创建</option>
+          <option value="title_asc">标题 A→Z</option>
+          <option value="status">状态优先</option>
+        </select>
+        <button type="button" @click="refreshCurrentView({ quiet: false })" :disabled="isLoadingProjects"
+          class="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 text-xs text-slate-500 transition hover:bg-slate-50 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
+          <svg class="h-3.5 w-3.5" :class="{ 'animate-spin': isLoadingProjects }" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 6.1"/><path d="M20 4v7h-7"/></svg>
+          <span x-text="isLoadingProjects ? '刷新中…' : '刷新'"></span>
+        </button>
+        <span class="text-[10px] tabular-nums text-slate-400" x-show="listUpdatedText()" x-text="listUpdatedText()"></span>
+      </div>
+      <template x-if="listError">
+        <div class="mt-2 flex items-center justify-between gap-2 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-[11px] text-rose-700">
+          <span class="min-w-0 break-words">无法刷新项目列表：<span x-text="listError"></span></span>
+          <button type="button" @click="refreshCurrentView({ quiet: false })"
+            class="shrink-0 rounded-md border border-rose-200 bg-white px-2 py-0.5 font-medium text-rose-700 hover:bg-rose-100">重试</button>
+        </div>
+      </template>
+    </div>
+
     <template x-if="projects.length === 0">
-      <div class="flex flex-col items-center justify-center h-full text-slate-400">
+      <div class="flex flex-col items-center justify-center py-16 text-slate-400">
         <img src="/static/favicon.svg" alt="" class="w-20 h-20 mb-5 opacity-30">
         <p class="text-lg font-medium text-slate-500">还没有项目</p>
         <p class="text-sm mt-1">创建项目以开始探索</p>
       </div>
     </template>
 
+    <template x-if="projects.length > 0 && visibleProjects().length === 0">
+      <div class="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-white/70 px-6 py-10 text-center text-slate-400">
+        <p class="text-sm font-medium text-slate-500">没有匹配的项目</p>
+        <p class="mt-1 text-xs">调整搜索词或状态筛选</p>
+        <button type="button" @click="clearListFilters()"
+          class="mt-3 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-50">清除筛选</button>
+      </div>
+    </template>
+
     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-      <template x-for="p in projects" :key="p.id">
+      <template x-for="p in visibleProjects()" :key="p.id">
         <div @click="openProject(p.id)"
           class="group h-full flex flex-col bg-white rounded-2xl border border-slate-200/60 p-5 cursor-pointer transition-all duration-200 hover:shadow-lg hover:shadow-slate-200/50 hover:border-slate-300 hover:-translate-y-0.5">
           <div class="flex items-start justify-between mb-3">
@@ -500,6 +552,14 @@
     </div>
   </header>
 
+  <template x-if="projectError">
+    <div class="shrink-0 flex items-center justify-between gap-3 border-b border-rose-200 bg-rose-50 px-4 py-1.5 text-[11px] text-rose-700">
+      <span class="min-w-0 break-words">无法刷新项目：<span x-text="projectError"></span></span>
+      <button type="button" @click="refreshCurrentView({ quiet: false })"
+        class="shrink-0 rounded-md border border-rose-200 bg-white px-2 py-0.5 font-medium text-rose-700 hover:bg-rose-100">重试</button>
+    </div>
+  </template>
+
   <div class="flex-1 flex overflow-hidden" id="graphLayout">
     <!-- Graph -->
     <div class="flex-1 relative min-w-0">
@@ -604,34 +664,34 @@
           <button @click="selectSideTab('log')" class="px-2 py-2.5 text-[11px] font-medium transition border-b-2"
             :class="sideTab === 'log' ? 'text-brand-600 border-brand-500' : 'text-slate-400 border-transparent hover:text-slate-600'">日志</button>
         </div>
-        <div class="grid grid-cols-8 border-t border-slate-100 bg-slate-50/60">
-          <button @click="selectSideTab('runs')" class="px-2 py-2 text-[11px] font-medium transition border-b-2"
+        <div class="flex overflow-x-auto border-t border-slate-100 bg-slate-50/60">
+          <button @click="selectSideTab('runs')" class="shrink-0 whitespace-nowrap px-2.5 py-2 text-[11px] font-medium transition border-b-2"
             :class="sideTab === 'runs' ? 'text-brand-600 border-brand-500 bg-white' : 'text-slate-400 border-transparent hover:text-slate-600'">
             运行 <span class="ml-0.5 text-[10px] opacity-60" x-show="runsPanel.loadedFor && runsPanel.items.length" x-text="runsPanel.items.length"></span>
           </button>
-          <button @click="selectSideTab('strategist')" class="px-2 py-2 text-[11px] font-medium transition border-b-2"
+          <button @click="selectSideTab('strategist')" class="shrink-0 whitespace-nowrap px-2.5 py-2 text-[11px] font-medium transition border-b-2"
             :class="sideTab === 'strategist' ? 'text-brand-600 border-brand-500 bg-white' : 'text-slate-400 border-transparent hover:text-slate-600'">
             慢层 <span class="ml-0.5 text-[10px] opacity-60" x-show="strategistPanel.data" x-text="strategistPanel.data ? strategistPanel.data.intents.length : ''"></span>
           </button>
-          <button @click="selectSideTab('audit')" class="px-2 py-2 text-[11px] font-medium transition border-b-2"
+          <button @click="selectSideTab('audit')" class="shrink-0 whitespace-nowrap px-2.5 py-2 text-[11px] font-medium transition border-b-2"
             :class="sideTab === 'audit' ? 'text-brand-600 border-brand-500 bg-white' : 'text-slate-400 border-transparent hover:text-slate-600'">
             审计 <span class="ml-0.5 text-[10px] opacity-60" x-show="auditPanel.loadedFor && auditPanel.summaries.length" x-text="auditPanel.summaries.length"></span>
           </button>
-          <button @click="selectSideTab('evidence')" class="px-2 py-2 text-[11px] font-medium transition border-b-2"
+          <button @click="selectSideTab('evidence')" class="shrink-0 whitespace-nowrap px-2.5 py-2 text-[11px] font-medium transition border-b-2"
             :class="sideTab === 'evidence' ? 'text-brand-600 border-brand-500 bg-white' : 'text-slate-400 border-transparent hover:text-slate-600'">证据</button>
-          <button @click="selectSideTab('proposals')" class="px-2 py-2 text-[11px] font-medium transition border-b-2"
+          <button @click="selectSideTab('proposals')" class="shrink-0 whitespace-nowrap px-2.5 py-2 text-[11px] font-medium transition border-b-2"
             :class="sideTab === 'proposals' ? 'text-brand-600 border-brand-500 bg-white' : 'text-slate-400 border-transparent hover:text-slate-600'">
             提案 <span class="ml-0.5 text-[10px] opacity-60" x-show="proposalsPanel.loadedFor && proposalsPanel.items.length" x-text="proposalsPanel.items.length"></span>
           </button>
-          <button @click="selectSideTab('cost')" class="px-2 py-2 text-[11px] font-medium transition border-b-2"
+          <button @click="selectSideTab('cost')" class="shrink-0 whitespace-nowrap px-2.5 py-2 text-[11px] font-medium transition border-b-2"
             :class="sideTab === 'cost' ? 'text-brand-600 border-brand-500 bg-white' : 'text-slate-400 border-transparent hover:text-slate-600'">
             成本 <span class="ml-0.5 text-[10px] opacity-60" x-show="costPanel.data && costPanel.data.runs.length" x-text="costPanel.data ? costPanel.data.runs.length : ''"></span>
           </button>
-          <button @click="selectSideTab('stats')" class="px-2 py-2 text-[11px] font-medium transition border-b-2"
+          <button @click="selectSideTab('stats')" class="shrink-0 whitespace-nowrap px-2.5 py-2 text-[11px] font-medium transition border-b-2"
             :class="sideTab === 'stats' ? 'text-brand-600 border-brand-500 bg-white' : 'text-slate-400 border-transparent hover:text-slate-600'">
             统计 <span class="ml-0.5 text-[10px] opacity-60" x-show="statsPanel.data && statsPanel.data.totals.runs" x-text="statsPanel.data ? statsPanel.data.totals.runs : ''"></span>
           </button>
-          <button @click="selectSideTab('report')" class="px-2 py-2 text-[11px] font-medium transition border-b-2"
+          <button @click="selectSideTab('report')" class="shrink-0 whitespace-nowrap px-2.5 py-2 text-[11px] font-medium transition border-b-2"
             :class="sideTab === 'report' ? 'text-brand-600 border-brand-500 bg-white' : 'text-slate-400 border-transparent hover:text-slate-600'">
             报告 <span class="ml-0.5 text-[10px] opacity-60" x-show="reportPanel.loadedFor && reportPanel.data" x-text="reportPanel.data ? reportPanel.data.graph.current_facts : ''"></span>
           </button>
@@ -2461,6 +2521,16 @@ function cairnApp() {
     projectListScrollTop: 0,
     shouldRestoreProjectListScroll: false,
     isStoppingAllProjects: false,
+    listQuery: '',
+    listStatusFilter: 'all',
+    listSort: 'created_desc',
+    isLoadingProjects: false,
+    listError: '',
+    projectError: '',
+    lastProjectListAt: 0,
+    pollFailures: 0,
+    isPollingTick: false,
+    sideTabs: {},
 
     runsPanel: {
       items: [],
@@ -2533,8 +2603,23 @@ function cairnApp() {
     async init() {
       this._panelResizeMove = (e) => this.onPanelResize(e);
       this._panelResizeStop = () => this.stopPanelResize();
+      this._visibilityRefresh = async () => {
+        if (document.hidden || !this.polling || this.replay.active || this.isPollingTick) return;
+        await this.refreshCurrentView({ quiet: true });
+        this.schedulePoll();
+      };
+      this._listShortcut = (event) => {
+        if (event.key !== '/' || event.ctrlKey || event.metaKey || event.altKey) return;
+        if (this.view !== 'list') return;
+        const target = event.target;
+        if (target && (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable)) return;
+        event.preventDefault();
+        this.$refs.listSearch?.focus();
+      };
       window.addEventListener('pointermove', this._panelResizeMove);
       window.addEventListener('pointerup', this._panelResizeStop);
+      document.addEventListener('visibilitychange', this._visibilityRefresh);
+      window.addEventListener('keydown', this._listShortcut);
       this.loadLocalPrefs();
       await this.loadProjects();
       await this.loadSettings();
@@ -2630,6 +2715,25 @@ function cairnApp() {
         if (rawPanelWidth !== null) {
           const savedPanelWidth = Number(rawPanelWidth);
           if (Number.isFinite(savedPanelWidth)) this.sidePanelWidth = savedPanelWidth;
+        }
+        const rawListPrefs = localStorage.getItem('cairn.listPrefs');
+        if (rawListPrefs !== null) {
+          const listPrefs = JSON.parse(rawListPrefs);
+          if (['all', 'active', 'stopped', 'completed'].includes(listPrefs?.statusFilter)) {
+            this.listStatusFilter = listPrefs.statusFilter;
+          }
+          if (['created_desc', 'title_asc', 'status'].includes(listPrefs?.sort)) {
+            this.listSort = listPrefs.sort;
+          }
+        }
+        const rawSideTabs = localStorage.getItem('cairn.sideTabs');
+        if (rawSideTabs !== null) {
+          const savedTabs = JSON.parse(rawSideTabs);
+          if (savedTabs && typeof savedTabs === 'object' && !Array.isArray(savedTabs)) {
+            for (const [projectId, tab] of Object.entries(savedTabs)) {
+              if (typeof tab === 'string' && this.opsTabs().includes(tab)) this.sideTabs[projectId] = tab;
+            }
+          }
         }
       } catch (e) {
         console.error(e);
@@ -2749,8 +2853,84 @@ function cairnApp() {
       return this.projectIsActive() && this.selectedFacts.length > 0 && !this.selectedFacts.includes('goal');
     },
 
-    async loadProjects() {
-      try { this.projects = await this.api('GET', '/projects'); } catch(e) { console.error(e); }
+    formatClock(timestamp) {
+      if (!timestamp) return '';
+      const date = new Date(timestamp);
+      if (Number.isNaN(date.getTime())) return '';
+      return date.toLocaleTimeString('zh-CN', { hour12: false });
+    },
+
+    matchingProjects(projects, query = '', status = 'all', sort = 'created_desc') {
+      const needle = String(query ?? '').trim().toLowerCase();
+      const statusLabel = value => ({ active: '进行中', stopped: '已停止', completed: '已完成' }[value] || value || '未知');
+      const matched = (Array.isArray(projects) ? projects : []).filter(project => {
+        if (status !== 'all' && project.status !== status) return false;
+        if (!needle) return true;
+        return [project.id, project.title, project.status, statusLabel(project.status), project.reason]
+          .some(value => String(value ?? '').toLowerCase().includes(needle));
+      });
+      const rank = { active: 0, stopped: 1, completed: 2 };
+      const byCreatedDesc = (a, b) => String(b.created_at ?? '').localeCompare(String(a.created_at ?? ''));
+      if (sort === 'title_asc') {
+        matched.sort((a, b) =>
+          String(a.title ?? '').localeCompare(String(b.title ?? ''), 'zh-Hans-CN')
+          || String(a.id).localeCompare(String(b.id)));
+      } else if (sort === 'status') {
+        matched.sort((a, b) =>
+          (rank[a.status] ?? 9) - (rank[b.status] ?? 9) || byCreatedDesc(a, b));
+      } else {
+        matched.sort(byCreatedDesc);
+      }
+      return matched;
+    },
+
+    visibleProjects() {
+      return this.matchingProjects(this.projects, this.listQuery, this.listStatusFilter, this.listSort);
+    },
+
+    listUpdatedText() {
+      return this.lastProjectListAt ? `更新于 ${this.formatClock(this.lastProjectListAt)}` : '';
+    },
+
+    setListStatusFilter(status) {
+      if (!['all', 'active', 'stopped', 'completed'].includes(status)) return;
+      this.listStatusFilter = status;
+      this.saveListPrefs();
+    },
+
+    clearListFilters() {
+      this.listQuery = '';
+      this.listStatusFilter = 'all';
+      this.saveListPrefs();
+    },
+
+    saveListPrefs() {
+      try {
+        localStorage.setItem('cairn.listPrefs', JSON.stringify({
+          statusFilter: this.listStatusFilter,
+          sort: this.listSort,
+        }));
+      } catch (e) {
+        console.error(e);
+      }
+    },
+
+    async loadProjects({ quiet = false } = {}) {
+      if (this.isLoadingProjects) return;
+      this.isLoadingProjects = true;
+      try {
+        const projects = await this.api('GET', '/projects');
+        this.projects = projects;
+        this.listError = '';
+        this.lastProjectListAt = Date.now();
+        this.pollFailures = 0;
+      } catch (e) {
+        this.listError = this.errorText(e);
+        this.pollFailures += 1;
+        if (!quiet) this.showToast(e.message, 'error');
+      } finally {
+        this.isLoadingProjects = false;
+      }
     },
 
     rememberProjectListScroll() {
@@ -3005,8 +3185,16 @@ function cairnApp() {
       } catch(e) { console.error(e); }
     },
 
-    async loadProject(id) {
-      try { this.project = await this.api('GET', `/projects/${id}`); } catch(e) { this.showToast(e.message, 'error'); }
+    async loadProject(id, { quiet = false } = {}) {
+      try {
+        this.project = await this.api('GET', `/projects/${id}`);
+        this.projectError = '';
+        this.pollFailures = 0;
+      } catch (e) {
+        this.projectError = this.errorText(e);
+        this.pollFailures += 1;
+        if (!quiet) this.showToast(e.message, 'error');
+      }
     },
 
     resetOpsPanels() {
@@ -3041,9 +3229,29 @@ function cairnApp() {
       this.reportPanel = { data: null, loading: false, error: '', loadedFor: '' };
     },
 
+    opsTabs() {
+      return ['runs', 'strategist', 'audit', 'evidence', 'proposals', 'cost', 'stats', 'report'];
+    },
+
+    isOpsTab(tab) {
+      return this.opsTabs().includes(tab);
+    },
+
+    saveSideTab() {
+      const projectId = this.selectedProjectId;
+      if (!projectId || !this.isOpsTab(this.sideTab)) return;
+      this.sideTabs[projectId] = this.sideTab;
+      try {
+        localStorage.setItem('cairn.sideTabs', JSON.stringify(this.sideTabs));
+      } catch (e) {
+        console.error(e);
+      }
+    },
+
     selectSideTab(tab) {
-      if (!['detail', 'hints', 'log', 'runs', 'strategist', 'audit', 'evidence', 'proposals', 'cost', 'stats', 'report'].includes(tab)) return;
+      if (!['detail', 'hints', 'log', ...this.opsTabs()].includes(tab)) return;
       this.sideTab = tab;
+      this.saveSideTab();
       this.loadActiveOpsTab();
     },
 
@@ -4166,6 +4374,7 @@ function cairnApp() {
     },
 
     async openProject(id) {
+      const switchingProject = this.selectedProjectId !== id;
       if (this.replay.active) {
         this.stopReplayTimer();
         this.replay.active = false;
@@ -4184,10 +4393,13 @@ function cairnApp() {
       this.selectedFacts = [];
       this.selectedTimelineEntryId = null;
       this.resetOpsPanels();
+      if (switchingProject) {
+        this.sideTab = this.isOpsTab(this.sideTabs[id]) ? this.sideTabs[id] : 'detail';
+      }
       await this.loadProject(id);
       await this.loadProjectScope(id);
       this.view = 'graph';
-      if (['runs', 'strategist', 'audit', 'evidence', 'cost'].includes(this.sideTab)) this.loadActiveOpsTab();
+      if (this.opsTabs().includes(this.sideTab)) this.loadActiveOpsTab();
       if (location.hash !== `#/projects/${id}`) location.hash = `/projects/${id}`;
       this.$nextTick(() => {
         const clampedWidth = this.clampPanelWidth(this.sidePanelWidth);
@@ -4217,6 +4429,7 @@ function cairnApp() {
       this.view = 'list';
       this.shouldRestoreProjectListScroll = true;
       this.project = null;
+      this.projectError = '';
       this.selectedProjectId = '';
       this.selectedNode = null;
       this.selectedFacts = [];
@@ -4230,16 +4443,47 @@ function cairnApp() {
       this.loadProjects().then(() => this.restoreProjectListScroll());
     },
 
+    async refreshCurrentView({ quiet = true } = {}) {
+      if (this.view === 'graph' && this.selectedProjectId) {
+        await this.loadProject(this.selectedProjectId, { quiet });
+        this.updateGraph();
+      } else {
+        await this.loadProjects({ quiet });
+      }
+    },
+
+    stopPolling() {
+      if (this.pollTimer) {
+        clearTimeout(this.pollTimer);
+        this.pollTimer = null;
+      }
+    },
+
+    schedulePoll(delay) {
+      if (typeof this._pollTick !== 'function') return;
+      if (this.pollTimer) clearTimeout(this.pollTimer);
+      const failures = Math.min(this.pollFailures || 0, 4);
+      const wait = delay ?? Math.min(5000 * 2 ** failures, 60000);
+      this.pollTimer = setTimeout(this._pollTick, wait);
+    },
+
     startPolling() {
-      this.pollTimer = setInterval(async () => {
-        if (!this.polling) return;
-        if (this.selectedProjectId && this.view === 'graph') {
-          await this.loadProject(this.selectedProjectId);
-          this.updateGraph();
-        } else {
-          await this.loadProjects();
+      this.stopPolling();
+      this._pollTick = async () => {
+        this.pollTimer = null;
+        if (!this.polling || this.replay.active || document.hidden || this.isPollingTick) {
+          this.schedulePoll();
+          return;
         }
-      }, 5000);
+        this.isPollingTick = true;
+        try {
+          await this.refreshCurrentView({ quiet: true });
+        } finally {
+          this.isPollingTick = false;
+          this.schedulePoll();
+        }
+      };
+      this.schedulePoll();
     },
 
     buildElements() {

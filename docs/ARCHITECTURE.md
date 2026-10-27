@@ -1,4 +1,4 @@
-# 架构（M17a 更新）
+# 架构（M17b 更新）
 
 本文固定合并后的角色边界、数据所有权和失败语义。实现以本文为准；需要改动时先改本文并
 记录原因。
@@ -105,7 +105,12 @@ epsilon-greedy 探索，探索时选已结束 run 最少的 profile，`epsilon` 
 授权目标，去重后随 `POST /projects` 的 `scope` 提交；新增 `GET/PUT
 /projects/{id}/scope` 以便给既有项目补配或修改范围，`GET /projects` 的
 `ProjectSummary` 增加 `has_scope` 供列表标记“未授权”。范围仍是项目配置，写入后只影响
-之后的派发；`POST /projects` 的既有字段与响应不变，`GET /projects` 只多一个字段。
+之后的派发；`POST /projects` 的既有字段与响应不变，`GET /projects` 只多一个字段。M17b
+改善日常操作：项目列表在客户端搜索标题/ID/状态/备注、按状态计数筛选并提供三种排序，
+筛选与排序写入 `localStorage`；轮询在 `document.hidden` 时暂停，恢复可见时立即刷新，
+失败按 5s→60s 指数退避，列表与项目视图显示错误横幅和重试，列表页展示最后更新时间。
+侧栏八个运维页签改为横向滚动，并按项目记忆上次页签。以上都只影响静态 UI，不改变
+HTTP 契约、图或调度语义。
 
 ## 1. 范围
 

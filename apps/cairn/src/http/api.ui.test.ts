@@ -126,5 +126,92 @@ describe("static operations UI", () => {
     expect(appScript).toContain("saveProjectScope");
     expect(appScript).toContain("/scope`");
     expect(appScript).toContain("has_scope");
+    expect(html).toContain('x-model="listQuery"');
+    expect(html).toContain('x-model="listSort"');
+    expect(html).toContain("setListStatusFilter('active')");
+    expect(html).toContain("clearListFilters()");
+    expect(html).toContain("没有匹配的项目");
+    expect(html).toContain("无法刷新项目列表");
+    expect(html).toContain("无法刷新项目：");
+    expect(appScript).toContain("projectError");
+    expect(html).toContain("flex overflow-x-auto");
+    expect(appScript).toContain("document.addEventListener('visibilitychange'");
+    expect(appScript).toContain("document.hidden");
+    expect(appScript).toContain("Math.min(5000 * 2 ** failures, 60000)");
+    expect(appScript).toContain("cairn.listPrefs");
+    expect(appScript).toContain("cairn.sideTabs");
+    expect(appScript).toContain("opsTabs()");
+  });
+});
+
+interface TestProject {
+  id: string;
+  title: string;
+  status: string;
+  created_at: string;
+  reason: string | null;
+  has_scope: boolean;
+}
+
+function loadApp(): Record<string, (...args: any[]) => any> {
+  const html = readFileSync(INDEX_PATH, "utf8");
+  const match = html.match(/<script>\s*(function cairnApp\(\)[\s\S]*?)<\/script>/);
+  if (!match) throw new Error("app script not found");
+  const factory = new Function(`${match[1]}; return cairnApp;`)() as () => Record<
+    string,
+    (...args: any[]) => any
+  >;
+  return factory();
+}
+
+describe("project list search and sort", () => {
+  const projects: TestProject[] = [
+    {
+      id: "proj_c",
+      title: "Gamma",
+      status: "completed",
+      created_at: "2026-01-03T00:00:00Z",
+      reason: null,
+      has_scope: true,
+    },
+    {
+      id: "proj_a",
+      title: "Alpha",
+      status: "active",
+      created_at: "2026-01-01T00:00:00Z",
+      reason: null,
+      has_scope: true,
+    },
+    {
+      id: "proj_b",
+      title: "Beta",
+      status: "stopped",
+      created_at: "2026-01-02T00:00:00Z",
+      reason: "budget exhausted",
+      has_scope: false,
+    },
+  ];
+
+  function ids(app: ReturnType<typeof loadApp>, query = "", status = "all", sort = "created_desc") {
+    return app.matchingProjects!(projects, query, status, sort).map((p: TestProject) => p.id);
+  }
+
+  test("matches title, id, status label and reason case-insensitively", () => {
+    const app = loadApp();
+    expect(ids(app, "alp")).toEqual(["proj_a"]);
+    expect(ids(app, "proj_b")).toEqual(["proj_b"]);
+    expect(ids(app, "进行中")).toEqual(["proj_a"]);
+    expect(ids(app, "BUDGET")).toEqual(["proj_b"]);
+    expect(ids(app, "  ")).toEqual(["proj_c", "proj_b", "proj_a"]);
+  });
+
+  test("applies the status filter and deterministic sort orders", () => {
+    const app = loadApp();
+    expect(ids(app, "", "active")).toEqual(["proj_a"]);
+    expect(ids(app, "", "all", "title_asc")).toEqual(["proj_a", "proj_b", "proj_c"]);
+    expect(ids(app, "", "all", "status")).toEqual(["proj_a", "proj_b", "proj_c"]);
+    expect(ids(app, "", "all", "created_desc")).toEqual(["proj_c", "proj_b", "proj_a"]);
+    // Sorting must not mutate the caller's array.
+    expect(projects.map(p => p.id)).toEqual(["proj_c", "proj_a", "proj_b"]);
   });
 });
