@@ -6,8 +6,8 @@
 skills / Observer）合并成**一个 Bun/TypeScript 代码库**，不再维护 Python ↔ TypeScript
 之间的进程桥、JSONL RPC 和 worker 适配器。
 
-状态：**M18a（模型与密钥管理 API）**；M0–M4、M5a–M5c、
-M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M17a、M17b、M17c、M17d、M18a 的计划项全部完成。Phase 1 的
+状态：**M18b（模型与密钥管理 UI）**；M0–M4、M5a–M5c、
+M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M17a、M17b、M17c、M17d、M18a、M18b 的计划项全部完成。Phase 1 的
 “本地看板 + Observer 提案 + 证据门 + 单一写图者”闭环已具备；提案默认关闭。Phase 2
 的触发持久化、意图优先级/预算、单项目 token/成本与并发配额、只读慢层观测、逐 Fact
 成本归因与因果链，以及 reason 的 Hint/去重输出、人工重规划与资源压力触发均已落地，并
@@ -75,6 +75,14 @@ M18a 增加模型与密钥管理 API（UI 在 M18b 接入）：控制面按需�
 Origin 与请求 host 不一致的浏览器写请求；删除仍被模型、`worker_profiles`、Observer
 或 prompt 默认引用的配置返回 409，`?force=true` 才级联删除。测试连接的错误文本会先
 替换真实密钥，再遮蔽 `Bearer` 与 `api_key=…` 形态的凭据，且不回传 `details.headers`。
+M18b 把这套 API 接进静态 UI：页头的 CPU 图标打开“模型与密钥”弹窗，Provider 页签可
+新增/编辑名称、协议、Base URL、API Key 与额外请求头（密钥只写、留空表示不修改），
+删除被引用条目时行内提示并切换为“强制删除”；模型页签可先拉取内置目录或远端
+`/models`，再选模型 ID，或手工填写，并展开 thinkingLevel、reasoning、输入模态、四项
+成本、contextWindow、maxTokens 与模型请求头。列表给出默认标记/引用方，支持设为默认、
+编辑、测试与行内删除确认；所有写操作沿用弹窗栈的禁用与回焦约定（现为 14 个 overlay）。
+内置 provider 只填名称时，同步到 `models.json` 的 `provider:<id>` 会继承内置协议与
+Base URL；测试前若 provider 尚未保存密钥，直接给出可读提示而不是 SDK 的文件路径错误。
 `cairn serve` 是可运行的 Cairn 兼容服务：SQLite schema、领域服务、全部
 五个路由、YAML/timeline 导出、静态 Web UI 均已就位，并用 Python Cairn 生成的 golden
 做了逐字对照。进程内 scheduler、任务/结果文件 worker 协议、BreachWeave Solver 接入已在 M2
@@ -1019,12 +1027,14 @@ CAIRN_SOLVER=breachweave bun run cairn serve --port 8000 --db-path ./cairn.db \
 
 这些文件不属于仓库，也不会写进 `task.json`；权限应仅限本人。
 
-### 通过 API 管理模型与密钥（M18a）
+### 通过 API 与 UI 管理模型与密钥（M18a/M18b）
 
 控制面新增 `/settings/agent` 路由；目录按 `--config` 的 `common_env`
 （`CAIRN_AGENT_CONFIG_DIR`）→ 进程环境变量 → `~/.tch-agent/config` 解析，纯 HTTP 模式
 同样可用。返回的 provider/模型列表带掩码状态，密钥、provider 与模型的自定义 header
-值都不会回传。
+值都不会回传。静态 UI 的页头“模型与密钥”入口直接使用这些路由：Provider 页签维护
+provider 与密钥，模型页签负责拉取/手工录入、设为默认、测试与删除；密钥输入框永远
+是空值，留空即保持原值。
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
@@ -1131,9 +1141,9 @@ M6 的跨进程恢复 gate 不调用模型：它先写下一台崩溃控制面�
 bun run tools/gate/m6-restart-gate.ts
 ```
 
-## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a + M17a + M17b + M17c + M17d + M18a，2026-10-28，Bun 1.4.4）
+## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a + M17a + M17b + M17c + M17d + M18a + M18b，2026-10-28，Bun 1.4.4）
 
-- `bun test`：**592 passed**（65 个文件），0 failed。
+- `bun test`：**604 passed**（65 个文件），0 failed。
 - `bun run typecheck`：`tsc --noEmit` 通过。
 - **HTTP 对照**：`api.golden.json` 的 60 步请求（成功路径、400/403/404/405/409、租约过期、
   删除级联、导出、路由错误）由 Python FastAPI + 固定时钟生成；TS 重放后状态码、content-type
@@ -1371,7 +1381,7 @@ bun run tools/gate/m6-restart-gate.ts
   判定、Tab 在两端回环、焦点逃出弹窗被拉回、禁用与隐藏控件不计入可聚焦集合、autofocus
   在该层完成布局前按帧重试且有上限、请求期间拒绝关闭弹窗；另校验授权目标按行去重与逐行报错、
   新建项目四个必填字段、超时整数校验，以及停止/停止全部的确认状态、确认与失败回吐后
-  状态复位。UI 静态测试断言 13 个 overlay 都挂在同一 `syncModal` 栈上、各自只有一个
+  状态复位。UI 静态测试断言 14 个 overlay 都挂在同一 `syncModal` 栈上、各自只有一个
   `data-autofocus`、互为 body 直接子节点（漏掉一个 `</div>` 会把后续弹窗嵌进前一个，
   从而永不显示），并断言停止入口只走确认弹窗。浏览器实测 Esc/Tab 回环与回焦、背景点击
   取消、行内校验与聚焦第一个错误项、提交中禁用、停止单个/全部确认与恢复项目免确认。
@@ -1392,7 +1402,20 @@ bun run tools/gate/m6-restart-gate.ts
   URL、内嵌凭据、缺失 `api`/`baseUrl`、未知协议、未知 provider、非法 pref id 与
   thinkingLevel。operator token 缺失 401、GET 保持开放；跨源 Origin 的写请求 403。
   注入 fake manager 的用例断言 `test` 输出会抹掉密钥、`Authorization` 与 `Bearer` 片段，
-  且发现接口只返回模型 id/名称。
+  且发现接口只返回模型 id/名称。M18b 追加：以内置名创建 provider 时 `models.json` 的
+  `provider:<id>` 继承 `anthropic-messages` 与官方 Base URL；未保存密钥时测试直接返回
+  “provider has no API key”，不再暴露配置文件路径。
+- **模型与密钥 UI（M18b）**：UI 静态测试从内联脚本实例化 `cairnApp()`，校验请求头解析
+  （注释/空行、`:` 或 `=` 分隔、非法名称与超长值逐行报错）、provider 表单校验（自定义
+  必须协议+地址、内置可省略、拒绝 `ftp://` 与内嵌凭据、密钥长度、非法 header 名）、
+  模型提交载荷（思考级别/推理/输入模态/四项成本/上下文/最大 Token/请求头）、编辑时
+  不带条目 ID、非法字段不发请求、拉取后选择模型并回填显示名、未命中提示、409 后切换
+  “强制删除”、请求中禁止关闭弹窗，以及设为默认调用 `/settings/agent/default-model`。
+  浏览器实测：打开弹窗并聚焦关闭按钮；添加内置 `anthropic` provider；拉取 22 个内置
+  模型并选择 `claude-sonnet-4-5`；展开高级参数后保存，列表显示 `thinking:high`、
+  `text+image`、`ctx 200000`、`max 8192` 与 `cost 3/15`；设为默认后出现 `cairn-worker`
+  默认条目与 `prompt:cairn-worker` 引用；编辑名称并保存；无密钥测试显示可读错误；
+  删除默认条目被 409 拒绝后出现“强制删除”；Esc 关闭并回焦入口按钮，控制台无脚本错误。
 
 golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定时钟、`TZ=UTC`）。
 重新生成方法与约束见 `docs/PORTING.md`。
@@ -1456,6 +1479,7 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M17c ✅ | 表单与弹窗一致性：13 个 overlay 共用模态栈（Esc 关最上层、Tab 焦点陷阱、关闭回焦、显示后重试 autofocus）；新建/范围/重命名/设置逐字段行内校验并聚焦首个错误；写操作提交期间禁用并显示进度；停止单个与“停止全部”改为二次确认 | 578 passed / 64 files（2026-10-28）；浏览器实测 Esc/Tab/回焦、校验、确认与背景取消 |
 | M17d ✅ | 详情/图交互一致性：项目卡片键盘可达（Tab + Enter/Space，内部按钮不冒泡）；进入项目聚焦图标题、返回列表回焦来源卡片（缺失回落搜索框）；返回按钮补可访问名称；图视图 Esc 清除选择、多选面板“已选 N 个事实/清空选择”；图页头删除统一走 `deleteProjectById` | 582 passed / 64 files（2026-10-28）；浏览器实测 Enter/Space 打开、标题/卡片回焦、Esc 与清空按钮、弹窗内 Esc 不清选择 |
 | M18a ✅ | 模型与密钥管理 API：`GET /settings/agent` 汇总 provider/模型（密钥与请求头只回掩码/名称）；provider 与模型的增删改、默认模型设置（复制为 `cairn-worker`）、内置目录与远端 `/models` 发现、单模型连通性测试；删除被引用条目 409（`?force=true` 放行）；写请求要求 operator token 且拒绝跨源；测试/发现错误输出脱敏 | 592 passed / 65 files（2026-10-28）；入口弹窗与拉取模型列表 UI 列入 M18b |
+| M18b ✅ | 模型与密钥管理 UI：页头入口与弹窗栈集成（14 overlay）；Provider/模型页签、密钥只写、请求头逐行解析、协议/Base URL、拉取或手工录入模型、thinkingLevel/reasoning/输入模态/成本/上下文/最大 Token、默认标记与引用方、设为默认、测试、行内删除确认与 409 强制删除；内置 provider 继承协议与 Base URL，无密钥测试给可读提示 | 604 passed / 65 files（2026-10-28）；浏览器实测完整 CRUD/拉取/默认/测试/强制删除流程 |
 
 ## 与 Phase 0 的关系
 

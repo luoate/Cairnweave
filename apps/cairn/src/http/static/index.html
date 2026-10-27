@@ -292,6 +292,9 @@
       <button @click="showLocalPrefs = true" class="h-7 max-w-40 px-2.5 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition inline-flex items-center shrink-0">
         <span class="truncate block" x-text="actorName()"></span>
       </button>
+      <button @click="openAgentSettings()" class="h-7 w-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition inline-flex items-center justify-center shrink-0" title="模型与密钥" aria-label="模型与密钥">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2"/><path d="M9 3v4M15 3v4M9 17v4M15 17v4M3 9h4M3 15h4M17 9h4M17 15h4"/></svg>
+      </button>
       <button @click="loadSettings(); showSettings = true" class="h-7 w-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition inline-flex items-center justify-center shrink-0">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7 7 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a7 7 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a7 7 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a7 7 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.28Z"/><path d="M15 12a3 3 0 1 1-6 0-3 3 0 0 1 6 0Z"/></svg>
       </button>
@@ -549,6 +552,9 @@
     <div class="flex items-center gap-1.5 ml-1">
       <button @click="showLocalPrefs = true" class="h-7 max-w-40 px-2.5 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition inline-flex items-center shrink-0">
         <span class="truncate block" x-text="actorName()"></span>
+      </button>
+      <button @click="openAgentSettings()" class="h-7 w-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition inline-flex items-center justify-center shrink-0" title="模型与密钥" aria-label="模型与密钥">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2"/><path d="M9 3v4M15 3v4M9 17v4M15 17v4M3 9h4M3 15h4M17 9h4M17 15h4"/></svg>
       </button>
       <button @click="loadSettings(); showSettings = true" class="h-7 w-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition inline-flex items-center justify-center shrink-0">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7 7 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a7 7 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a7 7 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a7 7 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.28Z"/><path d="M15 12a3 3 0 1 1-6 0-3 3 0 0 1 6 0Z"/></svg>
@@ -2432,6 +2438,272 @@
   </div>
 </div>
 
+<!-- Agent Model Settings -->
+<div x-show="showAgentSettings" x-cloak data-modal="agent" x-effect="syncModal('agent', showAgentSettings, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('agent')">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-3xl mx-4 border border-slate-200/60 overflow-hidden" @click.stop>
+    <div class="px-5 py-4 border-b border-slate-200/80 flex items-start justify-between gap-4">
+      <div class="min-w-0">
+        <h3 class="text-base font-semibold text-slate-700">模型与密钥</h3>
+        <p class="text-[11px] text-slate-400 mt-0.5" x-text="agentConfigHint()"></p>
+      </div>
+      <button @click="dismissModal('agent')" :disabled="agentWritePending()" data-autofocus class="px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition disabled:opacity-40 disabled:cursor-not-allowed">关闭</button>
+    </div>
+    <div class="flex items-center gap-1 border-b border-slate-200/80 px-5 pt-3">
+      <button @click="agentTab = 'providers'" class="px-3 py-1.5 text-xs font-medium rounded-t-lg border-b-2 transition"
+        :class="agentTab === 'providers' ? 'border-brand-400 text-brand-600' : 'border-transparent text-slate-400 hover:text-slate-600'">Provider</button>
+      <button @click="agentTab = 'models'" class="px-3 py-1.5 text-xs font-medium rounded-t-lg border-b-2 transition"
+        :class="agentTab === 'models' ? 'border-brand-400 text-brand-600' : 'border-transparent text-slate-400 hover:text-slate-600'">模型</button>
+      <span class="ml-auto text-[10px] text-slate-400">密钥与请求头只写不回显</span>
+    </div>
+    <div class="max-h-[70vh] overflow-y-auto p-5 space-y-4">
+      <div x-show="agentConfig.error" class="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] text-rose-700 break-words">
+        无法读取模型配置：<span x-text="agentConfig.error"></span>
+      </div>
+      <p x-show="agentConfig.loading" class="text-[11px] text-slate-400">加载中…</p>
+
+      <div x-show="agentTab === 'providers'" class="space-y-4">
+        <template x-for="p in agentConfig.providers" :key="p.id">
+          <div class="rounded-xl border border-slate-200 bg-white p-3">
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="text-sm font-medium text-slate-700" x-text="p.name"></span>
+                  <span class="text-[10px] font-mono text-slate-400" x-text="p.id"></span>
+                  <span x-show="p.hasApiKey" class="text-[10px] text-teal-600" x-text="p.apiKeySummary"></span>
+                  <span x-show="!p.hasApiKey" class="text-[10px] text-amber-600">未配置密钥</span>
+                </div>
+                <p class="text-[11px] text-slate-400 mt-1 break-all" x-text="agentProviderMeta(p)"></p>
+                <p x-show="p.headerNames && p.headerNames.length" class="text-[10px] text-slate-400 mt-0.5 break-all" x-text="'请求头：' + p.headerNames.join(', ')"></p>
+              </div>
+              <div class="flex shrink-0 items-center gap-1.5">
+                <button @click="selectAgentProvider(p)" class="px-2 py-1 text-[11px] text-slate-500 border border-slate-200 rounded-lg hover:bg-slate-50 transition">编辑</button>
+                <button @click="requestAgentDelete('provider', p.id, p.name)" class="px-2 py-1 text-[11px] text-rose-500 border border-rose-200 rounded-lg hover:bg-rose-50 transition">删除</button>
+              </div>
+            </div>
+            <div x-show="agentDelete.kind === 'provider' && agentDelete.id === p.id" class="mt-2 rounded-lg border border-rose-200 bg-rose-50 p-2">
+              <p class="text-[11px] text-rose-700" x-text="agentDeletePrompt()"></p>
+              <p x-show="agentDelete.error" class="mt-1 text-[10px] text-rose-600 break-words" x-text="agentDelete.error"></p>
+              <div class="mt-2 flex justify-end gap-1.5">
+                <button @click="cancelAgentDelete()" :disabled="agentDelete.loading" class="px-2 py-1 text-[11px] text-slate-500 rounded-lg hover:bg-white transition disabled:opacity-40">取消</button>
+                <button @click="confirmAgentDelete()" :disabled="agentDelete.loading" class="px-2 py-1 text-[11px] text-white bg-rose-500 rounded-lg hover:bg-rose-600 transition disabled:opacity-40"
+                  x-text="agentDelete.loading ? '删除中…' : (agentDelete.force ? '强制删除' : '确认删除')"></button>
+              </div>
+            </div>
+          </div>
+        </template>
+        <p x-show="!agentConfig.loading && agentConfig.providers.length === 0" class="text-[11px] text-slate-400">还没有 provider。先添加内置 provider（如 anthropic、openai）或自定义网关。</p>
+
+        <div class="rounded-xl border border-slate-200 bg-slate-50/60 p-4 space-y-3">
+          <div class="flex items-center justify-between">
+            <h4 class="text-xs font-semibold text-slate-600" x-text="agentProviderForm.id ? '编辑 provider' : '新增 provider'"></h4>
+            <button x-show="agentProviderForm.id" @click="resetAgentProviderForm()" class="text-[11px] text-slate-400 hover:text-slate-600">取消编辑</button>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="text-[11px] text-slate-400 mb-1 block font-medium">名称</label>
+              <input x-model="agentProviderForm.name" list="agent-provider-names" placeholder="anthropic / openai / my-gateway"
+                class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+              <datalist id="agent-provider-names">
+                <template x-for="item in agentConfig.builtinProviders" :key="item.provider"><option :value="item.provider"></option></template>
+              </datalist>
+            </div>
+            <div>
+              <label class="text-[11px] text-slate-400 mb-1 block font-medium">协议</label>
+              <select x-model="agentProviderForm.api" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
+                <option value="">自动 / 默认</option>
+                <template x-for="protocol in agentConfig.protocols" :key="protocol">
+                  <option :value="protocol" x-text="agentProtocolLabel(protocol)"></option>
+                </template>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label class="text-[11px] text-slate-400 mb-1 block font-medium">Base URL</label>
+            <input x-model="agentProviderForm.baseUrl" placeholder="https://api.example.com/v1"
+              class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+            <p class="text-[10px] text-slate-400 mt-1">内置 provider 可留空；自定义 provider 必须填写 http(s) 地址，不能带用户名密码。</p>
+            <label x-show="agentProviderForm.id && agentProviderForm.baseUrl" class="mt-1 inline-flex items-center gap-1.5 text-[10px] text-slate-500">
+              <input type="checkbox" x-model="agentProviderForm.clearBaseUrl"> 清除已保存的 Base URL
+            </label>
+          </div>
+          <div>
+            <label class="text-[11px] text-slate-400 mb-1 block font-medium">API Key</label>
+            <input type="password" autocomplete="new-password" x-model="agentProviderForm.apiKey" :placeholder="agentProviderKeyPlaceholder()"
+              class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+            <p class="text-[10px] text-slate-400 mt-1">只写入服务端配置，不会回显；留空表示不修改。</p>
+          </div>
+          <div>
+            <label class="text-[11px] text-slate-400 mb-1 block font-medium">额外请求头</label>
+            <textarea rows="2" x-model="agentProviderForm.headersText" placeholder="X-Tenant: team-a（每行一个 Name: value）"
+              class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
+            <p x-show="agentProviderHeaderNames().length" class="text-[10px] text-slate-400 mt-1">已保存：<span x-text="agentProviderHeaderNames().join(', ')"></span>；留空不修改。</p>
+            <label x-show="agentProviderForm.id && agentProviderHeaderNames().length" class="mt-1 inline-flex items-center gap-1.5 text-[10px] text-slate-500">
+              <input type="checkbox" x-model="agentProviderForm.clearHeaders"> 清除已保存的请求头
+            </label>
+          </div>
+          <p x-show="agentProviderError" class="text-[11px] text-rose-500 break-words" x-text="agentProviderError"></p>
+          <div class="flex justify-end">
+            <button @click="saveAgentProvider()" :disabled="isSavingAgentProvider"
+              class="px-3 py-1.5 text-xs bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition shadow-sm shadow-brand-200 disabled:opacity-40 disabled:cursor-not-allowed"
+              x-text="isSavingAgentProvider ? '保存中…' : (agentProviderForm.id ? '保存 provider' : '添加 provider')"></button>
+          </div>
+        </div>
+      </div>
+
+      <div x-show="agentTab === 'models'" class="space-y-4">
+        <template x-for="m in agentConfig.models" :key="m.id">
+          <div class="rounded-xl border border-slate-200 bg-white p-3">
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="text-sm font-medium text-slate-700" x-text="m.id"></span>
+                  <span x-show="m.isDefault" class="text-[10px] px-1.5 py-0.5 rounded bg-brand-50 text-brand-600 border border-brand-200">默认</span>
+                  <span x-show="m.referencedBy && m.referencedBy.length" class="text-[10px] text-slate-400" x-text="'引用：' + m.referencedBy.join(', ')"></span>
+                </div>
+                <p class="text-[11px] text-slate-400 mt-1 break-all" x-text="agentModelMeta(m)"></p>
+              </div>
+              <div class="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+                <button x-show="!m.isDefault" @click="setDefaultAgentModel(m.id)" :disabled="isSettingAgentDefault"
+                  class="px-2 py-1 text-[11px] text-brand-600 border border-brand-200 rounded-lg hover:bg-brand-50 transition disabled:opacity-40">设为默认</button>
+                <button @click="selectAgentModel(m)" class="px-2 py-1 text-[11px] text-slate-500 border border-slate-200 rounded-lg hover:bg-slate-50 transition">编辑</button>
+                <button @click="testAgentModel(m.id)" :disabled="agentTest.loading"
+                  class="px-2 py-1 text-[11px] text-slate-500 border border-slate-200 rounded-lg hover:bg-slate-50 transition disabled:opacity-40"
+                  x-text="agentTest.loading && agentTest.modelId === m.id ? '测试中…' : '测试'"></button>
+                <button @click="requestAgentDelete('model', m.id, m.id)" class="px-2 py-1 text-[11px] text-rose-500 border border-rose-200 rounded-lg hover:bg-rose-50 transition">删除</button>
+              </div>
+            </div>
+            <div x-show="agentTest.modelId === m.id && !agentTest.loading" class="mt-2 rounded-lg border px-2 py-1.5 text-[11px] break-words"
+              :class="agentTest.ok ? 'border-teal-200 bg-teal-50 text-teal-700' : 'border-rose-200 bg-rose-50 text-rose-700'">
+              <span x-text="agentTest.ok ? '连通性测试通过' : '测试失败'"></span>
+              <span x-show="agentTest.error" x-text="'：' + agentTest.error"></span>
+              <div x-show="agentTest.response" class="mt-1 max-h-24 overflow-auto font-mono text-[10px] whitespace-pre-wrap" x-text="agentTest.response"></div>
+            </div>
+            <div x-show="agentDelete.kind === 'model' && agentDelete.id === m.id" class="mt-2 rounded-lg border border-rose-200 bg-rose-50 p-2">
+              <p class="text-[11px] text-rose-700" x-text="agentDeletePrompt()"></p>
+              <p x-show="agentDelete.error" class="mt-1 text-[10px] text-rose-600 break-words" x-text="agentDelete.error"></p>
+              <div class="mt-2 flex justify-end gap-1.5">
+                <button @click="cancelAgentDelete()" :disabled="agentDelete.loading" class="px-2 py-1 text-[11px] text-slate-500 rounded-lg hover:bg-white transition disabled:opacity-40">取消</button>
+                <button @click="confirmAgentDelete()" :disabled="agentDelete.loading" class="px-2 py-1 text-[11px] text-white bg-rose-500 rounded-lg hover:bg-rose-600 transition disabled:opacity-40"
+                  x-text="agentDelete.loading ? '删除中…' : (agentDelete.force ? '强制删除' : '确认删除')"></button>
+              </div>
+            </div>
+          </div>
+        </template>
+        <p x-show="!agentConfig.loading && agentConfig.models.length === 0" class="text-[11px] text-slate-400">还没有模型条目。先保存 provider，再拉取模型列表或手工填写模型 ID。</p>
+
+        <div class="rounded-xl border border-slate-200 bg-slate-50/60 p-4 space-y-3">
+          <div class="flex items-center justify-between">
+            <h4 class="text-xs font-semibold text-slate-600" x-text="agentModelForm.originalId ? '编辑模型' : '新增模型'"></h4>
+            <button x-show="agentModelForm.originalId" @click="resetAgentModelForm()" class="text-[11px] text-slate-400 hover:text-slate-600">取消编辑</button>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="text-[11px] text-slate-400 mb-1 block font-medium">Provider</label>
+              <select x-model="agentModelForm.providerId" @change="resetAgentDiscovery()" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
+                <option value="">选择 provider</option>
+                <template x-for="p in agentConfig.providers" :key="p.id"><option :value="p.id" x-text="p.name + ' (' + p.id + ')'"></option></template>
+              </select>
+            </div>
+            <div>
+              <label class="text-[11px] text-slate-400 mb-1 block font-medium">模型 ID</label>
+              <input x-model="agentModelForm.modelId" list="agent-model-ids" placeholder="gpt-4o / claude-sonnet-4-5"
+                class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+              <datalist id="agent-model-ids">
+                <template x-for="item in agentDiscover.models" :key="item.id"><option :value="item.id" :label="item.name"></option></template>
+              </datalist>
+            </div>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <button @click="discoverAgentModels()" :disabled="agentDiscover.loading || !agentModelForm.providerId"
+              class="px-2.5 py-1.5 text-[11px] text-slate-600 border border-slate-200 bg-white rounded-lg hover:bg-slate-50 transition disabled:opacity-40"
+              x-text="agentDiscover.loading ? '拉取中…' : '拉取模型列表'"></button>
+            <select x-show="agentDiscover.models.length" @change="pickDiscoveredModel($event.target.value)" class="min-w-0 flex-1 px-2.5 py-1.5 text-[11px] border border-slate-200 rounded-lg bg-white">
+              <option value="">选择拉取到的模型…</option>
+              <template x-for="item in agentDiscover.models" :key="item.id"><option :value="item.id" x-text="item.name + ' (' + item.id + ')'"></option></template>
+            </select>
+            <span x-show="agentDiscover.models.length" class="text-[10px] text-slate-400" x-text="agentDiscover.models.length + ' 个模型'"></span>
+          </div>
+          <p x-show="agentDiscover.error" class="text-[10px] text-rose-500 break-words" x-text="agentDiscover.error"></p>
+          <p class="text-[10px] text-slate-400">拉取支持 OpenAI 兼容与 Anthropic Messages；其他协议或内置目录无网络时可直接填写模型 ID。</p>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="text-[11px] text-slate-400 mb-1 block font-medium">显示名</label>
+              <input x-model="agentModelForm.name" placeholder="可留空"
+                class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+            </div>
+            <div>
+              <label class="text-[11px] text-slate-400 mb-1 block font-medium">条目 ID</label>
+              <input x-model="agentModelForm.id" :disabled="!!agentModelForm.originalId" placeholder="留空自动生成"
+                class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300 disabled:bg-slate-100 disabled:text-slate-400">
+            </div>
+          </div>
+          <details class="rounded-lg border border-slate-200 bg-white px-3 py-2">
+            <summary class="cursor-pointer text-[11px] font-medium text-slate-500">高级参数</summary>
+            <div class="mt-3 grid grid-cols-2 gap-3">
+              <div>
+                <label class="text-[11px] text-slate-400 mb-1 block font-medium">思考级别</label>
+                <select x-model="agentModelForm.thinkingLevel" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
+                  <option value="">不指定</option>
+                  <option value="minimal">minimal</option>
+                  <option value="low">low</option>
+                  <option value="medium">medium</option>
+                  <option value="high">high</option>
+                  <option value="xhigh">xhigh</option>
+                </select>
+              </div>
+              <label class="mt-5 inline-flex items-center gap-1.5 text-[11px] text-slate-500">
+                <input type="checkbox" x-model="agentModelForm.reasoning"> 支持推理（reasoning）
+              </label>
+              <div class="col-span-2">
+                <label class="text-[11px] text-slate-400 mb-1 block font-medium">输入模态</label>
+                <div class="flex gap-4 text-[11px] text-slate-500">
+                  <label class="inline-flex items-center gap-1.5"><input type="checkbox" x-model="agentModelForm.inputText"> 文本</label>
+                  <label class="inline-flex items-center gap-1.5"><input type="checkbox" x-model="agentModelForm.inputImage"> 图像</label>
+                </div>
+              </div>
+              <div>
+                <label class="text-[11px] text-slate-400 mb-1 block font-medium">cost.input</label>
+                <input type="number" min="0" step="any" x-model="agentModelForm.costInput" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
+              </div>
+              <div>
+                <label class="text-[11px] text-slate-400 mb-1 block font-medium">cost.output</label>
+                <input type="number" min="0" step="any" x-model="agentModelForm.costOutput" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
+              </div>
+              <div>
+                <label class="text-[11px] text-slate-400 mb-1 block font-medium">cost.cacheRead</label>
+                <input type="number" min="0" step="any" x-model="agentModelForm.costCacheRead" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
+              </div>
+              <div>
+                <label class="text-[11px] text-slate-400 mb-1 block font-medium">cost.cacheWrite</label>
+                <input type="number" min="0" step="any" x-model="agentModelForm.costCacheWrite" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
+              </div>
+              <div>
+                <label class="text-[11px] text-slate-400 mb-1 block font-medium">contextWindow</label>
+                <input type="number" min="1" x-model="agentModelForm.contextWindow" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
+              </div>
+              <div>
+                <label class="text-[11px] text-slate-400 mb-1 block font-medium">maxTokens</label>
+                <input type="number" min="1" x-model="agentModelForm.maxTokens" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
+              </div>
+              <div class="col-span-2">
+                <label class="text-[11px] text-slate-400 mb-1 block font-medium">模型请求头</label>
+                <textarea rows="2" x-model="agentModelForm.headersText" placeholder="X-Model-Token: ...（只写不回显）"
+                  class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
+              </div>
+            </div>
+          </details>
+          <p x-show="agentModelError" class="text-[11px] text-rose-500 break-words" x-text="agentModelError"></p>
+          <div class="flex justify-end">
+            <button @click="saveAgentModel()" :disabled="isSavingAgentModel"
+              class="px-3 py-1.5 text-xs bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition shadow-sm shadow-brand-200 disabled:opacity-40 disabled:cursor-not-allowed"
+              x-text="isSavingAgentModel ? '保存中…' : (agentModelForm.originalId ? '保存模型' : '添加模型')"></button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Export Preview -->
 <div x-show="showYamlModal" x-cloak data-modal="yaml" x-effect="syncModal('yaml', showYamlModal, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('yaml')">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-4xl mx-4 border border-slate-200/60 overflow-hidden" @click.stop>
@@ -2546,6 +2818,7 @@ function cairnApp() {
     showScopeModal: false,
     showLocalPrefs: false,
     showSettings: false,
+    showAgentSettings: false,
     showYamlModal: false,
     exportTab: 'yaml',
     exportProjectId: '',
@@ -2564,6 +2837,23 @@ function cairnApp() {
     renameForm: { projectId: '', originalTitle: '', title: '' },
     localPrefs: { actor_name: '本机用户', layout_mode: 'dagre_tb' },
     settingsForm: { intent_timeout: 5, reason_timeout: 5 },
+    agentTab: 'providers',
+    agentConfig: { loading: false, error: '', defaultModelPrefId: null, providers: [], models: [], protocols: [], builtinProviders: [] },
+    agentProviderForm: { id: '', name: '', api: '', baseUrl: '', apiKey: '', headersText: '', clearHeaders: false, clearBaseUrl: false },
+    agentProviderError: '',
+    isSavingAgentProvider: false,
+    agentModelForm: {
+      id: '', originalId: '', providerId: '', modelId: '', name: '', thinkingLevel: '',
+      reasoning: false, inputText: true, inputImage: false,
+      costInput: '', costOutput: '', costCacheRead: '', costCacheWrite: '',
+      contextWindow: '', maxTokens: '', headersText: '',
+    },
+    agentModelError: '',
+    isSavingAgentModel: false,
+    isSettingAgentDefault: false,
+    agentDiscover: { providerId: '', loading: false, error: '', models: [] },
+    agentTest: { modelId: '', loading: false, ok: null, error: '', response: '' },
+    agentDelete: { kind: '', id: '', name: '', force: false, loading: false, error: '' },
     deleteConfirm: { id: '', title: '' },
     isDeletingProject: false,
     showConfirmModal: false,
@@ -2750,7 +3040,9 @@ function cairnApp() {
         let msg = `HTTP ${r.status}`;
         if (typeof data.detail === 'string') msg = data.detail;
         else if (Array.isArray(data.detail)) msg = data.detail.map(e => e.msg).join('; ');
-        throw new Error(msg);
+        const error = new Error(msg);
+        error.status = r.status;
+        throw error;
       }
       return data;
     },
@@ -3356,6 +3648,9 @@ function cairnApp() {
         },
         settings: () => {
           if (!this.isSavingSettings) this.showSettings = false;
+        },
+        agent: () => {
+          if (!this.agentWritePending()) this.showAgentSettings = false;
         },
         yaml: () => {
           this.showYamlModal = false;
@@ -6263,6 +6558,457 @@ function cairnApp() {
         this.showToast('服务端设置已保存');
       } catch(e) { this.showToast(e.message, 'error'); }
       finally { this.isSavingSettings = false; }
+    },
+
+    agentWritePending() {
+      return this.isSavingAgentProvider || this.isSavingAgentModel || this.agentDelete.loading;
+    },
+
+    agentConfigHint() {
+      const def = this.agentConfig.models.find(m => m.isDefault);
+      const defaultLabel = def ? `${def.id} → ${def.modelId}` : '未设置';
+      return `${this.agentConfig.providers.length} 个 provider · ${this.agentConfig.models.length} 个模型条目 · 默认模型：${defaultLabel}`;
+    },
+
+    agentProtocolLabel(protocol) {
+      const labels = {
+        'openai-completions': 'OpenAI Chat Completions',
+        'openai-responses': 'OpenAI Responses',
+        'anthropic-messages': 'Anthropic Messages',
+        'google-generative-ai': 'Google Generative AI',
+        'mistral-conversations': 'Mistral Conversations',
+      };
+      return labels[protocol] ? `${labels[protocol]}（${protocol}）` : protocol;
+    },
+
+    agentProviderMeta(provider) {
+      return [provider.api || '协议自动', provider.baseUrl || '内置地址'].join(' · ');
+    },
+
+    agentModelMeta(model) {
+      const parts = [model.provider || '未知 provider'];
+      if (model.providerId) parts.push(`(${model.providerId})`);
+      parts.push(model.modelId);
+      if (model.name && model.name !== model.modelId) parts.push(model.name);
+      if (model.thinkingLevel) parts.push(`thinking:${model.thinkingLevel}`);
+      if (model.reasoning === true) parts.push('reasoning');
+      if (Array.isArray(model.input) && model.input.length) parts.push(model.input.join('+'));
+      if (model.contextWindow) parts.push(`ctx ${model.contextWindow}`);
+      if (model.maxTokens) parts.push(`max ${model.maxTokens}`);
+      if (model.cost) parts.push(`cost ${model.cost.input}/${model.cost.output}`);
+      if (Array.isArray(model.headerNames) && model.headerNames.length) parts.push(`headers ${model.headerNames.length}`);
+      return parts.join(' · ');
+    },
+
+    agentBuiltinProviderNames() {
+      return (this.agentConfig.builtinProviders || []).map(item => item.provider);
+    },
+
+    isAgentBuiltinProvider(name) {
+      return this.agentBuiltinProviderNames().includes((name || '').trim());
+    },
+
+    agentProviderKeyPlaceholder() {
+      const form = this.agentProviderForm;
+      const existing = this.agentConfig.providers.find(p => p.id === form.id);
+      if (existing && existing.hasApiKey) return `已保存 ${existing.apiKeySummary}，留空不修改`;
+      return '粘贴 API key（只写不回显）';
+    },
+
+    agentProviderHeaderNames() {
+      const existing = this.agentConfig.providers.find(p => p.id === this.agentProviderForm.id);
+      return existing && Array.isArray(existing.headerNames) ? existing.headerNames : [];
+    },
+
+    agentHeadersFromText(text) {
+      const headers = {};
+      const errors = [];
+      const lines = String(text == null ? '' : text).split(/\r?\n/);
+      for (let index = 0; index < lines.length; index += 1) {
+        const raw = lines[index].trim();
+        if (!raw || raw.startsWith('#')) continue;
+        const colon = raw.indexOf(':');
+        const equals = raw.indexOf('=');
+        const split = colon >= 0 && (equals < 0 || colon < equals) ? colon : equals;
+        if (split <= 0) {
+          errors.push(`第 ${index + 1} 行缺少 “Name: value”`);
+          continue;
+        }
+        const name = raw.slice(0, split).trim();
+        const value = raw.slice(split + 1).trim();
+        if (!/^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/.test(name)) {
+          errors.push(`请求头名称非法：${name}`);
+          continue;
+        }
+        if (!value) {
+          errors.push(`请求头 ${name} 的值不能为空`);
+          continue;
+        }
+        if (value.length > 4096) {
+          errors.push(`请求头 ${name} 的值过长`);
+          continue;
+        }
+        headers[name] = value;
+      }
+      if (Object.keys(headers).length > 32) errors.push('请求头不能超过 32 个');
+      return { headers, errors };
+    },
+
+    agentProviderErrors() {
+      const errors = {};
+      const form = this.agentProviderForm;
+      const name = (form.name || '').trim();
+      if (!name) errors.name = '请填写 provider 名称';
+      else if (name.length > 64) errors.name = 'provider 名称不能超过 64 个字符';
+      const builtin = this.isAgentBuiltinProvider(name);
+      const api = (form.api || '').trim();
+      const baseUrl = (form.baseUrl || '').trim();
+      if (!builtin) {
+        if (!api) errors.api = '自定义 provider 需要选择协议（如 openai-completions / anthropic-messages）';
+        if (!baseUrl) errors.baseUrl = '自定义 provider 需要填写 Base URL';
+      }
+      if (baseUrl) {
+        try {
+          const parsed = new URL(baseUrl);
+          if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+            errors.baseUrl = 'Base URL 只支持 http/https';
+          } else if (parsed.username || parsed.password) {
+            errors.baseUrl = 'Base URL 不能包含用户名或密码';
+          }
+        } catch (e) {
+          errors.baseUrl = 'Base URL 不是合法地址';
+        }
+      }
+      const apiKey = (form.apiKey || '').trim();
+      if (apiKey && (apiKey.length < 4 || apiKey.length > 4096)) {
+        errors.apiKey = 'API key 长度需在 4–4096 之间';
+      }
+      const parsedHeaders = this.agentHeadersFromText(form.headersText);
+      if (parsedHeaders.errors.length > 0) errors.headers = parsedHeaders.errors[0];
+      return errors;
+    },
+
+    selectAgentProvider(provider) {
+      this.agentProviderForm = {
+        id: provider.id,
+        name: provider.name || '',
+        api: provider.api || '',
+        baseUrl: provider.baseUrl || '',
+        apiKey: '',
+        headersText: '',
+        clearHeaders: false,
+        clearBaseUrl: false,
+      };
+      this.agentProviderError = '';
+    },
+
+    resetAgentProviderForm() {
+      this.agentProviderForm = { id: '', name: '', api: '', baseUrl: '', apiKey: '', headersText: '', clearHeaders: false, clearBaseUrl: false };
+      this.agentProviderError = '';
+    },
+
+    async openAgentSettings() {
+      this.showAgentSettings = true;
+      this.agentTab = 'providers';
+      this.agentProviderError = '';
+      this.agentModelError = '';
+      this.agentDiscover = { providerId: '', loading: false, error: '', models: [] };
+      this.agentTest = { modelId: '', loading: false, ok: null, error: '', response: '' };
+      this.agentDelete = { kind: '', id: '', name: '', force: false, loading: false, error: '' };
+      this.resetAgentProviderForm();
+      this.resetAgentModelForm();
+      await this.loadAgentConfig();
+    },
+
+    async loadAgentConfig() {
+      this.agentConfig.loading = true;
+      this.agentConfig.error = '';
+      try {
+        const data = await this.api('GET', '/settings/agent');
+        this.agentConfig = {
+          loading: false,
+          error: '',
+          defaultModelPrefId: data.defaultModelPrefId == null ? null : data.defaultModelPrefId,
+          providers: Array.isArray(data.providers) ? data.providers : [],
+          models: Array.isArray(data.models) ? data.models : [],
+          protocols: Array.isArray(data.protocols) ? data.protocols : [],
+          builtinProviders: Array.isArray(data.builtinProviders) ? data.builtinProviders : [],
+        };
+      } catch (e) {
+        this.agentConfig.loading = false;
+        this.agentConfig.error = e.message;
+      }
+    },
+
+    async saveAgentProvider() {
+      if (this.isSavingAgentProvider) return;
+      const errors = this.agentProviderErrors();
+      const firstError = Object.values(errors)[0];
+      if (firstError) {
+        this.agentProviderError = firstError;
+        return;
+      }
+      const form = this.agentProviderForm;
+      const editing = Boolean(form.id);
+      const body = { name: form.name.trim() };
+      if (form.api) body.api = form.api;
+      if (form.baseUrl.trim()) body.baseUrl = form.baseUrl.trim();
+      else if (editing && form.clearBaseUrl) body.baseUrl = null;
+      if (form.apiKey.trim()) body.apiKey = form.apiKey.trim();
+      const parsedHeaders = this.agentHeadersFromText(form.headersText);
+      if (form.clearHeaders) body.headers = null;
+      else if (Object.keys(parsedHeaders.headers).length > 0) body.headers = parsedHeaders.headers;
+
+      this.agentProviderError = '';
+      this.isSavingAgentProvider = true;
+      try {
+        if (editing) {
+          await this.api('PUT', `/settings/agent/providers/${encodeURIComponent(form.id)}`, body);
+        } else {
+          await this.api('POST', '/settings/agent/providers', body);
+        }
+        await this.loadAgentConfig();
+        this.resetAgentProviderForm();
+        this.showToast(editing ? 'provider 已更新' : 'provider 已添加');
+      } catch (e) {
+        this.agentProviderError = e.message;
+      } finally {
+        this.isSavingAgentProvider = false;
+      }
+    },
+
+    resetAgentModelForm() {
+      this.agentModelForm = {
+        id: '', originalId: '', providerId: '', modelId: '', name: '', thinkingLevel: '',
+        reasoning: false, inputText: true, inputImage: false,
+        costInput: '', costOutput: '', costCacheRead: '', costCacheWrite: '',
+        contextWindow: '', maxTokens: '', headersText: '',
+      };
+      this.agentModelError = '';
+    },
+
+    selectAgentModel(model) {
+      const provider = this.agentConfig.providers.find(p => p.id === model.providerId)
+        || this.agentConfig.providers.find(p => p.name === model.provider);
+      this.agentModelForm = {
+        id: model.id,
+        originalId: model.id,
+        providerId: provider ? provider.id : '',
+        modelId: model.modelId || '',
+        name: model.name || '',
+        thinkingLevel: model.thinkingLevel || '',
+        reasoning: model.reasoning === true,
+        inputText: !Array.isArray(model.input) || model.input.includes('text'),
+        inputImage: Array.isArray(model.input) && model.input.includes('image'),
+        costInput: model.cost ? String(model.cost.input) : '',
+        costOutput: model.cost ? String(model.cost.output) : '',
+        costCacheRead: model.cost ? String(model.cost.cacheRead) : '',
+        costCacheWrite: model.cost ? String(model.cost.cacheWrite) : '',
+        contextWindow: model.contextWindow ? String(model.contextWindow) : '',
+        maxTokens: model.maxTokens ? String(model.maxTokens) : '',
+        headersText: '',
+      };
+      this.agentModelError = '';
+      this.agentTab = 'models';
+    },
+
+    resetAgentDiscovery() {
+      this.agentDiscover = { providerId: '', loading: false, error: '', models: [] };
+    },
+
+    async discoverAgentModels() {
+      const providerId = this.agentModelForm.providerId;
+      if (!providerId || this.agentDiscover.loading) return;
+      this.agentDiscover = { providerId, loading: true, error: '', models: [] };
+      try {
+        const data = await this.api('POST', `/settings/agent/providers/${encodeURIComponent(providerId)}/discover`, {});
+        const models = Array.isArray(data.models) ? data.models : [];
+        this.agentDiscover = {
+          providerId,
+          loading: false,
+          models,
+          error: models.length === 0 ? '没有拉到模型；请检查 Base URL、协议与密钥。' : '',
+        };
+      } catch (e) {
+        this.agentDiscover = { providerId, loading: false, models: [], error: e.message };
+      }
+    },
+
+    pickDiscoveredModel(modelId) {
+      if (!modelId) return;
+      const found = this.agentDiscover.models.find(item => item.id === modelId);
+      if (!found) return;
+      this.agentModelForm.modelId = found.id;
+      this.agentModelForm.name = found.name || found.id;
+    },
+
+    agentModelErrors() {
+      const errors = {};
+      const form = this.agentModelForm;
+      if (!form.providerId) errors.providerId = '请选择 provider';
+      const modelId = (form.modelId || '').trim();
+      if (!modelId) errors.modelId = '请填写模型 ID';
+      else if (modelId.length > 128) errors.modelId = '模型 ID 不能超过 128 个字符';
+      if (!form.originalId && form.id.trim() && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(form.id.trim())) {
+        errors.id = '条目 ID 只能包含字母、数字、点、横线与下划线，且不超过 64 个字符';
+      }
+      const costs = [
+        ['input', form.costInput],
+        ['output', form.costOutput],
+        ['cacheRead', form.costCacheRead],
+        ['cacheWrite', form.costCacheWrite],
+      ];
+      const anyCost = costs.some(([, raw]) => String(raw == null ? '' : raw).trim() !== '');
+      if (anyCost) {
+        for (const [field, raw] of costs) {
+          const text = String(raw == null ? '' : raw).trim();
+          const value = Number(text);
+          if (!text || !Number.isFinite(value) || value < 0 || value > 1000000) {
+            errors.cost = `cost.${field} 必须是 0–1000000 的数字`;
+            break;
+          }
+        }
+      }
+      for (const [field, label] of [['contextWindow', 'contextWindow'], ['maxTokens', 'maxTokens']]) {
+        const text = String(form[field] == null ? '' : form[field]).trim();
+        if (!text) continue;
+        const value = Number(text);
+        if (!Number.isSafeInteger(value) || value <= 0) {
+          errors[field] = `${label} 必须是正整数`;
+        }
+      }
+      const parsedHeaders = this.agentHeadersFromText(form.headersText);
+      if (parsedHeaders.errors.length > 0) errors.headers = parsedHeaders.errors[0];
+      return errors;
+    },
+
+    async saveAgentModel() {
+      if (this.isSavingAgentModel) return;
+      const errors = this.agentModelErrors();
+      const firstError = Object.values(errors)[0];
+      if (firstError) {
+        this.agentModelError = firstError;
+        return;
+      }
+      const form = this.agentModelForm;
+      const editing = Boolean(form.originalId);
+      const body = { providerId: form.providerId, modelId: form.modelId.trim() };
+      if (!editing && form.id.trim()) body.id = form.id.trim();
+      if (form.name.trim()) body.name = form.name.trim();
+      if (form.thinkingLevel) body.thinkingLevel = form.thinkingLevel;
+      body.reasoning = form.reasoning === true;
+      const input = [];
+      if (form.inputText) input.push('text');
+      if (form.inputImage) input.push('image');
+      if (input.length > 0) body.input = input;
+      const costs = [form.costInput, form.costOutput, form.costCacheRead, form.costCacheWrite];
+      if (costs.some(raw => String(raw == null ? '' : raw).trim() !== '')) {
+        body.cost = {
+          input: Number(form.costInput),
+          output: Number(form.costOutput),
+          cacheRead: Number(form.costCacheRead),
+          cacheWrite: Number(form.costCacheWrite),
+        };
+      }
+      if (String(form.contextWindow).trim()) body.contextWindow = Number(form.contextWindow);
+      if (String(form.maxTokens).trim()) body.maxTokens = Number(form.maxTokens);
+      const parsedHeaders = this.agentHeadersFromText(form.headersText);
+      if (Object.keys(parsedHeaders.headers).length > 0) body.headers = parsedHeaders.headers;
+
+      this.agentModelError = '';
+      this.isSavingAgentModel = true;
+      try {
+        if (editing) {
+          await this.api('PUT', `/settings/agent/models/${encodeURIComponent(form.originalId)}`, body);
+        } else {
+          await this.api('POST', '/settings/agent/models', body);
+        }
+        await this.loadAgentConfig();
+        this.resetAgentModelForm();
+        this.showToast(editing ? '模型条目已更新' : '模型条目已添加');
+      } catch (e) {
+        this.agentModelError = e.message;
+      } finally {
+        this.isSavingAgentModel = false;
+      }
+    },
+
+    async setDefaultAgentModel(modelPrefId) {
+      if (this.isSettingAgentDefault || !modelPrefId) return;
+      this.isSettingAgentDefault = true;
+      try {
+        await this.api('PUT', '/settings/agent/default-model', { modelPrefId });
+        await this.loadAgentConfig();
+        this.showToast(`默认模型已设为 ${modelPrefId}`);
+      } catch (e) {
+        this.showToast(e.message, 'error');
+      } finally {
+        this.isSettingAgentDefault = false;
+      }
+    },
+
+    async testAgentModel(modelPrefId) {
+      if (!modelPrefId || this.agentTest.loading) return;
+      this.agentTest = { modelId: modelPrefId, loading: true, ok: null, error: '', response: '' };
+      try {
+        const data = await this.api('POST', `/settings/agent/models/${encodeURIComponent(modelPrefId)}/test`, {});
+        this.agentTest = {
+          modelId: modelPrefId,
+          loading: false,
+          ok: data.ok === true,
+          error: data.error || '',
+          response: data.response || '',
+        };
+        if (data.ok !== true) this.showToast(data.error || '模型连通性测试失败', 'error');
+      } catch (e) {
+        this.agentTest = { modelId: modelPrefId, loading: false, ok: false, error: e.message, response: '' };
+        this.showToast(e.message, 'error');
+      }
+    },
+
+    requestAgentDelete(kind, id, name) {
+      this.agentDelete = { kind, id, name: name || id, force: false, loading: false, error: '' };
+    },
+
+    cancelAgentDelete() {
+      if (this.agentDelete.loading) return;
+      this.agentDelete = { kind: '', id: '', name: '', force: false, loading: false, error: '' };
+    },
+
+    agentDeletePrompt() {
+      const target = this.agentDelete;
+      if (!target.kind) return '';
+      if (target.force) {
+        return `“${target.name}”仍被引用。强制删除会移除依赖的模型或让引用失效，确定继续？`;
+      }
+      if (target.kind === 'provider') {
+        return `删除 provider “${target.name}”？若仍有模型依赖会被拒绝。`;
+      }
+      return `删除模型条目 “${target.name}”？若被 prompt、worker profile 或 Observer 引用会被拒绝。`;
+    },
+
+    async confirmAgentDelete() {
+      const target = this.agentDelete;
+      if (!target.kind || target.loading) return;
+      target.loading = true;
+      target.error = '';
+      const base = target.kind === 'provider' ? '/settings/agent/providers' : '/settings/agent/models';
+      const suffix = target.force ? '?force=true' : '';
+      try {
+        await this.api('DELETE', `${base}/${encodeURIComponent(target.id)}${suffix}`);
+        const label = target.kind === 'provider' ? 'provider' : '模型条目';
+        this.agentDelete = { kind: '', id: '', name: '', force: false, loading: false, error: '' };
+        await this.loadAgentConfig();
+        this.showToast(`${label}已删除`);
+      } catch (e) {
+        target.loading = false;
+        if (e.status === 409 && !target.force) {
+          target.force = true;
+          target.error = e.message;
+        } else {
+          target.error = e.message;
+        }
+      }
     },
   };
 }

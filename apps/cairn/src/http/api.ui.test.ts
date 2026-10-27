@@ -408,7 +408,7 @@ describe("modal focus management", () => {
     }
     // An unclosed overlay would nest every later modal inside it, hiding them.
     expect(depth).toBe(0);
-    expect(Object.keys(overlayDepths).length).toBe(13);
+    expect(Object.keys(overlayDepths).length).toBe(14);
     for (const [name, level] of Object.entries(overlayDepths)) {
       expect(level, name).toBe(0);
     }
@@ -517,10 +517,11 @@ describe("form validation and submitting states", () => {
     for (const flag of [
       "isCreatingProject", "isSavingScope", "isCreatingIntent", "isConcluding", "isCompleting",
       "isAddingHint", "isReopening", "isRenaming", "isSavingSettings", "isConfirmingAction",
+      "isSavingAgentProvider", "isSavingAgentModel", "isSettingAgentDefault",
     ]) {
       expect(html, flag).toContain(`:disabled="${flag}"`);
     }
-    for (const closer of ["conclude", "complete", "hint", "reopen", "rename", "settings", "intent"]) {
+    for (const closer of ["conclude", "complete", "hint", "reopen", "rename", "settings", "intent", "agent"]) {
       expect(html).toContain(`@click="dismissModal('${closer}')"`);
     }
     expect(html).toContain("x-text=\"isCreatingProject ? '创建中…' : '创建'\"");
@@ -758,5 +759,247 @@ describe("detail and graph interaction parity", () => {
     expect(html).toContain("Esc 清除选择");
     expect(html).toContain('@click="deleteProjectById(project.project.id, project.project.title)"');
     expect(html).not.toContain("deleteProject()");
+  });
+});
+
+describe("model and key settings", () => {
+  test("wires a dedicated overlay to the agent config routes", () => {
+    const html = readFileSync(INDEX_PATH, "utf8");
+    const app = loadState();
+    expect(html).toContain('data-modal="agent"');
+    expect(html).toContain("openAgentSettings()");
+    expect(app.modalClosers().agent).toBeTruthy();
+    expect(html).toContain("/settings/agent");
+    expect(html).toContain("/discover`");
+    expect(html).toContain("/test`");
+    expect(html).toContain("/settings/agent/default-model");
+    expect(html).toContain("?force=true");
+    expect(html).toContain("拉取模型列表");
+    expect(html).toContain("Anthropic Messages");
+    expect(html).toContain("OpenAI Chat Completions");
+    expect(html).toContain("thinkingLevel");
+    expect(html).toContain("contextWindow");
+    expect(html).toContain("maxTokens");
+    expect(app.agentProtocolLabel("anthropic-messages")).toContain("Anthropic Messages");
+    expect(app.agentProtocolLabel("openai-completions")).toContain("OpenAI Chat Completions");
+  });
+
+  test("parses extra headers and rejects malformed lines", () => {
+    const app = loadState();
+    expect(
+      app.agentHeadersFromText("X-Tenant: team-a\nX-Token=abc\n\n# comment"),
+    ).toEqual({ headers: { "X-Tenant": "team-a", "X-Token": "abc" }, errors: [] });
+    const parsed = app.agentHeadersFromText("NoColon\nBad Name: x\nX-Empty: \nX-A: 1\nX-B: 2");
+    expect(parsed.headers).toEqual({ "X-A": "1", "X-B": "2" });
+    expect(parsed.errors).toEqual([
+      "第 1 行缺少 “Name: value”",
+      "请求头名称非法：Bad Name",
+      "请求头 X-Empty 的值不能为空",
+    ]);
+    expect(app.agentHeadersFromText(undefined)).toEqual({ headers: {}, errors: [] });
+  });
+
+  test("validates provider transport, key length and header text", () => {
+    const app = loadState();
+    app.agentConfig.builtinProviders = [{ provider: "anthropic" }, { provider: "openai" }];
+    app.agentProviderForm = {
+      id: "", name: "my-gateway", api: "", baseUrl: "", apiKey: "", headersText: "",
+      clearHeaders: false, clearBaseUrl: false,
+    };
+    expect(app.agentProviderErrors()).toMatchObject({
+      api: expect.stringContaining("需要选择协议"),
+      baseUrl: expect.stringContaining("需要填写 Base URL"),
+    });
+
+    app.agentProviderForm.name = "anthropic";
+    expect(app.agentProviderErrors()).toEqual({});
+
+    app.agentProviderForm.apiKey = "x";
+    expect(app.agentProviderErrors().apiKey).toContain("4–4096");
+    app.agentProviderForm.apiKey = "";
+
+    app.agentProviderForm = {
+      id: "", name: "gateway", api: "openai-completions",
+      baseUrl: "https://user:pass@example.com/v1", apiKey: "", headersText: "Bad Name: x",
+      clearHeaders: false, clearBaseUrl: false,
+    };
+    expect(app.agentProviderErrors().baseUrl).toContain("不能包含用户名或密码");
+    expect(app.agentProviderErrors().headers).toBe("请求头名称非法：Bad Name");
+
+    app.agentProviderForm.baseUrl = "ftp://example.com";
+    expect(app.agentProviderErrors().baseUrl).toContain("只支持 http/https");
+    app.agentProviderForm.baseUrl = "not a url";
+    expect(app.agentProviderErrors().baseUrl).toContain("不是合法地址");
+  });
+
+  test("posts a full model entry including advanced fields", async () => {
+    const app = loadState();
+    const calls: any[] = [];
+    app.api = async (method: string, path: string, body: unknown) => {
+      calls.push([method, path, body]);
+      return { id: "claude-x" };
+    };
+    app.loadAgentConfig = async () => {};
+    app.showToast = () => {};
+    app.agentModelForm = {
+      id: "", originalId: "", providerId: "anthropic", modelId: "claude-x", name: "Claude X",
+      thinkingLevel: "high", reasoning: true, inputText: true, inputImage: true,
+      costInput: "1", costOutput: "2", costCacheRead: "0.1", costCacheWrite: "0.2",
+      contextWindow: "200000", maxTokens: "8192", headersText: "X-Org: acme",
+    };
+
+    await app.saveAgentModel();
+    expect(calls[0]![0]).toBe("POST");
+    expect(calls[0]![1]).toBe("/settings/agent/models");
+    expect(calls[0]![2]).toEqual({
+      providerId: "anthropic",
+      modelId: "claude-x",
+      name: "Claude X",
+      thinkingLevel: "high",
+      reasoning: true,
+      input: ["text", "image"],
+      cost: { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 0.2 },
+      contextWindow: 200000,
+      maxTokens: 8192,
+      headers: { "X-Org": "acme" },
+    });
+    expect(app.agentModelForm.originalId).toBe("");
+    expect(app.isSavingAgentModel).toBe(false);
+  });
+
+  test("updates an existing entry without resending its id", async () => {
+    const app = loadState();
+    const calls: any[] = [];
+    app.api = async (method: string, path: string, body: unknown) => {
+      calls.push([method, path, body]);
+      return { id: "m1" };
+    };
+    app.loadAgentConfig = async () => {};
+    app.showToast = () => {};
+    app.agentModelForm = {
+      id: "m1", originalId: "m1", providerId: "p1", modelId: "model-b", name: "",
+      thinkingLevel: "", reasoning: false, inputText: true, inputImage: false,
+      costInput: "", costOutput: "", costCacheRead: "", costCacheWrite: "",
+      contextWindow: "", maxTokens: "", headersText: "",
+    };
+
+    await app.saveAgentModel();
+    expect(calls[0]![0]).toBe("PUT");
+    expect(calls[0]![1]).toBe("/settings/agent/models/m1");
+    expect(calls[0]![2]).toEqual({
+      providerId: "p1",
+      modelId: "model-b",
+      reasoning: false,
+      input: ["text"],
+    });
+  });
+
+  test("rejects invalid model fields before calling the API", async () => {
+    const app = loadState();
+    const calls: any[] = [];
+    app.api = async (...args: any[]) => { calls.push(args); return {}; };
+    app.agentModelForm = {
+      id: "bad id", originalId: "", providerId: "", modelId: "", name: "",
+      thinkingLevel: "", reasoning: false, inputText: true, inputImage: false,
+      costInput: "1", costOutput: "", costCacheRead: "", costCacheWrite: "",
+      contextWindow: "0", maxTokens: "", headersText: "Bad Name: x",
+    };
+    const errors = app.agentModelErrors();
+    expect(errors.providerId).toBe("请选择 provider");
+    expect(errors.modelId).toBe("请填写模型 ID");
+    expect(errors.id).toContain("条目 ID");
+    expect(errors.cost).toContain("cost.output");
+    expect(errors.contextWindow).toContain("正整数");
+    expect(errors.headers).toContain("请求头名称非法");
+    await app.saveAgentModel();
+    expect(calls).toEqual([]);
+    expect(app.agentModelError).toBeTruthy();
+  });
+
+  test("discovers models for the selected provider and fills the form", async () => {
+    const app = loadState();
+    const calls: any[] = [];
+    app.api = async (method: string, path: string, body: unknown) => {
+      calls.push([method, path, body]);
+      return { models: [{ id: "a", name: "Alpha" }, { id: "b", name: "Beta" }] };
+    };
+    app.agentModelForm.providerId = "p1";
+    await app.discoverAgentModels();
+    expect(calls).toEqual([["POST", "/settings/agent/providers/p1/discover", {}]]);
+    expect(app.agentDiscover.models.map((item: any) => item.id)).toEqual(["a", "b"]);
+    expect(app.agentDiscover.loading).toBe(false);
+
+    app.pickDiscoveredModel("b");
+    expect(app.agentModelForm.modelId).toBe("b");
+    expect(app.agentModelForm.name).toBe("Beta");
+
+    app.api = async () => ({ models: [] });
+    await app.discoverAgentModels();
+    expect(app.agentDiscover.error).toContain("没有拉到模型");
+  });
+
+  test("turns a 409 delete into an explicit force action", async () => {
+    const app = loadState();
+    const calls: string[] = [];
+    app.loadAgentConfig = async () => {};
+    app.showToast = () => {};
+    const conflict: any = new Error("model config is referenced by prompt:cairn-worker");
+    conflict.status = 409;
+    app.api = async (_method: string, path: string) => {
+      calls.push(path);
+      throw conflict;
+    };
+    app.agentDelete = { kind: "model", id: "m1", name: "m1", force: false, loading: false, error: "" };
+
+    await app.confirmAgentDelete();
+    expect(app.agentDelete.force).toBe(true);
+    expect(app.agentDelete.error).toContain("referenced by");
+    expect(app.agentDelete.loading).toBe(false);
+    expect(app.agentDeletePrompt()).toContain("强制删除");
+
+    app.api = async (_method: string, path: string) => {
+      calls.push(path);
+      return { deleted: true };
+    };
+    await app.confirmAgentDelete();
+    expect(calls).toEqual([
+      "/settings/agent/models/m1",
+      "/settings/agent/models/m1?force=true",
+    ]);
+    expect(app.agentDelete.kind).toBe("");
+  });
+
+  test("keeps the settings modal open while an agent write is pending", () => {
+    const app = loadState();
+    app.showAgentSettings = true;
+    app.isSavingAgentProvider = true;
+    app.dismissModal("agent");
+    expect(app.showAgentSettings).toBe(true);
+
+    app.isSavingAgentProvider = false;
+    app.agentDelete = { kind: "provider", id: "p1", name: "p1", force: false, loading: true, error: "" };
+    app.dismissModal("agent");
+    expect(app.showAgentSettings).toBe(true);
+
+    app.agentDelete.loading = false;
+    app.dismissModal("agent");
+    expect(app.showAgentSettings).toBe(false);
+  });
+
+  test("sets the default model through the dedicated route", async () => {
+    const app = loadState();
+    const calls: any[] = [];
+    app.api = async (method: string, path: string, body: unknown) => {
+      calls.push([method, path, body]);
+      return { id: "cairn-worker" };
+    };
+    app.loadAgentConfig = async () => {};
+    app.showToast = () => {};
+
+    await app.setDefaultAgentModel("m2");
+    expect(calls).toEqual([
+      ["PUT", "/settings/agent/default-model", { modelPrefId: "m2" }],
+    ]);
+    expect(app.isSettingAgentDefault).toBe(false);
   });
 });

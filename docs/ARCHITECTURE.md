@@ -1,4 +1,4 @@
-# 架构（M18a 更新）
+# 架构（M18b 更新）
 
 本文固定合并后的角色边界、数据所有权和失败语义。实现以本文为准；需要改动时先改本文并
 记录原因。
@@ -110,7 +110,7 @@ epsilon-greedy 探索，探索时选已结束 run 最少的 profile，`epsilon` 
 筛选与排序写入 `localStorage`；轮询在 `document.hidden` 时暂停，恢复可见时立即刷新，
 失败按 5s→60s 指数退避，列表与项目视图显示错误横幅和重试，列表页展示最后更新时间。
 侧栏八个运维页签改为横向滚动，并按项目记忆上次页签。M17c 收口表单与弹窗：13 个
-overlay 由 `syncModal` 维护同一个模态栈，Esc 只关最上层（输入法组合中忽略）、Tab 在
+overlay（M18b 起 14 个）由 `syncModal` 维护同一个模态栈，Esc 只关最上层（输入法组合中忽略）、Tab 在
 最上层内回焦、关闭后把焦点还给触发元素，autofocus 按帧重试直到该层真正完成布局（上限
 8 帧，因为 Alpine 在 `x-effect` 之后一拍才应用 `x-show`）；写操作在请求期间禁用按钮并
 显示进度，行内校验取代静默失败；停止单个项目与“停止全部”改为先确认再发 PATCH。
@@ -134,6 +134,14 @@ M18a 增加模型与密钥管理 API（`apps/cairn/src/http/agent-config.ts`，�
 测试的错误输出按注入的 fake manager 单测要求脱敏（密钥、`Authorization`、`Bearer`
 片段），只保留可读摘要。协议支持沿用 config 层的 `listSupportedProtocols`（OpenAI
 compatible、Anthropic、Google 等），内置 provider/模型走本地目录，不访问网络。
+M18b 把它接成 UI：页头 CPU 入口打开 `data-modal="agent"` 弹窗，Provider 页签维护
+provider（名称/协议/Base URL/密钥/请求头，删除 409 时就地切换“强制删除”），模型页签
+维护条目（拉取内置目录或远端 `/models`、手工模型 ID、thinkingLevel/reasoning/输入
+模态/成本/上下文/最大 Token/请求头、默认标记与引用方、测试、删除确认）。写操作沿用
+模态栈的禁用与回焦；表单在发送前做与 API 同构的校验。config 层在同步 `provider:<id>`
+时，若 pref 只写了名称且与内置 provider 同名，会继承内置协议与 Base URL，使 UI 创建的
+内置 provider 能被 SDK 直接加载；测试路由在 provider 尚无密钥时返回可读提示，避免把
+`models.json` 的文件系统错误暴露到页面。
 
 ## 1. 范围
 
@@ -670,6 +678,12 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
   因果边和每个 run 的直接产出。它不把意图合计与 Fact 合计相加。
 - 这些面板只在打开页签或点刷新时拉取，全部使用 GET；错误在面板内显示并可重试，
   不弹写操作、不参与调度。UI 本身不带认证，远程/容器部署仍需网络层限制整个 API。
+- `模型与密钥`（M18b）是唯一非项目级、且带写操作的弹窗（`data-modal="agent"`）：
+  打开时读取 `GET /settings/agent`，Provider 页签管理 provider（协议下拉来自
+  `protocols`，名称建议来自 `builtinProviders`），模型页签管理条目并可在
+  `POST /providers/{id}/discover` 后从下拉选择模型、自动回填显示名。密钥输入永远为空，
+  留空表示不修改；保存后重读配置。删除先走行内确认，409 时显示依赖方并切换
+  “强制删除”；所有请求期间关闭按钮与提交按钮同时禁用。
 
 实时审计流（M9）：
 

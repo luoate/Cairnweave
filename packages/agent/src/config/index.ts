@@ -460,14 +460,23 @@ export class ConfigManager {
     private async syncProviderToModelsJson(entry: ProviderPrefEntry) {
         const runtimeProvider = providerRuntimeName(entry.id)
         const existing = (await this.getProvider(runtimeProvider)) ?? {}
+        // A pref named after a built-in provider inherits its protocol and base URL;
+        // otherwise the runtime provider (`provider:<id>`) is "custom" and the SDK
+        // rejects it for missing baseUrl.
+        const builtin =
+            entry.api === undefined || entry.baseUrl === undefined
+                ? this.listBuiltInProviders().find((item) => item.provider === entry.name)
+                : undefined
+        const api = entry.api ?? builtin?.apis[0]
+        const baseUrl = entry.baseUrl ?? builtin?.baseUrls[0]
         const config: Record<string, unknown> = {
             ...existing,
             displayName: entry.name,
             providerPrefId: entry.id,
         }
-        if (entry.api) config.api = entry.api
+        if (api) config.api = api
         else delete config.api
-        if (entry.baseUrl) config.baseUrl = entry.baseUrl
+        if (baseUrl) config.baseUrl = baseUrl
         else delete config.baseUrl
         await this.setProvider(runtimeProvider, config)
         // Credentials usually live in auth.json only. An absent apiKey therefore means

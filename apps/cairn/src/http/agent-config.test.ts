@@ -110,6 +110,25 @@ describe("agent config routes", () => {
     expect(body.models).toEqual([]);
   });
 
+  test("inherits built-in protocol and base URL for a provider pref", async () => {
+    const response = await call("POST", "/settings/agent/providers", { name: "anthropic" });
+    expect(response.status).toBe(200);
+    const { id } = (await response.json()) as { id: string };
+
+    const models = JSON.parse(readConfig("models.json")) as {
+      providers: Record<string, { displayName?: string; api?: string; baseUrl?: string }>;
+    };
+    const runtime = models.providers[`provider:${id}`]!;
+    expect(runtime.displayName).toBe("anthropic");
+    expect(runtime.api).toBe("anthropic-messages");
+    expect(runtime.baseUrl).toBe("https://api.anthropic.com");
+
+    const discovery = await call("POST", `/settings/agent/providers/${id}/discover`);
+    expect(discovery.status).toBe(200);
+    const discovered = (await discovery.json()) as { models: Array<{ id: string }> };
+    expect(discovered.models.some((model) => model.id === "claude-sonnet-4-5")).toBe(true);
+  });
+
   test("keeps custom headers write-only and exposes only their names", async () => {
     const providerId = await createProvider({ headers: { "x-tenant": TENANT } });
     await createModel(providerId, {
@@ -338,6 +357,29 @@ describe("agent config routes", () => {
 });
 
 describe("agent config route sanitization", () => {
+  test("asks for an API key before testing a provider-backed model", async () => {
+    const response = await call("POST", "/settings/agent/providers", {
+      name: "lab-gateway",
+      api: "openai-completions",
+      baseUrl: "https://lab.invalid/v1",
+    });
+    expect(response.status).toBe(200);
+    const { id: providerId } = (await response.json()) as { id: string };
+    const modelId = await createModel(providerId);
+
+    const result = await call("POST", `/settings/agent/models/${modelId}/test`);
+    expect(result.status).toBe(200);
+    const body = (await result.json()) as {
+      ok: boolean;
+      error: string;
+      summary: { modelPrefId: string };
+    };
+    expect(body.ok).toBe(false);
+    expect(body.error).toContain("API key");
+    expect(body.error).not.toContain("models.json");
+    expect(body.summary.modelPrefId).toBe(modelId);
+  });
+
   test("strips credentials from model test output", async () => {
     const secret = "sk-fake-secret-1234567890";
     const fake = {

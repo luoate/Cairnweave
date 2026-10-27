@@ -308,6 +308,22 @@ export function registerAgentConfigRoutes(
     const existing = (await store.listModelPrefs()).find((pref) => pref.id === params.id);
     if (!existing) throw new HttpError(404, "model config not found");
 
+    const providerPrefs = await store.listProviderPrefs();
+    const providerPref =
+      existing.providerId === undefined
+        ? providerPrefs.find((pref) => pref.name === existing.provider)
+        : providerPrefs.find((pref) => pref.id === existing.providerId);
+    if (
+      providerPref !== undefined &&
+      !store.getApiKeyValue(`provider:${providerPref.id}`)
+    ) {
+      return json({
+        ok: false,
+        error: "provider has no API key; save one before testing",
+        summary: testSummary(existing),
+      });
+    }
+
     let result: Awaited<ReturnType<ConfigManager["testModel"]>>;
     try {
       result = await store.testModel(existing.id);
