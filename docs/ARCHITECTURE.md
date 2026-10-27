@@ -1,4 +1,4 @@
-# 架构（M17b 更新）
+# 架构（M17c 更新）
 
 本文固定合并后的角色边界、数据所有权和失败语义。实现以本文为准；需要改动时先改本文并
 记录原因。
@@ -109,8 +109,12 @@ epsilon-greedy 探索，探索时选已结束 run 最少的 profile，`epsilon` 
 改善日常操作：项目列表在客户端搜索标题/ID/状态/备注、按状态计数筛选并提供三种排序，
 筛选与排序写入 `localStorage`；轮询在 `document.hidden` 时暂停，恢复可见时立即刷新，
 失败按 5s→60s 指数退避，列表与项目视图显示错误横幅和重试，列表页展示最后更新时间。
-侧栏八个运维页签改为横向滚动，并按项目记忆上次页签。以上都只影响静态 UI，不改变
-HTTP 契约、图或调度语义。
+侧栏八个运维页签改为横向滚动，并按项目记忆上次页签。M17c 收口表单与弹窗：13 个
+overlay 由 `syncModal` 维护同一个模态栈，Esc 只关最上层（输入法组合中忽略）、Tab 在
+最上层内回焦、关闭后把焦点还给触发元素，autofocus 按帧重试直到该层真正完成布局（上限
+8 帧，因为 Alpine 在 `x-effect` 之后一拍才应用 `x-show`）；写操作在请求期间禁用按钮并
+显示进度，行内校验取代静默失败；停止单个项目与“停止全部”改为先确认再发 PATCH。
+以上都只影响静态 UI，不改变 HTTP 契约、图或调度语义。
 
 ## 1. 范围
 
@@ -604,6 +608,12 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
   `GET /` 与 `/static/*` 直接提供，没有构建/打包步骤。页签分两行：原有
   `Detail / Hints / Log`，以及运维页签 `Runs / Strategist / Audit / Evidence /
   Proposals / Cost`。
+- 弹窗（M17c）：每个 overlay 是 body 的直接子节点，带 `data-modal="<name>"` 与
+  `x-effect="syncModal('<name>', showX, $el)"`；`syncModal` 维护 `modalOrder` 栈和
+  `modalReturnFocus`，全局 `keydown` 处理器只对栈顶执行 Esc（`dismissModal` 走
+  `modalClosers()`，请求进行中拒绝关闭）与 Tab 焦点陷阱。新增弹窗时必须保持 overlay 的
+  `</div>` 平衡——漏一个闭合标签会把之后的弹窗嵌进它，父层 `x-show` 为假时子弹窗即使
+  自己为真也拿不到布局与焦点。
 - `Runs` 读取 `GET /projects/{id}/runs`，按最新在前显示 kind、worker、profile、模型、
   outcome、退出码、时长、evidence 数量和 detail；每行可跳到该 task 的 Audit。
 - Fact 详情（M14c）在单选时读取 `GET /facts/{id}/meta`，用 `run_id` 从已加载或补取的

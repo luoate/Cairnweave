@@ -274,7 +274,7 @@
         <span class="font-semibold tabular-nums" x-text="countProjectsByStatus('completed')"></span>
       </button>
       <button type="button"
-        @click="stopAllActiveProjects()"
+        @click="requestStopAllProjects()"
         :disabled="!hasActiveProjects() || isStoppingAllProjects"
         class="h-7 px-2.5 rounded-lg border border-amber-200 text-xs text-amber-700 hover:bg-amber-50 transition inline-flex items-center gap-1.5 shrink-0 disabled:cursor-not-allowed disabled:opacity-40"
         title="停止所有进行中的项目">
@@ -283,7 +283,7 @@
       </button>
     </div>
     <div class="flex items-center gap-1.5">
-      <button @click="showNewProject = true" class="h-7 px-2.5 rounded-lg border border-brand-200 text-xs text-brand-600 hover:bg-brand-50 transition inline-flex items-center gap-1.5">
+      <button @click="openNewProject()" class="h-7 px-2.5 rounded-lg border border-brand-200 text-xs text-brand-600 hover:bg-brand-50 transition inline-flex items-center gap-1.5">
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
         新建项目
       </button>
@@ -433,7 +433,7 @@
                 快照
               </button>
               <template x-if="p.status !== 'completed'">
-                <button type="button" @click.stop="toggleProjectStopById(p.id, p.status)"
+                <button type="button" @click.stop="requestToggleProjectStop(p.id, p.status, p.title)"
                   class="px-2 py-1 rounded-lg border text-[11px] transition flex items-center gap-1"
                   :class="p.status === 'active'
                     ? 'border-amber-200 text-amber-600 hover:bg-amber-50'
@@ -520,7 +520,7 @@
         快照
       </button>
       <template x-if="!replay.active && project.project.status !== 'completed'">
-        <button @click="toggleProjectStop()"
+        <button @click="requestToggleProjectStop(selectedProjectId, project.project.status, project.project.title)"
           class="px-2.5 py-1 rounded-lg border text-xs transition flex items-center gap-1.5"
           :class="project.project.status === 'active'
             ? 'border-amber-200 text-amber-600 hover:bg-amber-50'
@@ -2143,19 +2143,37 @@
 <!-- ═══════════ MODALS ═══════════ -->
 
 <!-- New Project -->
-<div x-show="showNewProject" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showNewProject = false">
+<div x-show="showNewProject" x-cloak data-modal="newProject" x-effect="syncModal('newProject', showNewProject, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('newProject')">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 border border-slate-200/60" @click.stop>
     <h3 class="text-base font-semibold text-slate-700 mb-4">新建项目</h3>
     <div class="space-y-3">
-      <input x-model="newProject.title" placeholder="项目标题" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
-      <textarea x-model="newProject.origin" placeholder="起点 — 起始状态" rows="2" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
-      <textarea x-model="newProject.goal" placeholder="目标 — 期望达成" rows="2" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
+      <div>
+        <input x-ref="newProjectTitle" data-autofocus x-model="newProject.title" placeholder="项目标题" aria-label="项目标题"
+          class="w-full px-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"
+          :class="newProjectShowErrors && newProjectErrors().title ? 'border-rose-300' : 'border-slate-200'">
+        <p x-show="newProjectShowErrors && newProjectErrors().title" class="text-[11px] text-rose-500 mt-1" x-text="newProjectErrors().title"></p>
+      </div>
+      <div>
+        <textarea x-ref="newProjectOrigin" x-model="newProject.origin" placeholder="起点 — 起始状态" rows="2" aria-label="起点"
+          class="w-full px-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"
+          :class="newProjectShowErrors && newProjectErrors().origin ? 'border-rose-300' : 'border-slate-200'"></textarea>
+        <p x-show="newProjectShowErrors && newProjectErrors().origin" class="text-[11px] text-rose-500 mt-1" x-text="newProjectErrors().origin"></p>
+      </div>
+      <div>
+        <textarea x-ref="newProjectGoal" x-model="newProject.goal" placeholder="目标 — 期望达成" rows="2" aria-label="目标"
+          class="w-full px-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"
+          :class="newProjectShowErrors && newProjectErrors().goal ? 'border-rose-300' : 'border-slate-200'"></textarea>
+        <p x-show="newProjectShowErrors && newProjectErrors().goal" class="text-[11px] text-rose-500 mt-1" x-text="newProjectErrors().goal"></p>
+      </div>
       <div>
         <div class="flex items-center justify-between mb-1">
           <label class="text-[11px] text-slate-400 font-medium uppercase tracking-wider">授权范围 <span class="text-rose-500">*</span></label>
           <span class="text-[10px] text-slate-300">每行一个目标</span>
         </div>
-        <textarea x-model="newProject.targetsText" rows="3" placeholder="127.0.0.1:8080&#10;https://lab.example" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
+        <textarea x-ref="newProjectTargets" x-model="newProject.targetsText" rows="3" placeholder="127.0.0.1:8080&#10;https://lab.example" aria-label="授权目标"
+          class="w-full px-3 py-2 border rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"
+          :class="newProjectShowErrors && newProjectErrors().targets ? 'border-rose-300' : 'border-slate-200'"></textarea>
+        <p x-show="newProjectShowErrors && newProjectErrors().targets" class="text-[11px] text-rose-500 mt-1" x-text="newProjectErrors().targets"></p>
         <input x-model="newProject.scopeNotes" placeholder="范围备注（可选）" class="mt-2 w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
         <p class="text-[11px] text-slate-400 mt-1">调度器只向这些目标派发任务；未配置范围的项目不会运行。</p>
       </div>
@@ -2179,8 +2197,8 @@
       </div>
     </div>
     <div class="flex justify-end gap-2 mt-5">
-      <button @click="showNewProject = false" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">取消</button>
-      <button @click="createProject()" :disabled="!canCreateProject() || isCreatingProject"
+      <button @click="dismissModal('newProject')" :disabled="isCreatingProject" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition disabled:opacity-40 disabled:cursor-not-allowed">取消</button>
+      <button @click="createProject()" :disabled="isCreatingProject"
         class="px-5 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition disabled:opacity-30 shadow-sm shadow-brand-200"
         x-text="isCreatingProject ? '创建中…' : '创建'"></button>
     </div>
@@ -2188,7 +2206,7 @@
 </div>
 
 <!-- Project Scope -->
-<div x-show="showScopeModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="closeScopeModal()">
+<div x-show="showScopeModal" x-cloak data-modal="scope" x-effect="syncModal('scope', showScopeModal, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('scope')">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 border border-slate-200/60" @click.stop>
     <h3 class="text-base font-semibold text-slate-700 mb-1">授权范围</h3>
     <p class="text-xs text-slate-400 font-mono mb-4" x-text="scopeForm.projectTitle ? `${scopeForm.projectId} - ${scopeForm.projectTitle}` : scopeForm.projectId"></p>
@@ -2198,14 +2216,17 @@
           <label class="text-[11px] text-slate-400 font-medium uppercase tracking-wider">目标 <span class="text-rose-500">*</span></label>
           <span class="text-[10px] text-slate-300">每行一个目标</span>
         </div>
-        <textarea x-model="scopeForm.targetsText" rows="4" placeholder="127.0.0.1:8080&#10;https://lab.example" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
+        <textarea x-model="scopeForm.targetsText" @input="scopeFormError = ''" data-autofocus rows="4" placeholder="127.0.0.1:8080&#10;https://lab.example" aria-label="授权目标"
+          class="w-full px-3 py-2 border rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"
+          :class="scopeFormError ? 'border-rose-300' : 'border-slate-200'"></textarea>
+        <p x-show="scopeFormError" class="text-[11px] text-rose-500 mt-1" x-text="scopeFormError"></p>
         <p class="text-[11px] text-slate-400 mt-1">调度器只向这些目标派发任务。</p>
       </div>
       <input x-model="scopeForm.notes" placeholder="范围备注（可选）" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
     </div>
     <div class="flex justify-end gap-2 mt-5">
-      <button @click="closeScopeModal()" :disabled="isSavingScope" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition disabled:opacity-40">取消</button>
-      <button @click="saveProjectScope()" :disabled="isSavingScope || scopeTargets(scopeForm.targetsText).length === 0"
+      <button @click="dismissModal('scope')" :disabled="isSavingScope" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition disabled:opacity-40">取消</button>
+      <button @click="saveProjectScope()" :disabled="isSavingScope"
         class="px-5 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition disabled:opacity-30 shadow-sm shadow-brand-200"
         x-text="isSavingScope ? '保存中…' : '保存范围'"></button>
     </div>
@@ -2213,7 +2234,7 @@
 </div>
 
 <!-- Create Intent -->
-<div x-show="showIntentModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showIntentModal = false">
+<div x-show="showIntentModal" x-cloak data-modal="intent" x-effect="syncModal('intent', showIntentModal, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('intent')">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 border border-slate-200/60" @click.stop>
     <h3 class="text-base font-semibold text-slate-700 mb-1">新建意图</h3>
     <div class="mb-4">
@@ -2225,42 +2246,45 @@
       </div>
     </div>
     <div class="space-y-3">
-      <textarea x-model="intentForm.description" placeholder="你打算探索什么？" rows="3" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
+      <textarea x-model="intentForm.description" data-autofocus placeholder="你打算探索什么？" rows="3" aria-label="意图描述" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
       <div class="px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-500">
         操作者： <span class="font-medium text-slate-700" x-text="actorName()"></span>
       </div>
     </div>
     <div class="flex justify-end gap-2 mt-5">
-      <button @click="showIntentModal = false" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">取消</button>
-      <button @click="createIntent(false)" :disabled="!intentForm.description"
-        class="px-5 py-2 text-sm border border-slate-200 text-slate-600 rounded-xl font-medium hover:bg-slate-50 transition disabled:opacity-30">声明</button>
-      <button @click="createIntent(true)" :disabled="!intentForm.description"
-        class="px-5 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition disabled:opacity-30 shadow-sm shadow-brand-200">声明并认领</button>
+      <button @click="dismissModal('intent')" :disabled="isCreatingIntent" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition disabled:opacity-40 disabled:cursor-not-allowed">取消</button>
+      <button @click="createIntent(false)" :disabled="!intentForm.description.trim() || isCreatingIntent"
+        class="px-5 py-2 text-sm border border-slate-200 text-slate-600 rounded-xl font-medium hover:bg-slate-50 transition disabled:opacity-30"
+        x-text="intentSubmitting === 'declare' ? '提交中…' : '声明'"></button>
+      <button @click="createIntent(true)" :disabled="!intentForm.description.trim() || isCreatingIntent"
+        class="px-5 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition disabled:opacity-30 shadow-sm shadow-brand-200"
+        x-text="intentSubmitting === 'claim' ? '提交中…' : '声明并认领'"></button>
     </div>
   </div>
 </div>
 
 <!-- Conclude -->
-<div x-show="showConcludeModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showConcludeModal = false">
+<div x-show="showConcludeModal" x-cloak data-modal="conclude" x-effect="syncModal('conclude', showConcludeModal, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('conclude')">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 border border-slate-200/60" @click.stop>
     <h3 class="text-base font-semibold text-slate-700 mb-1">结束意图</h3>
     <p class="text-xs text-slate-400 mb-4 font-mono" x-text="concludeForm.intentId"></p>
     <div class="space-y-3">
-      <textarea x-model="concludeForm.description" placeholder="发现了什么？（新事实）" rows="3" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
+      <textarea x-model="concludeForm.description" data-autofocus placeholder="发现了什么？（新事实）" rows="3" aria-label="结束说明" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
       <div class="px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-500">
         操作者： <span class="font-medium text-slate-700" x-text="actorName()"></span>
       </div>
     </div>
     <div class="flex justify-end gap-2 mt-5">
-      <button @click="showConcludeModal = false" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">取消</button>
-      <button @click="concludeIntent()" :disabled="!concludeForm.description"
-        class="px-5 py-2 text-sm bg-teal-500 text-white rounded-xl font-medium hover:bg-teal-600 transition disabled:opacity-30 shadow-sm shadow-teal-200">结束</button>
+      <button @click="dismissModal('conclude')" :disabled="isConcluding" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition disabled:opacity-40 disabled:cursor-not-allowed">取消</button>
+      <button @click="concludeIntent()" :disabled="!concludeForm.description.trim() || isConcluding"
+        class="px-5 py-2 text-sm bg-teal-500 text-white rounded-xl font-medium hover:bg-teal-600 transition disabled:opacity-30 shadow-sm shadow-teal-200"
+        x-text="isConcluding ? '结束中…' : '结束'"></button>
     </div>
   </div>
 </div>
 
 <!-- Complete Project -->
-<div x-show="showCompleteModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showCompleteModal = false">
+<div x-show="showCompleteModal" x-cloak data-modal="complete" x-effect="syncModal('complete', showCompleteModal, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('complete')">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 border border-slate-200/60" @click.stop>
     <h3 class="text-base font-semibold text-slate-700 mb-1">完成项目</h3>
     <p class="text-xs text-slate-400 mb-4">将项目标记为已完成</p>
@@ -2273,81 +2297,88 @@
           </template>
         </div>
       </div>
-      <textarea x-model="completeForm.description" placeholder="为什么目标已达成？" rows="2" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
+      <textarea x-model="completeForm.description" data-autofocus placeholder="为什么目标已达成？" rows="2" aria-label="完成说明" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
       <div class="px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-500">
         操作者： <span class="font-medium text-slate-700" x-text="actorName()"></span>
       </div>
     </div>
     <div class="flex justify-end gap-2 mt-5">
-      <button @click="showCompleteModal = false" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">取消</button>
-      <button @click="completeProject()" :disabled="selectedFacts.length === 0 || !completeForm.description"
-        class="px-5 py-2 text-sm bg-teal-500 text-white rounded-xl font-medium hover:bg-teal-600 transition disabled:opacity-30 shadow-sm shadow-teal-200">完成</button>
+      <button @click="dismissModal('complete')" :disabled="isCompleting" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition disabled:opacity-40 disabled:cursor-not-allowed">取消</button>
+      <button @click="completeProject()" :disabled="selectedFacts.length === 0 || !completeForm.description.trim() || isCompleting"
+        class="px-5 py-2 text-sm bg-teal-500 text-white rounded-xl font-medium hover:bg-teal-600 transition disabled:opacity-30 shadow-sm shadow-teal-200"
+        x-text="isCompleting ? '完成中…' : '完成'"></button>
     </div>
   </div>
 </div>
 
 <!-- Hint -->
-<div x-show="showHintModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showHintModal = false">
+<div x-show="showHintModal" x-cloak data-modal="hint" x-effect="syncModal('hint', showHintModal, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('hint')">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 border border-slate-200/60" @click.stop>
     <h3 class="text-base font-semibold text-slate-700 mb-4">添加提示</h3>
     <div class="space-y-3">
-      <textarea x-model="hintForm.content" placeholder="策略建议或备注…" rows="3" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
+      <textarea x-model="hintForm.content" data-autofocus aria-label="提示内容" placeholder="策略建议或备注…" rows="3" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
       <div class="px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-500">
         操作者： <span class="font-medium text-slate-700" x-text="actorName()"></span>
       </div>
     </div>
     <div class="flex justify-end gap-2 mt-5">
-      <button @click="showHintModal = false" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">取消</button>
-      <button @click="addHint()" :disabled="!hintForm.content"
-        class="px-5 py-2 text-sm bg-amber-500 text-white rounded-xl font-medium hover:bg-amber-600 transition disabled:opacity-30 shadow-sm shadow-amber-200">添加</button>
+      <button @click="dismissModal('hint')" :disabled="isAddingHint" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition disabled:opacity-40 disabled:cursor-not-allowed">取消</button>
+      <button @click="addHint()" :disabled="!hintForm.content.trim() || isAddingHint"
+        class="px-5 py-2 text-sm bg-amber-500 text-white rounded-xl font-medium hover:bg-amber-600 transition disabled:opacity-30 shadow-sm shadow-amber-200"
+        x-text="isAddingHint ? '添加中…' : '添加'"></button>
     </div>
-</div>
+  </div>
 </div>
 
 <!-- Reopen -->
-<div x-show="showReopenModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showReopenModal = false">
+<div x-show="showReopenModal" x-cloak data-modal="reopen" x-effect="syncModal('reopen', showReopenModal, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('reopen')">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 border border-slate-200/60" @click.stop>
     <h3 class="text-base font-semibold text-slate-700 mb-1">重新打开项目</h3>
     <p class="text-xs text-slate-400 mb-4" x-text="projectLabel(reopenForm.projectId, reopenForm.projectTitle)"></p>
     <div class="space-y-3">
-      <textarea x-model="reopenForm.description" placeholder="为什么这个项目实际上尚未完成？" rows="3" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
+      <textarea x-model="reopenForm.description" data-autofocus aria-label="重新打开说明" placeholder="为什么这个项目实际上尚未完成？" rows="3" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
       <div class="px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-500">
         操作者： <span class="font-medium text-slate-700" x-text="actorName()"></span>
       </div>
     </div>
     <div class="flex justify-end gap-2 mt-5">
-      <button @click="showReopenModal = false" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">取消</button>
-      <button @click="reopenProject()" :disabled="!reopenForm.projectId || !reopenForm.description"
-        class="px-5 py-2 text-sm bg-sky-500 text-white rounded-xl font-medium hover:bg-sky-600 transition disabled:opacity-30 shadow-sm shadow-sky-200">重新打开</button>
+      <button @click="dismissModal('reopen')" :disabled="isReopening" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition disabled:opacity-40 disabled:cursor-not-allowed">取消</button>
+      <button @click="reopenProject()" :disabled="!reopenForm.projectId || !reopenForm.description.trim() || isReopening"
+        class="px-5 py-2 text-sm bg-sky-500 text-white rounded-xl font-medium hover:bg-sky-600 transition disabled:opacity-30 shadow-sm shadow-sky-200"
+        x-text="isReopening ? '重新打开中…' : '重新打开'"></button>
     </div>
   </div>
 </div>
 
 <!-- Rename Project -->
-<div x-show="showRenameModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showRenameModal = false">
+<div x-show="showRenameModal" x-cloak data-modal="rename" x-effect="syncModal('rename', showRenameModal, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('rename')">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 border border-slate-200/60" @click.stop>
     <h3 class="text-base font-semibold text-slate-700 mb-1">重命名项目</h3>
     <p class="text-xs text-slate-400 mb-4" x-text="projectLabel(renameForm.projectId, renameForm.originalTitle)"></p>
     <div class="space-y-3">
-      <input x-ref="renameTitleInput" x-model="renameForm.title" @keydown.enter.prevent="renameProject()" placeholder="项目标题" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+      <input x-ref="renameTitleInput" x-model="renameForm.title" @input="renameFormError = ''" @keydown.enter.prevent="renameProject()" placeholder="项目标题" aria-label="项目标题" data-autofocus
+        class="w-full px-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"
+        :class="renameFormError ? 'border-rose-300' : 'border-slate-200'">
+      <p x-show="renameFormError" class="text-[11px] text-rose-500" x-text="renameFormError"></p>
       <p class="text-[11px] text-slate-400">只修改项目标题，任何项目状态下均可操作。</p>
     </div>
     <div class="flex justify-end gap-2 mt-5">
-      <button @click="showRenameModal = false" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">取消</button>
-      <button @click="renameProject()" :disabled="!renameForm.projectId || !renameForm.title"
-        class="px-5 py-2 text-sm bg-slate-800 text-white rounded-xl font-medium hover:bg-slate-900 transition disabled:opacity-30 shadow-sm">保存</button>
+      <button @click="dismissModal('rename')" :disabled="isRenaming" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition disabled:opacity-40 disabled:cursor-not-allowed">取消</button>
+      <button @click="renameProject()" :disabled="!renameForm.projectId || isRenaming"
+        class="px-5 py-2 text-sm bg-slate-800 text-white rounded-xl font-medium hover:bg-slate-900 transition disabled:opacity-30 shadow-sm"
+        x-text="isRenaming ? '保存中…' : '保存'"></button>
     </div>
   </div>
 </div>
 
 <!-- Local Preferences -->
-<div x-show="showLocalPrefs" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showLocalPrefs = false">
+<div x-show="showLocalPrefs" x-cloak data-modal="localPrefs" x-effect="syncModal('localPrefs', showLocalPrefs, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('localPrefs')">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 border border-slate-200/60" @click.stop>
     <h3 class="text-base font-semibold text-slate-700 mb-4">本地偏好</h3>
     <div class="space-y-4">
       <div>
         <label class="text-[11px] text-slate-400 mb-1 block font-medium">操作者</label>
-        <input x-model="localPrefs.actor_name" placeholder="你的名字" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+        <input x-model="localPrefs.actor_name" data-autofocus placeholder="你的名字" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
       </div>
       <div>
         <label class="text-[11px] text-slate-400 mb-1 block font-medium">默认布局</label>
@@ -2363,19 +2394,19 @@
       <p class="text-[11px] text-slate-400">仅保存在当前浏览器。</p>
     </div>
     <div class="flex justify-end gap-2 mt-5">
-      <button @click="showLocalPrefs = false" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">关闭</button>
+      <button @click="dismissModal('localPrefs')" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">关闭</button>
       <button @click="saveLocalSettings()" class="px-4 py-2 text-sm bg-slate-800 text-white rounded-xl font-medium hover:bg-slate-900 transition shadow-sm">保存本地设置</button>
     </div>
   </div>
 </div>
 
 <!-- Settings -->
-<div x-show="showSettings" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showSettings = false">
+<div x-show="showSettings" x-cloak data-modal="settings" x-effect="syncModal('settings', showSettings, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('settings')">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 border border-slate-200/60" @click.stop>
     <h3 class="text-base font-semibold text-slate-700 mb-4">服务端设置</h3>
     <div>
       <label class="text-[11px] text-slate-400 mb-1 block font-medium">意图超时（秒）</label>
-      <input type="number" x-model.number="settingsForm.intent_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
+      <input type="number" x-model.number="settingsForm.intent_timeout" data-autofocus @input="settingsFormError = ''" aria-label="意图超时（秒）" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
     </div>
     <div class="mt-4">
       <label class="text-[11px] text-slate-400 mb-1 block font-medium">推理超时（秒）</label>
@@ -2383,14 +2414,17 @@
       <p class="text-[11px] text-slate-400 mt-2">所有客户端共享的服务端配置。</p>
     </div>
     <div class="flex justify-end gap-2 mt-5">
-      <button @click="showSettings = false" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">关闭</button>
-      <button @click="saveServerSettings()" class="px-4 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition shadow-sm shadow-brand-200">保存服务端设置</button>
+      <p x-show="settingsFormError" class="text-[11px] text-rose-500 mt-2" x-text="settingsFormError"></p>
+      <button @click="dismissModal('settings')" :disabled="isSavingSettings" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition disabled:opacity-40 disabled:cursor-not-allowed">关闭</button>
+      <button @click="saveServerSettings()" :disabled="isSavingSettings"
+        class="px-4 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition shadow-sm shadow-brand-200 disabled:opacity-40 disabled:cursor-not-allowed"
+        x-text="isSavingSettings ? '保存中…' : '保存服务端设置'"></button>
     </div>
   </div>
 </div>
 
 <!-- Export Preview -->
-<div x-show="showYamlModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showYamlModal = false">
+<div x-show="showYamlModal" x-cloak data-modal="yaml" x-effect="syncModal('yaml', showYamlModal, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('yaml')">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-4xl mx-4 border border-slate-200/60 overflow-hidden" @click.stop>
     <div class="px-5 py-4 border-b border-slate-200/80 flex items-center justify-between gap-4">
       <div class="min-w-0 flex items-center gap-3">
@@ -2404,7 +2438,7 @@
       </div>
       <div class="flex items-center gap-2">
         <button @click="copyYamlPreview()" class="px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">复制</button>
-        <button @click="showYamlModal = false" class="px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">关闭</button>
+        <button @click="dismissModal('yaml')" data-autofocus class="px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">关闭</button>
       </div>
     </div>
     <div class="max-h-[75vh] overflow-auto bg-slate-50 p-4">
@@ -2415,8 +2449,30 @@
   </div>
 </div>
 
+<!-- Danger Confirmation -->
+<div x-show="showConfirmModal" x-cloak data-modal="confirm" x-effect="syncModal('confirm', showConfirmModal, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('confirm')">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 border border-slate-200/60" @click.stop>
+    <div class="flex items-start gap-3">
+      <div class="w-10 h-10 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/></svg>
+      </div>
+      <div class="min-w-0 flex-1">
+        <h3 class="text-base font-semibold text-slate-700" x-text="confirmActionTitle()"></h3>
+        <p class="text-sm text-slate-500 mt-1 leading-relaxed" x-text="confirmActionBody()"></p>
+        <p class="text-xs text-slate-400 mt-3">停止后可随时恢复；进行中的任务不被中断，但不再派发新任务。</p>
+      </div>
+    </div>
+    <div class="flex justify-end gap-2 mt-6">
+      <button @click="dismissModal('confirm')" data-autofocus :disabled="isConfirmingAction" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition disabled:opacity-40 disabled:cursor-not-allowed">取消</button>
+      <button @click="confirmDangerousAction()" :disabled="isConfirmingAction" class="px-4 py-2 text-sm bg-amber-500 text-white rounded-xl font-medium hover:bg-amber-600 transition shadow-sm shadow-amber-200 disabled:opacity-40 disabled:cursor-not-allowed">
+        <span x-text="isConfirmingAction ? '正在停止…' : '确认停止'"></span>
+      </button>
+    </div>
+  </div>
+</div>
+
 <!-- Delete Project -->
-<div x-show="showDeleteModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="closeDeleteModal()">
+<div x-show="showDeleteModal" x-cloak data-modal="delete" x-effect="syncModal('delete', showDeleteModal, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('delete')">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 border border-slate-200/60" @click.stop>
     <div class="flex items-start gap-3">
       <div class="w-10 h-10 rounded-2xl bg-rose-50 text-rose-500 flex items-center justify-center shrink-0">
@@ -2432,7 +2488,7 @@
       </div>
     </div>
     <div class="flex justify-end gap-2 mt-6">
-      <button @click="closeDeleteModal()" :disabled="isDeletingProject" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition disabled:opacity-40 disabled:cursor-not-allowed">取消</button>
+      <button @click="dismissModal('delete')" data-autofocus :disabled="isDeletingProject" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition disabled:opacity-40 disabled:cursor-not-allowed">取消</button>
       <button @click="confirmDeleteProject()" :disabled="isDeletingProject" class="px-4 py-2 text-sm bg-rose-500 text-white rounded-xl font-medium hover:bg-rose-600 transition shadow-sm shadow-rose-200 disabled:opacity-40 disabled:cursor-not-allowed">
         <span x-text="isDeletingProject ? '正在删除…' : '删除'"></span>
       </button>
@@ -2501,6 +2557,23 @@ function cairnApp() {
     settingsForm: { intent_timeout: 5, reason_timeout: 5 },
     deleteConfirm: { id: '', title: '' },
     isDeletingProject: false,
+    showConfirmModal: false,
+    confirmState: { kind: '', projectId: '', projectTitle: '', count: 0 },
+    isConfirmingAction: false,
+    modalOrder: [],
+    modalReturnFocus: {},
+    isCreatingIntent: false,
+    intentSubmitting: '',
+    isConcluding: false,
+    isCompleting: false,
+    isAddingHint: false,
+    isReopening: false,
+    isRenaming: false,
+    isSavingSettings: false,
+    newProjectShowErrors: false,
+    scopeFormError: '',
+    renameFormError: '',
+    settingsFormError: '',
     yamlPreviewTitle: '',
     yamlPreviewText: '',
     yamlPreviewHtml: '',
@@ -2616,10 +2689,26 @@ function cairnApp() {
         event.preventDefault();
         this.$refs.listSearch?.focus();
       };
+      this._modalShortcut = (event) => {
+        const top = this.topModalName();
+        if (!top) return;
+        if (event.key === 'Escape') {
+          if (event.isComposing) return;
+          event.preventDefault();
+          event.stopPropagation();
+          this.dismissModal(top);
+          return;
+        }
+        if (event.key === 'Tab') {
+          const modal = this.modalElement(top);
+          if (modal) this.trapModalFocus(modal, event);
+        }
+      };
       window.addEventListener('pointermove', this._panelResizeMove);
       window.addEventListener('pointerup', this._panelResizeStop);
       document.addEventListener('visibilitychange', this._visibilityRefresh);
       window.addEventListener('keydown', this._listShortcut);
+      window.addEventListener('keydown', this._modalShortcut);
       this.loadLocalPrefs();
       await this.loadProjects();
       await this.loadSettings();
@@ -3119,6 +3208,137 @@ function cairnApp() {
       if (this.isDeletingProject && !force) return;
       this.showDeleteModal = false;
       this.deleteConfirm = { id: '', title: '' };
+    },
+
+    modalElement(name) {
+      return document.querySelector(`[data-modal="${name}"]`);
+    },
+
+    modalFocusables(element) {
+      if (!element || typeof element.querySelectorAll !== 'function') return [];
+      const selector = [
+        'button:not([disabled])',
+        '[href]',
+        'input:not([disabled]):not([type="hidden"])',
+        'select:not([disabled])',
+        'textarea:not([disabled])',
+        '[tabindex]:not([tabindex="-1"])',
+      ].join(',');
+      return Array.from(element.querySelectorAll(selector)).filter((node) => {
+        if (!node || node.disabled) return false;
+        if (node.offsetParent !== undefined && node.offsetParent === null) {
+          return typeof document !== 'undefined' && node === document.activeElement;
+        }
+        return true;
+      });
+    },
+
+    syncModal(name, open, element) {
+      const isOpen = this.modalOrder.includes(name);
+      if (open && !isOpen) {
+        const focused = typeof document !== 'undefined' ? document.activeElement : null;
+        this.modalReturnFocus[name] = focused && typeof focused.focus === 'function' ? focused : null;
+        this.modalOrder = [...this.modalOrder, name];
+        this.focusModalContent(name, element);
+        return;
+      }
+      if (!open && isOpen) {
+        const wasTop = this.modalOrder[this.modalOrder.length - 1] === name;
+        this.modalOrder = this.modalOrder.filter((item) => item !== name);
+        const previous = this.modalReturnFocus[name];
+        delete this.modalReturnFocus[name];
+        if (wasTop && previous && document.contains(previous)) {
+          setTimeout(() => previous.focus(), 0);
+        }
+      }
+    },
+
+    topModalName() {
+      return this.modalOrder.length > 0 ? this.modalOrder[this.modalOrder.length - 1] : '';
+    },
+
+    // Alpine flips x-show one tick after x-effect, so a hidden target swallows focus().
+    focusModalContent(name, element, retries = 8) {
+      const schedule = (run) => (typeof requestAnimationFrame === 'function' ? requestAnimationFrame(run) : setTimeout(run, 0));
+      let remaining = retries;
+      const attempt = () => {
+        if (!this.modalOrder.includes(name)) return;
+        const root = element || this.modalElement(name);
+        if (!root || typeof root.querySelector !== 'function') return;
+        const target =
+          root.querySelector('[data-autofocus]') ||
+          root.querySelector('input:not([type="hidden"]), textarea, select, button');
+        if (!target || typeof target.focus !== 'function') return;
+        target.focus();
+        const laidOut = typeof target.getBoundingClientRect !== 'function' || target.getBoundingClientRect().width > 0;
+        if (!laidOut && remaining > 0) {
+          remaining -= 1;
+          schedule(attempt);
+        }
+      };
+      schedule(attempt);
+    },
+
+    modalClosers() {
+      return {
+        newProject: () => {
+          if (!this.isCreatingProject) this.showNewProject = false;
+        },
+        scope: () => this.closeScopeModal(),
+        intent: () => {
+          if (!this.isCreatingIntent) this.showIntentModal = false;
+        },
+        conclude: () => {
+          if (!this.isConcluding) this.showConcludeModal = false;
+        },
+        complete: () => {
+          if (!this.isCompleting) this.showCompleteModal = false;
+        },
+        hint: () => {
+          if (!this.isAddingHint) this.showHintModal = false;
+        },
+        reopen: () => {
+          if (!this.isReopening) this.showReopenModal = false;
+        },
+        rename: () => {
+          if (!this.isRenaming) this.showRenameModal = false;
+        },
+        localPrefs: () => {
+          this.showLocalPrefs = false;
+        },
+        settings: () => {
+          if (!this.isSavingSettings) this.showSettings = false;
+        },
+        yaml: () => {
+          this.showYamlModal = false;
+        },
+        delete: () => this.closeDeleteModal(),
+        confirm: () => this.closeConfirmModal(),
+      };
+    },
+
+    dismissModal(name) {
+      const closer = this.modalClosers()[name];
+      if (closer) closer();
+    },
+
+    trapModalFocus(element, event) {
+      const focusables = this.modalFocusables(element);
+      if (focusables.length === 0) {
+        event.preventDefault();
+        return;
+      }
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const active = event.target || (typeof document !== 'undefined' ? document.activeElement : null);
+      const inside = typeof element.contains === 'function' ? element.contains(active) : true;
+      if (event.shiftKey && (active === first || !inside)) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (active === last || !inside)) {
+        event.preventDefault();
+        first.focus();
+      }
     },
 
     async viewProjectYaml(projectId, projectTitle = '') {
@@ -3895,23 +4115,59 @@ function cairnApp() {
       return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
     },
 
-    async toggleProjectStop() {
-      if (!this.selectedProjectId || !this.project || this.project.project.status === 'completed') return;
-      const nextStatus = this.project.project.status === 'active' ? 'stopped' : 'active';
-      try {
-        await this.setProjectStatus(this.selectedProjectId, nextStatus);
-      } catch (e) {
-        this.showToast(e.message, 'error');
+    requestToggleProjectStop(projectId, currentStatus, projectTitle = '') {
+      if (!projectId || currentStatus === 'completed') return;
+      if (currentStatus === 'active') {
+        this.confirmState = { kind: 'stop', projectId, projectTitle, count: 1 };
+        this.showConfirmModal = true;
+        return;
       }
+      this.setProjectStatus(projectId, 'active').catch((e) => {
+        this.showToast(e.message, 'error');
+      });
     },
 
-    async toggleProjectStopById(projectId, currentStatus) {
-      if (!projectId || currentStatus === 'completed') return;
-      const nextStatus = currentStatus === 'active' ? 'stopped' : 'active';
+    requestStopAllProjects() {
+      const activeProjects = this.projects.filter(project => project.status === 'active');
+      if (activeProjects.length === 0 || this.isStoppingAllProjects) return;
+      this.confirmState = { kind: 'stop_all', projectId: '', projectTitle: '', count: activeProjects.length };
+      this.showConfirmModal = true;
+    },
+
+    closeConfirmModal() {
+      if (this.isConfirmingAction) return;
+      this.showConfirmModal = false;
+      this.confirmState = { kind: '', projectId: '', projectTitle: '', count: 0 };
+    },
+
+    confirmActionTitle() {
+      return this.confirmState.kind === 'stop_all' ? '停止全部进行中的项目' : '停止项目';
+    },
+
+    confirmActionBody() {
+      if (this.confirmState.kind === 'stop_all') {
+        return `将停止 ${this.confirmState.count} 个进行中的项目；已认领的意图会释放，调度器不再派发新任务。`;
+      }
+      return `将停止 ${this.projectLabel(this.confirmState.projectId, this.confirmState.projectTitle)}；已认领的意图会释放，调度器不再派发新任务。可稍后恢复。`;
+    },
+
+    async confirmDangerousAction() {
+      if (this.isConfirmingAction) return;
+      const state = this.confirmState;
+      if (!state.kind) return;
+      this.isConfirmingAction = true;
+      this.showConfirmModal = false;
       try {
-        await this.setProjectStatus(projectId, nextStatus);
+        if (state.kind === 'stop_all') {
+          await this.stopAllActiveProjects();
+        } else {
+          await this.setProjectStatus(state.projectId, 'stopped');
+        }
       } catch (e) {
         this.showToast(e.message, 'error');
+      } finally {
+        this.isConfirmingAction = false;
+        this.confirmState = { kind: '', projectId: '', projectTitle: '', count: 0 };
       }
     },
 
@@ -3972,6 +4228,7 @@ function cairnApp() {
     openRenameProject(projectId, projectTitle = '') {
       if (!projectId) return;
       this.renameForm = { projectId, originalTitle: projectTitle, title: projectTitle };
+      this.renameFormError = '';
       this.showRenameModal = true;
       this.$nextTick(() => {
         this.$refs.renameTitleInput?.focus();
@@ -3981,11 +4238,16 @@ function cairnApp() {
 
     async renameProject() {
       const projectId = this.renameForm.projectId || this.selectedProjectId;
-      if (!projectId) return;
+      if (!projectId || this.isRenaming) return;
+      const title = this.renameForm.title.trim();
+      if (!title) {
+        this.renameFormError = '请填写项目标题';
+        return;
+      }
+      this.renameFormError = '';
+      this.isRenaming = true;
       try {
-        const updated = await this.api('PUT', `/projects/${projectId}/title`, {
-          title: this.renameForm.title,
-        });
+        const updated = await this.api('PUT', `/projects/${projectId}/title`, { title });
         const projectSummary = this.projects.find(item => item.id === projectId);
         if (projectSummary) {
           projectSummary.title = updated.title;
@@ -3999,6 +4261,8 @@ function cairnApp() {
         this.showToast('项目已重命名');
       } catch (e) {
         this.showToast(e.message, 'error');
+      } finally {
+        this.isRenaming = false;
       }
     },
 
@@ -4353,11 +4617,14 @@ function cairnApp() {
 
     async reopenProject() {
       const projectId = this.reopenForm.projectId || this.selectedProjectId;
-      if (!projectId) return;
+      if (!projectId || this.isReopening) return;
+      const description = this.reopenForm.description.trim();
+      if (!description) return;
+      this.isReopening = true;
       try {
         const actor = this.actorName();
         await this.api('POST', `/projects/${projectId}/reopen`, {
-          description: this.reopenForm.description,
+          description,
           creator: actor,
         });
         this.showReopenModal = false;
@@ -4370,6 +4637,8 @@ function cairnApp() {
         this.showToast('项目已重新打开');
       } catch (e) {
         this.showToast(e.message, 'error');
+      } finally {
+        this.isReopening = false;
       }
     },
 
@@ -5617,25 +5886,52 @@ function cairnApp() {
       return `${seconds} 秒`;
     },
 
-    scopeTargets(text) {
-      const seen = new Set();
+    validateScopeTargets(text) {
       const targets = [];
+      const errors = [];
+      const seen = new Set();
       for (const line of String(text ?? '').split(/\r?\n/)) {
         const target = line.trim();
-        if (!target || seen.has(target)) continue;
+        if (!target) continue;
+        if (/\s/.test(target)) {
+          errors.push(`目标不能包含空格：${target}`);
+          continue;
+        }
+        if (target.length > 255) {
+          errors.push(`目标过长：${target.slice(0, 32)}…`);
+          continue;
+        }
+        if (seen.has(target)) continue;
         seen.add(target);
         targets.push(target);
       }
-      return targets;
+      return { targets, errors };
     },
 
-    canCreateProject() {
-      return Boolean(
-        this.newProject.title.trim() &&
-        this.newProject.origin.trim() &&
-        this.newProject.goal.trim() &&
-        this.scopeTargets(this.newProject.targetsText).length > 0
-      );
+    scopeTargets(text) {
+      return this.validateScopeTargets(text).targets;
+    },
+
+    newProjectErrors() {
+      const errors = {};
+      const title = this.newProject.title.trim();
+      if (!title) errors.title = '请填写项目标题';
+      else if (title.length > 200) errors.title = '标题不能超过 200 个字符';
+      if (!this.newProject.origin.trim()) errors.origin = '请填写起点';
+      if (!this.newProject.goal.trim()) errors.goal = '请填写目标';
+      const scope = this.validateScopeTargets(this.newProject.targetsText);
+      if (scope.errors.length > 0) errors.targets = scope.errors[0];
+      else if (scope.targets.length === 0) errors.targets = '请至少填写一个授权目标';
+      return errors;
+    },
+
+    settingsErrors() {
+      const errors = {};
+      for (const [key, label] of [['intent_timeout', '意图超时'], ['reason_timeout', '推理超时']]) {
+        const value = Number(this.settingsForm[key]);
+        if (!Number.isInteger(value) || value < 0) errors[key] = `${label}必须是 ≥ 0 的整数`;
+      }
+      return errors;
     },
 
     async loadProjectScope(projectId) {
@@ -5664,6 +5960,7 @@ function cairnApp() {
         targetsText: known ? known.targets.join('\n') : '',
         notes: known && known.notes ? known.notes : '',
       };
+      this.scopeFormError = '';
       this.showScopeModal = true;
       try {
         const data = await this.api('GET', `/projects/${encodeURIComponent(projectId)}/scope`);
@@ -5679,18 +5976,24 @@ function cairnApp() {
     closeScopeModal() {
       if (this.isSavingScope) return;
       this.showScopeModal = false;
+      this.scopeFormError = '';
     },
 
     async saveProjectScope() {
       if (this.isSavingScope) return;
       const projectId = this.scopeForm.projectId;
       if (!projectId) return;
-      const targets = this.scopeTargets(this.scopeForm.targetsText);
+      const { targets, errors } = this.validateScopeTargets(this.scopeForm.targetsText);
+      if (errors.length > 0) {
+        this.scopeFormError = errors[0];
+        return;
+      }
       if (targets.length === 0) {
-        this.showToast('请至少填写一个授权目标', 'error');
+        this.scopeFormError = '请至少填写一个授权目标';
         return;
       }
       const notes = this.scopeForm.notes.trim();
+      this.scopeFormError = '';
       this.isSavingScope = true;
       try {
         const data = await this.api('PUT', `/projects/${encodeURIComponent(projectId)}/scope`, {
@@ -5712,22 +6015,40 @@ function cairnApp() {
       }
     },
 
+    openNewProject() {
+      this.newProjectShowErrors = false;
+      this.showNewProject = true;
+    },
+
+    focusNewProjectError(errors) {
+      const refs = {
+        title: 'newProjectTitle',
+        origin: 'newProjectOrigin',
+        goal: 'newProjectGoal',
+        targets: 'newProjectTargets',
+      };
+      const key = ['title', 'origin', 'goal', 'targets'].find((item) => errors[item]);
+      if (key) this.$refs[refs[key]]?.focus();
+    },
+
     async createProject() {
       if (this.isCreatingProject) return;
-      const targets = this.scopeTargets(this.newProject.targetsText);
-      if (targets.length === 0) {
-        this.showToast('请至少填写一个授权目标', 'error');
+      const errors = this.newProjectErrors();
+      if (Object.keys(errors).length > 0) {
+        this.newProjectShowErrors = true;
+        this.focusNewProjectError(errors);
         return;
       }
+      const targets = this.scopeTargets(this.newProject.targetsText);
       this.isCreatingProject = true;
       try {
         const actor = this.actorName();
         const hintContents = this.newProject.hints.filter(h => h.content?.trim());
         const notes = this.newProject.scopeNotes.trim();
         const body = {
-          title: this.newProject.title,
-          origin: this.newProject.origin,
-          goal: this.newProject.goal,
+          title: this.newProject.title.trim(),
+          origin: this.newProject.origin.trim(),
+          goal: this.newProject.goal.trim(),
           bootstrap_enabled: this.newProject.bootstrap,
           scope: { targets, ...(notes ? { notes } : {}) },
         };
@@ -5735,6 +6056,7 @@ function cairnApp() {
         if (hints.length > 0) body.hints = hints;
         const data = await this.api('POST', '/projects', body);
         this.showNewProject = false;
+        this.newProjectShowErrors = false;
         this.newProject = { title:'', origin:'', goal:'', bootstrap: true, targetsText:'', scopeNotes:'', hints: [{ content:'' }] };
         await this.loadProjects();
         await this.openProject(data.project.id);
@@ -5750,11 +6072,16 @@ function cairnApp() {
     },
 
     async createIntent(claim = false) {
+      if (this.isCreatingIntent) return;
+      const description = this.intentForm.description.trim();
+      if (!description) return;
+      this.isCreatingIntent = true;
+      this.intentSubmitting = claim ? 'claim' : 'declare';
       try {
         const actor = this.actorName();
         await this.api('POST', `/projects/${this.selectedProjectId}/intents`, {
           from: this.selectedFacts,
-          description: this.intentForm.description,
+          description,
           creator: actor,
           worker: claim ? actor : null,
         });
@@ -5763,6 +6090,10 @@ function cairnApp() {
         this.updateGraph();
         this.showToast(claim ? '意图已声明并认领' : '意图已声明');
       } catch(e) { this.showToast(e.message, 'error'); }
+      finally {
+        this.isCreatingIntent = false;
+        this.intentSubmitting = '';
+      }
     },
 
     async sendHeartbeatForSelectedIntent() {
@@ -5793,15 +6124,20 @@ function cairnApp() {
     openConclude(intent) { this.concludeForm = { description:'', intentId: intent.id }; this.showConcludeModal = true; },
 
     async concludeIntent() {
+      if (this.isConcluding) return;
+      const description = this.concludeForm.description.trim();
+      if (!description) return;
+      this.isConcluding = true;
       try {
         const actor = this.actorName();
-        await this.api('POST', `/projects/${this.selectedProjectId}/intents/${this.concludeForm.intentId}/conclude`, { worker: actor, description: this.concludeForm.description });
+        await this.api('POST', `/projects/${this.selectedProjectId}/intents/${this.concludeForm.intentId}/conclude`, { worker: actor, description });
         this.showConcludeModal = false;
         this.selectedNode = null;
         await this.loadProject(this.selectedProjectId);
         this.updateGraph();
         this.showToast('意图已结束');
       } catch(e) { this.showToast(e.message, 'error'); }
+      finally { this.isConcluding = false; }
     },
 
     openCompleteProject() {
@@ -5817,22 +6153,30 @@ function cairnApp() {
     },
 
     async completeProject() {
+      if (this.isCompleting) return;
+      const description = this.completeForm.description.trim();
+      if (!description || this.selectedFacts.length === 0) return;
+      this.isCompleting = true;
       try {
         const actor = this.actorName();
-        await this.api('POST', `/projects/${this.selectedProjectId}/complete`, { from: this.selectedFacts, description: this.completeForm.description, worker: actor });
+        await this.api('POST', `/projects/${this.selectedProjectId}/complete`, { from: this.selectedFacts, description, worker: actor });
         this.showCompleteModal = false;
         await this.loadProjects();
         await this.loadProject(this.selectedProjectId);
         this.updateGraph();
         this.showToast('项目已完成');
       } catch(e) { this.showToast(e.message, 'error'); }
+      finally { this.isCompleting = false; }
     },
 
     async addHint() {
-      if (!this.projectCanWriteHints()) return;
+      if (!this.projectCanWriteHints() || this.isAddingHint) return;
+      const content = this.hintForm.content.trim();
+      if (!content) return;
+      this.isAddingHint = true;
       try {
         const actor = this.actorName();
-        await this.api('POST', `/projects/${this.selectedProjectId}/hints`, { content: this.hintForm.content, creator: actor });
+        await this.api('POST', `/projects/${this.selectedProjectId}/hints`, { content, creator: actor });
         this.showHintModal = false;
         this.hintForm = { content:'' };
         await this.loadProjects();
@@ -5840,6 +6184,7 @@ function cairnApp() {
         this.sideTab = 'hints';
         this.showToast('提示已添加');
       } catch(e) { this.showToast(e.message, 'error'); }
+      finally { this.isAddingHint = false; }
     },
 
     saveLocalSettings() {
@@ -5855,11 +6200,21 @@ function cairnApp() {
     },
 
     async saveServerSettings() {
+      if (this.isSavingSettings) return;
+      const errors = this.settingsErrors();
+      const firstError = Object.values(errors)[0];
+      if (firstError) {
+        this.settingsFormError = firstError;
+        return;
+      }
+      this.settingsFormError = '';
+      this.isSavingSettings = true;
       try {
         await this.api('PUT', '/settings', this.settingsForm);
         this.showSettings = false;
         this.showToast('服务端设置已保存');
       } catch(e) { this.showToast(e.message, 'error'); }
+      finally { this.isSavingSettings = false; }
     },
   };
 }

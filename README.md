@@ -6,8 +6,8 @@
 skills / Observer）合并成**一个 Bun/TypeScript 代码库**，不再维护 Python ↔ TypeScript
 之间的进程桥、JSONL RPC 和 worker 适配器。
 
-状态：**M17b（列表与轮询：日常操作效率）**；M0–M4、M5a–M5c、
-M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M17a、M17b 的计划项全部完成。Phase 1 的
+状态：**M17c（表单与弹窗一致性）**；M0–M4、M5a–M5c、
+M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M17a、M17b、M17c 的计划项全部完成。Phase 1 的
 “本地看板 + Observer 提案 + 证据门 + 单一写图者”闭环已具备；提案默认关闭。Phase 2
 的触发持久化、意图优先级/预算、单项目 token/成本与并发配额、只读慢层观测、逐 Fact
 成本归因与因果链，以及 reason 的 Hint/去重输出、人工重规划与资源压力触发均已落地，并
@@ -54,6 +54,13 @@ M17b 面向日常操作：项目列表增加搜索（标题/ID/状态/备注）�
 三种排序，筛选与排序存入 `localStorage`；轮询在页面隐藏时暂停、恢复可见时立即刷新，
 失败按 5s→60s 指数退避，列表与项目视图都显示错误横幅和重试按钮，并给出最后更新时间
 与手动刷新。侧栏八个运维页签改为可横向滚动，并按项目记住上次停留的页签。
+M17c 统一表单与弹窗：13 个 overlay 共用一个模态栈，Esc 只关最上层（输入法组合中不
+响应），Tab 在最上层弹窗内回环、焦点逃出弹窗会被拉回，关闭后焦点回到触发元素；打开时
+把焦点交给 `[data-autofocus]`，并在 Alpine 真正显示该层后重试，避免焦点掉回页面。
+新建项目、范围补配、重命名与服务端设置改为行内校验：逐字段红框加提示，提交后聚焦第一个
+错误项；所有写操作在请求期间禁用按钮并显示“…中…”，重复点击不再重复提交。停止项目与
+“停止全部”不再直接发 PATCH，先弹出二次确认，说明已认领意图会被释放，取消或点背景不改
+状态。以上仍只影响静态 UI，HTTP 契约、图与调度语义不变。
 `cairn serve` 是可运行的 Cairn 兼容服务：SQLite schema、领域服务、全部
 五个路由、YAML/timeline 导出、静态 Web UI 均已就位，并用 Python Cairn 生成的 golden
 做了逐字对照。进程内 scheduler、任务/结果文件 worker 协议、BreachWeave Solver 接入已在 M2
@@ -1082,9 +1089,9 @@ M6 的跨进程恢复 gate 不调用模型：它先写下一台崩溃控制面�
 bun run tools/gate/m6-restart-gate.ts
 ```
 
-## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a + M17a + M17b，2026-10-27，Bun 1.4.4）
+## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a + M17a + M17b + M17c，2026-10-28，Bun 1.4.4）
 
-- `bun test`：**558 passed**（64 个文件），0 failed。
+- `bun test`：**578 passed**（64 个文件），0 failed。
 - `bun run typecheck`：`tsc --noEmit` 通过。
 - **HTTP 对照**：`api.golden.json` 的 60 步请求（成功路径、400/403/404/405/409、租约过期、
   删除级联、导出、路由错误）由 Python FastAPI + 固定时钟生成；TS 重放后状态码、content-type
@@ -1318,6 +1325,14 @@ bun run tools/gate/m6-restart-gate.ts
   搜索框、排序选择、状态筛选、空结果提示、`visibilitychange`、指数退避、
   `cairn.listPrefs` 与 `cairn.sideTabs`。浏览器实测搜索/筛选/排序与刷新、失败横幅，
   以及运维页签横向滚动和按项目恢复。
+- **表单与弹窗一致性（M17c）**：单测实例化 `cairnApp()` 校验模态栈的入栈/出栈与顶层
+  判定、Tab 在两端回环、焦点逃出弹窗被拉回、禁用与隐藏控件不计入可聚焦集合、autofocus
+  在该层完成布局前按帧重试且有上限、请求期间拒绝关闭弹窗；另校验授权目标按行去重与逐行报错、
+  新建项目四个必填字段、超时整数校验，以及停止/停止全部的确认状态、确认与失败回吐后
+  状态复位。UI 静态测试断言 13 个 overlay 都挂在同一 `syncModal` 栈上、各自只有一个
+  `data-autofocus`、互为 body 直接子节点（漏掉一个 `</div>` 会把后续弹窗嵌进前一个，
+  从而永不显示），并断言停止入口只走确认弹窗。浏览器实测 Esc/Tab 回环与回焦、背景点击
+  取消、行内校验与聚焦第一个错误项、提交中禁用、停止单个/全部确认与恢复项目免确认。
 
 golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定时钟、`TZ=UTC`）。
 重新生成方法与约束见 `docs/PORTING.md`。
@@ -1378,6 +1393,7 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M16a ✅ | CI 门槛与真实模型 A/B 工具：GitHub Actions 执行 install/typecheck/test，`bun run check` 本地复现；`tools/gate/m16-model-ab.ts` 双 arm 独立数据库/工作区、同 marker、单 profile，强制两个不同 model-prefs 且两侧 run.model 不重叠 | 548 passed / 63 files（2026-10-27）；Linux 容器同门槛通过；真实 A/B 待第二个模型（M16b） |
 | M17a ✅ | 前端 P0：新建项目强制授权范围并随 `scope` 提交；`GET/PUT /projects/{id}/scope`；`GET /projects` 增加 `has_scope`；列表“未授权”徽章与详情范围卡片支持补配/修改 | 556 passed / 64 files（2026-10-27）；浏览器实测创建、编辑与补配 |
 | M17b ✅ | 列表与轮询：搜索标题/ID/状态、可点击状态筛选、三种排序与 `localStorage` 记忆；页面隐藏暂停轮询、可见即刷新、失败 5s→60s 退避；列表/项目错误横幅与重试、最后更新时间；侧栏页签横向滚动并按项目记忆 | 558 passed / 64 files（2026-10-27）；浏览器实测筛选、错误横幅与页签恢复 |
+| M17c ✅ | 表单与弹窗一致性：13 个 overlay 共用模态栈（Esc 关最上层、Tab 焦点陷阱、关闭回焦、显示后重试 autofocus）；新建/范围/重命名/设置逐字段行内校验并聚焦首个错误；写操作提交期间禁用并显示进度；停止单个与“停止全部”改为二次确认 | 578 passed / 64 files（2026-10-28）；浏览器实测 Esc/Tab/回焦、校验、确认与背景取消 |
 
 ## 与 Phase 0 的关系
 
