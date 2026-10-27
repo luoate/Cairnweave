@@ -48,6 +48,9 @@ export {
   type ProjectDetail,
   type ProjectMeta,
   type ProjectReason,
+  type ProjectReport,
+  type ProjectReportRunTotals,
+  type ProjectReportVerification,
   type ProjectStatus,
   type ProjectSummary,
   type ProjectVerification,
@@ -251,8 +254,16 @@ export {
   listVerificationChecks,
   recordVerificationCheck,
   setProjectVerification,
+  summarizeProjectVerification,
+  type ProjectVerificationSummary,
   type RecordVerificationCheckInput,
 } from "./verification";
+
+export {
+  buildProjectReport,
+  renderProjectReportMarkdown,
+  type BuildProjectReportOptions,
+} from "./report";
 
 export {
   getProjectArtifact,

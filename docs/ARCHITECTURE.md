@@ -85,7 +85,10 @@ runtime prompt 扩展（priority/budget/dedupe/Hint 语义）；`POST /projects/
 增加「统计」页签；它只读旁路数据，不改变图模型、YAML 导出或调度。M15a 已落地：
 `worker_profiles` 把稳定 id 映射到 model-prefs 条目，`worker_selection.mode: stats`
 按历史 `runs.worker_profile` 采样后选择模型，并把 profile/model 写入 task.json 与
-`runs`；prompt 模式保持原行为。
+`runs`；prompt 模式保持原行为。M15c 已落地：只读 `GET /projects/{id}/report` 把一个
+项目的图、完成验证、run/成本统计、审计与工件汇总合成一个快照，`format=markdown`
+渲染同一对象；它不写图也不写旁路，且不输出审计事件原文、工件路径或证据内容。详见
+`docs/REPORT.md`。
 
 ## 1. 范围
 
@@ -513,6 +516,12 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
   `{project_id, facts: {total, current, superseded}, supersessions}`。`supersessions`
   每条含 `fact_id`、`description`、`superseded_by`、`superseded_by_description`、
   `created_at`，按被取代 Fact id 排序；未知项目 404；只有 GET，其他方法 405。
+- `GET /projects/{id}/report?format=json|markdown`（M15c，只读）→
+  `{generated_at, project, verification, graph, current_facts, hints, supersessions,
+  runs: {totals, by_worker, by_model, by_profile}, cost, audit, artifacts}`。`format`
+  默认 `json`；`markdown` 用 `text/markdown` 返回同一对象的渲染结果。`audit` 与
+  `artifacts` 只有汇总（任务数、事件数、时间边界、文件数与字节数），不含审计事件
+  原文、工件路径或证据内容。未知项目 404；非法 `format` 400；其他方法 405。
 - `GET /projects/{id}/strategist?limit=20`（M12c，只读）→
   `{state, budget, intents, reason_runs}`。`state` 为 `strategist_state` 或 `null`；
   `budget` 含 `used_tokens` / `used_cost_usd` / `running_tasks`、配置上限（纯 HTTP
@@ -659,7 +668,30 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
 - **边界**：取代不改变意图、提示词、timeline 或 YAML 导出；`GET /projects/{id}` 仍
   返回全部 Fact（追加语义）。取代链只在项目内生效，不支持跨项目引用。
 
-### 5.8 session 保留与启动对账（M6）
+### 5.8 项目报告导出（M15c）
+
+报告是只读快照，不引入新的图语义；与其它读取项目详情的端点一样会顺带让过期租约失效，
+但不写 Fact、意图或旁路历史：
+
+- **组成**：`packages/graph/src/report.ts` 组合既有读取——`getProjectDetail`（项目、
+  Fact、意图、Hint）、`listFactSupersessions`（取代边）、
+  `summarizeProjectVerification`（策略、检查汇总、最近一次检查）、`runs` +
+  `buildProjectRunStats`（总用量与按 worker/model/profile 分桶）、
+  `buildProjectCostReport`（成本与 `by_kind`）、`listProjectAudit`（任务与事件计数）、
+  `listProjectArtifacts`（文件数与字节数）。
+- **当前 Fact**：`current_facts` 排除有 `superseded_by` 的 Fact，按 id 排序；取代边
+  原样输出。`graph.current_facts` 等于 `current_facts.length`。
+- **确定性**：除 `generated_at` 外，所有数组都有稳定排序（Fact 按 id、Hint 按
+  `created_at, id`、run 分桶沿用 `/stats` 的顺序）。测试注入固定的 `generatedAt`。
+- **脱敏**：`audit` 只有 `{tasks, events, first_at, last_at}`，`artifacts` 只有
+  `{count, bytes}`。审计事件原文（可能含命令输出）、工件路径与证据文件内容都不进入
+  报告；挑战验证只读取并输出计数，从不读取 flag。Fact / Hint 是图内容，按图原样导出。
+- **路由**：`GET /projects/{id}/report` 默认 JSON；`format=markdown` 返回同一对象的
+  人读版本。Markdown 渲染把用户内容折叠成单行并转义表格中的 `|`。只有 GET。
+- **边界**：报告不包含 timeline / YAML 导出（仍走 `GET /projects/{id}/export`），
+  也不支持跨项目汇总；大项目会返回全部当前 Fact 与 Hint，尚无分页。
+
+### 5.9 session 保留与启动对账（M6）
 
 scheduler 的 housekeeping sweep 由 `scheduler/retention.ts` 与 `loop.ts` 共同实现：
 
@@ -930,8 +962,6 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
 - `tch.py`、`tch_bridge.py`、`solver rpc` 适配、`tch` 提示词释放逻辑；
 - `ctfagent/scripts/apply_overlay.py` 及其文本补丁；
 - Python 的 prompt 渲染、调度、进程 runtime（由 TS 端口替代）。
-
-`ctfagent/` 目录在本仓库之外，**尚未删除**；删除它需要用户明确确认，不属于 M3 验收条件。
 
 ## 12. 安全模型
 

@@ -12,6 +12,7 @@ import type { Database } from "bun:sqlite";
 
 import { all, get, run } from "./db";
 import type {
+  ProjectReportVerification,
   ProjectVerification,
   ProjectVerificationInput,
   VerificationCheck,
@@ -157,6 +158,48 @@ export function getLatestVerificationCheck(
 ): VerificationCheck | null {
   const rows = listVerificationChecks(conn, projectId, 1);
   return rows[0] ?? null;
+}
+
+export interface ProjectVerificationSummary {
+  policy: ProjectVerification;
+  checks: ProjectReportVerification["checks"];
+  latest: VerificationCheck | null;
+}
+
+/**
+ * The policy, the pass/fail aggregate over every stored check, and the most recent check.
+ * Challenge flag values are not read here; the checks themselves keep only the counters.
+ */
+export function summarizeProjectVerification(
+  conn: Database,
+  projectId: string,
+  fallbackKind: VerificationKind = DEFAULT_VERIFICATION_KIND,
+): ProjectVerificationSummary {
+  const policy = getProjectVerification(conn, projectId, fallbackKind);
+  const row = get<{
+    total: number;
+    passed: number;
+    failed: number;
+    last_checked_at: string | null;
+  }>(
+    conn,
+    `SELECT COUNT(*) AS total,
+            COALESCE(SUM(CASE WHEN ok = 1 THEN 1 ELSE 0 END), 0) AS passed,
+            COALESCE(SUM(CASE WHEN ok = 0 THEN 1 ELSE 0 END), 0) AS failed,
+            MAX(checked_at) AS last_checked_at
+     FROM verification_checks WHERE project_id = ?`,
+    projectId,
+  );
+  return {
+    policy,
+    checks: {
+      total: row?.total ?? 0,
+      passed: row?.passed ?? 0,
+      failed: row?.failed ?? 0,
+      last_checked_at: row?.last_checked_at ?? null,
+    },
+    latest: getLatestVerificationCheck(conn, projectId),
+  };
 }
 
 function checkFromRow(row: CheckRow): VerificationCheck {

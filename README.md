@@ -4,8 +4,8 @@
 skills / Observer）合并成**一个 Bun/TypeScript 代码库**，不再维护 Python ↔ TypeScript
 之间的进程桥、JSONL RPC 和 worker 适配器。
 
-状态：**M15b（Fact 取代链）**；M0–M4、M5a–M5c、
-M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b 的计划项全部完成。Phase 1 的
+状态：**M15c（项目报告导出）**；M0–M4、M5a–M5c、
+M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c 的计划项全部完成。Phase 1 的
 “本地看板 + Observer 提案 + 证据门 + 单一写图者”闭环已具备；提案默认关闭。Phase 2
 的触发持久化、意图优先级/预算、单项目 token/成本与并发配额、只读慢层观测、逐 Fact
 成本归因与因果链，以及 reason 的 Hint/去重输出、人工重规划与资源压力触发均已落地，并
@@ -22,7 +22,9 @@ challenge 计数严格相等，默认策略由 `verification.evidence_enforcemen
 `/complete` 可选 operator token。M15b 在不动图的前提下增加 Fact 取代链：Observer 的
 fact 提案可用 `supersedes` 声明它取代哪些旧结论，控制面校验后写入
 `fact_meta.supersedes`，读取时推导 `superseded_by`；完成 oracle 拒绝引用已被取代的
-Fact，只读 `GET /projects/{id}/supersedes` 给出当前/被取代计数与边。
+Fact，只读 `GET /projects/{id}/supersedes` 给出当前/被取代计数与边。M15c 增加只读
+`GET /projects/{id}/report`：把图、完成验证、run/成本统计、审计与工件汇总合成一个
+快照，`format=markdown` 渲染同一对象；审计事件原文、工件路径与证据内容不进入报告。
 `cairn serve` 是可运行的 Cairn 兼容服务：SQLite schema、领域服务、全部
 五个路由、YAML/timeline 导出、静态 Web UI 均已就位，并用 Python Cairn 生成的 golden
 做了逐字对照。进程内 scheduler、任务/结果文件 worker 协议、BreachWeave Solver 接入已在 M2
@@ -427,6 +429,21 @@ M15b 增加（Fact 取代链）：
   测试覆盖正常写入与四类拒绝；Observer 候选测试覆盖 fact 透传、非 fact 拒绝与上限；
   oracle 测试确认旧 Fact 不能完成；HTTP 测试覆盖响应、404 与只能 GET。
 
+M15c 增加（项目报告导出）：
+
+- **一个快照**：`buildProjectReport` 组合既有读取——项目与图、完成策略与检查汇总、
+  run 总量与按 worker/model/profile 分桶、成本与 `by_kind`、审计任务/事件计数、工件
+  文件数与字节数。不新增图语义、不写图；与其它读端点一样会顺带清理过期租约。
+- **当前 Fact**：报告排除已被取代的 Fact 并单列取代边；`graph.current_facts` 与
+  `current_facts.length` 一致。
+- **脱敏**：`audit` 只有计数与时间边界，`artifacts` 只有文件数与字节数；审计事件
+  原文（可能含命令输出与凭据）、工件路径与证据文件内容都不导出。挑战验证只读并导出
+  `flag_count` / `flag_got_count`，不读取 flag；Fact 与 Hint 按图原样导出。
+- **HTTP**：`GET /projects/{id}/report` 默认 JSON，`format=markdown` 返回人读版本；
+  非法 `format` 400、未知项目 404、非 GET 405。Markdown 渲染折叠换行并转义表格。
+- **验证**：图测试覆盖空项目、取代排除、run/成本分桶、验证与工件汇总、旧项目策略
+  回退、审计脱敏与 Markdown 稳定性；HTTP 测试覆盖 JSON、Markdown、400/404/405。
+
 默认仍是确定性 fake solver，测试与离线运行不需要模型凭据。Observer 只接在
 `CAIRN_SOLVER=breachweave` 的真实 Solver 路径上，fake solver 会忽略它。
 
@@ -539,6 +556,7 @@ docs/ARCHITECTURE.md     角色、数据所有权、时序、沙箱、失败语�
 docs/OBSERVER.md         Observer 实现、配置、权限、flush 语义与已知限制（M4c）
 docs/STRATEGIST.md       慢层触发、意图优先级/预算、Hint/去重、人工/资源触发、成本归因（M12a–M14b）
 docs/VERIFICATION.md     完成验证：策略、oracle、路由、失败语义与安全边界（M14a）
+docs/REPORT.md           项目报告：JSON 结构、来源、排序、脱敏与边界（M15c）
 docs/PORTING.md          Python 模块 → TS 模块映射与对照测试策略
 ```
 
@@ -934,9 +952,9 @@ M6 的跨进程恢复 gate 不调用模型：它先写下一台崩溃控制面�
 bun run tools/gate/m6-restart-gate.ts
 ```
 
-## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b，2026-10-27，Bun 1.4.4）
+## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c，2026-10-27，Bun 1.4.4）
 
-- `bun test`：**495 passed**（57 个文件），0 failed。
+- `bun test`：**540 passed**（62 个文件），0 failed。
 - `bun run typecheck`：`tsc --noEmit` 通过。
 - **HTTP 对照**：`api.golden.json` 的 60 步请求（成功路径、400/403/404/405/409、租约过期、
   删除级联、导出、路由错误）由 Python FastAPI + 固定时钟生成；TS 重放后状态码、content-type
@@ -1142,6 +1160,10 @@ bun run tools/gate/m6-restart-gate.ts
   逐条覆盖采样顺序、成功率/Token/成本/配置顺序平局和 preferred profile；scheduler
   集成测试确认 `runs.worker_profile` 与任务字段一致；HTTP/UI 测试覆盖 `by_profile`
   与“按 Profile”卡片。
+- **项目报告导出（M15c）**：图测试覆盖空项目快照、取代 Fact 排除、run 总量与
+  worker/model/profile 分桶、验证检查汇总与工件字节数、旧项目策略回退、审计计数不含
+  事件原文、Markdown 确定性与空集合标记；HTTP 测试覆盖默认 JSON、Markdown
+  content-type、非法 `format` 400、未知项目 404 与 POST 405。
 
 golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定时钟、`TZ=UTC`）。
 重新生成方法与约束见 `docs/PORTING.md`。
@@ -1195,6 +1217,7 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M15a ✅ | Phase 4 起点：`worker_profiles` 映射 model-prefs、任务级模型覆盖、`runs.worker_profile`、先采样后利用的统计驱动派发、`by_profile` 统计与「按 Profile」卡片 | 495 passed / 57 files（2026-10-26） |
 | M14a 收口 ✅ | 完成判定收紧：证据 Fact 必须关联 run、challenge 计数严格相等、`verification.evidence_enforcement` 默认开关、`/complete` 可选 operator token、模型把 `evidence_refs` 写进 `data` 时由 worker 提升、gate 断言完成时证据覆盖 | 509 passed / 58 files（2026-10-26） |
 | M15b ✅ | Fact 取代链：`fact_meta.supersedes` 只追加边、反向 `superseded_by` 推导、Observer fact 提案校验（种子/不存在/已取代）、完成 oracle 拒绝旧 Fact、只读 `GET /projects/{id}/supersedes` | 529 passed / 60 files（2026-10-27） |
+| M15c ✅ | 项目报告导出：只读 `GET /projects/{id}/report` 合成图、完成验证、run/成本统计、审计与工件汇总；`format=markdown` 人读版本；审计原文、工件路径与证据内容不导出 | 540 passed / 62 files（2026-10-27） |
 
 ## 与 Phase 0 的关系
 

@@ -375,6 +375,71 @@ export interface ProjectDetail {
   hints: Hint[];
 }
 
+/** Aggregate of the stored oracle checks; flag values are never part of a report. */
+export interface ProjectReportVerification {
+  kind: VerificationKind;
+  challenge_code: string | null;
+  checks: {
+    total: number;
+    passed: number;
+    failed: number;
+    last_checked_at: string | null;
+  };
+  latest: VerificationCheck | null;
+}
+
+export interface ProjectReportRunTotals {
+  runs: number;
+  finished: number;
+  succeeded: number;
+  failed: number;
+  tokens: number;
+  cost_usd: number;
+  avg_duration_ms: number | null;
+}
+
+/**
+ * Read-only snapshot of one project (M15c). It composes existing graph and sidecar reads
+ * and deliberately carries aggregates instead of raw audit events, artifact paths or
+ * evidence contents, so the report can be shared without leaking command output.
+ */
+export interface ProjectReport {
+  generated_at: string;
+  project: ProjectMeta;
+  verification: ProjectReportVerification;
+  graph: {
+    facts: number;
+    current_facts: number;
+    superseded_facts: number;
+    intents: number;
+    open_intents: number;
+    hints: number;
+  };
+  current_facts: Fact[];
+  hints: Hint[];
+  supersessions: FactSupersession[];
+  runs: {
+    totals: ProjectReportRunTotals;
+    by_worker: WorkerRunStats[];
+    by_model: ModelRunStats[];
+    by_profile: ProfileRunStats[];
+  };
+  cost: {
+    tokens: number;
+    cost_usd: number;
+    unattributed_tokens: number;
+    unattributed_cost_usd: number;
+    by_kind: CostKind[];
+  };
+  audit: {
+    tasks: number;
+    events: number;
+    first_at: string | null;
+    last_at: string | null;
+  };
+  artifacts: { count: number; bytes: number };
+}
+
 export type ProposalKind = "fact" | "intent" | "hint";
 export type ProposalStatus = "pending" | "applied" | "rejected" | "duplicate" | "dry_run";
 export type ProposalSource = "observer" | "strategist" | "human";

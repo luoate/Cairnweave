@@ -5,6 +5,7 @@ import {
   all,
   appendTaskAudit,
   buildProjectCostReport,
+  buildProjectReport,
   buildProjectRunStats,
   buildProjectSupersedeSummary,
   checkProjectCompleted,
@@ -57,6 +58,7 @@ import {
   recordFactMeta,
   releaseIntent,
   releaseReason,
+  renderProjectReportMarkdown,
   requestStrategistReplan,
   utcnow,
   type AuditEntry,
@@ -461,6 +463,26 @@ function buildRoutes(
   route("GET", "/projects/{project_id}/supersedes", ({ params }) =>
     db.withConn((conn) => json(buildProjectSupersedeSummary(conn, params["project_id"]!))),
   );
+
+  // Read-only project snapshot (M15c). It composes the graph detail with the runs, cost,
+  // verification, audit and artifact sidecars; `format=markdown` renders the same object.
+  route("GET", "/projects/{project_id}/report", ({ params, url }) => {
+    const format = url.searchParams.get("format") ?? "json";
+    if (format !== "json" && format !== "markdown") {
+      throw new HttpError(400, "Supported formats: json, markdown");
+    }
+    return db.withConn((conn) => {
+      const report = buildProjectReport(conn, params["project_id"]!, {
+        verificationFallback: oracle.defaultKind,
+      });
+      if (format === "markdown") {
+        return new Response(renderProjectReportMarkdown(report), {
+          headers: { "content-type": "text/markdown; charset=utf-8" },
+        });
+      }
+      return json(report);
+    });
+  });
 
   // Read-only slow-layer view (M12c): persisted trigger watermarks, the effective
   // per-project budget, open intents in dispatch order, and recent reason runs.
