@@ -1,6 +1,6 @@
 {
   "name": "cairn-merged",
-  "version": "0.21.0-m15f",
+  "version": "0.22.0-m16a",
   "private": true,
   "type": "module",
   "workspaces": [
@@ -10,7 +10,8 @@
   "scripts": {
     "cairn": "bun run apps/cairn/src/cli.ts",
     "test": "bun test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "bun x tsc --noEmit",
+    "check": "bun run typecheck && bun test"
   },
   "devDependencies": {
     "@types/bun": "^1.4.4",

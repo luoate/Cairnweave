@@ -1,4 +1,4 @@
-# 架构（M14b 更新）
+# 架构（M16a 更新）
 
 本文固定合并后的角色边界、数据所有权和失败语义。实现以本文为准；需要改动时先改本文并
 记录原因。
@@ -96,7 +96,12 @@ epsilon-greedy 探索，探索时选已结束 run 最少的 profile，`epsilon` 
 `tools/gate/m15e-calibration.ts` 用真实 model-prefs 核对 run 的 profile/model 记账、
 项目统计与报告分桶一致，并输出当前 epsilon 与探索预算。M15f 收尾 Phase 4：UI 常驻
 “无身份认证”提示、非回环绑定启动警告，新增 `docs/CONTRACT.md` 汇总 worker 文件契约，
-并把 Phase 0 相关表述改为已移除的现状。
+并把 Phase 0 相关表述改为已移除的现状。M16a 增加 CI 门槛
+（`.github/workflows/ci.yml`：`bun install --frozen-lockfile` → `typecheck` →
+`bun test`，本地等价命令 `bun run check`）与真实模型 A/B 工具
+`tools/gate/m16-model-ab.ts`：两个 arm 各自独立数据库/工作区、单 profile 统计配置，
+跑同一组 marker 项目，并要求两个 model-prefs 解析到不同模型、两侧 `runs.model`
+不重叠；第二个模型未配置时 gate 拒绝运行。
 
 ## 1. 范围
 

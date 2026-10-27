@@ -1,11 +1,13 @@
 # Cairn（合并重写）
 
+[![CI](https://github.com/luoate/Cairnweave/actions/workflows/ci.yml/badge.svg)](https://github.com/luoate/Cairnweave/actions/workflows/ci.yml)
+
 把 Cairn 的图内核（事实 / 意图 / 调度）与 BreachWeave 的执行层（Solver / tools /
 skills / Observer）合并成**一个 Bun/TypeScript 代码库**，不再维护 Python ↔ TypeScript
 之间的进程桥、JSONL RPC 和 worker 适配器。
 
-状态：**M15f（Phase 0 清理、认证提示与契约收尾）**；M0–M4、M5a–M5c、
-M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f 的计划项全部完成。Phase 1 的
+状态：**M16a（CI 门槛与真实模型 A/B 工具）**；M0–M4、M5a–M5c、
+M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a 的计划项全部完成。Phase 1 的
 “本地看板 + Observer 提案 + 证据门 + 单一写图者”闭环已具备；提案默认关闭。Phase 2
 的触发持久化、意图优先级/预算、单项目 token/成本与并发配额、只读慢层观测、逐 Fact
 成本归因与因果链，以及 reason 的 Hint/去重输出、人工重规划与资源压力触发均已落地，并
@@ -35,6 +37,14 @@ model-prefs 跑一次小项目，核对每个 run 的 profile/model 记账、项
 并输出当前 epsilon 与探索预算。M15f 收尾 Phase 4：Phase 0 的对照副本已不存在于仓库，文档
 改为现状说明；静态 UI 顶部常驻“无身份认证”提示，`cairn serve` 绑定非回环地址时在启动日志
 再次警告；新增 `docs/CONTRACT.md` 汇总 task/result/usage/audit 的字段、校验与退出码。
+M16a 加持续集成门槛：`.github/workflows/ci.yml` 在 Ubuntu 上用 Bun 1.4.4 执行
+`bun install --frozen-lockfile`、`bun run typecheck` 与 `bun test`，根脚本
+`bun run check` 在本地复现同一门槛，README 顶部显示 CI 徽章。真实模型 A/B 工具
+`tools/gate/m16-model-ab.ts` 为两个 arm 各建独立数据库与工作区、用单 profile 统计配置
+（`min_runs: 0`、`epsilon: 0`）跑同一组 marker 项目，比较成功率、Token、成本与耗时；
+启动前校验两个 model-prefs 条目存在且解析到不同 provider/model，观测到的 run.model
+集合必须不重叠，否则拒绝运行。当前 agent 配置只有 `deepseek-flash` 一个可用模型，真实
+对比留到 M16b——需要先把第二个模型加进 `model-prefs.json`。
 `cairn serve` 是可运行的 Cairn 兼容服务：SQLite schema、领域服务、全部
 五个路由、YAML/timeline 导出、静态 Web UI 均已就位，并用 Python Cairn 生成的 golden
 做了逐字对照。进程内 scheduler、任务/结果文件 worker 协议、BreachWeave Solver 接入已在 M2
@@ -504,6 +514,26 @@ M15f 增加（Phase 0 清理、认证提示与契约收尾）：
   路径/原子性与安全边界；README 文档索引与 `ARCHITECTURE.md` 数据所有权表指向它。
 - **验证**：UI 静态测试断言认证提示文案与回环地址说明；全量测试与 typecheck 通过。
 
+M16a 增加（CI 门槛与真实模型 A/B 工具）：
+
+- **CI 门槛**：`.github/workflows/ci.yml` 固定 Bun 1.4.4，缓存安装目录后执行
+  `bun install --frozen-lockfile`、`bun run typecheck`、`bun test`；`bun run check`
+  在本地按同一顺序执行。CI 只使用 fake solver，不需要模型凭据。
+- **真实模型 A/B**：`bun run tools/gate/m16-model-ab.ts`。两个 arm 顺序执行，各自使用
+  独立临时数据库、工作区和单 profile 统计配置（`min_runs: 0`、`epsilon: 0`），
+  创建同样的两个 marker 文件与两个未认领意图，因此每个任务都是 explore 且必然落到该
+  arm 的 model-prefs。报告记录每个 run 的 profile/model/outcome/Token/成本/耗时，给出
+  A−B 差值与两侧 summary。
+- **拒跑条件**：缺少 `CAIRN_AB_MODEL_A` / `CAIRN_AB_MODEL_B`、两个条目相同、或两个
+  条目解析到同一 `provider/model` 时直接失败（退出 2）；跑完后还要求两侧上报的
+  `run.model` 集合不重叠、任务数相同。这样不会把“同一个模型跑两次”记成 A/B。
+- **当前状态**：agent 配置里只有 `deepseek-flash`，且网关对 `deepseek-chat` 等常见
+  候选返回 `MODEL_NOT_SUPPORTED`；真实对比（M16b）阻塞在第二个模型配置上，工具本身
+  已就绪并验证了拒跑路径。`CAIRN_AB_SOLVER=fake` 可离线演练两个 arm 的派发与报告，
+  此时模型相关断言（`run.model`、模型集合不重叠）会按预期失败。
+- **验证**：`bun run tools/gate/m16-model-ab.ts` 在缺参和同条目两种情况下均以退出码 2
+  结束并写出 `runs/m16-model-ab.json`；全量测试与 typecheck 通过。
+
 默认仍是确定性 fake solver，测试与离线运行不需要模型凭据。Observer 只接在
 `CAIRN_SOLVER=breachweave` 的真实 Solver 路径上，fake solver 会忽略它。
 
@@ -629,7 +659,15 @@ bun run cairn serve --port 8000 --db-path ./cairn.db
 bun run cairn version
 bun test
 bun run typecheck
+bun run check        # typecheck + bun test，与 CI 相同
 ```
+
+### 持续集成（M16a）
+
+`.github/workflows/ci.yml` 在推送到 `main` 和 pull request 时运行：检出代码、安装
+Bun 1.4.4、按 `bun.lock` 缓存 `~/.bun/install/cache`，然后执行
+`bun install --frozen-lockfile`、`bun run typecheck` 和 `bun test`。CI 只跑 fake
+solver，不需要模型凭据；所有真实模型 gate 仍保留在 `tools/gate/` 手动执行。
 
 `serve` 支持 `--host`、`--port`、`--db-path`、`--static-dir`、`--log-level`、
 `--access-log/--no-access-log`（后两者为兼容 Cairn CLI 而接受）。`--config` 指向
@@ -982,6 +1020,17 @@ CAIRN_GATE_MAX_TASKS=2 CAIRN_GATE_MAX_MINUTES=8 \
 报告默认写到 `runs/m15e-calibration.json`。默认两个 profile 都指向 `cairn-worker`
 时只校准记账；用 `CAIRN_GATE_PROFILE_B_MODEL` 指向第二个 model-prefs 条目才会比较模型。
 
+M16a 的 A/B gate 需要两个不同的 model-prefs 条目，分别跑独立的 marker 项目：
+
+```bash
+CAIRN_AB_MODEL_A=<pref-a> CAIRN_AB_MODEL_B=<pref-b> \
+  CAIRN_AB_TASKS=2 bun run tools/gate/m16-model-ab.ts
+```
+
+报告默认写到 `runs/m16-model-ab.json`。gate 在条目缺失、相同或解析到同一模型时直接
+退出 2；跑完后要求两侧 `run.model` 不重叠、任务数相同。当前配置只有一个可用模型，
+真实对比留到 M16b。
+
 容器 + 真实模型的联调 gate 是 `tools/gate/m3-real-container-gate.ts`，同样不在
 `bun test` 中。它要求 Docker、`cairn-worker:latest` 与本机模型凭据，会真实调用模型并
 产生费用。除模型路径外，它还会在容器内用 `docker exec` 直接运行 Host Bridge 的
@@ -1024,9 +1073,9 @@ M6 的跨进程恢复 gate 不调用模型：它先写下一台崩溃控制面�
 bun run tools/gate/m6-restart-gate.ts
 ```
 
-## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f，2026-10-27，Bun 1.4.4）
+## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a，2026-10-27，Bun 1.4.4）
 
-- `bun test`：**545 passed**（62 个文件），0 failed。
+- `bun test`：**548 passed**（63 个文件），0 failed。
 - `bun run typecheck`：`tsc --noEmit` 通过。
 - **HTTP 对照**：`api.golden.json` 的 60 步请求（成功路径、400/403/404/405/409、租约过期、
   删除级联、导出、路由错误）由 Python FastAPI + 固定时钟生成；TS 重放后状态码、content-type
@@ -1246,6 +1295,10 @@ bun run tools/gate/m6-restart-gate.ts
 - **Phase 0 清理与契约收尾（M15f）**：UI 静态测试断言“无身份认证”与回环地址提示；
   `docs/CONTRACT.md` 与 contracts 源码逐字段核对（task 字段/limits、result 信封、
   usage 上限、audit 事件、退出码）；仓库内无 Phase 0 对照副本。
+- **CI 与 A/B 工具（M16a）**：`.github/workflows/ci.yml` 与 `bun run check` 执行同一
+  typecheck + test 门槛；Linux 容器用 Bun 镜像复跑同一命令验证不依赖 Windows 路径。
+  `tools/gate/m16-model-ab.ts` 在缺少两个 model-prefs、条目相同或同模型时以退出码 2
+  拒跑，并写出失败报告；真实 A/B 需要第二个可用模型，列入 M16b。
 
 golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定时钟、`TZ=UTC`）。
 重新生成方法与约束见 `docs/PORTING.md`。
@@ -1303,6 +1356,7 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M15d ✅ | 报告页与取代视图：「报告」页签展示完成判定、当前事实、取代边、run/成本与审计/工件汇总，提供 Markdown 下载；Fact 详情显示 `superseded_by`/`supersedes` 并可跳转 | 540 passed / 62 files（2026-10-27） |
 | M15e ✅ | 真实模型校准 + epsilon 探索/衰减：采样后按解析式预算探索（最少样本优先），`epsilon`/`epsilon_decay`/`epsilon_min` 可配；`tools/gate/m15e-calibration.ts` 用真实 model-prefs 核对 profile/model 记账与统计/报告一致 | 545 passed / 62 files（2026-10-27） |
 | M15f ✅ | Phase 4 收尾：Phase 0 对照副本移除的现状说明、UI 常驻“无身份认证”提示与非回环绑定警告、`docs/CONTRACT.md` 汇总 task/result/usage/audit 契约与退出码 | 545 passed / 62 files（2026-10-27） |
+| M16a ✅ | CI 门槛与真实模型 A/B 工具：GitHub Actions 执行 install/typecheck/test，`bun run check` 本地复现；`tools/gate/m16-model-ab.ts` 双 arm 独立数据库/工作区、同 marker、单 profile，强制两个不同 model-prefs 且两侧 run.model 不重叠 | 548 passed / 63 files（2026-10-27）；Linux 容器同门槛通过；真实 A/B 待第二个模型（M16b） |
 
 ## 与 Phase 0 的关系
 
