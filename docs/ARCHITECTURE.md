@@ -87,7 +87,9 @@ runtime prompt 扩展（priority/budget/dedupe/Hint 语义）；`POST /projects/
 按历史 `runs.worker_profile` 采样后选择模型，并把 profile/model 写入 task.json 与
 `runs`；prompt 模式保持原行为。M15c 已落地：只读 `GET /projects/{id}/report` 把一个
 项目的图、完成验证、run/成本统计、审计与工件汇总合成一个快照，`format=markdown`
-渲染同一对象；它不写图也不写旁路，且不输出审计事件原文、工件路径或证据内容。详见
+渲染同一对象；它不写图也不写旁路，且不输出审计事件原文、工件路径或证据内容。M15d
+已落地：静态 UI 增加「报告」页签读取该快照并提供 Markdown 下载，Fact 详情显示
+`supersedes`/`superseded_by` 并可在取代链上跳转。详见
 `docs/REPORT.md`。
 
 ## 1. 范围
@@ -601,6 +603,12 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
   按模型、按 Profile 三组卡片：运行数、成功/结束、成功率、Token、成本、平均耗时和最近
   启动。`model: null` 显示为“未记录模型”；`by_profile` 只在统计驱动选择启用后有数据；
   没有结束运行的组显示“无结束运行”而不是 0%。
+- `Report`（报告，M15d）读取 `GET /projects/{id}/report`，显示完成判定（策略、通过/
+  失败、最近检查、题目编号）、图状态、当前 Fact、取代边、run 总量与按 worker/model/
+  profile 分桶、审计与工件计数；右上角链接到同一路由的 `format=markdown` 由浏览器
+  下载。它只展示报告快照，不在前端重新组合数据。
+- Fact 详情（M15d）在 `GET /facts/{id}/meta` 返回 `superseded_by` 或非空 `supersedes`
+  时额外显示“取代关系”：点取代者可跳到新 Fact，点旧 Fact 可回到被取代项。
 - `Cost`（成本，M13b）读取 `GET /projects/{id}/cost`，显示项目总量与归因完整性、
   按 run kind 汇总、逐 Fact 的直付/编排成本及产出/创建 run、逐意图的执行与创建成本、
   因果边和每个 run 的直接产出。它不把意图合计与 Fact 合计相加。
@@ -690,6 +698,9 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
   人读版本。Markdown 渲染把用户内容折叠成单行并转义表格中的 `|`。只有 GET。
 - **边界**：报告不包含 timeline / YAML 导出（仍走 `GET /projects/{id}/export`），
   也不支持跨项目汇总；大项目会返回全部当前 Fact 与 Hint，尚无分页。
+- **静态 UI（M15d）**：「报告」页签打开时读取 JSON 快照并渲染上述字段，Markdown 按钮
+  直接指向 `?format=markdown`；Fact 详情的“取代关系”只读取 fact meta。两者都不写图、
+  不写旁路，也不改变调度；UI 的唯一写操作仍是慢层的人工重规划。
 
 ### 5.9 session 保留与启动对账（M6）
 

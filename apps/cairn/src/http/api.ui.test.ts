@@ -38,6 +38,7 @@ describe("static operations UI", () => {
     expect(html).toContain("selectSideTab('proposals')");
     expect(html).toContain("selectSideTab('cost')");
     expect(html).toContain("selectSideTab('stats')");
+    expect(html).toContain("selectSideTab('report')");
 
     const favicon = await api.handle(new Request("http://cairn.test/static/favicon.svg"));
     expect(favicon.status).toBe(200);
@@ -63,6 +64,7 @@ describe("static operations UI", () => {
       "loadProposals",
       "loadCost",
       "loadStats",
+      "loadReport",
     ]) {
       const start = appScript.indexOf(`async ${method}(`);
       expect(start).toBeGreaterThan(-1);
@@ -93,6 +95,8 @@ describe("static operations UI", () => {
     expect(appScript).toContain("/proposals`");
     expect(appScript).toContain("/cost`");
     expect(appScript).toContain("/stats`");
+    expect(appScript).toContain("/report`");
+    expect(appScript).toContain("format=markdown");
     expect(html).toContain("慢层");
     expect(html).toContain("单项目预算");
     expect(html).toContain("推理历史");
@@ -109,6 +113,10 @@ describe("static operations UI", () => {
     expect(html).toContain("只读");
     expect(html).toContain("溯源");
     expect(html).toContain("查看工具调用");
+    expect(html).toContain("当前事实");
+    expect(html).toContain("取代关系");
+    expect(html).toContain("已被取代");
+    expect(html).toContain("完成判定");
     expect(html).toContain("新建项目");
   });
 });

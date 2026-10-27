@@ -4,8 +4,8 @@
 skills / Observer）合并成**一个 Bun/TypeScript 代码库**，不再维护 Python ↔ TypeScript
 之间的进程桥、JSONL RPC 和 worker 适配器。
 
-状态：**M15c（项目报告导出）**；M0–M4、M5a–M5c、
-M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c 的计划项全部完成。Phase 1 的
+状态：**M15d（报告页与取代视图）**；M0–M4、M5a–M5c、
+M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d 的计划项全部完成。Phase 1 的
 “本地看板 + Observer 提案 + 证据门 + 单一写图者”闭环已具备；提案默认关闭。Phase 2
 的触发持久化、意图优先级/预算、单项目 token/成本与并发配额、只读慢层观测、逐 Fact
 成本归因与因果链，以及 reason 的 Hint/去重输出、人工重规划与资源压力触发均已落地，并
@@ -25,6 +25,9 @@ fact 提案可用 `supersedes` 声明它取代哪些旧结论，控制面校验�
 Fact，只读 `GET /projects/{id}/supersedes` 给出当前/被取代计数与边。M15c 增加只读
 `GET /projects/{id}/report`：把图、完成验证、run/成本统计、审计与工件汇总合成一个
 快照，`format=markdown` 渲染同一对象；审计事件原文、工件路径与证据内容不进入报告。
+M15d 把这些只读视图接进静态 UI：新增「报告」页签展示完成判定、当前事实、取代边、
+run/成本与审计/工件汇总，并提供 Markdown 下载；Fact 详情显示 `superseded_by` 与它
+取代的旧 Fact，可点击跳转。UI 仍只发 GET（唯一例外是慢层的人工重规划）。
 `cairn serve` 是可运行的 Cairn 兼容服务：SQLite schema、领域服务、全部
 五个路由、YAML/timeline 导出、静态 Web UI 均已就位，并用 Python Cairn 生成的 golden
 做了逐字对照。进程内 scheduler、任务/结果文件 worker 协议、BreachWeave Solver 接入已在 M2
@@ -443,6 +446,21 @@ M15c 增加（项目报告导出）：
   非法 `format` 400、未知项目 404、非 GET 405。Markdown 渲染折叠换行并转义表格。
 - **验证**：图测试覆盖空项目、取代排除、run/成本分桶、验证与工件汇总、旧项目策略
   回退、审计脱敏与 Markdown 稳定性；HTTP 测试覆盖 JSON、Markdown、400/404/405。
+
+M15d 增加（报告页与取代视图）：
+
+- **报告页签**：「报告」读取 `GET /projects/{id}/report`，显示完成判定（策略、通过/
+  失败、最近检查、题目编号）、图状态（当前/全部 Fact、被取代数、意图、Hint）、当前
+  Fact、取代边、run 总量与按 worker/model/profile 分桶、审计与工件计数。打开页签或
+  点刷新时拉取；错误在面板内显示并可重试。
+- **Markdown 导出**：面板右上角链接到 `GET /projects/{id}/report?format=markdown`，
+  由浏览器直接下载；UI 不重新渲染 Markdown。
+- **取代视图**：Fact 详情在 `meta.superseded_by` 或 `supersedes` 非空时显示“取代关系”；
+  被取代的 Fact 标出取代者，取代者可点回旧 Fact，二者都复用现有图选择。报告页签同时
+  列出项目内全部取代边。
+- **只读约束**：新增 loader 只发 GET；报告与取代视图不改变调度、图或旁路数据。
+- **验证**：UI 静态测试覆盖页签、`loadReport` 的 GET-only 约束、报告/取代文案与
+  Markdown 链接；全量测试与 typecheck 通过。
 
 默认仍是确定性 fake solver，测试与离线运行不需要模型凭据。Observer 只接在
 `CAIRN_SOLVER=breachweave` 的真实 Solver 路径上，fake solver 会忽略它。
@@ -952,7 +970,7 @@ M6 的跨进程恢复 gate 不调用模型：它先写下一台崩溃控制面�
 bun run tools/gate/m6-restart-gate.ts
 ```
 
-## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c，2026-10-27，Bun 1.4.4）
+## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d，2026-10-27，Bun 1.4.4）
 
 - `bun test`：**540 passed**（62 个文件），0 failed。
 - `bun run typecheck`：`tsc --noEmit` 通过。
@@ -1164,6 +1182,9 @@ bun run tools/gate/m6-restart-gate.ts
   worker/model/profile 分桶、验证检查汇总与工件字节数、旧项目策略回退、审计计数不含
   事件原文、Markdown 确定性与空集合标记；HTTP 测试覆盖默认 JSON、Markdown
   content-type、非法 `format` 400、未知项目 404 与 POST 405。
+- **报告页与取代视图（M15d）**：UI 静态测试确认「报告」页签、`loadReport` 仅发 GET、
+  Markdown 链接指向 `format=markdown`，页面含“完成判定/当前事实/取代关系/已被取代”；
+  内联脚本仍可解析。浏览器实测报告页与 Fact 取代跳转。
 
 golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定时钟、`TZ=UTC`）。
 重新生成方法与约束见 `docs/PORTING.md`。
@@ -1218,6 +1239,7 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M14a 收口 ✅ | 完成判定收紧：证据 Fact 必须关联 run、challenge 计数严格相等、`verification.evidence_enforcement` 默认开关、`/complete` 可选 operator token、模型把 `evidence_refs` 写进 `data` 时由 worker 提升、gate 断言完成时证据覆盖 | 509 passed / 58 files（2026-10-26） |
 | M15b ✅ | Fact 取代链：`fact_meta.supersedes` 只追加边、反向 `superseded_by` 推导、Observer fact 提案校验（种子/不存在/已取代）、完成 oracle 拒绝旧 Fact、只读 `GET /projects/{id}/supersedes` | 529 passed / 60 files（2026-10-27） |
 | M15c ✅ | 项目报告导出：只读 `GET /projects/{id}/report` 合成图、完成验证、run/成本统计、审计与工件汇总；`format=markdown` 人读版本；审计原文、工件路径与证据内容不导出 | 540 passed / 62 files（2026-10-27） |
+| M15d ✅ | 报告页与取代视图：「报告」页签展示完成判定、当前事实、取代边、run/成本与审计/工件汇总，提供 Markdown 下载；Fact 详情显示 `superseded_by`/`supersedes` 并可跳转 | 540 passed / 62 files（2026-10-27） |
 
 ## 与 Phase 0 的关系
 

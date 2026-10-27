@@ -586,7 +586,7 @@
           <button @click="selectSideTab('log')" class="px-2 py-2.5 text-[11px] font-medium transition border-b-2"
             :class="sideTab === 'log' ? 'text-brand-600 border-brand-500' : 'text-slate-400 border-transparent hover:text-slate-600'">日志</button>
         </div>
-        <div class="grid grid-cols-7 border-t border-slate-100 bg-slate-50/60">
+        <div class="grid grid-cols-8 border-t border-slate-100 bg-slate-50/60">
           <button @click="selectSideTab('runs')" class="px-2 py-2 text-[11px] font-medium transition border-b-2"
             :class="sideTab === 'runs' ? 'text-brand-600 border-brand-500 bg-white' : 'text-slate-400 border-transparent hover:text-slate-600'">
             运行 <span class="ml-0.5 text-[10px] opacity-60" x-show="runsPanel.loadedFor && runsPanel.items.length" x-text="runsPanel.items.length"></span>
@@ -612,6 +612,10 @@
           <button @click="selectSideTab('stats')" class="px-2 py-2 text-[11px] font-medium transition border-b-2"
             :class="sideTab === 'stats' ? 'text-brand-600 border-brand-500 bg-white' : 'text-slate-400 border-transparent hover:text-slate-600'">
             统计 <span class="ml-0.5 text-[10px] opacity-60" x-show="statsPanel.data && statsPanel.data.totals.runs" x-text="statsPanel.data ? statsPanel.data.totals.runs : ''"></span>
+          </button>
+          <button @click="selectSideTab('report')" class="px-2 py-2 text-[11px] font-medium transition border-b-2"
+            :class="sideTab === 'report' ? 'text-brand-600 border-brand-500 bg-white' : 'text-slate-400 border-transparent hover:text-slate-600'">
+            报告 <span class="ml-0.5 text-[10px] opacity-60" x-show="reportPanel.loadedFor && reportPanel.data" x-text="reportPanel.data ? reportPanel.data.graph.current_facts : ''"></span>
           </button>
         </div>
       </div>
@@ -743,6 +747,27 @@
                     </template>
                     <template x-if="factTrace.factId !== selectedFactId()">
                       <p class="text-[11px] text-slate-400">加载运行记录…</p>
+                    </template>
+                  </div>
+                </template>
+                <template x-if="selectedFactId() !== 'origin' && selectedFactId() !== 'goal' && factTrace.factId === selectedFactId() && !factTrace.loading && !factTrace.error && ((factTrace.meta && factTrace.meta.superseded_by) || (factTrace.meta && factTrace.meta.supersedes && factTrace.meta.supersedes.length))">
+                  <div class="pt-4 border-t border-slate-100 space-y-2">
+                    <p class="text-[10px] font-semibold text-amber-500 uppercase tracking-widest">取代关系</p>
+                    <template x-if="factTrace.meta && factTrace.meta.superseded_by">
+                      <div class="flex items-start justify-between gap-3">
+                        <span class="text-slate-400 shrink-0">已被取代</span>
+                        <button type="button" @click="selectFact(factTrace.meta.superseded_by)"
+                          class="font-mono text-[11px] text-amber-600 text-right break-all hover:underline" x-text="factTrace.meta.superseded_by"></button>
+                      </div>
+                    </template>
+                    <template x-if="factTrace.meta && factTrace.meta.supersedes && factTrace.meta.supersedes.length">
+                      <div class="space-y-1">
+                        <div class="text-slate-400">取代旧事实</div>
+                        <template x-for="oldId in factTrace.meta.supersedes" :key="`superseded-${oldId}`">
+                          <button type="button" @click="selectFact(oldId)"
+                            class="block w-full text-left font-mono text-[10px] text-slate-500 break-all hover:text-brand-600 hover:underline" x-text="oldId"></button>
+                        </template>
+                      </div>
                     </template>
                   </div>
                 </template>
@@ -1835,6 +1860,166 @@
           </div>
         </template>
       </div>
+
+      <!-- Project report (read-only, M15d) -->
+      <div x-show="sideTab === 'report'" class="flex-1 overflow-y-auto p-3 space-y-3 bg-slate-50/30">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <div class="flex items-center gap-1.5">
+              <span class="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">报告</span>
+              <span class="px-1.5 py-0.5 rounded-full border border-slate-200 bg-white text-[9px] font-medium uppercase tracking-wide text-slate-400">只读</span>
+            </div>
+            <p class="mt-1 text-xs text-slate-500"
+              x-text="reportPanel.data ? `生成于 ${formatTime(reportPanel.data.generated_at)} · ${reportPanel.data.project.status}` : '完成度、取代关系与用量快照'"></p>
+          </div>
+          <div class="flex shrink-0 items-center gap-1.5">
+            <button type="button" @click="loadReport()" :disabled="reportPanel.loading" title="刷新报告" aria-label="刷新报告"
+              class="h-7 w-7 rounded-lg border border-slate-200 bg-white text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition disabled:opacity-40 inline-flex items-center justify-center">
+              <svg class="w-3.5 h-3.5" :class="{ 'animate-spin': reportPanel.loading }" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5"/><path d="M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5"/></svg>
+            </button>
+            <a :href="reportMarkdownHref()" download
+              class="h-7 rounded-lg border border-slate-200 bg-white px-2 text-[10px] font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-600 transition inline-flex items-center">Markdown</a>
+          </div>
+        </div>
+
+        <template x-if="reportPanel.error">
+          <div class="rounded-xl border border-rose-200 bg-rose-50/80 px-3 py-2.5">
+            <p class="text-[11px] text-rose-600 break-words" x-text="reportPanel.error"></p>
+            <button type="button" @click="loadReport()" class="mt-1.5 text-[11px] font-medium text-rose-600 hover:text-rose-700">重试</button>
+          </div>
+        </template>
+
+        <template x-if="reportPanel.loading && !reportPanel.data">
+          <div class="space-y-2 animate-pulse">
+            <div class="h-24 rounded-2xl border border-slate-200 bg-white"></div>
+            <div class="h-36 rounded-2xl border border-slate-200 bg-white"></div>
+          </div>
+        </template>
+
+        <template x-if="!reportPanel.loading && !reportPanel.error && reportPanel.loadedFor && reportPanel.data">
+          <div class="space-y-3">
+            <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+              <div class="px-3 py-2.5 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between gap-2">
+                <span class="text-[11px] font-semibold text-slate-600">完成判定</span>
+                <span class="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[9px] font-semibold text-slate-500"
+                  x-text="verificationKindLabel(reportPanel.data.verification.kind)"></span>
+              </div>
+              <div class="p-3 grid grid-cols-2 gap-x-3 gap-y-2 text-[11px]">
+                <div><span class="text-slate-400">校验</span><div class="text-slate-600 tabular-nums" x-text="`${reportPanel.data.verification.checks.passed}/${reportPanel.data.verification.checks.total} 通过`"></div></div>
+                <div><span class="text-slate-400">失败</span><div class="text-slate-600 tabular-nums" x-text="reportPanel.data.verification.checks.failed"></div></div>
+                <div class="col-span-2"><span class="text-slate-400">最近校验</span>
+                  <div class="text-slate-600 break-words"
+                    x-text="reportPanel.data.verification.latest ? `${reportPanel.data.verification.latest.ok ? '通过' : '未通过'} · ${formatTime(reportPanel.data.verification.latest.checked_at)}` : '尚无校验记录'"></div>
+                </div>
+                <template x-if="reportPanel.data.verification.challenge_code">
+                  <div class="col-span-2"><span class="text-slate-400">题目编号</span>
+                    <div class="font-mono text-slate-600 break-all" x-text="reportPanel.data.verification.challenge_code"></div>
+                  </div>
+                </template>
+              </div>
+            </section>
+
+            <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+              <div class="px-3 py-2.5 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between gap-2">
+                <span class="text-[11px] font-semibold text-slate-600">图状态</span>
+                <span class="text-[10px] text-slate-400" x-text="`${reportPanel.data.graph.current_facts} 条当前事实`"></span>
+              </div>
+              <div class="p-3 grid grid-cols-3 gap-x-3 gap-y-2 text-[11px]">
+                <div><span class="text-slate-400">事实</span><div class="text-slate-600 tabular-nums" x-text="`${reportPanel.data.graph.current_facts} / ${reportPanel.data.graph.facts}`"></div></div>
+                <div><span class="text-slate-400">已取代</span><div class="text-slate-600 tabular-nums" x-text="reportPanel.data.graph.superseded_facts"></div></div>
+                <div><span class="text-slate-400">提示</span><div class="text-slate-600 tabular-nums" x-text="reportPanel.data.graph.hints"></div></div>
+                <div><span class="text-slate-400">意图</span><div class="text-slate-600 tabular-nums" x-text="`${reportPanel.data.graph.open_intents} 开放 / ${reportPanel.data.graph.intents}`"></div></div>
+              </div>
+            </section>
+
+            <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+              <div class="px-3 py-2.5 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between gap-2">
+                <span class="text-[11px] font-semibold text-slate-600">当前事实</span>
+                <span class="text-[10px] text-slate-400" x-text="`${reportPanel.data.current_facts.length} 条`"></span>
+              </div>
+              <div class="p-3 space-y-1.5">
+                <template x-if="reportPanel.data.current_facts.length === 0">
+                  <p class="text-[11px] text-slate-400">当前没有未被取代的事实。</p>
+                </template>
+                <template x-for="fact in reportPanel.data.current_facts" :key="`report-fact-${fact.id}`">
+                  <div class="rounded-lg border border-slate-100 bg-slate-50/50 px-2 py-1.5">
+                    <div class="font-mono text-[10px] text-slate-400 break-all" x-text="fact.id"></div>
+                    <p class="mt-0.5 text-[11px] text-slate-600 leading-relaxed break-words" x-text="fact.description"></p>
+                  </div>
+                </template>
+              </div>
+            </section>
+
+            <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+              <div class="px-3 py-2.5 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between gap-2">
+                <span class="text-[11px] font-semibold text-slate-600">取代关系</span>
+                <span class="text-[10px] text-slate-400" x-text="`${reportPanel.data.supersessions.length} 条`"></span>
+              </div>
+              <div class="p-3 space-y-1.5">
+                <template x-if="reportPanel.data.supersessions.length === 0">
+                  <p class="text-[11px] text-slate-400">没有事实被取代。</p>
+                </template>
+                <template x-for="edge in reportPanel.data.supersessions" :key="`report-supersede-${edge.fact_id}-${edge.superseded_by}`">
+                  <div class="rounded-lg border border-amber-200/70 bg-amber-50/50 px-2 py-1.5 text-[10px]">
+                    <div class="font-mono text-slate-500 break-all" x-text="`${edge.fact_id} → ${edge.superseded_by}`"></div>
+                    <p class="mt-0.5 text-slate-600 leading-relaxed break-words" x-text="edge.description"></p>
+                  </div>
+                </template>
+              </div>
+            </section>
+
+            <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+              <div class="px-3 py-2.5 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between gap-2">
+                <span class="text-[11px] font-semibold text-slate-600">运行</span>
+                <span class="text-[10px] text-slate-400" x-text="`${reportPanel.data.runs.totals.runs} 次`"></span>
+              </div>
+              <div class="p-3 grid grid-cols-3 gap-x-3 gap-y-2 text-[11px]">
+                <div><span class="text-slate-400">成功 / 结束</span><div class="text-slate-600 tabular-nums" x-text="`${reportPanel.data.runs.totals.succeeded} / ${reportPanel.data.runs.totals.finished}`"></div></div>
+                <div><span class="text-slate-400">Token</span><div class="text-slate-600 tabular-nums" x-text="formatNumber(reportPanel.data.runs.totals.tokens)"></div></div>
+                <div><span class="text-slate-400">成本</span><div class="text-slate-600 tabular-nums" x-text="strategistCostText(reportPanel.data.runs.totals.cost_usd)"></div></div>
+              </div>
+              <div class="px-3 pb-3 space-y-1.5">
+                <template x-for="row in reportPanel.data.runs.by_worker" :key="`report-worker-${row.worker}`">
+                  <div class="flex items-center justify-between gap-2 rounded-lg border border-slate-100 bg-slate-50/50 px-2 py-1 text-[10px]">
+                    <span class="font-mono text-slate-500 truncate" x-text="row.worker"></span>
+                    <span class="shrink-0 text-slate-400 tabular-nums" x-text="`${row.runs} 次 · ${statsRateLabel(row)} · ${formatNumber(row.tokens)} Token`"></span>
+                  </div>
+                </template>
+                <template x-for="row in reportPanel.data.runs.by_model" :key="`report-model-${row.model || 'unrecorded'}`">
+                  <div class="flex items-center justify-between gap-2 rounded-lg border border-slate-100 bg-slate-50/50 px-2 py-1 text-[10px]">
+                    <span class="font-mono text-slate-500 truncate" x-text="row.model || '未记录模型'"></span>
+                    <span class="shrink-0 text-slate-400 tabular-nums" x-text="`${row.runs} 次 · ${statsRateLabel(row)} · ${formatNumber(row.tokens)} Token`"></span>
+                  </div>
+                </template>
+                <template x-for="row in reportPanel.data.runs.by_profile" :key="`report-profile-${row.worker_profile}`">
+                  <div class="flex items-center justify-between gap-2 rounded-lg border border-slate-100 bg-slate-50/50 px-2 py-1 text-[10px]">
+                    <span class="font-mono text-slate-500 truncate" x-text="row.worker_profile"></span>
+                    <span class="shrink-0 text-slate-400 tabular-nums" x-text="`${row.runs} 次 · ${statsRateLabel(row)} · ${formatNumber(row.tokens)} Token`"></span>
+                  </div>
+                </template>
+              </div>
+            </section>
+
+            <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+              <div class="px-3 py-2.5 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between gap-2">
+                <span class="text-[11px] font-semibold text-slate-600">审计与产物</span>
+                <span class="text-[10px] text-slate-400">聚合视图</span>
+              </div>
+              <div class="p-3 space-y-1.5 text-[11px]">
+                <div class="flex items-center justify-between gap-2">
+                  <span class="text-slate-400">审计</span>
+                  <span class="text-slate-600 tabular-nums" x-text="`${reportPanel.data.audit.tasks} 任务 · ${reportPanel.data.audit.events} 事件`"></span>
+                </div>
+                <div class="flex items-center justify-between gap-2">
+                  <span class="text-slate-400">产物</span>
+                  <span class="text-slate-600 tabular-nums" x-text="`${reportPanel.data.artifacts.count} 文件 · ${formatNumber(reportPanel.data.artifacts.bytes)} 字节`"></span>
+                </div>
+                <p class="pt-1 text-[10px] text-slate-400">原始审计事件、产物路径与证据内容不会出现在报告中。</p>
+              </div>
+            </section>
+          </div>
+        </template>
+      </div>
     </div>
   </div>
 </div>
@@ -2238,6 +2423,12 @@ function cairnApp() {
       loadedFor: '',
     },
     statsPanel: {
+      data: null,
+      loading: false,
+      error: '',
+      loadedFor: '',
+    },
+    reportPanel: {
       data: null,
       loading: false,
       error: '',
@@ -2752,10 +2943,11 @@ function cairnApp() {
       this.proposalsPanel = { items: [], loading: false, error: '', loadedFor: '' };
       this.costPanel = { data: null, loading: false, error: '', loadedFor: '' };
       this.statsPanel = { data: null, loading: false, error: '', loadedFor: '' };
+      this.reportPanel = { data: null, loading: false, error: '', loadedFor: '' };
     },
 
     selectSideTab(tab) {
-      if (!['detail', 'hints', 'log', 'runs', 'strategist', 'audit', 'evidence', 'proposals', 'cost', 'stats'].includes(tab)) return;
+      if (!['detail', 'hints', 'log', 'runs', 'strategist', 'audit', 'evidence', 'proposals', 'cost', 'stats', 'report'].includes(tab)) return;
       this.sideTab = tab;
       this.loadActiveOpsTab();
     },
@@ -2768,6 +2960,7 @@ function cairnApp() {
       else if (this.sideTab === 'proposals') this.loadProposals();
       else if (this.sideTab === 'cost') this.loadCost();
       else if (this.sideTab === 'stats') this.loadStats();
+      else if (this.sideTab === 'report') this.loadReport();
     },
 
     async loadRuns() {
@@ -2909,6 +3102,28 @@ function cairnApp() {
       } finally {
         if (this.selectedProjectId === projectId) this.statsPanel.loading = false;
       }
+    },
+
+    async loadReport() {
+      const projectId = this.selectedProjectId;
+      if (!projectId) return;
+      this.reportPanel.loading = true;
+      this.reportPanel.error = '';
+      try {
+        const data = await this.api('GET', `/projects/${encodeURIComponent(projectId)}/report`);
+        if (this.selectedProjectId !== projectId) return;
+        this.reportPanel.data = data && typeof data === 'object' ? data : null;
+        this.reportPanel.loadedFor = projectId;
+      } catch (e) {
+        if (this.selectedProjectId === projectId) this.reportPanel.error = this.errorText(e);
+      } finally {
+        if (this.selectedProjectId === projectId) this.reportPanel.loading = false;
+      }
+    },
+
+    reportMarkdownHref() {
+      if (!this.selectedProjectId) return '#';
+      return `/projects/${encodeURIComponent(this.selectedProjectId)}/report?format=markdown`;
     },
 
     async loadAudit(preferredTaskId = null) {
@@ -3145,6 +3360,11 @@ function cairnApp() {
 
     statsAvgDurationLabel(ms) {
       return ms === null || ms === undefined ? '—' : this.formatDurationMs(ms);
+    },
+
+    verificationKindLabel(kind) {
+      const labels = { challenge: '题目校验', evidence: '证据校验', off: '关闭校验' };
+      return labels[kind] || kind || '—';
     },
 
     costFactRows() {

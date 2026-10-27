@@ -2,7 +2,7 @@
 import { runControl } from "./roles/control";
 import { runWorker } from "./roles/worker";
 
-const VERSION = "0.18.0-m15c";
+const VERSION = "0.19.0-m15d";
 
 function usage(): void {
   console.log(`cairn (merged) ${VERSION}

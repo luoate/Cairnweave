@@ -51,7 +51,7 @@ describe("cairn CLI", () => {
   test("prints its version", () => {
     const { code, stdout } = run(["version"]);
     expect(code).toBe(0);
-    expect(stdout).toContain("cairn 0.18.0-m15c");
+    expect(stdout).toContain("cairn 0.19.0-m15d");
   });
 
   test("prints usage for help and for no command", () => {
