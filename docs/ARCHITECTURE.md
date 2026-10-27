@@ -90,7 +90,11 @@ runtime prompt 扩展（priority/budget/dedupe/Hint 语义）；`POST /projects/
 渲染同一对象；它不写图也不写旁路，且不输出审计事件原文、工件路径或证据内容。M15d
 已落地：静态 UI 增加「报告」页签读取该快照并提供 Markdown 下载，Fact 详情显示
 `supersedes`/`superseded_by` 并可在取代链上跳转。详见
-`docs/REPORT.md`。
+`docs/REPORT.md`。M15e 已落地：`stats` 选择在采样期后按解析式累计预算做
+epsilon-greedy 探索，探索时选已结束 run 最少的 profile，`epsilon` 按
+`epsilon_decay` 衰减到 `epsilon_min` 下限；判断只读 run 历史、不含随机数。
+`tools/gate/m15e-calibration.ts` 用真实 model-prefs 核对 run 的 profile/model 记账、
+项目统计与报告分桶一致，并输出当前 epsilon 与探索预算。
 
 ## 1. 范围
 
@@ -856,14 +860,19 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
   `max_project_tasks` 为 `0` 时继承 `runtime.max_project_workers`，非零值仍会与全局
   `runtime.max_workers` 取较小值。token/成本按项目已结束 run 汇总，只拦截新的
   bootstrap/reason/explore，不拦截 pending conclude；在途任务未上报前可能超预算。
-- `worker_profiles` 与 `worker_selection` 是新增的可选段（M15a）：profiles 是
+- `worker_profiles` 与 `worker_selection` 是新增的可选段（M15a/M15e）：profiles 是
   `{id, model}` 数组，id 匹配 `[A-Za-z0-9][A-Za-z0-9._-]*`（≤64）且唯一，model 是
   model-prefs 条目名（≤128）；selection 的 `mode` 为 `prompt | stats`（默认 `prompt`），
-  `min_runs` 是非负整数（默认 `3`）。`stats` 模式必须至少有一个 profile。scheduler
+  `min_runs` 是非负整数（默认 `3`）。`epsilon`（默认 `0.1`，`0` 关闭探索）是采样期后
+  每次派发的探索概率上界，`epsilon_decay`（默认 `0.99`，范围 `(0,1]`）在每次合格派发后
+  乘到 `epsilon` 上，`epsilon_min`（默认 `0.01`）是下限且不得大于 `epsilon`。
+  `stats` 模式必须至少有一个 profile。scheduler
   把选中的 `workerProfile` / `model` 写入 `task.json`，并按 profile id/模型记录
   `runs`；`prompt` 模式完全保持旧行为。选择读取跨项目 `runs.worker_profile` 历史：
   先按配置顺序采样到每个 profile 有 `min_runs` 个已结束 run，再按成功率选择，平局依次
-  比较每结束 run 的 Token、成本与配置顺序；排队的 conclude 复用失败任务的 profile。
+  比较每结束 run 的 Token、成本与配置顺序；合格派发（扣除采样期）的累计探索预算
+  `Σ ε·decay^k` 整数部分增长时改为探索，选已结束 run 最少的 profile；排队的 conclude
+  复用失败任务的 profile。策略是确定性的：同样的 run 历史永远得到同样的选择。
   凭据仍只在 agent 配置中，派发表只出现 id 与模型名。
 - `verification` 是新增的可选段（M14a）：`evidence_enforcement` 为
   `completion | off`（默认 `completion`），决定 API 新建项目与旧项目的完成证据策略；
@@ -1084,9 +1093,11 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
     成本、平均耗时）与「统计」页签；仍未解决：统计按项目隔离，在跑任务的 model 尚为
     空，worker 仍固定为 `cairn-worker`，成功率的“结束”包含拒绝/取消/不健康，且统计
     尚未用于派发选择或跨项目汇总。M15a 已把 profile 统计接回派发：先采样后利用，
-    平局按 Token、成本、配置顺序打破，conclude 复用失败任务的 profile；仍未解决：
-    选择只会在 `stats` 模式下发生，冷启动样本少时退化为配置顺序，成功率未按任务难度
-    或项目类型分层，且没有 epsilon 探索/衰减，长期可能锁死在早期略优的 profile。
+    平局按 Token、成本、配置顺序打破，conclude 复用失败任务的 profile；M15e 补上
+    epsilon-greedy 探索（解析式衰减预算、探索时选最少样本）与真实 model-prefs 校准
+    gate；仍未解决：选择只会在 `stats` 模式下发生，冷启动样本少时退化为配置顺序，
+    成功率未按任务难度或项目类型分层，探索预算按“合格派发”而非墙钟时间计算，且
+    epsilon 默认值尚无跨项目长跑样本可校准。
     M14a 把完成判定收紧为完成时强制证据后，真实模型基线首次通过：3 个任务共 132,967
     tokens（input 12,317 / output 8,522 / cache read 112,128），1 个 Fact 带 `provided`
     证据并通过 evidence oracle 关闭项目。token 量随模型自行拆分探索的粒度波动很大

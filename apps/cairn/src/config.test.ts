@@ -88,7 +88,13 @@ describe("dispatcher config", () => {
       maxProjectTasks: 0,
     });
     expect(config.workerProfiles).toEqual([]);
-    expect(config.workerSelection).toEqual({ mode: "prompt", minRuns: 3 });
+    expect(config.workerSelection).toEqual({
+      mode: "prompt",
+      minRuns: 3,
+      epsilon: 0.1,
+      epsilonDecay: 0.99,
+      epsilonMin: 0.01,
+    });
     expect(config.verification).toEqual({
       evidenceEnforcement: "completion",
       challenge: {
@@ -461,7 +467,45 @@ worker_selection:
       { id: "fast", model: "cairn-worker" },
       { id: "deep", model: "deep-reasoner" },
     ]);
-    expect(config.workerSelection).toEqual({ mode: "stats", minRuns: 2 });
+    expect(config.workerSelection).toEqual({
+      mode: "stats",
+      minRuns: 2,
+      epsilon: 0.1,
+      epsilonDecay: 0.99,
+      epsilonMin: 0.01,
+    });
+  });
+
+  test("parses and validates worker selection exploration knobs", () => {
+    const config = parse(
+      BASE +
+        `worker_profiles:
+  - id: fast
+    model: cairn-worker
+worker_selection:
+  mode: stats
+  epsilon: 0.25
+  epsilon_decay: 0.9
+  epsilon_min: 0.02
+`,
+    );
+    expect(config.workerSelection).toEqual({
+      mode: "stats",
+      minRuns: 3,
+      epsilon: 0.25,
+      epsilonDecay: 0.9,
+      epsilonMin: 0.02,
+    });
+
+    expect(() => parse(BASE + "worker_selection: {epsilon: 1.5}\n")).toThrow(
+      "worker_selection.epsilon must be a number between 0 and 1",
+    );
+    expect(() => parse(BASE + "worker_selection: {epsilon_decay: 0}\n")).toThrow(
+      "worker_selection.epsilon_decay must be a number greater than 0 and at most 1",
+    );
+    expect(() =>
+      parse(BASE + "worker_selection: {epsilon: 0.1, epsilon_min: 0.2}\n"),
+    ).toThrow("worker_selection.epsilon_min must not exceed worker_selection.epsilon");
   });
 
   test("scopes artifacts by default only for concurrent project workers", () => {

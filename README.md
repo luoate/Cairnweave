@@ -4,8 +4,8 @@
 skills / Observer）合并成**一个 Bun/TypeScript 代码库**，不再维护 Python ↔ TypeScript
 之间的进程桥、JSONL RPC 和 worker 适配器。
 
-状态：**M15d（报告页与取代视图）**；M0–M4、M5a–M5c、
-M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d 的计划项全部完成。Phase 1 的
+状态：**M15e（真实模型校准 + epsilon 探索/衰减）**；M0–M4、M5a–M5c、
+M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e 的计划项全部完成。Phase 1 的
 “本地看板 + Observer 提案 + 证据门 + 单一写图者”闭环已具备；提案默认关闭。Phase 2
 的触发持久化、意图优先级/预算、单项目 token/成本与并发配额、只读慢层观测、逐 Fact
 成本归因与因果链，以及 reason 的 Hint/去重输出、人工重规划与资源压力触发均已落地，并
@@ -27,7 +27,12 @@ Fact，只读 `GET /projects/{id}/supersedes` 给出当前/被取代计数与边
 快照，`format=markdown` 渲染同一对象；审计事件原文、工件路径与证据内容不进入报告。
 M15d 把这些只读视图接进静态 UI：新增「报告」页签展示完成判定、当前事实、取代边、
 run/成本与审计/工件汇总，并提供 Markdown 下载；Fact 详情显示 `superseded_by` 与它
-取代的旧 Fact，可点击跳转。UI 仍只发 GET（唯一例外是慢层的人工重规划）。
+取代的旧 Fact，可点击跳转。UI 仍只发 GET（唯一例外是慢层的人工重规划）。M15e 给
+`stats` 选择补上 epsilon-greedy 探索：采样期结束后按解析式预算确定何时探索，探索时选
+样本最少的 profile，`epsilon` 可按 `epsilon_decay` 衰减到 `epsilon_min` 下限；策略仍由
+run 历史确定性推导，不引入随机数，离线可复现。`tools/gate/m15e-calibration.ts` 用真实
+model-prefs 跑一次小项目，核对每个 run 的 profile/model 记账、项目统计与报告分桶一致，
+并输出当前 epsilon 与探索预算。
 `cairn serve` 是可运行的 Cairn 兼容服务：SQLite schema、领域服务、全部
 五个路由、YAML/timeline 导出、静态 Web UI 均已就位，并用 Python Cairn 生成的 golden
 做了逐字对照。进程内 scheduler、任务/结果文件 worker 协议、BreachWeave Solver 接入已在 M2
@@ -461,6 +466,28 @@ M15d 增加（报告页与取代视图）：
 - **只读约束**：新增 loader 只发 GET；报告与取代视图不改变调度、图或旁路数据。
 - **验证**：UI 静态测试覆盖页签、`loadReport` 的 GET-only 约束、报告/取代文案与
   Markdown 链接；全量测试与 typecheck 通过。
+
+M15e 增加（epsilon 探索与真实模型校准）：
+
+- **探索时钟**：`stats` 模式先按配置顺序采样到每个 profile 有 `min_runs` 个已结束
+  run；之后每个 profile 的平均样本数构成“合格 run”计数。选择器用解析式累计预算
+  `Σ ε·decay^k`（到 `epsilon_min` 下限后保持）判定本次是否探索：累计预算的整数部分
+  增长时派发一次探索，否则利用当前成功率最高的 profile。
+- **探索目标**：探索时选已结束 run 最少的 profile（配置顺序打破平局），把样本补向
+  短板；利用规则与 M15a 相同（成功率 → Token → 成本 → 配置顺序）。整套判断只读取
+  `runs.worker_profile` 历史，不含随机数，冷启动/重放结果稳定。
+- **衰减与关闭**：`epsilon`（默认 `0.1`）、`epsilon_decay`（默认 `0.99`，须
+  `0 < decay ≤ 1`）、`epsilon_min`（默认 `0.01`，不得大于 `epsilon`）。`epsilon: 0`
+  关闭探索，回到纯 M15a 行为；`epsilon_min: 0` 让衰减最终淘汰探索。
+- **真实模型校准**：`bun run tools/gate/m15e-calibration.ts` 用 agent 配置中的真实
+  model-prefs 跑一个临时项目（默认最多 2 个任务），断言 run 都带配置内 profile、两个
+  profile 都拿到任务、至少一个 run 上报模型、`by_profile` 与项目 run 一致、报告分桶与
+  统计一致，并输出当前 eligible/epsilon/预算/下一次是否探索。默认两个 profile 映射同一
+  model-prefs 时只校准记账而非模型质量；用 `CAIRN_GATE_PROFILE_B_MODEL` 指向第二个条目
+  才能比较模型。该 gate 调用真实模型，默认不进 `bun test`。
+- **验证**：选择单测覆盖采样后首次探索、最少样本优先、衰减/下限/关闭与首选 profile
+  优先级；配置测试覆盖 `epsilon` 范围、`decay` 的 `(0,1]` 约束与 `min ≤ epsilon`；
+  全量测试与 typecheck 通过。
 
 默认仍是确定性 fake solver，测试与离线运行不需要模型凭据。Observer 只接在
 `CAIRN_SOLVER=breachweave` 的真实 Solver 路径上，fake solver 会忽略它。
@@ -928,6 +955,17 @@ CAIRN_GATE_BUDGET_TOKENS=1000 CAIRN_GATE_EXPECT_EXHAUSTED=1 \
 报告默认写到 `runs/m13-baseline.json`；参数、断言与基线数字见 `docs/STRATEGIST.md`
 第 10 节。它同样计费、不在 `bun test` 中。
 
+M15e 的派发校准 gate 用真实 model-prefs 跑一个两任务小项目，核对每个 run 的
+profile/model 记账、项目统计与报告分桶，并输出 epsilon 与探索预算：
+
+```bash
+CAIRN_GATE_MAX_TASKS=2 CAIRN_GATE_MAX_MINUTES=8 \
+  bun run tools/gate/m15e-calibration.ts
+```
+
+报告默认写到 `runs/m15e-calibration.json`。默认两个 profile 都指向 `cairn-worker`
+时只校准记账；用 `CAIRN_GATE_PROFILE_B_MODEL` 指向第二个 model-prefs 条目才会比较模型。
+
 容器 + 真实模型的联调 gate 是 `tools/gate/m3-real-container-gate.ts`，同样不在
 `bun test` 中。它要求 Docker、`cairn-worker:latest` 与本机模型凭据，会真实调用模型并
 产生费用。除模型路径外，它还会在容器内用 `docker exec` 直接运行 Host Bridge 的
@@ -970,9 +1008,9 @@ M6 的跨进程恢复 gate 不调用模型：它先写下一台崩溃控制面�
 bun run tools/gate/m6-restart-gate.ts
 ```
 
-## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d，2026-10-27，Bun 1.4.4）
+## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e，2026-10-27，Bun 1.4.4）
 
-- `bun test`：**540 passed**（62 个文件），0 failed。
+- `bun test`：**545 passed**（62 个文件），0 failed。
 - `bun run typecheck`：`tsc --noEmit` 通过。
 - **HTTP 对照**：`api.golden.json` 的 60 步请求（成功路径、400/403/404/405/409、租约过期、
   删除级联、导出、路由错误）由 Python FastAPI + 固定时钟生成；TS 重放后状态码、content-type
@@ -1185,6 +1223,10 @@ bun run tools/gate/m6-restart-gate.ts
 - **报告页与取代视图（M15d）**：UI 静态测试确认「报告」页签、`loadReport` 仅发 GET、
   Markdown 链接指向 `format=markdown`，页面含“完成判定/当前事实/取代关系/已被取代”；
   内联脚本仍可解析。浏览器实测报告页与 Fact 取代跳转。
+- **epsilon 探索与校准（M15e）**：选择单测用固定 run 历史断言采样后首次探索的
+  eligible 计数、最少样本优先、`epsilon: 0` 关闭、几何衰减与 `epsilon_min` 下限
+  （含精确累计预算）以及 preferred/rookie 的优先级；配置测试覆盖三个新字段的默认值、
+  范围与 `epsilon_min > epsilon` 拒绝。真实模型 gate 见 `tools/gate/m15e-calibration.ts`。
 
 golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定时钟、`TZ=UTC`）。
 重新生成方法与约束见 `docs/PORTING.md`。
@@ -1240,6 +1282,7 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M15b ✅ | Fact 取代链：`fact_meta.supersedes` 只追加边、反向 `superseded_by` 推导、Observer fact 提案校验（种子/不存在/已取代）、完成 oracle 拒绝旧 Fact、只读 `GET /projects/{id}/supersedes` | 529 passed / 60 files（2026-10-27） |
 | M15c ✅ | 项目报告导出：只读 `GET /projects/{id}/report` 合成图、完成验证、run/成本统计、审计与工件汇总；`format=markdown` 人读版本；审计原文、工件路径与证据内容不导出 | 540 passed / 62 files（2026-10-27） |
 | M15d ✅ | 报告页与取代视图：「报告」页签展示完成判定、当前事实、取代边、run/成本与审计/工件汇总，提供 Markdown 下载；Fact 详情显示 `superseded_by`/`supersedes` 并可跳转 | 540 passed / 62 files（2026-10-27） |
+| M15e ✅ | 真实模型校准 + epsilon 探索/衰减：采样后按解析式预算探索（最少样本优先），`epsilon`/`epsilon_decay`/`epsilon_min` 可配；`tools/gate/m15e-calibration.ts` 用真实 model-prefs 核对 profile/model 记账与统计/报告一致 | 545 passed / 62 files（2026-10-27） |
 
 ## 与 Phase 0 的关系
 

@@ -305,17 +305,30 @@ export interface WorkerProfileConfig {
 /**
  * How dispatch picks a worker profile. `prompt` keeps the model declared in the prompt
  * frontmatter and leaves runs untagged. `stats` samples every profile up to `min_runs`
- * finished runs, then always picks the observed best performer.
+ * finished runs, then exploits the observed best performer with a decaying epsilon
+ * exploration budget. Exploration is a deterministic function of the finished-run count,
+ * so a dispatch stays reproducible from run history.
  */
 export interface WorkerSelectionConfig {
   mode: WorkerSelectionMode;
   /** Finished runs a profile needs before it is eligible for exploitation. */
   minRuns: number;
+  /** Exploration probability per eligible dispatch before decay; 0 disables exploration. */
+  epsilon: number;
+  /** Per-eligible-dispatch multiplier applied to `epsilon`; 1 keeps it constant. */
+  epsilonDecay: number;
+  /** Exploration floor; 0 lets decay retire exploration entirely. */
+  epsilonMin: number;
 }
 
 export const DEFAULT_WORKER_SELECTION: WorkerSelectionConfig = {
   mode: "prompt",
   minRuns: 3,
+  // Conservative epsilon-greedy defaults: 10% exploration after sampling, decaying
+  // towards a 1% floor so a project never locks onto an early leader.
+  epsilon: 0.1,
+  epsilonDecay: 0.99,
+  epsilonMin: 0.01,
 };
 
 export const WORKER_SELECTION_MODES: readonly WorkerSelectionMode[] = ["prompt", "stats"];
@@ -794,6 +807,13 @@ function unitInterval(value: unknown, path: string): number {
   return value;
 }
 
+function positiveUnitInterval(value: unknown, path: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0 || value > 1) {
+    throw new ConfigError(`${path} must be a number greater than 0 and at most 1`);
+  }
+  return value;
+}
+
 function parseProposals(value: unknown): ProposalsConfig {
   const proposals = recordAt(value, "proposals");
   const maxFileBytes = has(proposals, "max_file_bytes")
@@ -911,6 +931,20 @@ function parseWorkerProfiles(value: unknown): WorkerProfileConfig[] {
 
 function parseWorkerSelection(value: unknown): WorkerSelectionConfig {
   const selection = recordAt(value, "worker_selection");
+  const epsilon = has(selection, "epsilon")
+    ? unitInterval(selection["epsilon"], "worker_selection.epsilon")
+    : DEFAULT_WORKER_SELECTION.epsilon;
+  const epsilonDecay = has(selection, "epsilon_decay")
+    ? positiveUnitInterval(selection["epsilon_decay"], "worker_selection.epsilon_decay")
+    : DEFAULT_WORKER_SELECTION.epsilonDecay;
+  const epsilonMin = has(selection, "epsilon_min")
+    ? unitInterval(selection["epsilon_min"], "worker_selection.epsilon_min")
+    : DEFAULT_WORKER_SELECTION.epsilonMin;
+  if (epsilonMin > epsilon) {
+    throw new ConfigError(
+      "worker_selection.epsilon_min must not exceed worker_selection.epsilon",
+    );
+  }
   return {
     mode: has(selection, "mode")
       ? oneOf(selection["mode"], "worker_selection.mode", WORKER_SELECTION_MODES)
@@ -918,6 +952,9 @@ function parseWorkerSelection(value: unknown): WorkerSelectionConfig {
     minRuns: has(selection, "min_runs")
       ? nonNegativeInt(selection["min_runs"], "worker_selection.min_runs")
       : DEFAULT_WORKER_SELECTION.minRuns,
+    epsilon,
+    epsilonDecay,
+    epsilonMin,
   };
 }
 

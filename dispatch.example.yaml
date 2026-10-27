@@ -181,12 +181,16 @@ retention:
 #   max_project_cost_usd: 0     # provider-reported USD total; 0 off
 #   max_project_tasks: 0        # per-project concurrency; 0 inherits max_project_workers
 
-# Optional worker profiles and stats-driven selection (M15a). A profile maps a stable id
-# to an entry in the agent's model-prefs.json. In "prompt" mode (default) the task keeps
+# Optional worker profiles and stats-driven selection (M15a/M15e). A profile maps a stable
+# id to an entry in the agent's model-prefs.json. In "prompt" mode (default) the task keeps
 # the prompt frontmatter model and runs are not tagged. In "stats" mode the scheduler
 # samples every profile in config order until each has min_runs finished runs, then picks
 # the highest success rate, breaking ties by fewer tokens per finished run, lower cost,
-# then config order. A queued conclude reuses the failed task's profile while it is still
+# then config order. After sampling, an epsilon-greedy schedule may explore instead: the
+# cumulative budget sum(epsilon * epsilon_decay^k) over eligible dispatches grows by one
+# whole unit -> the least-sampled profile gets the task. epsilon: 0 disables exploration;
+# epsilon_min > 0 keeps a permanent floor. All decisions derive from run history, so they
+# are reproducible. A queued conclude reuses the failed task's profile while it is still
 # configured. The chosen id and model go into task.json and runs.worker_profile/model.
 # worker_profiles:
 #   - id: fast
@@ -196,6 +200,9 @@ retention:
 # worker_selection:
 #   mode: prompt                # prompt | stats
 #   min_runs: 3
+#   epsilon: 0.1                # 0 disables exploration
+#   epsilon_decay: 0.99         # (0,1]; 1 keeps epsilon constant
+#   epsilon_min: 0.01           # floor; must not exceed epsilon
 
 # Completion verification (M14a). The policy is chosen per project at creation time
 # (`verification.kind`: challenge | evidence | off). `evidence_enforcement` supplies the
