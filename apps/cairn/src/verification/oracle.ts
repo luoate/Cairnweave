@@ -25,7 +25,7 @@ import {
   type VerificationKind,
 } from "@cairn/graph";
 
-import type { VerificationConfig } from "../config";
+import { defaultVerificationKind, type VerificationConfig } from "../config";
 
 export interface VerificationOptions {
   /** Fact ids that justify completion. Defaults to every non-seed fact. */
@@ -81,6 +81,8 @@ interface ChallengeEnvelope {
 export class VerificationService {
   private readonly fetchImpl: FetchLike;
   private readonly env: Record<string, string | undefined>;
+  /** Policy used for projects created before `project_verification` existed. */
+  readonly defaultKind: "evidence" | "off";
 
   constructor(
     private readonly db: CairnDatabase,
@@ -92,13 +94,16 @@ export class VerificationService {
   ) {
     this.fetchImpl = options.fetch ?? fetch;
     this.env = options.env ?? process.env;
+    this.defaultKind = defaultVerificationKind(config);
   }
 
   async verify(
     projectId: string,
     options: VerificationOptions = {},
   ): Promise<VerificationOutcome> {
-    const policy = this.db.withConn((conn) => getProjectVerification(conn, projectId));
+    const policy = this.db.withConn((conn) =>
+      getProjectVerification(conn, projectId, this.defaultKind),
+    );
     const checkedAt = new Date().toISOString();
 
     let result: {
@@ -179,6 +184,8 @@ export class VerificationService {
     }
     const requested = options.facts;
     const snapshot = this.db.withConn((conn) => {
+      // Seed facts are premises, not produced evidence. A completion claim may include
+      // them (for example `from: ["origin", "f003"]`), but only non-seed facts are checked.
       const factIds =
         requested === undefined
           ? (
@@ -188,7 +195,7 @@ export class VerificationService {
                 )
                 .all(projectId) as Array<{ id: string }>
             ).map((row) => row.id)
-          : [...requested];
+          : requested.filter((factId) => factId !== "origin" && factId !== "goal");
       const gaps: EvidenceGap[] = [];
       const refs: string[] = [];
       for (const factId of factIds) {
@@ -200,6 +207,14 @@ export class VerificationService {
         const files = listFactEvidence(conn, projectId, factId);
         if (meta.evidence_status !== "provided") {
           gaps.push({ factId, reason: `evidence status is ${meta.evidence_status}` });
+          continue;
+        }
+        if (meta.run_id === null) {
+          gaps.push({ factId, reason: "fact is not linked to a run" });
+          continue;
+        }
+        if (meta.evidence_refs.length === 0) {
+          gaps.push({ factId, reason: "no evidence refs were recorded" });
           continue;
         }
         if (files === null || files.length === 0) {
@@ -312,7 +327,7 @@ export class VerificationService {
     if (flagCount <= 0) {
       return challengeFailure(`challenge "${code}" has no flags to verify`);
     }
-    if (flagGotCount < flagCount) {
+    if (flagGotCount !== flagCount) {
       return {
         ok: false,
         detail: `challenge "${code}" has ${flagGotCount}/${flagCount} flags`,

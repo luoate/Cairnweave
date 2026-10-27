@@ -198,11 +198,14 @@ retention:
 #   min_runs: 3
 
 # Completion verification (M14a). The policy is chosen per project at creation time
-# (`verification.kind`: challenge | evidence | off); this section only configures how a
-# challenge project reaches the external verifier. The two values below are environment
+# (`verification.kind`: challenge | evidence | off). `evidence_enforcement` supplies the
+# default for API-created projects and for legacy projects without a stored policy;
+# `completion` requires evidence before a project may close, `off` is the escape hatch
+# for old projects and offline tests. The two challenge values below are environment
 # variable NAMES, never tokens or URLs. The oracle stores flag counts only; flag values
 # and the Agent-Token must never appear in this file, task.json, result.json or logs.
 # verification:
+#   evidence_enforcement: completion   # completion | off
 #   challenge:
 #     base_url_env: TCH_CHALLENGE_API_BASE_URL
 #     agent_token_env: TCH_CHALLENGE_AGENT_TOKEN

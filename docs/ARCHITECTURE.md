@@ -313,7 +313,9 @@ M5a/M5b 只增加旁路数据，不改图模型、YAML 导出和既有 HTTP 响�
 - **证据引用在结果根级**：worker 可以在 `result.json` 顶层写
   `evidence_refs: ["artifacts/report.txt", ...]`。它不进入 Cairn payload（`data`），
   因此现有 payload 校验器和 golden 响应不受影响；宽容解析器也会把裸 payload 里的
-  `evidence_refs` 提升到根级。
+  `evidence_refs` 提升到根级。模型仍常把它写进 `data`（payload 所在处），所以 worker
+  归一化时会把 `data.evidence_refs` 提升到根级并从 `data` 移除，根级值优先；否则
+  控制面只会看到“无证据”，而模型自己认为已经提供了。
 - **路径校验**（`scheduler/evidence.ts`）：逐条要求非空字符串、长度 ≤512、最多 20 条，
   拒绝 NUL、绝对路径/盘符、`..`、目录、符号链接；先按工作区做词法包含检查，再用
   realpath 复核，防止链接逃逸。通过后反斜杠统一为 `/` 并去重。
@@ -339,16 +341,20 @@ M5a/M5b 只增加旁路数据，不改图模型、YAML 导出和既有 HTTP 响�
 判定结果随后单独写入 `verification_checks`。
 
 - **策略**：`project_verification.kind` 为 `evidence`（默认）/ `challenge` / `off`；
-  创建项目时可指定，旧项目无行时合成 `evidence`。策略不进入图模型或 YAML。
+  创建项目时可指定。`verification.evidence_enforcement`（`completion` 默认 / `off`）
+  是 API 新建项目的默认策略，也是旧项目无行时的回退；策略不进入图模型或 YAML。
 - **evidence**：reason 检查 `data.complete.from` 的每个 Fact 的 `fact_meta` 与
-  `fact_evidence`；bootstrap 因为 Fact 在同一事务里创建，改用任务级
+  `fact_evidence`：必须有 `run_id`、非空 `evidence_refs`、`evidence_status=provided`
+  且至少一条证据文件。bootstrap 因为 Fact 在同一事务里创建，改用任务级
   `evidence_refs`。无任何非种子 Fact 时失败。
 - **challenge**：`GET <base_url>/api/challenges`，`Agent-Token` 取自环境变量；
-  按 `challenge_code` 匹配，要求 `flag_count > 0` 且 `flag_got_count >= flag_count`。
-  环境缺失、网络/超时、非 2xx、非法 JSON、`code != 0`、形状错误一律失败。
+  按 `challenge_code` 匹配，要求 `flag_count > 0` 且
+  `flag_got_count == flag_count`。环境缺失、网络/超时、非 2xx、非法 JSON、
+  `code != 0`、形状错误或计数不一致一律失败。
   **只保存计数，不保存 flag 明文或 token。**
 - **失败**：reason 释放租约并保持 active；bootstrap 保留 Fact、推迟完成；oracle 抛错
-  按任务失败处理。手工 `POST /complete` 仍是操作员覆盖，不经过 oracle。
+  按任务失败处理。手工 `POST /complete` 仍是操作员覆盖，不经过 oracle；配置
+  `CAIRN_OPERATOR_TOKEN` 后要求 `X-Cairn-Operator-Token`。
 - 详见 `docs/VERIFICATION.md`。
 
 ## 5. 内部契约
@@ -389,6 +395,8 @@ M5a/M5b 只增加旁路数据，不改图模型、YAML 导出和既有 HTTP 响�
 - `evidence_refs` 必须是字符串数组，路径相对**项目工作区**、以 `/` 分隔；它不影响
   `data` 的既有 payload 校验。`accepted:false` 时忽略。M5b 起每条被接受的文件都会在
   `fact_evidence` 里留下 size/SHA-256 快照。
+- 模型若把 `evidence_refs` 写进 `data`，worker 会在写结果文件前把它提升到根级
+  （根级已有时以根级为准），因为控制面只读根级字段。
 - 省略或空数组表示“本任务没有文件证据”，记为 `missing`，不拒绝任务；一旦提供了条目，
   任一条非法（绝对路径、`..`、目录、符号链接、不存在、越界）就使任务失败。详见 §4.1。
 - 为什么写文件而不是 stdout：Solver、工具和依赖都可能往 stdout 打日志；结果文件是唯一
@@ -526,7 +534,8 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
   challenge_code, flag_count, flag_got_count, evidence_refs, checked_at, check}`。
   未知项目 404；body 形状非法 400；非法 JSON 422。会追加一行 `verification_checks`。
 - `GET /projects/{id}/verification`（M14a，只读）→ `{policy, latest}`。`policy` 对
-  无行项目合成默认 `evidence`；`latest` 为最近一次检查或 `null`。未知项目 404。
+  无行项目按 `verification.evidence_enforcement` 合成 `evidence` / `off`；`latest` 为
+  最近一次检查或 `null`。未知项目 404。
 - `GET /projects/{id}/facts/{fact_id}/meta` → 单条 meta；Fact 存在但没有 sidecar 行时
   返回合成的 `legacy` 记录，未知 Fact 404。响应形状与既有 API 一致，直接是 JSON 对象，
   不加信封。
@@ -786,10 +795,12 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
   先按配置顺序采样到每个 profile 有 `min_runs` 个已结束 run，再按成功率选择，平局依次
   比较每结束 run 的 Token、成本与配置顺序；排队的 conclude 复用失败任务的 profile。
   凭据仍只在 agent 配置中，派发表只出现 id 与模型名。
-- `verification` 是新增的可选段（M14a）：`challenge.base_url_env` /
-  `challenge.agent_token_env` 是**环境变量名**（默认 `TCH_CHALLENGE_API_BASE_URL` /
-  `TCH_CHALLENGE_AGENT_TOKEN`），`challenge.timeout_ms` 是正整数（默认 `5000`）。
-  配置里不保存地址或 token 的值；缺省使用默认名，非法值以 `ConfigError` 拒绝。
+- `verification` 是新增的可选段（M14a）：`evidence_enforcement` 为
+  `completion | off`（默认 `completion`），决定 API 新建项目与旧项目的完成证据策略；
+  `challenge.base_url_env` / `challenge.agent_token_env` 是**环境变量名**（默认
+  `TCH_CHALLENGE_API_BASE_URL` / `TCH_CHALLENGE_AGENT_TOKEN`），
+  `challenge.timeout_ms` 是正整数（默认 `5000`）。配置里不保存地址或 token 的值；
+  缺省使用默认值，非法值以 `ConfigError` 拒绝。
 - `audit_stream` 是新增的可选段（M9，默认关闭）：`enabled`（布尔，默认 `false`）、
   `url`（可选的 http(s) 地址）。启用后 scheduler 才签发 bearer token 并注入 worker；
   本地模式在 `url` 缺省时使用实际监听的 loopback 地址，容器模式必须显式配置。缺省值
@@ -1008,3 +1019,7 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
     平局按 Token、成本、配置顺序打破，conclude 复用失败任务的 profile；仍未解决：
     选择只会在 `stats` 模式下发生，冷启动样本少时退化为配置顺序，成功率未按任务难度
     或项目类型分层，且没有 epsilon 探索/衰减，长期可能锁死在早期略优的 profile。
+    M14a 把完成判定收紧为完成时强制证据后，真实模型基线首次通过：3 个任务共 132,967
+    tokens（input 12,317 / output 8,522 / cache read 112,128），1 个 Fact 带 `provided`
+    证据并通过 evidence oracle 关闭项目。token 量随模型自行拆分探索的粒度波动很大
+    （同配置的失败试跑达到 23–25 万），只能作量级参考。

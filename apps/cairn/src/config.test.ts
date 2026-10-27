@@ -90,6 +90,7 @@ describe("dispatcher config", () => {
     expect(config.workerProfiles).toEqual([]);
     expect(config.workerSelection).toEqual({ mode: "prompt", minRuns: 3 });
     expect(config.verification).toEqual({
+      evidenceEnforcement: "completion",
       challenge: {
         baseUrlEnv: "TCH_CHALLENGE_API_BASE_URL",
         agentTokenEnv: "TCH_CHALLENGE_AGENT_TOKEN",
@@ -113,6 +114,28 @@ describe("dispatcher config", () => {
       agentTokenEnv: "CUSTOM_AGENT_TOKEN",
       timeoutMs: 1500,
     });
+  });
+
+  test("parses the evidence enforcement switch", () => {
+    const config = parse(
+      BASE +
+        `verification:
+  evidence_enforcement: off
+`,
+    );
+    expect(config.verification.evidenceEnforcement).toBe("off");
+    expect(config.verification.challenge.timeoutMs).toBe(5000);
+  });
+
+  test("rejects an unknown evidence enforcement mode", () => {
+    expect(() =>
+      parse(
+        BASE +
+          `verification:
+  evidence_enforcement: exploration
+`,
+      ),
+    ).toThrow("verification.evidence_enforcement");
   });
 
   test("rejects an invalid verification timeout", () => {

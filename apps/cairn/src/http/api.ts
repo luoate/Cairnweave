@@ -63,6 +63,7 @@ import {
   type IntentRow,
   type ProjectRow,
 } from "@cairn/graph";
+import { timingSafeEqual } from "node:crypto";
 import { resolve, sep } from "node:path";
 
 import type { AuditTokenRegistry } from "../audit-stream/tokens";
@@ -89,6 +90,12 @@ export interface ApiOptions {
   budget?: BudgetConfig;
   /** Completion oracle; defaults to the evidence policy and env-based challenge config. */
   verification?: VerificationService;
+  /**
+   * Opt-in operator secret for the manual completion override. When set (the control
+   * role reads `CAIRN_OPERATOR_TOKEN`), `POST /projects/{id}/complete` requires a matching
+   * `X-Cairn-Operator-Token` header; when unset the route keeps its historical behavior.
+   */
+  operatorToken?: string;
 }
 
 export interface Api {
@@ -139,6 +146,22 @@ function parseVerifyFacts(value: unknown): string[] | undefined {
     }
     return fact.trim();
   });
+}
+
+/**
+ * Manual completion is an operator override, not a worker action. The guard is opt-in so
+ * existing deployments and the API golden keep working when no token is configured.
+ */
+function requireOperator(request: Request, operatorToken: string | undefined): void {
+  if (operatorToken === undefined || operatorToken === "") {
+    return;
+  }
+  const provided = request.headers.get("x-cairn-operator-token") ?? "";
+  const expected = Buffer.from(operatorToken);
+  const actual = Buffer.from(provided);
+  if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) {
+    throw new HttpError(401, "operator token required");
+  }
 }
 
 async function readBody(request: Request, maxBytes?: number): Promise<unknown> {
@@ -249,10 +272,17 @@ function parseAuditStreamBody(value: unknown): AuditEntry[] {
 }
 
 export function createApi(options: ApiOptions): Api {
-  const { db, staticDir, workspaceRoot, auditTokens, budget } = options;
+  const { db, staticDir, workspaceRoot, auditTokens, budget, operatorToken } = options;
   const verification =
     options.verification ?? new VerificationService(db, DEFAULT_VERIFICATION);
-  const routes = buildRoutes(db, workspaceRoot, auditTokens, budget, verification);
+  const routes = buildRoutes(
+    db,
+    workspaceRoot,
+    auditTokens,
+    budget,
+    verification,
+    operatorToken,
+  );
 
   async function handle(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -353,6 +383,7 @@ function buildRoutes(
   auditTokens?: AuditTokenRegistry,
   budget?: BudgetConfig,
   verification?: VerificationService,
+  operatorToken?: string,
 ): Route[] {
   const routes: Route[] = [];
   const oracle = verification ?? new VerificationService(db, DEFAULT_VERIFICATION);
@@ -394,7 +425,13 @@ function buildRoutes(
 
   route("POST", "/projects", async ({ request }) => {
     const body = parseCreateProjectRequest(await readBody(request));
-    return db.withConn((conn) => json(createProject(conn, body), 201));
+    // Pin the configured evidence policy at creation time. A later config change must not
+    // silently re-open or re-verify projects that already exist.
+    const payload =
+      body.verification === undefined || body.verification === null
+        ? { ...body, verification: { kind: oracle.defaultKind } }
+        : body;
+    return db.withConn((conn) => json(createProject(conn, payload), 201));
   });
 
   route("GET", "/projects/{project_id}", ({ params }) =>
@@ -691,6 +728,7 @@ function buildRoutes(
   });
 
   route("POST", "/projects/{project_id}/complete", async ({ params, request }) => {
+    requireOperator(request, operatorToken);
     const body = parseCompleteRequest(await readBody(request));
     return db.withConn((conn) =>
       json(completeProject(conn, params["project_id"]!, body)),
@@ -710,7 +748,7 @@ function buildRoutes(
     db.withConn((conn) => {
       const projectId = params["project_id"]!;
       return json({
-        policy: getProjectVerification(conn, projectId),
+        policy: getProjectVerification(conn, projectId, oracle.defaultKind),
         latest: getLatestVerificationCheck(conn, projectId),
       });
     }),

@@ -130,12 +130,54 @@ describe("evidence verification", () => {
     expect((await service().verify(projectId, { facts: [bare] })).ok).toBe(false);
   });
 
+  test("fails when a fact has evidence files but no run", async () => {
+    const projectId = createRow();
+    const factId = db.withConn((conn) => {
+      const intent = createIntent(conn, projectId, {
+        from: ["origin"],
+        description: "probe",
+        creator: "tester",
+        worker: null,
+      });
+      heartbeatIntent(conn, projectId, intent.id, WORKER);
+      return concludeIntent(conn, projectId, intent.id, WORKER, "found", {
+        evidenceRefs: ["artifacts/probe.txt"],
+        evidenceStatus: "provided",
+        evidenceFiles: [
+          {
+            path: "artifacts/probe.txt",
+            size: Buffer.byteLength(CONTENT),
+            sha256: createHash("sha256").update(CONTENT).digest("hex"),
+          },
+        ],
+      }).fact.id;
+    });
+
+    const outcome = await service().verify(projectId, { facts: [factId] });
+
+    expect(outcome.ok).toBe(false);
+    expect(outcome.detail).toContain("fact is not linked to a run");
+  });
+
   test("fails when there are no non-seed facts to evidence", async () => {
     const projectId = createRow();
     const outcome = await service().verify(projectId);
 
     expect(outcome.ok).toBe(false);
     expect(outcome.detail).toContain("no non-seed facts");
+  });
+
+  test("does not require evidence for seed facts in the completion claim", async () => {
+    const projectId = createRow();
+
+    const seedOnly = await service().verify(projectId, { facts: ["origin", "goal"] });
+    expect(seedOnly.ok).toBe(false);
+    expect(seedOnly.detail).toContain("no non-seed facts");
+
+    const factId = addFact(projectId);
+    const mixed = await service().verify(projectId, { facts: ["origin", factId] });
+    expect(mixed.ok).toBe(true);
+    expect(mixed.evidence_refs).toEqual(["artifacts/probe.txt"]);
   });
 
   test("checks bootstrap completion against the task-level evidence", async () => {
@@ -209,6 +251,18 @@ describe("challenge verification", () => {
 
     expect(outcome.ok).toBe(true);
     expect(outcome.detail).toBe('challenge "web-01" has all 3 flag(s)');
+  });
+
+  test("fails closed when the counters are inconsistent", async () => {
+    const projectId = createRow({ kind: "challenge", challenge_code: "web-01" });
+    const outcome = await service({
+      env: CHALLENGE_ENV,
+      fetch: async () =>
+        challengeEnvelope([{ code: "web-01", flag_count: 2, flag_got_count: 3 }]),
+    }).verify(projectId);
+
+    expect(outcome.ok).toBe(false);
+    expect(outcome.detail).toBe('challenge "web-01" has 3/2 flags');
   });
 
   test("fails closed when the environment is incomplete", async () => {

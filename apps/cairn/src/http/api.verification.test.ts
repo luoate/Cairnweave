@@ -85,8 +85,27 @@ function addFact(projectId: string, evidence = true): string {
   });
 }
 
-function api(verification?: VerificationService): Api {
-  return createApi({ db, ...(verification === undefined ? {} : { verification }) });
+function api(verification?: VerificationService, operatorToken?: string): Api {
+  return createApi({
+    db,
+    ...(verification === undefined ? {} : { verification }),
+    ...(operatorToken === undefined ? {} : { operatorToken }),
+  });
+}
+
+function postWithHeaders(
+  instance: Api,
+  path: string,
+  body: unknown,
+  headers: Record<string, string>,
+): Promise<Response> {
+  return instance.handle(
+    new Request(`http://cairn.test${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...headers },
+      body: JSON.stringify(body),
+    }),
+  );
 }
 
 function post(instance: Api, path: string, body?: unknown): Promise<Response> {
@@ -211,6 +230,96 @@ describe("POST /projects/{id}/verify", () => {
     const outcome = (await response.json()) as Record<string, unknown>;
 
     expect(outcome).toMatchObject({ kind: "off", ok: true });
+  });
+});
+
+describe("evidence enforcement configuration", () => {
+  test("creates projects with the configured default policy", async () => {
+    const service = new VerificationService(db, {
+      ...DEFAULT_VERIFICATION,
+      evidenceEnforcement: "off",
+    });
+    const response = await post(api(service), "/projects", {
+      title: "off by default",
+      origin: "origin",
+      goal: "goal",
+      scope: { targets: ["127.0.0.1:8080"] },
+    });
+    expect(response.status).toBe(201);
+    const created = (await response.json()) as { project: { id: string } };
+
+    const view = (await (
+      await api(service).handle(
+        new Request(`http://cairn.test/projects/${created.project.id}/verification`),
+      )
+    ).json()) as { policy: Record<string, unknown> };
+    expect(view.policy).toMatchObject({ kind: "off" });
+  });
+
+  test("uses the configured policy for legacy projects without a row", async () => {
+    db.withConn((conn) => {
+      conn
+        .query("DELETE FROM project_verification WHERE project_id = ?")
+        .run(projectId);
+    });
+    const service = new VerificationService(db, {
+      ...DEFAULT_VERIFICATION,
+      evidenceEnforcement: "off",
+    });
+    const instance = api(service);
+
+    const view = (await (
+      await instance.handle(
+        new Request(`http://cairn.test/projects/${projectId}/verification`),
+      )
+    ).json()) as { policy: Record<string, unknown> };
+    expect(view.policy).toMatchObject({ kind: "off" });
+
+    const outcome = (await (
+      await post(instance, `/projects/${projectId}/verify`, {})
+    ).json()) as Record<string, unknown>;
+    expect(outcome).toMatchObject({ kind: "off", ok: true });
+  });
+});
+
+describe("manual completion override", () => {
+  const completion = {
+    from: ["origin"],
+    description: "operator says done",
+    worker: "operator",
+  };
+
+  test("requires the operator token when one is configured", async () => {
+    const instance = api(undefined, "operator-secret");
+
+    const denied = await post(instance, `/projects/${projectId}/complete`, completion);
+    expect(denied.status).toBe(401);
+
+    const wrong = await postWithHeaders(
+      instance,
+      `/projects/${projectId}/complete`,
+      completion,
+      { "x-cairn-operator-token": "wrong" },
+    );
+    expect(wrong.status).toBe(401);
+
+    const allowed = await postWithHeaders(
+      instance,
+      `/projects/${projectId}/complete`,
+      completion,
+      { "x-cairn-operator-token": "operator-secret" },
+    );
+    expect(allowed.status).toBe(200);
+    expect(await allowed.json()).toMatchObject({ to: "goal" });
+    const detail = (await (
+      await instance.handle(new Request(`http://cairn.test/projects/${projectId}`))
+    ).json()) as { project: { status: string } };
+    expect(detail.project.status).toBe("completed");
+  });
+
+  test("keeps the route open when no token is configured", async () => {
+    const response = await post(api(), `/projects/${projectId}/complete`, completion);
+    expect(response.status).toBe(200);
   });
 });
 

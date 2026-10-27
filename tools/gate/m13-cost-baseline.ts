@@ -32,8 +32,10 @@ import {
   configureDatabase,
   createProject,
   getFactMeta,
+  getLatestVerificationCheck,
   getProjectDetail,
   getProjectUsage,
+  getProjectVerification,
   getStrategistState,
   listProjectIntentMeta,
   listProjectRuns,
@@ -43,8 +45,10 @@ import {
   type ProjectCostReport,
   type ProjectDetail,
   type ProjectUsage,
+  type ProjectVerification,
   type Run,
   type StrategistState,
+  type VerificationCheck,
 } from "@cairn/graph";
 import {
   existsSync,
@@ -57,7 +61,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { parseDispatchConfig, type BudgetConfig } from "../../apps/cairn/src/config";
 import { createApi } from "../../apps/cairn/src/http/api";
@@ -169,9 +173,15 @@ interface FactReport {
   description: string;
   run_id: string | null;
   evidence_status: string;
+  evidence_refs: string[];
   evidence_ref_count: number;
   allocated_tokens: number;
   allocated_cost_usd: number;
+}
+
+interface VerificationReport {
+  policy: ProjectVerification;
+  latest: VerificationCheck | null;
 }
 
 interface StrategistBudgetView {
@@ -231,6 +241,7 @@ interface BaselineReport {
   };
   runs: RunReport[];
   facts: FactReport[];
+  verification: VerificationReport | null;
   strategist: {
     state: StrategistState | null;
     budget: StrategistBudgetView | null;
@@ -296,14 +307,16 @@ async function main(): Promise<void> {
           "marker files created for this authorized cost-baseline test.",
         goal:
           "Read the exact contents of marker.txt and second.txt in the workspace and record both " +
-          "values. These are two independent checks; each must be verified. Do not mark the project " +
-          "complete until both exact values are confirmed.",
+          "values. These are two independent checks; each must be verified. Write a small summary " +
+          "file for each value under evidence/ in the workspace and cite both files in " +
+          "evidence_refs. Do not mark the project complete until both exact values are confirmed.",
         bootstrap_enabled: false,
         hints: [
           {
             content:
               "The workspace root contains marker.txt and second.txt. Treat reading each file as a " +
-              "separate exploration direction and report each exact string.",
+              "separate exploration direction, report each exact string, and write evidence/<name>.txt " +
+              "summaries so the completion claim is verifiable.",
             creator: "m13-gate",
           },
         ],
@@ -311,6 +324,9 @@ async function main(): Promise<void> {
           targets: [`file://${workspaceRoot.replaceAll("\\", "/")}`],
           notes: "Local temporary workspace created by the M13a cost-baseline gate.",
         },
+        // M14a: make the completion policy explicit in the baseline record. The real model
+        // must now produce run-linked facts with accepted evidence before the project closes.
+        verification: { kind: "evidence" },
       }),
     );
     projectId = project.project.id;
@@ -646,6 +662,29 @@ function verifyCostReport(
   );
 }
 
+/**
+ * Concatenates the accepted evidence files of the dynamic facts. Models often keep the
+ * exact marker out of the fact description (treating it as a secret) and put it only in
+ * the evidence file, which is exactly what M14a treats as the authoritative proof.
+ */
+function evidenceTextFor(reports: readonly FactReport[], workspace: string): string {
+  const root = resolve(workspace);
+  const parts: string[] = [];
+  for (const report of reports) {
+    for (const ref of report.evidence_refs) {
+      const target = resolve(root, ref);
+      const rel = relative(root, target);
+      if (rel === "" || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) continue;
+      try {
+        parts.push(readFileSync(target, "utf8"));
+      } catch {
+        // Missing or unreadable evidence is reported by the completion-oracle checks.
+      }
+    }
+  }
+  return parts.join("\n");
+}
+
 function reportFacts(
   projectIdToLoad: string,
   detail: ProjectDetail,
@@ -689,6 +728,7 @@ function reportFacts(
         description: entry.fact.description,
         run_id: entry.meta?.run_id ?? null,
         evidence_status: entry.meta?.evidence_status ?? "legacy",
+        evidence_refs: entry.meta?.evidence_refs ?? [],
         evidence_ref_count: entry.meta?.evidence_refs.length ?? 0,
         allocated_tokens: allocation.tokens,
         allocated_cost_usd: allocation.cost,
@@ -712,6 +752,7 @@ async function collectAndCheck(): Promise<{
   cost: ProjectCostReport | null;
   runReports: RunReport[];
   factReports: FactReport[];
+  verification: VerificationReport | null;
 }> {
   let detail: ProjectDetail | null = null;
   let runs: Run[] = [];
@@ -721,10 +762,11 @@ async function collectAndCheck(): Promise<{
   let cost: ProjectCostReport | null = null;
   let runReports: RunReport[] = [];
   let factReports: FactReport[] = [];
+  let verification: VerificationReport | null = null;
 
   if (projectId === null) {
     check("project was created", false, "no project id");
-    return { detail, runs, usage, state, strategist, cost, runReports, factReports };
+    return { detail, runs, usage, state, strategist, cost, runReports, factReports, verification };
   }
   const id = projectId;
 
@@ -734,13 +776,17 @@ async function collectAndCheck(): Promise<{
     runs = db.withConn((conn) => listProjectRuns(conn, id));
     usage = db.withConn((conn) => getProjectUsage(conn, id));
     state = db.withConn((conn) => getStrategistState(conn, id));
+    verification = db.withConn((conn) => ({
+      policy: getProjectVerification(conn, id),
+      latest: getLatestVerificationCheck(conn, id),
+    }));
   } catch (error) {
     check("project state is readable", false, error instanceof Error ? error.message : String(error));
-    return { detail, runs, usage, state, strategist, cost, runReports, factReports };
+    return { detail, runs, usage, state, strategist, cost, runReports, factReports, verification };
   }
   if (loadedDetail === null) {
     check("project state is readable", false, "project not found");
-    return { detail, runs, usage, state, strategist, cost, runReports, factReports };
+    return { detail, runs, usage, state, strategist, cost, runReports, factReports, verification };
   }
   const current = loadedDetail;
   detail = current;
@@ -773,6 +819,19 @@ async function collectAndCheck(): Promise<{
     "project reached completed",
     !REQUIRE_EXPLORATION || current.project.status === "completed",
     current.project.status,
+  );
+  check(
+    "completion policy is evidence",
+    verification?.policy.kind === "evidence",
+    verification?.policy.kind ?? "missing",
+  );
+  check(
+    "completion was oracle-verified with evidence",
+    !REQUIRE_EXPLORATION ||
+      (verification?.latest?.ok === true && verification.latest.kind === "evidence"),
+    verification?.latest === null || verification?.latest === undefined
+      ? "no verification check"
+      : `${verification.latest.kind}:${verification.latest.ok ? "ok" : "failed"} ${verification.latest.detail}`,
   );
 
   const totals = sumUsage(runs);
@@ -877,26 +936,31 @@ async function collectAndCheck(): Promise<{
       (factResult.dynamicCount > 0 && factResult.attributedCount === factResult.dynamicCount),
     `${factResult.attributedCount}/${factResult.dynamicCount}`,
   );
-  if (factResult.dynamicCount > 0 && factResult.evidenceCount < factResult.dynamicCount) {
-    warn(
-      `${factResult.dynamicCount - factResult.evidenceCount} of ${factResult.dynamicCount} ` +
-        "dynamic fact(s) have no accepted evidence",
-    );
-  }
+  check(
+    "every dynamic fact has accepted evidence",
+    !REQUIRE_EXPLORATION ||
+      (factResult.dynamicCount > 0 && factResult.evidenceCount === factResult.dynamicCount),
+    `${factResult.evidenceCount}/${factResult.dynamicCount} fact(s) with provided evidence`,
+  );
   const factText = factReports.map((report) => report.description).join("\n");
+  const evidenceText = evidenceTextFor(factReports, projectWorkspace(workspaceRoot, id));
   check(
     "a fact records the first marker",
-    !REQUIRE_EXPLORATION || factText.includes(MARKER),
-    factReports.some((report) => report.description.includes(MARKER))
-      ? "marker.txt value present"
-      : "marker value absent",
+    !REQUIRE_EXPLORATION || factText.includes(MARKER) || evidenceText.includes(MARKER),
+    factText.includes(MARKER)
+      ? "marker.txt value in fact text"
+      : evidenceText.includes(MARKER)
+        ? "marker.txt value in fact evidence"
+        : "marker value absent",
   );
   check(
     "a fact records the second marker",
-    !REQUIRE_EXPLORATION || factText.includes(SECOND),
-    factReports.some((report) => report.description.includes(SECOND))
-      ? "second.txt value present"
-      : "second value absent",
+    !REQUIRE_EXPLORATION || factText.includes(SECOND) || evidenceText.includes(SECOND),
+    factText.includes(SECOND)
+      ? "second.txt value in fact text"
+      : evidenceText.includes(SECOND)
+        ? "second.txt value in fact evidence"
+        : "second value absent",
   );
 
   for (const report of factReports) {
@@ -1097,7 +1161,17 @@ async function collectAndCheck(): Promise<{
     );
   }
 
-  return { detail, runs, usage, state, strategist, cost, runReports, factReports };
+  return {
+    detail,
+    runs,
+    usage,
+    state,
+    strategist,
+    cost,
+    runReports,
+    factReports,
+    verification,
+  };
 }
 
 function findBudgetCrossing(runs: readonly Run[], limits: BudgetConfig): number | null {
@@ -1127,6 +1201,7 @@ function writeReport(input: {
   cost: ProjectCostReport | null;
   runReports: RunReport[];
   factReports: FactReport[];
+  verification: VerificationReport | null;
   passed: boolean;
   kept: boolean;
 }): void {
@@ -1180,6 +1255,7 @@ function writeReport(input: {
     },
     runs: input.runReports,
     facts: input.factReports,
+    verification: input.verification,
     strategist: {
       state: input.state,
       budget: input.strategist?.budget ?? null,

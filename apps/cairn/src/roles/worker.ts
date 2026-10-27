@@ -114,7 +114,7 @@ export async function runWorker(args: readonly string[]): Promise<number> {
  * Accepts either Cairn's wrapper (`accepted` boolean) or a bare payload from a model that
  * ignored the wrapper. A refusal without a reason still has to produce a valid envelope.
  */
-function normalizeResult(payload: Record<string, unknown>): TaskResult {
+export function normalizeResult(payload: Record<string, unknown>): TaskResult {
   const evidence = payload["evidence_refs"];
   let result: unknown;
   if (typeof payload["accepted"] === "boolean") {
@@ -128,10 +128,15 @@ function normalizeResult(payload: Record<string, unknown>): TaskResult {
             : "solver rejected the task",
       };
     } else {
+      // Models routinely put `evidence_refs` inside `data`, where their task payload
+      // lives, even though the contract declares it top-level. Lift it out; a
+      // top-level value wins when both are present.
+      const lifted = liftNestedEvidence(payload["data"]);
+      const refs = evidence === undefined ? lifted.evidence : evidence;
       result = {
         accepted: true,
-        data: payload["data"],
-        ...(evidence === undefined ? {} : { evidence_refs: evidence }),
+        data: lifted.data,
+        ...(refs === undefined ? {} : { evidence_refs: refs }),
       };
     }
   } else {
@@ -149,6 +154,15 @@ function normalizeResult(payload: Record<string, unknown>): TaskResult {
     throw new Error("solver answer does not form a valid result");
   }
   return result;
+}
+
+/** Splits `data.evidence_refs` from the payload when `data` is an object. */
+function liftNestedEvidence(data: unknown): { data: unknown; evidence: unknown } {
+  if (typeof data !== "object" || data === null || Array.isArray(data)) {
+    return { data, evidence: undefined };
+  }
+  const { evidence_refs: evidence, ...rest } = data as Record<string, unknown>;
+  return { data: rest, evidence };
 }
 
 function writeUsage(task: WorkerTask, usage: SolverUsage | null, model: string | null): void {

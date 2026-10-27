@@ -487,7 +487,9 @@ CAIRN_GATE_BUDGET_TOKENS=1000 CAIRN_GATE_EXPECT_EXHAUSTED=1 \
   completed；
 - `usage.json` 存在且六个字段与该 run 的 `runs` 列相等；所有 run 的旁路之和等于
   `getProjectUsage()`；
-- 每个动态 Fact 归属到某个 run，marker 值出现在 Fact 描述中；
+- 每个动态 Fact 归属到某个 run 且证据状态为 `provided`；marker 值出现在 Fact 描述或其
+  被接受的证据文件中（模型常把值只写进证据文件，M14a 以证据文件为准）；
+- 完成策略是 `evidence`，最近一次 `verification_checks` 为通过；
 - `strategist_state` 前进，最后一个 run 是 reason，trigger 描述图变化；
 - `/strategist` 的 state、usage、`running_tasks`、limits、exhausted、reason 历史与
   未结束意图顺序均与数据库/调度器一致；
@@ -530,6 +532,25 @@ run_001 创建 i001/i002，两个意图各分得 12,057/12,058 的编排成本�
 预算模式：1 个 reason 任务使用 22,381 tokens（上限 1,000），API 报告
 `exhausted.tokens=true`，没有后续普通任务；43/43 检查通过。该模式没有 Fact，因此
 `/cost` 全部 22,381 tokens 落在未归因，但 run/意图创建边仍然一致。
+
+### M14a 基线：完成时证据强制（2026-10-26，`deepseek-flash`）
+
+| 指标 | 值 |
+| --- | --- |
+| 任务 | 3（reason 2 / explore 1），全部成功 |
+| 总 tokens | 132,967 |
+| input / output | 12,317 / 8,522 |
+| cache read / write | 112,128 / 0（84.3%） |
+| 慢层（reason） | 69,949 tokens（52.6%） |
+| 快层（explore） | 63,018 tokens |
+| Facts | 1（`evidence_status=provided`） |
+| 完成判定 | `verification_checks`：`kind=evidence`、`ok=true` |
+| 检查 | 45 passed / 0 failed |
+
+这一轮模型把两个 marker 都写进同一个 explore 结论（值同时出现在 Fact 描述和证据文件），
+所以只派发了 1 个 explore。此前两轮同样配置的失败试跑消耗 236,939 与 253,608 tokens，
+说明模型的探索拆分粒度会让用量波动一倍以上；token 数只适合作量级参考，不是固定预算。
+报告写入 `runs/m14a-baseline.json`。
 
 ### 结论与限制
 

@@ -120,10 +120,14 @@ export async function runControl(args: readonly string[]): Promise<number> {
     db,
     config?.verification ?? DEFAULT_VERIFICATION,
   );
+  // Empty means "not configured": the manual /complete route keeps its historical
+  // unauthenticated behavior, so local single-user setups do not need to set anything.
+  const operatorToken = process.env["CAIRN_OPERATOR_TOKEN"]?.trim();
   const api = createApi({
     db,
     staticDir,
     verification,
+    ...(operatorToken === undefined || operatorToken === "" ? {} : { operatorToken }),
     ...(config === null
       ? {}
       : { workspaceRoot: resolveWorkspaceRoot(config), budget: config.budget }),

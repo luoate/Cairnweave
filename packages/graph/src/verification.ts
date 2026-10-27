@@ -2,8 +2,10 @@
  * Completion policy and verification history.
  *
  * The policy is sidecar data: it never changes the Cairn graph export. A project without
- * a row (created before M14a) behaves as `evidence`, which keeps the acceptance rule
- * "every Fact is traceable to evidence" without rewriting old graphs.
+ * a row (created before M14a) behaves as `evidence` by default, which keeps the acceptance
+ * rule "every Fact is traceable to evidence" without rewriting old graphs. Callers can
+ * pass a different fallback for legacy projects (the dispatcher maps
+ * `verification.evidence_enforcement: off` to `off`); it is never persisted.
  */
 
 import type { Database } from "bun:sqlite";
@@ -77,6 +79,7 @@ export function setProjectVerification(
 export function getProjectVerification(
   conn: Database,
   projectId: string,
+  fallbackKind: VerificationKind = DEFAULT_VERIFICATION_KIND,
 ): ProjectVerification {
   const project = getProjectOr404(conn, projectId);
   const row = get<VerificationRow>(
@@ -87,7 +90,7 @@ export function getProjectVerification(
   if (row === null) {
     return {
       project_id: projectId,
-      kind: DEFAULT_VERIFICATION_KIND,
+      kind: fallbackKind,
       challenge_code: null,
       created_at: project.created_at,
     };

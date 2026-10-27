@@ -17,7 +17,9 @@ UI 的 Fact 详情可沿 `run_id` 下钻到产出 run 与该任务的工具调�
 `/stats` 与「统计」页签，按 Worker 和模型汇总成功/失败、Token、成本与耗时。M15a 把它
 接回派发：命名 worker profile 映射到 model-prefs，`worker_selection.mode: stats` 先按
 配置顺序采样、再按历史成功率（Token/成本打破平局）选择，运行 model 与 profile 一并
-落到 task 与 `runs`。
+落到 task 与 `runs`。M14a 的完成判定随后收紧：证据必须来自 run 且带 `evidence_refs`，
+challenge 计数严格相等，默认策略由 `verification.evidence_enforcement` 决定，手工
+`/complete` 可选 operator token。
 `cairn serve` 是可运行的 Cairn 兼容服务：SQLite schema、领域服务、全部
 五个路由、YAML/timeline 导出、静态 Web UI 均已就位，并用 Python Cairn 生成的 golden
 做了逐字对照。进程内 scheduler、任务/结果文件 worker 协议、BreachWeave Solver 接入已在 M2
@@ -61,10 +63,11 @@ M4c 增加：
 
 M5a 增加：
 
-- **证据门控**：worker 可在 `result.json` 根级返回 `evidence_refs`（工作区相对路径）。
-  控制面在写图前逐条校验：拒绝绝对路径、`..`、目录、符号链接、不存在或越界；
-  最多 20 条、每条 ≤512 字符。省略/空数组记为 `evidence_status: "missing"`，不拒绝；
-  一旦声称却非法，任务失败（explore/bootstrap 仍走 conclude 回退）。
+- **证据门控**：worker 可在 `result.json` 根级返回 `evidence_refs`（工作区相对路径）；
+  模型写进 `data` 的 `evidence_refs` 会由 worker 提升到根级。控制面在写图前逐条校验：
+  拒绝绝对路径、`..`、目录、符号链接、不存在或越界；最多 20 条、每条 ≤512 字符。
+  省略/空数组记为 `evidence_status: "missing"`，不拒绝；一旦声称却非法，任务失败
+  （explore/bootstrap 仍走 conclude 回退）。
 - **`runs` 旁路表**：控制面在认领任务时生成 `run_id` 并记录启动，结束时补全
   outcome/退出码/时长/证据数/detail；成功、失败、取消、lease 丢失都有一行。
 - **`fact_meta` 旁路表**：每个由任务产出的 Fact 记录对应 `run_id`、证据引用与状态；
@@ -282,8 +285,15 @@ M13a 增加：
   M13b 归因显示：Fact 直付 60,467，reason 创建意图的编排分摊 24,115（两个意图各一半），
   已归因 84,582，因两个 reason 验证轮没有创建意图而留下 50,158 未归因。网关未返回价格
   （`models.json` 的 cost 为 0），因此报告把 token 作为基线、费用记 0 并给出 warning；
-  可用 `CAIRN_GATE_PRICE_*_PER_M` 在报告中估算美元成本。两个 Fact 都没有被接受的证据，
-  说明“完成项目”与“可复核证据”在当前 goal/prompt 下仍是两件事。
+  可用 `CAIRN_GATE_PRICE_*_PER_M` 在报告中估算美元成本。该轮两个 Fact 都没有被接受的证据，
+  说明“完成项目”与“可复核证据”在当时仍是两件事；M14a 已把这个缺口补上。
+- **M14a 证据强制基线（2026-10-26，`deepseek-flash`）**：gate 新增“完成策略为 evidence”
+  “最近一次 `verification_checks` 通过”“每个动态 Fact 有已接受证据”“marker 出现在 Fact
+  描述或被接受的证据文件”四项断言。成功轮共 3 个任务（2 reason + 1 explore）、
+  **132,967 tokens**（input 12,317 / output 8,522 / cache_read 112,128，缓存读占 84.3%），
+  1 个 Fact 带 `provided` 证据，项目由 oracle 判定完成后关闭，45/45 检查通过。模型的探索
+  拆分差异会显著影响用量（同配置的失败试跑达到 23–25 万 tokens），token 只作量级基线；
+  报告写入 `runs/m14a-baseline.json`。
 
 M13b 增加：
 
@@ -306,19 +316,23 @@ M13b 增加：
 M14a 增加（Phase 3 收口）：
 
 - **完成不再由模型自证**：项目创建时可选 `verification.kind`：`challenge`（外部挑战
-  API 计分）、`evidence`（默认）、`off`。worker 返回的 `complete` 只是声明；scheduler
-  在写完成前调用 oracle。验证失败时 reason 释放租约、项目保持 active，bootstrap 仍
-  保留已产出的 Fact 但推迟完成；每次判定写入 `verification_checks`。手工
-  `POST /projects/{id}/complete` 仍是显式的操作员覆盖。
+  API 计分）、`evidence`（默认）、`off`。`verification.evidence_enforcement`
+  （`completion` 默认 / `off`）决定 API 新建项目与旧项目的默认策略，只在完成时强制，
+  探索阶段保持宽容。worker 返回的 `complete` 只是声明；scheduler 在写完成前调用
+  oracle。验证失败时 reason 释放租约、项目保持 active，bootstrap 仍保留已产出的 Fact
+  但推迟完成；每次判定写入 `verification_checks`。手工
+  `POST /projects/{id}/complete` 仍是显式的操作员覆盖；设置 `CAIRN_OPERATOR_TOKEN`
+  后该路由要求 `X-Cairn-Operator-Token`。
 - **challenge oracle**：从 `data.challenges[]` 按 `code` 读取 `flag_count` /
-  `flag_got_count`，只有 `flag_got_count >= flag_count > 0` 才通过。基址与 Agent-Token
-  只按**环境变量名**读取（默认 `TCH_CHALLENGE_API_BASE_URL` /
+  `flag_got_count`，只有 `flag_got_count == flag_count > 0` 才通过（计数不一致也失败）。
+  基址与 Agent-Token 只按**环境变量名**读取（默认 `TCH_CHALLENGE_API_BASE_URL` /
   `TCH_CHALLENGE_AGENT_TOKEN`，可在 `verification.challenge` 改名）；配置、任务文件、
   日志和数据库只保存计数，不保存 flag 明文或 token。
-- **evidence oracle**：reason 的 `complete.from` 中每个 Fact 必须有
-  `fact_meta.evidence_status = provided` 且至少一条 `fact_evidence`；bootstrap 用任务级
-  `evidence_refs` 校验（它的 Fact 在同一事务里新建）。缺少证据的完成声明被拒绝，并
-  记录缺口。
+- **evidence oracle**：reason 的 `complete.from` 中每个非种子 Fact 必须关联到一次
+  run（`fact_meta.run_id` 非空）、`evidence_status = provided`、`evidence_refs` 非空
+  且至少一条 `fact_evidence`；`origin` / `goal` 是前提，不作为证据要求，但只有种子
+  Fact 的完成声明仍然失败。bootstrap 用任务级 `evidence_refs` 校验（它的 Fact 在同一
+  事务里新建）。缺少证据的完成声明被拒绝，并记录缺口。
 - **只读查询与手动复核**：`GET /projects/{id}/verification` 返回策略与最近一次检查；
   `POST /projects/{id}/verify` 可手动重跑（可带 `facts` 子集）。两种策略的判定都会入
   `verification_checks`。
@@ -1161,6 +1175,7 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M14c ✅ | 可观测性补链：`usage.json` → `runs.model`、Fact 详情溯源到产出 run 与该任务工具调用审计 | 477 passed / 55 files；浏览器实测下钻（2026-10-26） |
 | M14d ✅ | 逐 Worker/模型统计：`GET /stats` 汇总成功率、Token、成本与耗时，新增只读「统计」页签 | 482 passed / 56 files；浏览器实测（2026-10-26） |
 | M15a ✅ | Phase 4 起点：`worker_profiles` 映射 model-prefs、任务级模型覆盖、`runs.worker_profile`、先采样后利用的统计驱动派发、`by_profile` 统计与「按 Profile」卡片 | 495 passed / 57 files（2026-10-26） |
+| M14a 收口 ✅ | 完成判定收紧：证据 Fact 必须关联 run、challenge 计数严格相等、`verification.evidence_enforcement` 默认开关、`/complete` 可选 operator token、模型把 `evidence_refs` 写进 `data` 时由 worker 提升、gate 断言完成时证据覆盖 | 509 passed / 58 files（2026-10-26） |
 
 ## 与 Phase 0 的关系
 

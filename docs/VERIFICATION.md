@@ -21,19 +21,23 @@ reason 释放租约、项目保持 active；bootstrap 保留已产出的 Fact，
 
 | kind | 语义 |
 | --- | --- |
-| `evidence`（默认） | 完成声明引用的每个非种子 Fact 必须有 `evidence_status=provided` 且至少一条 `fact_evidence` |
-| `challenge` | 读取外部挑战 API 的 `flag_got_count` / `flag_count`；全部拿到才通过 |
+| `evidence`（默认） | 完成声明引用的每个非种子 Fact 必须有 `run_id`、`evidence_status=provided` 且至少一条 `fact_evidence` |
+| `challenge` | 读取外部挑战 API 的 `flag_got_count` / `flag_count`；两者严格相等才通过 |
 | `off` | 显式关闭验证；用于导入项目或只关心图推进的场景 |
 
-没有 `project_verification` 行的旧项目按 `evidence` 处理。`kind=challenge` 必须带
-非空 `challenge_code`（≤200 字符）；`evidence` / `off` 不接受 `challenge_code`。
+没有 `project_verification` 行的旧项目按配置的
+`verification.evidence_enforcement` 处理（默认 `completion` → `evidence`；`off` →
+`off`）。`kind=challenge` 必须带非空 `challenge_code`（≤200 字符）；`evidence` / `off`
+不接受 `challenge_code`。
 
 ## 2. 判定来源
 
 ### evidence
 
-- reason：取 `data.complete.from` 的 Fact 列表；每个 Fact 必须存在、证据状态为
-  `provided`，且 `fact_evidence` 至少一行。任一缺口都会失败并列出 Fact 与原因。
+- reason：取 `data.complete.from` 的 Fact 列表；`origin` / `goal` 是前提，不要求证据
+  （只有它们是种子 Fact 时仍失败）。每个非种子 Fact 必须存在、关联到一次 run
+  （`fact_meta.run_id` 非空）、证据状态为 `provided`、`fact_meta.evidence_refs`
+  非空，且 `fact_evidence` 至少一行。任一缺口都会失败并列出 Fact 与原因。
 - bootstrap：它要完成的 Fact 与结论在同一事务里创建，外层看不到；因此用任务级
   `evidence_refs` 校验，要求 `evidence_status=provided` 且至少一条引用。
 - 显式 `POST /verify` 可带 `facts` 子集；不带时检查全部非 `origin`/`goal` Fact。
@@ -51,8 +55,9 @@ header `Agent-Token: <token>`，超时默认 5000ms。响应必须是：
 ```
 
 按 `code` 精确匹配；`flag_count` / `flag_got_count` 必须是非负整数；`flag_count > 0`
-且 `flag_got_count >= flag_count` 才通过。以下情况一律失败（fail closed）：环境变量
-缺失、网络错误、超时、非 2xx、非法 JSON、`code != 0`、列表或字段形状错误、挑战不存在。
+且 `flag_got_count == flag_count` 才通过。计数器不一致（包括 `flag_got_count >
+flag_count`）同样失败。以下情况一律失败（fail closed）：环境变量缺失、网络错误、
+超时、非 2xx、非法 JSON、`code != 0`、列表或字段形状错误、挑战不存在。
 
 **flag 明文不进入控制面。** oracle 只读取两个计数，`verification_checks` 只存
 `flag_count` / `flag_got_count`；token 只从环境变量读取，不写配置、task.json、日志或
@@ -62,6 +67,9 @@ header `Agent-Token: <token>`，超时默认 5000ms。响应必须是：
 
 ```yaml
 verification:
+  # completion：完成时必须满足证据规则（默认）；off：旧项目/离线测试的逃生口。
+  # 该值在创建项目时写入 project_verification，之后改配置不会改变已有项目。
+  evidence_enforcement: completion
   challenge:
     base_url_env: TCH_CHALLENGE_API_BASE_URL
     agent_token_env: TCH_CHALLENGE_AGENT_TOKEN
@@ -70,6 +78,10 @@ verification:
 
 `base_url_env` / `agent_token_env` 是环境变量**名**，不是值。默认名与 `TCH` 挑战
 平台一致；换成其他平台时只改名字，凭据仍放在进程环境里。
+
+`evidence_enforcement` 只影响完成判定，不在探索阶段拦截；它同时作为没有
+`project_verification` 行的旧项目的回退策略。`POST /projects` 未显式给出
+`verification` 时，控制面会把当前配置映射成 `{kind: evidence|off}` 并落库。
 
 ## 4. HTTP
 
@@ -80,7 +92,9 @@ verification:
 - `GET /projects/{id}/verification`：`{policy, latest}`。`policy` 对没有旁路行的项目
   合成 `evidence` 默认值；`latest` 是最近一次检查或 `null`。
 - 手工 `POST /projects/{id}/complete` 不经过 oracle，仍是操作员显式覆盖；调度器不会
-  调用它。
+  调用它。设置 `CAIRN_OPERATOR_TOKEN` 后，该路由要求
+  `X-Cairn-Operator-Token` 匹配，否则返回 401；未设置时保持旧行为，兼容本地单用户
+  部署与 golden。
 
 ## 5. 数据
 
@@ -103,8 +117,9 @@ verification:
 
 ## 7. 已知边界
 
-- evidence 只证明“完成声明引用的 Fact 有已记录的文件摘要”，不证明文件内容能推出
-  Fact 描述；人工复核仍需要看证据文件。
+- evidence 只证明“完成声明引用的 Fact 来自一次 run 且有已记录的文件摘要”，不证明
+  文件内容能推出 Fact 描述；人工复核仍需要看证据文件。
 - challenge 的信任落在外部挑战 API 与 token 的保管上；控制面不校验 flag 明文。
 - 并发完成声明可能重复调用 oracle；每次都是一行新检查，`latest` 只反映最后一次。
-- 手工 `/complete` 可绕过验证，审计上需要把它当作操作员决策。
+- 手工 `/complete` 可绕过验证（配置 token 后至少要求操作员凭据），审计上仍需要把它
+  当作操作员决策。

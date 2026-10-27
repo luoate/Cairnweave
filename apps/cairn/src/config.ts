@@ -153,10 +153,19 @@ export const DEFAULT_AUDIT_STREAM: AuditStreamConfig = {
 
 /**
  * Completion verification. The policy is chosen per project when it is created
- * (`challenge`, `evidence`, or `off`); this section only says how the control plane
- * reaches the external challenge service for `challenge` projects. Credentials are read
- * from the named environment variables at verification time and never stored here.
+ * (`challenge`, `evidence`, or `off`), and `evidence_enforcement` supplies the default
+ * for projects created through the API and for legacy projects without a policy row.
+ * It only decides whether the evidence rule runs at completion time; exploration stays
+ * lenient. Credentials are read from the named environment variables at verification
+ * time and never stored here.
  */
+export type EvidenceEnforcement = "completion" | "off";
+
+export const EVIDENCE_ENFORCEMENT_MODES: readonly EvidenceEnforcement[] = [
+  "completion",
+  "off",
+];
+
 export interface ChallengeVerifierConfig {
   baseUrlEnv: string;
   agentTokenEnv: string;
@@ -164,16 +173,26 @@ export interface ChallengeVerifierConfig {
 }
 
 export interface VerificationConfig {
+  /** `completion` requires evidence before a project may close; `off` disables it. */
+  evidenceEnforcement: EvidenceEnforcement;
   challenge: ChallengeVerifierConfig;
 }
 
 export const DEFAULT_VERIFICATION: VerificationConfig = {
+  evidenceEnforcement: "completion",
   challenge: {
     baseUrlEnv: "TCH_CHALLENGE_API_BASE_URL",
     agentTokenEnv: "TCH_CHALLENGE_AGENT_TOKEN",
     timeoutMs: 5000,
   },
 };
+
+/** Maps the completion-evidence switch to the per-project oracle policy. */
+export function defaultVerificationKind(
+  config: VerificationConfig,
+): "evidence" | "off" {
+  return config.evidenceEnforcement === "off" ? "off" : "evidence";
+}
 
 export type ProposalMode = "off" | "dry_run" | "apply";
 export type ProposalKindConfig = "fact" | "intent" | "hint";
@@ -732,11 +751,19 @@ function parseAuditStream(value: unknown): AuditStreamConfig {
 function parseVerification(value: unknown): VerificationConfig {
   const root = recordAt(value, "verification");
   const defaults = DEFAULT_VERIFICATION.challenge;
+  const evidenceEnforcement = has(root, "evidence_enforcement")
+    ? oneOf(
+        root["evidence_enforcement"],
+        "verification.evidence_enforcement",
+        EVIDENCE_ENFORCEMENT_MODES,
+      )
+    : DEFAULT_VERIFICATION.evidenceEnforcement;
   if (!has(root, "challenge")) {
-    return { challenge: { ...defaults } };
+    return { evidenceEnforcement, challenge: { ...defaults } };
   }
   const challenge = recordAt(root["challenge"], "verification.challenge");
   return {
+    evidenceEnforcement,
     challenge: {
       baseUrlEnv: has(challenge, "base_url_env")
         ? requiredString(challenge, "base_url_env", "verification.challenge")
@@ -978,7 +1005,10 @@ export function parseDispatchConfig(value: unknown, options: ConfigOptions = {})
 
   const verification = has(root, "verification")
     ? parseVerification(root["verification"])
-    : { challenge: { ...DEFAULT_VERIFICATION.challenge } };
+    : {
+        evidenceEnforcement: DEFAULT_VERIFICATION.evidenceEnforcement,
+        challenge: { ...DEFAULT_VERIFICATION.challenge },
+      };
 
   const proposals = has(root, "proposals")
     ? parseProposals(root["proposals"])

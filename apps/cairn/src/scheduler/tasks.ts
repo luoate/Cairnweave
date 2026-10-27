@@ -502,7 +502,9 @@ function withCompletionPolicy(prompt: string): string {
 
 # Completion Verification
 Saying "complete" is a claim, not proof. The control plane verifies the claim before it marks the project completed, and a rejected claim leaves the project active.
-- Every fact that justifies completion must have at least one recorded file evidence entry. Put those paths in the result envelope's top-level \`evidence_refs\` array; descriptions alone are not evidence.
+- Completion must cite at least one non-seed fact produced by a previous task (not \`origin\` or \`goal\`). Seed facts are premises and can never justify completion on their own; a claim whose only source is \`origin\` is rejected.
+- Every fact that justifies completion must come from a recorded run and have at least one recorded file evidence entry. Put those paths in the result envelope's top-level \`evidence_refs\` array; descriptions alone are not evidence.
+- A reason turn that has not produced any facts yet should propose intents instead of claiming completion. Let the explore tasks produce evidence-backed facts.
 - Challenge-backed projects are checked against the external challenge service's flag counters. Never paste flag values or credentials into descriptions, evidence files, task output or logs.
 - If verification fails, keep working and collect the missing evidence instead of repeating the same completion claim.
 `;
