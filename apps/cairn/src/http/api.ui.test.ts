@@ -117,6 +117,8 @@ describe("static operations UI", () => {
     expect(html).toContain("取代关系");
     expect(html).toContain("已被取代");
     expect(html).toContain("完成判定");
+    expect(html).toContain("无身份认证");
+    expect(html).toContain("127.0.0.1");
     expect(html).toContain("新建项目");
   });
 });

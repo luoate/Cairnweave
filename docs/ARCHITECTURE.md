@@ -94,7 +94,9 @@ runtime prompt 扩展（priority/budget/dedupe/Hint 语义）；`POST /projects/
 epsilon-greedy 探索，探索时选已结束 run 最少的 profile，`epsilon` 按
 `epsilon_decay` 衰减到 `epsilon_min` 下限；判断只读 run 历史、不含随机数。
 `tools/gate/m15e-calibration.ts` 用真实 model-prefs 核对 run 的 profile/model 记账、
-项目统计与报告分桶一致，并输出当前 epsilon 与探索预算。
+项目统计与报告分桶一致，并输出当前 epsilon 与探索预算。M15f 收尾 Phase 4：UI 常驻
+“无身份认证”提示、非回环绑定启动警告，新增 `docs/CONTRACT.md` 汇总 worker 文件契约，
+并把 Phase 0 相关表述改为已移除的现状。
 
 ## 1. 范围
 
@@ -167,7 +169,8 @@ scheduler 与 HTTP API 共用 `packages/graph/src/commands.ts` 的命令，不�
 | `observer/proposals/*.json` | Observer sidecar（主 Solver 结构化文件工具只读） | 控制面摄取 | `<sessionDir>/observer/proposals/`（任务级） |
 | 模型/凭据（`~/.tch-agent/config`） | 用户 | worker（只读使用） | 控制面主机（容器模式只读挂载） |
 
-规则：worker 的任何输出都是**不可信输入**；控制面必须按契约校验后才写图。
+规则：worker 的任何输出都是**不可信输入**；控制面必须按契约校验后才写图。各文件的字段、
+校验与退出码见 [`CONTRACT.md`](./CONTRACT.md)。
 
 ## 4. 一次任务的生命周期
 
@@ -974,9 +977,9 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
   `read`/`write`/`edit`/`grep`/`find`/`ls`。`Dockerfile.worker` 提供带 `procps` 的
   Linux worker 镜像。
 
-## 11. Phase 0 的删除清单
+## 11. Phase 0 遗留物的处置
 
-合并完成后不再存在：
+以下 Phase 0 组件已从合并版移除，仓库内不再保留对照副本（2026-10-27 复核）：
 
 - `WorkerDriver` / `registry` / `workers/adapters/*` / `WORKER_ENV_KEYS`；
 - `tch.py`、`tch_bridge.py`、`solver rpc` 适配、`tch` 提示词释放逻辑；

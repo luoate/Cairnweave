@@ -4,8 +4,8 @@
 skills / Observer）合并成**一个 Bun/TypeScript 代码库**，不再维护 Python ↔ TypeScript
 之间的进程桥、JSONL RPC 和 worker 适配器。
 
-状态：**M15e（真实模型校准 + epsilon 探索/衰减）**；M0–M4、M5a–M5c、
-M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e 的计划项全部完成。Phase 1 的
+状态：**M15f（Phase 0 清理、认证提示与契约收尾）**；M0–M4、M5a–M5c、
+M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f 的计划项全部完成。Phase 1 的
 “本地看板 + Observer 提案 + 证据门 + 单一写图者”闭环已具备；提案默认关闭。Phase 2
 的触发持久化、意图优先级/预算、单项目 token/成本与并发配额、只读慢层观测、逐 Fact
 成本归因与因果链，以及 reason 的 Hint/去重输出、人工重规划与资源压力触发均已落地，并
@@ -32,7 +32,9 @@ run/成本与审计/工件汇总，并提供 Markdown 下载；Fact 详情显示
 样本最少的 profile，`epsilon` 可按 `epsilon_decay` 衰减到 `epsilon_min` 下限；策略仍由
 run 历史确定性推导，不引入随机数，离线可复现。`tools/gate/m15e-calibration.ts` 用真实
 model-prefs 跑一次小项目，核对每个 run 的 profile/model 记账、项目统计与报告分桶一致，
-并输出当前 epsilon 与探索预算。
+并输出当前 epsilon 与探索预算。M15f 收尾 Phase 4：Phase 0 的对照副本已不存在于仓库，文档
+改为现状说明；静态 UI 顶部常驻“无身份认证”提示，`cairn serve` 绑定非回环地址时在启动日志
+再次警告；新增 `docs/CONTRACT.md` 汇总 task/result/usage/audit 的字段、校验与退出码。
 `cairn serve` 是可运行的 Cairn 兼容服务：SQLite schema、领域服务、全部
 五个路由、YAML/timeline 导出、静态 Web UI 均已就位，并用 Python Cairn 生成的 golden
 做了逐字对照。进程内 scheduler、任务/结果文件 worker 协议、BreachWeave Solver 接入已在 M2
@@ -489,6 +491,19 @@ M15e 增加（epsilon 探索与真实模型校准）：
   优先级；配置测试覆盖 `epsilon` 范围、`decay` 的 `(0,1]` 约束与 `min ≤ epsilon`；
   全量测试与 typecheck 通过。
 
+M15f 增加（Phase 0 清理、认证提示与契约收尾）：
+
+- **Phase 0 清理**：仓库内没有 `ctfagent/` 对照副本，Phase 0 的 `tch` driver、
+  `tch_bridge.py`、`solver rpc` 适配与 overlay 补丁均已移除；README 与
+  `ARCHITECTURE.md` 第 11 节改为现状说明，模块对应关系保留在 `docs/PORTING.md`。
+- **认证提示**：静态 UI 在列表与图视图上方常驻“无身份认证”提示，说明界面与 API 会直接
+  修改控制面数据、应只绑定回环地址或置于受信网络/反向代理之后；`cairn serve --host`
+  绑定非回环地址时在启动日志输出同类警告。默认绑定仍是 `127.0.0.1`。
+- **契约收尾**：新增 `docs/CONTRACT.md`，汇总 `task.json` 字段与校验、`result.json`
+  信封与各 kind 载荷、`usage.json` 上限、`audit.jsonl` 事件与哈希链、worker 退出码以及
+  路径/原子性与安全边界；README 文档索引与 `ARCHITECTURE.md` 数据所有权表指向它。
+- **验证**：UI 静态测试断言认证提示文案与回环地址说明；全量测试与 typecheck 通过。
+
 默认仍是确定性 fake solver，测试与离线运行不需要模型凭据。Observer 只接在
 `CAIRN_SOLVER=breachweave` 的真实 Solver 路径上，fake solver 会忽略它。
 
@@ -602,6 +617,7 @@ docs/OBSERVER.md         Observer 实现、配置、权限、flush 语义与已�
 docs/STRATEGIST.md       慢层触发、意图优先级/预算、Hint/去重、人工/资源触发、成本归因（M12a–M14b）
 docs/VERIFICATION.md     完成验证：策略、oracle、路由、失败语义与安全边界（M14a）
 docs/REPORT.md           项目报告：JSON 结构、来源、排序、脱敏与边界（M15c）
+docs/CONTRACT.md         worker 契约：task/result/usage/audit、退出码与校验边界（M15f）
 docs/PORTING.md          Python 模块 → TS 模块映射与对照测试策略
 ```
 
@@ -1008,7 +1024,7 @@ M6 的跨进程恢复 gate 不调用模型：它先写下一台崩溃控制面�
 bun run tools/gate/m6-restart-gate.ts
 ```
 
-## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e，2026-10-27，Bun 1.4.4）
+## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f，2026-10-27，Bun 1.4.4）
 
 - `bun test`：**545 passed**（62 个文件），0 failed。
 - `bun run typecheck`：`tsc --noEmit` 通过。
@@ -1227,6 +1243,9 @@ bun run tools/gate/m6-restart-gate.ts
   eligible 计数、最少样本优先、`epsilon: 0` 关闭、几何衰减与 `epsilon_min` 下限
   （含精确累计预算）以及 preferred/rookie 的优先级；配置测试覆盖三个新字段的默认值、
   范围与 `epsilon_min > epsilon` 拒绝。真实模型 gate 见 `tools/gate/m15e-calibration.ts`。
+- **Phase 0 清理与契约收尾（M15f）**：UI 静态测试断言“无身份认证”与回环地址提示；
+  `docs/CONTRACT.md` 与 contracts 源码逐字段核对（task 字段/limits、result 信封、
+  usage 上限、audit 事件、退出码）；仓库内无 Phase 0 对照副本。
 
 golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定时钟、`TZ=UTC`）。
 重新生成方法与约束见 `docs/PORTING.md`。
@@ -1283,12 +1302,14 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M15c ✅ | 项目报告导出：只读 `GET /projects/{id}/report` 合成图、完成验证、run/成本统计、审计与工件汇总；`format=markdown` 人读版本；审计原文、工件路径与证据内容不导出 | 540 passed / 62 files（2026-10-27） |
 | M15d ✅ | 报告页与取代视图：「报告」页签展示完成判定、当前事实、取代边、run/成本与审计/工件汇总，提供 Markdown 下载；Fact 详情显示 `superseded_by`/`supersedes` 并可跳转 | 540 passed / 62 files（2026-10-27） |
 | M15e ✅ | 真实模型校准 + epsilon 探索/衰减：采样后按解析式预算探索（最少样本优先），`epsilon`/`epsilon_decay`/`epsilon_min` 可配；`tools/gate/m15e-calibration.ts` 用真实 model-prefs 核对 profile/model 记账与统计/报告一致 | 545 passed / 62 files（2026-10-27） |
+| M15f ✅ | Phase 4 收尾：Phase 0 对照副本移除的现状说明、UI 常驻“无身份认证”提示与非回环绑定警告、`docs/CONTRACT.md` 汇总 task/result/usage/audit 契约与退出码 | 545 passed / 62 files（2026-10-27） |
 
 ## 与 Phase 0 的关系
 
-`ctfagent/` 里的 Phase 0 实现（`tch` driver、`tch_bridge.py`、overlay 补丁）保留作对照，
-M2c 验收通过后删除。它的价值是验证了 BreachWeave Solver 能被 Cairn 的任务契约驱动；
-它的成本是每次任务多一次进程、多一层 JSONL 转译——这两点在本项目中消失。
+Phase 0 的 `tch` driver、`tch_bridge.py`、`solver rpc` 适配与 overlay 文本补丁已随合并完成
+移除，本仓库不保留对照副本；模块对应关系与删除清单见 `docs/PORTING.md` 和
+`docs/ARCHITECTURE.md` 第 11 节。Phase 0 的价值是验证了 BreachWeave Solver 能被 Cairn 的
+任务契约驱动；它的成本是每次任务多一次进程、多一层 JSONL 转译——这两点在本项目中消失。
 
 ## 许可证与合规
 

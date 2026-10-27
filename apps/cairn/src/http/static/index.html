@@ -228,6 +228,12 @@
 </head>
 <body class="bg-slate-50 text-slate-800 h-screen flex flex-col overflow-hidden" :class="{ 'select-none cursor-col-resize': isResizingPanel }" x-data="cairnApp()">
 
+<!-- The control plane has no authentication; keep this visible in every view. -->
+<div class="shrink-0 flex items-center gap-2 border-b border-amber-200/70 bg-amber-50/90 px-4 py-1.5 text-[11px] text-amber-700">
+  <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/></svg>
+  <span>无身份认证：界面与 API 会直接修改控制面数据，请只绑定 127.0.0.1 或置于受信网络/反向代理之后。</span>
+</div>
+
 <!-- ═══════════ PROJECT LIST VIEW ═══════════ -->
 <div x-show="view === 'list'" x-cloak class="flex-1 flex flex-col overflow-hidden">
   <header class="bg-white/80 backdrop-blur border-b border-slate-200/60 px-4 py-2.5 flex items-center gap-3 shrink-0">

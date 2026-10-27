@@ -64,6 +64,11 @@ export async function runControl(args: readonly string[]): Promise<number> {
     console.error(`invalid --port: ${portText}`);
     return 2;
   }
+  if (!isLoopbackHost(host)) {
+    console.warn(
+      `warning: the Cairn control plane has no authentication; binding ${host} exposes its API to the network`,
+    );
+  }
 
   const dbPath = flagValue(args, "--db-path") ?? defaultDatabasePath();
   const staticDir =
@@ -209,6 +214,10 @@ function resolveAuditStreamUrl(
   const host =
     bound === "0.0.0.0" || bound === "::" || bound === ":::" ? "127.0.0.1" : bound;
   return `http://${host.includes(":") ? `[${host}]` : host}:${server.port}`;
+}
+
+function isLoopbackHost(host: string): boolean {
+  return host === "127.0.0.1" || host === "localhost" || host === "::1" || host === "[::1]";
 }
 
 /**
