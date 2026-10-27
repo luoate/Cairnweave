@@ -1,4 +1,4 @@
-# 架构（M17d 更新）
+# 架构（M18a 更新）
 
 本文固定合并后的角色边界、数据所有权和失败语义。实现以本文为准；需要改动时先改本文并
 记录原因。
@@ -121,6 +121,19 @@ M17d 对齐详情与图的交互：列表卡片成为可聚焦的 `role="button"
 清除选择；多选详情面板显示已选数量并提供“清空选择”；图页头删除改为显式传 id/标题的
 `deleteProjectById`，不再从选中状态推断。
 以上都只影响静态 UI，不改变 HTTP 契约、图或调度语义。
+
+M18a 增加模型与密钥管理 API（`apps/cairn/src/http/agent-config.ts`，挂载
+`/settings/agent*`）：`GET /settings/agent` 汇总 provider-prefs 与 model-prefs，
+密钥与自定义请求头的值永不回读，只给 `hasApiKey`/掩码摘要与 `headerNames`；写接口
+（provider/模型增删改、默认模型、发现、测试）沿用 operator token，并额外拒绝跨源
+`Origin`。密钥写入 `auth.json`，同时按 SDK 要求在 `models.json` 的
+`provider:<id>` 副本里保留明文，因此 `provider-prefs.json` 与所有 HTTP 响应都不含
+密钥/请求头值；`apiKey: null` 或空串清除两侧。默认模型通过把来源条目复制为
+`cairn-worker` 实现，prompt 侧仍只认这个名字。删除被 prompt/worker profile/Observer
+引用的 provider 或模型返回 409，`?force=true` 才执行并回收其模型。远端发现与连通性
+测试的错误输出按注入的 fake manager 单测要求脱敏（密钥、`Authorization`、`Bearer`
+片段），只保留可读摘要。协议支持沿用 config 层的 `listSupportedProtocols`（OpenAI
+compatible、Anthropic、Google 等），内置 provider/模型走本地目录，不访问网络。
 
 ## 1. 范围
 
@@ -941,9 +954,13 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
   解析到同一个 model-prefs 文件；没有任务级 `model` 时保持原行为。本地模式由
   worker 在启动真实 Solver 前补齐内置 prompts/skills；容器模式由控制面在挂载前补齐，容器
   内因 `CAIRN_AGENT_CONFIG_READONLY=1` 跳过写入。`CAIRN_AGENT_CONFIG_DIR` 可覆盖配置目录
-  （测试用）。API key 只存在于 `auth.json`；上游 SDK 要求自定义 provider 在 `models.json`
-  提供 `apiKey` 字段，因此该字段写成环境变量名（如 `CAIRN_MODEL_API_KEY`）作占位，请求时
-  `auth.json` 的凭据优先。
+  （测试用）。手工配置时 API key 通常只写 `auth.json`，`models.json` 的 `apiKey`
+  写环境变量名（如 `CAIRN_MODEL_API_KEY`）作占位即可。M18a 的 API 创建的自定义
+  provider 例外：SDK 按 provider 读取 `models.json` 的 `apiKey`，所以
+  `applyProviderApiKey` 同时写 `auth.json` 与 `models.json` 的明文副本，清除时两侧
+  一起删除；`provider-prefs.json` 与所有 HTTP 响应仍只保留掩码/`hasApiKey`。
+  `setProviderHeaders` 同样只写 `models.json`，不把请求头值复制到
+  `provider-prefs.json`。
 - **容器内的只读配置与任务副本**：宿主配置目录以 `readonly` 挂到 `/cairn/agent-config`，
   但上游 `AuthStorage` 会在 `auth.json` 旁建 `auth.json.lock`。只读挂载下该操作以 `EROFS`
   失败，错误被存储层记录后凭据集合为空，`getApiKey` 回退到 `models.json` 的字面占位符，
@@ -1070,6 +1087,13 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
 - 凭据只读挂载；日志脱敏；任务与结果文件按项目隔离。exec 环境只传白名单，容器不暴露
   Docker socket。M13a 起，Solver 的 `startup.json` 按字段名脱敏认证存储，真实模型 gate
   还会对项目工作区做凭据值扫描，防止诊断快照把 `auth.json` 的内容带进工作区。
+- 模型配置 API（M18a）改变了凭据的**写入面**，因此额外约束：所有写路由要求
+  operator token，并拒绝 `Origin` 与控制面 host 不一致的请求；读取只返回掩码与
+  `headerNames`；删除被引用的 provider/模型默认 409。`models.json` 因 SDK 约定保存
+  明文 `apiKey`，与 `auth.json` 同属敏感文件，部署时仍按凭据文件保护（测试目录用
+  `0700`/`0600`）。发现与连通性测试会让控制面访问用户提供的 `baseUrl`，这是有意的
+  SSRF 面，仅限已认证操作员且只接受 http(s)、不含内嵌凭据的地址，错误信息按已知
+  密钥与常见认证字段脱敏后再返回。
 - 容器是主要的爆炸半径边界；本地模式仅用于受控开发/靶场。
 - 合规前提：仅限已获明确书面授权的测试、靶场、比赛或企业自查。
 

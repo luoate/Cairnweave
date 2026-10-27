@@ -366,7 +366,7 @@ export class ConfigManager {
         return data.providers
     }
 
-    async addProviderPref(entry: ProviderPrefEntry): Promise<AddResult> {
+    async addProviderPref(entry: Omit<ProviderPrefEntry, "id"> & { id?: string }): Promise<AddResult> {
         entry = normalizeProviderPrefEntry(entry)
         if (!entry.id) entry.id = crypto.randomUUID().slice(0, 8)
         entry.hash = computeHash(entry as unknown as Record<string, unknown>)
@@ -470,11 +470,51 @@ export class ConfigManager {
         if (entry.baseUrl) config.baseUrl = entry.baseUrl
         else delete config.baseUrl
         await this.setProvider(runtimeProvider, config)
+        // Credentials usually live in auth.json only. An absent apiKey therefore means
+        // "keep whatever auth.json holds"; an explicit empty string clears it.
         if (entry.apiKey) {
             this.setApiKey(runtimeProvider, entry.apiKey)
-        } else {
+        } else if (entry.apiKey === "") {
             this.removeApiKey(runtimeProvider)
         }
+    }
+
+    /**
+     * Stores a provider credential in auth.json and refreshes the plaintext copy the SDK
+     * requires on a custom provider in models.json. `null` (or an empty string) removes it.
+     */
+    async applyProviderApiKey(id: string, apiKey: string | null) {
+        const runtimeProvider = providerRuntimeName(id)
+        if (apiKey === null || apiKey === "") {
+            this.removeApiKey(runtimeProvider)
+            const data = await this.readModelsJson()
+            const provider = data.providers[runtimeProvider]
+            if (provider) {
+                delete provider.apiKey
+                await this.writeModelsJson(data)
+            }
+            return
+        }
+        this.setApiKey(runtimeProvider, apiKey)
+        const data = await this.readModelsJson()
+        const provider = data.providers[runtimeProvider]
+        if (provider) {
+            provider.apiKey = apiKey
+            await this.writeModelsJson(data)
+        }
+    }
+
+    /**
+     * Extra request headers for a custom provider. They are written to models.json only, so
+     * header values that carry secrets are not duplicated into provider-prefs.json.
+     */
+    async setProviderHeaders(id: string, headers: Record<string, string> | null) {
+        const runtimeProvider = providerRuntimeName(id)
+        const existing = (await this.getProvider(runtimeProvider)) ?? {}
+        const next: Record<string, unknown> = { ...existing }
+        if (headers && Object.keys(headers).length > 0) next.headers = headers
+        else delete next.headers
+        await this.setProvider(runtimeProvider, next)
     }
 
     // ── Providers CRUD (models.json SDK 格式) ──
@@ -668,7 +708,10 @@ export class ConfigManager {
         return (await this.readModelPrefs()).models
     }
 
-    async addModelPref(entry: ModelConfigEntry): Promise<AddResult> {
+    async addModelPref(
+        entry: Omit<ModelConfigEntry, "id"> & { id?: string },
+        options: { allowDuplicate?: boolean } = {},
+    ): Promise<AddResult> {
         if (!entry.id) entry.id = crypto.randomUUID().slice(0, 8)
         const providerPrefs = await this.listProviderPrefs()
         const binding = resolveModelProviderBinding(entry, providerPrefs)
@@ -683,8 +726,10 @@ export class ConfigManager {
         const data = await this.readModelPrefs()
 
         // hash 相同则拒绝
-        const dup = data.models.find((m) => m.id !== nextEntry.id && m.hash === nextEntry.hash)
-        if (dup) return { id: nextEntry.id, rejected: `与已有配置 "${dup.provider}:${dup.modelId}" (${dup.id}) 完全相同` }
+        if (!options.allowDuplicate) {
+            const dup = data.models.find((m) => m.id !== nextEntry.id && m.hash === nextEntry.hash)
+            if (dup) return { id: nextEntry.id, rejected: `与已有配置 "${dup.provider}:${dup.modelId}" (${dup.id}) 完全相同` }
+        }
 
         const idx = data.models.findIndex((m) => m.id === nextEntry.id)
         if (idx >= 0) {
@@ -697,6 +742,53 @@ export class ConfigManager {
         // 写入 models.json 让 SDK 识别
         await this.ensureModelInProvider(nextEntry)
         return { id: nextEntry.id }
+    }
+
+    /**
+     * Merges `patch` into an existing pref. When the provider binding or model id changes,
+     * the previous model definition is dropped from models.json once nothing references it.
+     */
+    async updateModelPref(
+        id: string,
+        patch: Partial<ModelConfigEntry>,
+        options: { allowDuplicate?: boolean } = {},
+    ): Promise<AddResult | undefined> {
+        const data = await this.readModelPrefs()
+        const idx = data.models.findIndex((m) => m.id === id)
+        if (idx < 0) return
+        const previous = data.models[idx]
+        const providerPrefs = await this.listProviderPrefs()
+        const merged = { ...previous, ...patch, id }
+        const binding = resolveModelProviderBinding(merged, providerPrefs)
+        if (binding.error) return { id, rejected: binding.error }
+        const nextEntry = normalizeStoredModelPref(
+            { ...merged, provider: binding.displayProvider },
+            providerPrefs,
+        )
+
+        if (!options.allowDuplicate) {
+            const dup = data.models.find((m) => m.id !== id && m.hash === nextEntry.hash)
+            if (dup) return { id, rejected: `与已有配置 "${dup.provider}:${dup.modelId}" (${dup.id}) 完全相同` }
+        }
+
+        data.models[idx] = nextEntry
+        await this.writeModelPrefs(data)
+        await this.ensureModelInProvider(nextEntry)
+
+        const previousBinding = resolveModelProviderBinding(previous, providerPrefs)
+        const bindingChanged =
+            previousBinding.runtimeProvider !== binding.runtimeProvider ||
+            previous.modelId !== nextEntry.modelId
+        if (bindingChanged) {
+            const stillReferenced = data.models.some((m) => {
+                const candidate = resolveModelProviderBinding(m, providerPrefs)
+                return candidate.runtimeProvider === previousBinding.runtimeProvider && m.modelId === previous.modelId
+            })
+            if (!stillReferenced) {
+                await this.removeModelFromProvider(previousBinding.runtimeProvider, previous.modelId)
+            }
+        }
+        return { id }
     }
 
     async removeModelPref(id: string) {

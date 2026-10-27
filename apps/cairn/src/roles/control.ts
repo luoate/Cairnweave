@@ -132,6 +132,16 @@ export async function runControl(args: readonly string[]): Promise<number> {
     db,
     staticDir,
     verification,
+    agentConfigDir:
+      config === null ? undefined : resolveAgentConfigDir(config),
+    ...(config === null
+      ? {}
+      : {
+          agentModelReferences: {
+            workerProfiles: config.workerProfiles,
+            observerModel: config.observer.model,
+          },
+        }),
     ...(operatorToken === undefined || operatorToken === "" ? {} : { operatorToken }),
     ...(config === null
       ? {}

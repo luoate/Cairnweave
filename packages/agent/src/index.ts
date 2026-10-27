@@ -1,4 +1,6 @@
 export { ConfigManager } from "./config/index"
+export type { AddResult } from "./config/index"
+export type { ModelConfigEntry, ModelDefinition, ProviderPrefEntry } from "./config/providers/types"
 export { RuntimeManager } from "./runtime/runtime"
 export { runSolverCli, runSubagentCli, runSolverRpc } from "./solver/cli"
 export type { SolverEventListener } from "./solver/cli"

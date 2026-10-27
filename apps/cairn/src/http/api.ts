@@ -69,7 +69,6 @@ import {
   type IntentRow,
   type ProjectRow,
 } from "@cairn/graph";
-import { timingSafeEqual } from "node:crypto";
 import { resolve, sep } from "node:path";
 
 import type { AuditTokenRegistry } from "../audit-stream/tokens";
@@ -77,6 +76,11 @@ import { DEFAULT_VERIFICATION, type BudgetConfig } from "../config";
 import { verifyEvidenceFiles } from "../scheduler/evidence";
 import { projectWorkspace } from "../scheduler/tasks";
 import { VerificationService } from "../verification/oracle";
+import {
+  registerAgentConfigRoutes,
+  type AgentConfigOptions,
+} from "./agent-config";
+import { requireOperator } from "./auth";
 
 export interface ApiOptions {
   db: CairnDatabase;
@@ -97,18 +101,26 @@ export interface ApiOptions {
   /** Completion oracle; defaults to the evidence policy and env-based challenge config. */
   verification?: VerificationService;
   /**
-   * Opt-in operator secret for the manual completion override. When set (the control
-   * role reads `CAIRN_OPERATOR_TOKEN`), `POST /projects/{id}/complete` requires a matching
-   * `X-Cairn-Operator-Token` header; when unset the route keeps its historical behavior.
+   * Opt-in operator secret for the manual completion override and the credential routes.
+   * When set (the control role reads `CAIRN_OPERATOR_TOKEN`), `POST /projects/{id}/complete`
+   * and every mutating `/settings/agent` route require a matching
+   * `X-Cairn-Operator-Token` header; when unset those routes keep their historical
+   * behavior.
    */
   operatorToken?: string;
+  /** Agent config directory for the model/credential routes. Defaults to env or ~/.tch-agent/config. */
+  agentConfigDir?: string;
+  /** Test seam; production lazily imports `@cairn/agent`'s ConfigManager. */
+  agentConfigFactory?: AgentConfigOptions["factory"];
+  /** Dispatch config references used by the model delete guard. */
+  agentModelReferences?: AgentConfigOptions["references"];
 }
 
 export interface Api {
   handle(request: Request): Promise<Response>;
 }
 
-interface RouteContext {
+export interface RouteContext {
   params: Record<string, string>;
   url: URL;
   request: Request;
@@ -152,22 +164,6 @@ function parseVerifyFacts(value: unknown): string[] | undefined {
     }
     return fact.trim();
   });
-}
-
-/**
- * Manual completion is an operator override, not a worker action. The guard is opt-in so
- * existing deployments and the API golden keep working when no token is configured.
- */
-function requireOperator(request: Request, operatorToken: string | undefined): void {
-  if (operatorToken === undefined || operatorToken === "") {
-    return;
-  }
-  const provided = request.headers.get("x-cairn-operator-token") ?? "";
-  const expected = Buffer.from(operatorToken);
-  const actual = Buffer.from(provided);
-  if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) {
-    throw new HttpError(401, "operator token required");
-  }
 }
 
 async function readBody(request: Request, maxBytes?: number): Promise<unknown> {
@@ -281,6 +277,14 @@ export function createApi(options: ApiOptions): Api {
   const { db, staticDir, workspaceRoot, auditTokens, budget, operatorToken } = options;
   const verification =
     options.verification ?? new VerificationService(db, DEFAULT_VERIFICATION);
+  const agentConfig: AgentConfigOptions = {
+    ...(options.agentConfigDir === undefined ? {} : { configDir: options.agentConfigDir }),
+    ...(options.agentConfigFactory === undefined ? {} : { factory: options.agentConfigFactory }),
+    ...(operatorToken === undefined || operatorToken === "" ? {} : { operatorToken }),
+    ...(options.agentModelReferences === undefined
+      ? {}
+      : { references: options.agentModelReferences }),
+  };
   const routes = buildRoutes(
     db,
     workspaceRoot,
@@ -288,6 +292,7 @@ export function createApi(options: ApiOptions): Api {
     budget,
     verification,
     operatorToken,
+    agentConfig,
   );
 
   async function handle(request: Request): Promise<Response> {
@@ -390,6 +395,7 @@ function buildRoutes(
   budget?: BudgetConfig,
   verification?: VerificationService,
   operatorToken?: string,
+  agentConfig: AgentConfigOptions = {},
 ): Route[] {
   const routes: Route[] = [];
   const oracle = verification ?? new VerificationService(db, DEFAULT_VERIFICATION);
@@ -402,6 +408,8 @@ function buildRoutes(
     });
     routes.push({ method, regex: new RegExp(`^${source}$`), keys, handler });
   }
+
+  registerAgentConfigRoutes(route, agentConfig);
 
   route("GET", "/settings", () =>
     db.withConn((conn) => {

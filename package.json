@@ -1,6 +1,6 @@
 {
   "name": "cairn-merged",
-  "version": "0.26.0-m17d",
+  "version": "0.27.0-m18a",
   "private": true,
   "type": "module",
   "workspaces": [

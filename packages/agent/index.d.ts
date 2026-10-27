@@ -55,9 +55,109 @@ export interface SolverSession {
   observer?: SolverObserverHandle;
 }
 
+export interface ProviderPrefEntry {
+  id: string;
+  hash?: string;
+  name: string;
+  api?: string;
+  baseUrl?: string;
+  apiKey?: string;
+}
+
+export interface ModelCost {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
+export interface ModelConfigEntry {
+  id: string;
+  hash?: string;
+  provider: string;
+  providerId?: string;
+  modelId: string;
+  thinkingLevel?: string;
+  name?: string;
+  reasoning?: boolean;
+  input?: ("text" | "image")[];
+  cost?: ModelCost;
+  contextWindow?: number;
+  maxTokens?: number;
+  headers?: Record<string, string>;
+  compat?: Record<string, unknown>;
+}
+
+export interface AddResult {
+  id: string;
+  /** Set when the write was refused, for example an identical existing entry. */
+  rejected?: string;
+}
+
+export interface BuiltInProvider {
+  provider: string;
+  apis: string[];
+  baseUrls: string[];
+  modelCount: number;
+}
+
+export interface DiscoveredModel {
+  id: string;
+  name: string;
+}
+
+export interface TestModelDetails {
+  modelPrefId: string;
+  provider: string;
+  providerId?: string;
+  providerLabel: string;
+  runtimeProvider: string;
+  modelId: string;
+  api?: string;
+  baseUrl?: string;
+  thinkingLevel?: string;
+  reasoning?: boolean;
+  contextWindow?: number;
+  maxTokens?: number;
+  apiKeySummary?: string;
+  headers?: Record<string, string>;
+  compat?: Record<string, unknown>;
+}
+
 export class ConfigManager {
   static getInstance(configDir?: string): Promise<ConfigManager>;
   readonly dir: string;
+  listProviderPrefs(): Promise<ProviderPrefEntry[]>;
+  addProviderPref(entry: Omit<ProviderPrefEntry, "id"> & { id?: string }): Promise<AddResult>;
+  updateProviderPref(id: string, patch: Partial<ProviderPrefEntry>): Promise<AddResult | undefined>;
+  removeProviderPref(id: string): Promise<void>;
+  getProvider(name: string): Promise<Record<string, unknown> | undefined>;
+  setProvider(name: string, config: Record<string, unknown>): Promise<void>;
+  applyProviderApiKey(id: string, apiKey: string | null): Promise<void>;
+  setProviderHeaders(id: string, headers: Record<string, string> | null): Promise<void>;
+  getApiKeyValue(provider: string): string | undefined;
+  hasApiKey(provider: string): boolean;
+  listSupportedProtocols(): string[];
+  listBuiltInProviders(): BuiltInProvider[];
+  listBuiltInModels(provider: string): Array<{ id: string; name?: string }>;
+  discoverModels(providerName: string): Promise<DiscoveredModel[]>;
+  listModelPrefs(): Promise<ModelConfigEntry[]>;
+  addModelPref(
+    entry: Omit<ModelConfigEntry, "id"> & { id?: string },
+    options?: { allowDuplicate?: boolean },
+  ): Promise<AddResult>;
+  updateModelPref(
+    id: string,
+    patch: Partial<ModelConfigEntry>,
+    options?: { allowDuplicate?: boolean },
+  ): Promise<AddResult | undefined>;
+  removeModelPref(id: string): Promise<void>;
+  testModel(prefId: string): Promise<{
+    ok: boolean;
+    error?: string;
+    response?: string;
+    details?: TestModelDetails;
+  }>;
 }
 
 export function createSolverSession(init: SolverInitPayload): Promise<SolverSession>;
