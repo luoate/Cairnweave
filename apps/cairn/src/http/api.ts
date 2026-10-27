@@ -25,6 +25,7 @@ import {
   getLatestVerificationCheck,
   getProjectDetail,
   getProjectOr404,
+  getProjectScope,
   getProjectUsage,
   getProjectVerification,
   getStrategistState,
@@ -47,6 +48,7 @@ import {
   parseCreateHintRequest,
   parseCreateIntentRequest,
   parseCreateProjectRequest,
+  parseProjectScopeRequest,
   parseHeartbeatRequest,
   parseReasonClaimRequest,
   parseReopenRequest,
@@ -60,6 +62,7 @@ import {
   releaseReason,
   renderProjectReportMarkdown,
   requestStrategistReplan,
+  setProjectScope,
   utcnow,
   type AuditEntry,
   type CairnDatabase,
@@ -440,6 +443,25 @@ function buildRoutes(
   route("GET", "/projects/{project_id}", ({ params }) =>
     db.withConn((conn) => json(getProjectDetail(conn, params["project_id"]!))),
   );
+
+  // Authorized scope is a separate resource so an existing project can be repaired
+  // without recreating it; the scheduler dispatches nothing until it exists.
+  route("GET", "/projects/{project_id}/scope", ({ params }) =>
+    db.withConn((conn) => {
+      const projectId = params["project_id"]!;
+      getProjectOr404(conn, projectId);
+      return json({ scope: getProjectScope(conn, projectId) });
+    }),
+  );
+
+  route("PUT", "/projects/{project_id}/scope", async ({ params, request }) => {
+    const scope = parseProjectScopeRequest(await readBody(request));
+    return db.withConn((conn) => {
+      const projectId = params["project_id"]!;
+      setProjectScope(conn, projectId, scope);
+      return json({ scope: getProjectScope(conn, projectId) });
+    });
+  });
 
   route("GET", "/projects/{project_id}/artifacts", ({ params }) =>
     db.withConn((conn) => {

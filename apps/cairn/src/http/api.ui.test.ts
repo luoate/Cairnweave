@@ -120,5 +120,11 @@ describe("static operations UI", () => {
     expect(html).toContain("无身份认证");
     expect(html).toContain("127.0.0.1");
     expect(html).toContain("新建项目");
+    expect(html).toContain("授权范围");
+    expect(html).toContain("未配置授权范围");
+    expect(html).toContain("未授权");
+    expect(appScript).toContain("saveProjectScope");
+    expect(appScript).toContain("/scope`");
+    expect(appScript).toContain("has_scope");
   });
 });

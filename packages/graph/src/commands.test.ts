@@ -9,7 +9,9 @@ import {
   createIntent,
   createProject,
   getProjectScope,
+  listProjects,
   parseCreateProjectRequest,
+  parseProjectScopeRequest,
   renewIntentLease,
   setProjectScope,
   type CairnDatabase,
@@ -62,6 +64,41 @@ describe("project scope", () => {
     expect(() =>
       parseCreateProjectRequest({ ...BODY, scope: { targets: [127] } }),
     ).toThrow(RequestValidationError);
+  });
+
+  test("parses a standalone scope request", () => {
+    expect(
+      parseProjectScopeRequest({ targets: [" 127.0.0.1:8080 "], notes: "lab" }),
+    ).toEqual({ targets: ["127.0.0.1:8080"], notes: "lab" });
+  });
+
+  test("rejects a standalone scope request without targets", () => {
+    expect(() => parseProjectScopeRequest({ notes: "lab" })).toThrow(RequestValidationError);
+    expect(() => parseProjectScopeRequest({ targets: [] })).toThrow(RequestValidationError);
+  });
+
+  test("list flags which projects have an authorized scope", () => {
+    const unscoped = db.withConn((conn) =>
+      createProject(conn, {
+        ...BODY,
+        bootstrap_enabled: false,
+        hints: null,
+        scope: null,
+      }),
+    );
+    const scoped = db.withConn((conn) =>
+      createProject(conn, {
+        ...BODY,
+        bootstrap_enabled: false,
+        hints: null,
+        scope: { targets: ["a.test"] },
+      }),
+    );
+
+    const summaries = db.withConn((conn) => listProjects(conn));
+    const byId = new Map(summaries.map((item) => [item.id, item.has_scope]));
+    expect(byId.get(unscoped.project.id)).toBe(false);
+    expect(byId.get(scoped.project.id)).toBe(true);
   });
 
   test("round-trips through the database", () => {

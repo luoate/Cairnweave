@@ -18,6 +18,7 @@ export {
   parseCreateHintRequest,
   parseCreateIntentRequest,
   parseCreateProjectRequest,
+  parseProjectScopeRequest,
   parseHeartbeatRequest,
   parseReasonClaimRequest,
   parseReopenRequest,

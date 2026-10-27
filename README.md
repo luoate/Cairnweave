@@ -6,8 +6,8 @@
 skills / Observer）合并成**一个 Bun/TypeScript 代码库**，不再维护 Python ↔ TypeScript
 之间的进程桥、JSONL RPC 和 worker 适配器。
 
-状态：**M16a（CI 门槛与真实模型 A/B 工具）**；M0–M4、M5a–M5c、
-M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a 的计划项全部完成。Phase 1 的
+状态：**M17a（前端 P0：授权范围可创建/可修复）**；M0–M4、M5a–M5c、
+M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M17a 的计划项全部完成。Phase 1 的
 “本地看板 + Observer 提案 + 证据门 + 单一写图者”闭环已具备；提案默认关闭。Phase 2
 的触发持久化、意图优先级/预算、单项目 token/成本与并发配额、只读慢层观测、逐 Fact
 成本归因与因果链，以及 reason 的 Hint/去重输出、人工重规划与资源压力触发均已落地，并
@@ -45,6 +45,11 @@ M16a 加持续集成门槛：`.github/workflows/ci.yml` 在 Ubuntu 上用 Bun 1.
 启动前校验两个 model-prefs 条目存在且解析到不同 provider/model，观测到的 run.model
 集合必须不重叠，否则拒绝运行。当前 agent 配置只有 `deepseek-flash` 一个可用模型，真实
 对比留到 M16b——需要先把第二个模型加进 `model-prefs.json`。
+M17a 修复前端 P0：此前 UI 新建项目不带 `scope`，而调度器对无范围项目 fail-closed，页面
+创建的项目永远不会派发。现在「新建项目」必须填写至少一个授权目标，按行去重后作为
+`scope` 提交；项目列表对无范围项目显示“未授权”，项目详情常驻授权范围卡片，可对既有
+项目补配或修改。后端新增 `GET/PUT /projects/{id}/scope`，`GET /projects` 增加
+`has_scope`，`POST /projects` 的既有契约不变。
 `cairn serve` 是可运行的 Cairn 兼容服务：SQLite schema、领域服务、全部
 五个路由、YAML/timeline 导出、静态 Web UI 均已就位，并用 Python Cairn 生成的 golden
 做了逐字对照。进程内 scheduler、任务/结果文件 worker 协议、BreachWeave Solver 接入已在 M2
@@ -1073,9 +1078,9 @@ M6 的跨进程恢复 gate 不调用模型：它先写下一台崩溃控制面�
 bun run tools/gate/m6-restart-gate.ts
 ```
 
-## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a，2026-10-27，Bun 1.4.4）
+## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a + M17a，2026-10-27，Bun 1.4.4）
 
-- `bun test`：**548 passed**（63 个文件），0 failed。
+- `bun test`：**556 passed**（64 个文件），0 failed。
 - `bun run typecheck`：`tsc --noEmit` 通过。
 - **HTTP 对照**：`api.golden.json` 的 60 步请求（成功路径、400/403/404/405/409、租约过期、
   删除级联、导出、路由错误）由 Python FastAPI + 固定时钟生成；TS 重放后状态码、content-type
@@ -1299,6 +1304,11 @@ bun run tools/gate/m6-restart-gate.ts
   typecheck + test 门槛；Linux 容器用 Bun 镜像复跑同一命令验证不依赖 Windows 路径。
   `tools/gate/m16-model-ab.ts` 在缺少两个 model-prefs、条目相同或同模型时以退出码 2
   拒跑，并写出失败报告；真实 A/B 需要第二个可用模型，列入 M16b。
+- **前端授权范围（M17a）**：UI 静态测试断言新建表单要求至少一个目标、`scope` 随
+  `POST /projects` 提交、范围读写只走 `GET/PUT /projects/{id}/scope`、列表
+  `has_scope` 徽章与详情卡片；HTTP 测试覆盖范围的默认空值、去重/裁剪、替换、空目标
+  422 与未知项目 404。浏览器实测创建（重复行去重）、编辑范围，以及为无范围项目补配后
+  `has_scope` 翻转。
 
 golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定时钟、`TZ=UTC`）。
 重新生成方法与约束见 `docs/PORTING.md`。
@@ -1357,6 +1367,7 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M15e ✅ | 真实模型校准 + epsilon 探索/衰减：采样后按解析式预算探索（最少样本优先），`epsilon`/`epsilon_decay`/`epsilon_min` 可配；`tools/gate/m15e-calibration.ts` 用真实 model-prefs 核对 profile/model 记账与统计/报告一致 | 545 passed / 62 files（2026-10-27） |
 | M15f ✅ | Phase 4 收尾：Phase 0 对照副本移除的现状说明、UI 常驻“无身份认证”提示与非回环绑定警告、`docs/CONTRACT.md` 汇总 task/result/usage/audit 契约与退出码 | 545 passed / 62 files（2026-10-27） |
 | M16a ✅ | CI 门槛与真实模型 A/B 工具：GitHub Actions 执行 install/typecheck/test，`bun run check` 本地复现；`tools/gate/m16-model-ab.ts` 双 arm 独立数据库/工作区、同 marker、单 profile，强制两个不同 model-prefs 且两侧 run.model 不重叠 | 548 passed / 63 files（2026-10-27）；Linux 容器同门槛通过；真实 A/B 待第二个模型（M16b） |
+| M17a ✅ | 前端 P0：新建项目强制授权范围并随 `scope` 提交；`GET/PUT /projects/{id}/scope`；`GET /projects` 增加 `has_scope`；列表“未授权”徽章与详情范围卡片支持补配/修改 | 556 passed / 64 files（2026-10-27）；浏览器实测创建、编辑与补配 |
 
 ## 与 Phase 0 的关系
 

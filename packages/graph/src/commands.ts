@@ -65,6 +65,7 @@ export function listProjects(conn: Database): ProjectSummary[] {
       working_intent_count: number;
       unclaimed_intent_count: number;
       hint_count: number;
+      has_scope: number;
     }
   >(
     conn,
@@ -74,7 +75,8 @@ export function listProjects(conn: Database): ProjectSummary[] {
         (SELECT COUNT(*) FROM intents WHERE project_id = p.id) AS intent_count,
         (SELECT COUNT(*) FROM intents WHERE project_id = p.id AND concluded_at IS NULL AND worker IS NOT NULL) AS working_intent_count,
         (SELECT COUNT(*) FROM intents WHERE project_id = p.id AND concluded_at IS NULL AND worker IS NULL) AS unclaimed_intent_count,
-        (SELECT COUNT(*) FROM hints WHERE project_id = p.id) AS hint_count
+        (SELECT COUNT(*) FROM hints WHERE project_id = p.id) AS hint_count,
+        EXISTS (SELECT 1 FROM project_scopes WHERE project_id = p.id) AS has_scope
     FROM projects p
     ORDER BY p.created_at
     `,
@@ -86,6 +88,7 @@ export function listProjects(conn: Database): ProjectSummary[] {
     working_intent_count: row.working_intent_count,
     unclaimed_intent_count: row.unclaimed_intent_count,
     hint_count: row.hint_count,
+    has_scope: row.has_scope !== 0,
   }));
 }
 

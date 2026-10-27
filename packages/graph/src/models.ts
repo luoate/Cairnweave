@@ -366,6 +366,8 @@ export interface ProjectSummary extends ProjectMeta {
   working_intent_count: number;
   unclaimed_intent_count: number;
   hint_count: number;
+  /** False projects are never dispatched; the scheduler fails closed without a scope. */
+  has_scope: boolean;
 }
 
 export interface ProjectDetail {
@@ -717,6 +719,54 @@ export function parseSettings(value: unknown): Settings {
   };
 }
 
+function parseScopeRecord(record: Body, loc: ValidationLocation): ProjectScopeInput {
+  const rawTargets = record["targets"];
+  if (!Array.isArray(rawTargets)) {
+    invalid("list_type", [...loc, "targets"], "Input should be a valid list", rawTargets);
+  }
+  if (rawTargets.length === 0) {
+    invalid(
+      "too_short",
+      [...loc, "targets"],
+      "List should have at least 1 item after validation, not 0",
+      rawTargets,
+    );
+  }
+  const targets = rawTargets.map((item, index) => {
+    if (typeof item !== "string") {
+      invalid(
+        "string_type",
+        [...loc, "targets", index],
+        "Input should be a valid string",
+        item,
+      );
+    }
+    const text = item.trim();
+    if (text === "") {
+      invalid(
+        "value_error",
+        [...loc, "targets", index],
+        "Value error, scope targets must not be empty",
+        item,
+      );
+    }
+    return text;
+  });
+
+  const notes = record["notes"];
+  if (notes !== undefined && notes !== null && typeof notes !== "string") {
+    invalid("string_type", [...loc, "notes"], "Input should be a valid string", notes);
+  }
+  return notes === undefined || notes === null
+    ? { targets }
+    : { targets, notes: notes as string };
+}
+
+/** Validates the standalone scope body used by `PUT /projects/{id}/scope`. */
+export function parseProjectScopeRequest(value: unknown): ProjectScopeInput {
+  return parseScopeRecord(bodyRecord(value), ["body"]);
+}
+
 function optionalProjectScope(body: Body): ProjectScopeInput | null {
   if (!has(body, "scope") || body["scope"] === null) {
     return null;
@@ -730,57 +780,7 @@ function optionalProjectScope(body: Body): ProjectScopeInput | null {
       scope,
     );
   }
-  const record = scope as Body;
-  const rawTargets = record["targets"];
-  if (!Array.isArray(rawTargets)) {
-    invalid(
-      "list_type",
-      ["body", "scope", "targets"],
-      "Input should be a valid list",
-      rawTargets,
-    );
-  }
-  if (rawTargets.length === 0) {
-    invalid(
-      "too_short",
-      ["body", "scope", "targets"],
-      "List should have at least 1 item after validation, not 0",
-      rawTargets,
-    );
-  }
-  const targets = rawTargets.map((item, index) => {
-    if (typeof item !== "string") {
-      invalid(
-        "string_type",
-        ["body", "scope", "targets", index],
-        "Input should be a valid string",
-        item,
-      );
-    }
-    const text = item.trim();
-    if (text === "") {
-      invalid(
-        "value_error",
-        ["body", "scope", "targets", index],
-        "Value error, scope targets must not be empty",
-        item,
-      );
-    }
-    return text;
-  });
-
-  const notes = record["notes"];
-  if (notes !== undefined && notes !== null && typeof notes !== "string") {
-    invalid(
-      "string_type",
-      ["body", "scope", "notes"],
-      "Input should be a valid string",
-      notes,
-    );
-  }
-  return notes === undefined || notes === null
-    ? { targets }
-    : { targets, notes: notes as string };
+  return parseScopeRecord(scope as Body, ["body", "scope"]);
 }
 
 function optionalProjectVerification(body: Body): ProjectVerificationInput | null {

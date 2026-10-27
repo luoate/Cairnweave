@@ -301,9 +301,15 @@
           class="group h-full flex flex-col bg-white rounded-2xl border border-slate-200/60 p-5 cursor-pointer transition-all duration-200 hover:shadow-lg hover:shadow-slate-200/50 hover:border-slate-300 hover:-translate-y-0.5">
           <div class="flex items-start justify-between mb-3">
             <span class="text-[11px] font-mono text-slate-400 tracking-wide" x-text="p.id"></span>
-            <span class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold uppercase tracking-[0.12em]"
-              :class="projectStatusBadgeClass(p.status)"
-              x-text="projectStatusLabel(p.status)"></span>
+            <div class="flex items-center gap-1.5 shrink-0">
+              <template x-if="!p.has_scope">
+                <span class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold uppercase tracking-[0.12em] bg-amber-50 text-amber-700 border border-amber-200"
+                  title="没有授权范围，调度器不会派发任务">未授权</span>
+              </template>
+              <span class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold uppercase tracking-[0.12em]"
+                :class="projectStatusBadgeClass(p.status)"
+                x-text="projectStatusLabel(p.status)"></span>
+            </div>
           </div>
           <div class="mb-3 flex-1">
             <div class="title-action-trigger flex items-start gap-2">
@@ -363,6 +369,12 @@
           </div>
           <div class="mt-3 pt-3 border-t border-slate-100 flex items-center justify-end gap-1.5">
             <div class="flex items-center justify-end gap-1.5 flex-wrap">
+              <button type="button" @click.stop="openScopeEditor(p.id, p.title)"
+                class="px-2 py-1 rounded-lg border text-[11px] transition flex items-center gap-1"
+                :class="p.has_scope ? 'border-slate-200 text-slate-500 hover:bg-slate-50 hover:text-slate-700' : 'border-amber-200 text-amber-700 hover:bg-amber-50'">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.5-3 8.1-7 10-4-1.9-7-5.5-7-10V6l7-3Z"/><path d="M9.5 12l1.8 1.8 3.4-3.6"/></svg>
+                范围
+              </button>
               <button type="button" @click.stop="viewProjectYaml(p.id, p.title)"
                 class="px-2 py-1 rounded-lg border border-slate-200 text-[11px] text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition flex items-center gap-1">
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><path d="M14.25 3H7.5A2.25 2.25 0 0 0 5.25 5.25v13.5A2.25 2.25 0 0 0 7.5 21h9a2.25 2.25 0 0 0 2.25-2.25V8.25L14.25 3Z"/><path d="M14.25 3v5.25h4.5"/><path d="M8.25 12h7.5M8.25 15h5.25"/></svg>
@@ -628,6 +640,43 @@
 
       <!-- Detail -->
       <div x-show="sideTab === 'detail'" class="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50/40">
+        <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+          <div class="px-4 py-3 border-b border-slate-100 bg-slate-50/80 flex items-center justify-between gap-3">
+            <div class="flex items-center gap-2">
+              <span class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest">授权范围</span>
+              <span x-show="scopePanel.loading" class="text-[10px] text-slate-400">加载中…</span>
+            </div>
+            <button type="button" @click="openScopeEditor(selectedProjectId, project && project.project ? project.project.title : '')"
+              class="rounded-lg border border-slate-200 px-2 py-0.5 text-[10px] font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition">编辑</button>
+          </div>
+          <div class="p-4 text-xs space-y-2">
+            <template x-if="scopePanel.error">
+              <p class="text-rose-600 break-words" x-text="scopePanel.error"></p>
+            </template>
+            <template x-if="!scopePanel.loading && !scopePanel.error && !scopePanel.scope">
+              <div class="space-y-2">
+                <p class="text-amber-700 font-medium">未配置授权范围</p>
+                <p class="text-slate-400 leading-relaxed">调度器不会为该项目派发任务。补充至少一个目标后才会开始运行。</p>
+                <button type="button" @click="openScopeEditor(selectedProjectId, project && project.project ? project.project.title : '')"
+                  class="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-medium text-amber-700 hover:bg-amber-100 transition">
+                  配置授权范围
+                </button>
+              </div>
+            </template>
+            <template x-if="scopePanel.scope">
+              <div class="space-y-2">
+                <div class="flex flex-wrap gap-1.5">
+                  <template x-for="target in scopePanel.scope.targets" :key="target">
+                    <span class="px-2 py-1 rounded-lg bg-slate-50 border border-slate-200 font-mono text-[11px] text-slate-600 break-all" x-text="target"></span>
+                  </template>
+                </div>
+                <template x-if="scopePanel.scope.notes">
+                  <p class="text-slate-400 break-words" x-text="scopePanel.scope.notes"></p>
+                </template>
+              </div>
+            </template>
+          </div>
+        </section>
         <template x-if="!selectedNode">
           <div class="rounded-2xl border border-dashed border-slate-200 bg-white/80 px-5 py-10 text-center shadow-sm">
             <p class="text-sm text-slate-400">点击节点或连线</p>
@@ -2041,6 +2090,15 @@
       <input x-model="newProject.title" placeholder="项目标题" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
       <textarea x-model="newProject.origin" placeholder="起点 — 起始状态" rows="2" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
       <textarea x-model="newProject.goal" placeholder="目标 — 期望达成" rows="2" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
+      <div>
+        <div class="flex items-center justify-between mb-1">
+          <label class="text-[11px] text-slate-400 font-medium uppercase tracking-wider">授权范围 <span class="text-rose-500">*</span></label>
+          <span class="text-[10px] text-slate-300">每行一个目标</span>
+        </div>
+        <textarea x-model="newProject.targetsText" rows="3" placeholder="127.0.0.1:8080&#10;https://lab.example" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
+        <input x-model="newProject.scopeNotes" placeholder="范围备注（可选）" class="mt-2 w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+        <p class="text-[11px] text-slate-400 mt-1">调度器只向这些目标派发任务；未配置范围的项目不会运行。</p>
+      </div>
       <label class="flex items-center gap-2 px-1 text-sm text-slate-600">
         <input type="checkbox" x-model="newProject.bootstrap" class="h-4 w-4 rounded border-slate-300 text-brand-500 focus:ring-brand-200">
         <span>立即执行初始探索</span>
@@ -2062,8 +2120,34 @@
     </div>
     <div class="flex justify-end gap-2 mt-5">
       <button @click="showNewProject = false" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">取消</button>
-      <button @click="createProject()" :disabled="!newProject.title || !newProject.origin || !newProject.goal"
-        class="px-5 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition disabled:opacity-30 shadow-sm shadow-brand-200">创建</button>
+      <button @click="createProject()" :disabled="!canCreateProject() || isCreatingProject"
+        class="px-5 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition disabled:opacity-30 shadow-sm shadow-brand-200"
+        x-text="isCreatingProject ? '创建中…' : '创建'"></button>
+    </div>
+  </div>
+</div>
+
+<!-- Project Scope -->
+<div x-show="showScopeModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="closeScopeModal()">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 border border-slate-200/60" @click.stop>
+    <h3 class="text-base font-semibold text-slate-700 mb-1">授权范围</h3>
+    <p class="text-xs text-slate-400 font-mono mb-4" x-text="scopeForm.projectTitle ? `${scopeForm.projectId} - ${scopeForm.projectTitle}` : scopeForm.projectId"></p>
+    <div class="space-y-3">
+      <div>
+        <div class="flex items-center justify-between mb-1">
+          <label class="text-[11px] text-slate-400 font-medium uppercase tracking-wider">目标 <span class="text-rose-500">*</span></label>
+          <span class="text-[10px] text-slate-300">每行一个目标</span>
+        </div>
+        <textarea x-model="scopeForm.targetsText" rows="4" placeholder="127.0.0.1:8080&#10;https://lab.example" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
+        <p class="text-[11px] text-slate-400 mt-1">调度器只向这些目标派发任务。</p>
+      </div>
+      <input x-model="scopeForm.notes" placeholder="范围备注（可选）" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+    </div>
+    <div class="flex justify-end gap-2 mt-5">
+      <button @click="closeScopeModal()" :disabled="isSavingScope" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition disabled:opacity-40">取消</button>
+      <button @click="saveProjectScope()" :disabled="isSavingScope || scopeTargets(scopeForm.targetsText).length === 0"
+        class="px-5 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition disabled:opacity-30 shadow-sm shadow-brand-200"
+        x-text="isSavingScope ? '保存中…' : '保存范围'"></button>
     </div>
   </div>
 </div>
@@ -2334,6 +2418,7 @@ function cairnApp() {
     showHintModal: false,
     showReopenModal: false,
     showRenameModal: false,
+    showScopeModal: false,
     showLocalPrefs: false,
     showSettings: false,
     showYamlModal: false,
@@ -2341,7 +2426,11 @@ function cairnApp() {
     exportProjectId: '',
     showDeleteModal: false,
 
-    newProject: { title: '', origin: '', goal: '', bootstrap: true, hints: [{ content: '' }] },
+    newProject: { title: '', origin: '', goal: '', bootstrap: true, targetsText: '', scopeNotes: '', hints: [{ content: '' }] },
+    isCreatingProject: false,
+    scopeForm: { projectId: '', projectTitle: '', targetsText: '', notes: '' },
+    isSavingScope: false,
+    scopePanel: { projectId: '', scope: null, loading: false, error: '' },
     intentForm: { description: '' },
     concludeForm: { description: '', intentId: '' },
     completeForm: { description: '' },
@@ -4096,6 +4185,7 @@ function cairnApp() {
       this.selectedTimelineEntryId = null;
       this.resetOpsPanels();
       await this.loadProject(id);
+      await this.loadProjectScope(id);
       this.view = 'graph';
       if (['runs', 'strategist', 'audit', 'evidence', 'cost'].includes(this.sideTab)) this.loadActiveOpsTab();
       if (location.hash !== `#/projects/${id}`) location.hash = `/projects/${id}`;
@@ -4132,6 +4222,8 @@ function cairnApp() {
       this.selectedFacts = [];
       this.selectedTimelineEntryId = null;
       this.resetOpsPanels();
+      this.scopePanel = { projectId: '', scope: null, loading: false, error: '' };
+      this.showScopeModal = false;
       this.teardownAutoFit();
       if (this.cy) { this.cy.destroy(); this.cy = null; }
       if (!fromRoute) location.hash = '/';
@@ -5281,25 +5373,130 @@ function cairnApp() {
       return `${seconds} 秒`;
     },
 
+    scopeTargets(text) {
+      const seen = new Set();
+      const targets = [];
+      for (const line of String(text ?? '').split(/\r?\n/)) {
+        const target = line.trim();
+        if (!target || seen.has(target)) continue;
+        seen.add(target);
+        targets.push(target);
+      }
+      return targets;
+    },
+
+    canCreateProject() {
+      return Boolean(
+        this.newProject.title.trim() &&
+        this.newProject.origin.trim() &&
+        this.newProject.goal.trim() &&
+        this.scopeTargets(this.newProject.targetsText).length > 0
+      );
+    },
+
+    async loadProjectScope(projectId) {
+      if (!projectId) {
+        this.scopePanel = { projectId: '', scope: null, loading: false, error: '' };
+        return;
+      }
+      this.scopePanel = { projectId, scope: null, loading: true, error: '' };
+      try {
+        const data = await this.api('GET', `/projects/${encodeURIComponent(projectId)}/scope`);
+        if (this.scopePanel.projectId !== projectId) return;
+        this.scopePanel = { projectId, scope: data?.scope ?? null, loading: false, error: '' };
+      } catch (e) {
+        if (this.scopePanel.projectId === projectId) {
+          this.scopePanel = { projectId, scope: null, loading: false, error: this.errorText(e) };
+        }
+      }
+    },
+
+    async openScopeEditor(projectId, projectTitle = '') {
+      if (!projectId) return;
+      const known = this.scopePanel.projectId === projectId ? this.scopePanel.scope : null;
+      this.scopeForm = {
+        projectId,
+        projectTitle,
+        targetsText: known ? known.targets.join('\n') : '',
+        notes: known && known.notes ? known.notes : '',
+      };
+      this.showScopeModal = true;
+      try {
+        const data = await this.api('GET', `/projects/${encodeURIComponent(projectId)}/scope`);
+        if (!this.showScopeModal || this.scopeForm.projectId !== projectId) return;
+        const scope = data?.scope ?? null;
+        this.scopeForm.targetsText = scope ? scope.targets.join('\n') : '';
+        this.scopeForm.notes = scope && scope.notes ? scope.notes : '';
+      } catch (e) {
+        this.showToast(e.message, 'error');
+      }
+    },
+
+    closeScopeModal() {
+      if (this.isSavingScope) return;
+      this.showScopeModal = false;
+    },
+
+    async saveProjectScope() {
+      if (this.isSavingScope) return;
+      const projectId = this.scopeForm.projectId;
+      if (!projectId) return;
+      const targets = this.scopeTargets(this.scopeForm.targetsText);
+      if (targets.length === 0) {
+        this.showToast('请至少填写一个授权目标', 'error');
+        return;
+      }
+      const notes = this.scopeForm.notes.trim();
+      this.isSavingScope = true;
+      try {
+        const data = await this.api('PUT', `/projects/${encodeURIComponent(projectId)}/scope`, {
+          targets,
+          ...(notes ? { notes } : {}),
+        });
+        const scope = data?.scope ?? null;
+        const projectSummary = this.projects.find(item => item.id === projectId);
+        if (projectSummary) projectSummary.has_scope = Boolean(scope);
+        if (this.selectedProjectId === projectId) {
+          this.scopePanel = { projectId, scope, loading: false, error: '' };
+        }
+        this.showScopeModal = false;
+        this.showToast('授权范围已保存');
+      } catch (e) {
+        this.showToast(e.message, 'error');
+      } finally {
+        this.isSavingScope = false;
+      }
+    },
+
     async createProject() {
+      if (this.isCreatingProject) return;
+      const targets = this.scopeTargets(this.newProject.targetsText);
+      if (targets.length === 0) {
+        this.showToast('请至少填写一个授权目标', 'error');
+        return;
+      }
+      this.isCreatingProject = true;
       try {
         const actor = this.actorName();
         const hintContents = this.newProject.hints.filter(h => h.content?.trim());
+        const notes = this.newProject.scopeNotes.trim();
         const body = {
           title: this.newProject.title,
           origin: this.newProject.origin,
           goal: this.newProject.goal,
-          bootstrap_enabled: this.newProject.bootstrap
+          bootstrap_enabled: this.newProject.bootstrap,
+          scope: { targets, ...(notes ? { notes } : {}) },
         };
         const hints = hintContents.map(h => ({ content: h.content.trim(), creator: actor }));
         if (hints.length > 0) body.hints = hints;
         const data = await this.api('POST', '/projects', body);
         this.showNewProject = false;
-        this.newProject = { title:'', origin:'', goal:'', bootstrap: true, hints: [{ content:'' }] };
+        this.newProject = { title:'', origin:'', goal:'', bootstrap: true, targetsText:'', scopeNotes:'', hints: [{ content:'' }] };
         await this.loadProjects();
         await this.openProject(data.project.id);
         this.showToast('项目已创建');
       } catch(e) { this.showToast(e.message, 'error'); }
+      finally { this.isCreatingProject = false; }
     },
 
     openCreateIntent() {

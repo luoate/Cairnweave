@@ -1,4 +1,4 @@
-# 架构（M16a 更新）
+# 架构（M17a 更新）
 
 本文固定合并后的角色边界、数据所有权和失败语义。实现以本文为准；需要改动时先改本文并
 记录原因。
@@ -101,7 +101,11 @@ epsilon-greedy 探索，探索时选已结束 run 最少的 profile，`epsilon` 
 `bun test`，本地等价命令 `bun run check`）与真实模型 A/B 工具
 `tools/gate/m16-model-ab.ts`：两个 arm 各自独立数据库/工作区、单 profile 统计配置，
 跑同一组 marker 项目，并要求两个 model-prefs 解析到不同模型、两侧 `runs.model`
-不重叠；第二个模型未配置时 gate 拒绝运行。
+不重叠；第二个模型未配置时 gate 拒绝运行。M17a 修复前端 P0：新建项目表单强制填写
+授权目标，去重后随 `POST /projects` 的 `scope` 提交；新增 `GET/PUT
+/projects/{id}/scope` 以便给既有项目补配或修改范围，`GET /projects` 的
+`ProjectSummary` 增加 `has_scope` 供列表标记“未授权”。范围仍是项目配置，写入后只影响
+之后的派发；`POST /projects` 的既有字段与响应不变，`GET /projects` 只多一个字段。
 
 ## 1. 范围
 
@@ -791,7 +795,9 @@ Host Bridge 是 pi 的 `tool_call` 扩展：它在工具执行**之前**拿到�
 ### 6.3 Scope 的来源
 
 Scope 属于项目配置，由控制面在创建项目时校验并持久化到 `project_scopes` 表（新增表，
-不改既有列；`POST /projects` 的响应体不变），任务生成时写入 `task.json`。worker 不读
+不改既有列；`POST /projects` 的响应体不变），任务生成时写入 `task.json`。M17a 起还可
+通过 `PUT /projects/{id}/scope` 补配或替换，`GET /projects/{id}/scope` 只读返回当前
+范围；`GET /projects` 的 `has_scope` 直接查询该表。worker 不读
 数据库，只信任务里的 scope；控制面负责保证它来自授权记录。
 
 fail-closed 有两层：控制面在**派发前**拒绝没有 scope 的项目；worker 再把同一份 scope 交给
