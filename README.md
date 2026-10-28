@@ -6,8 +6,8 @@
 skills / Observer）合并成**一个 Bun/TypeScript 代码库**，不再维护 Python ↔ TypeScript
 之间的进程桥、JSONL RPC 和 worker 适配器。
 
-状态：**M19a（中文 Writeup 生成）**；M0–M4、M5a–M5c、
-M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e、M18f、M18g、M19a 的计划项全部完成（M16b 真实 A/B 仍待第二个可用模型）。Phase 1 的
+状态：**M19b（Writeup 面板布局与下载）**；M0–M4、M5a–M5c、
+M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e、M18f、M18g、M19a、M19b 的计划项全部完成（M16b 真实 A/B 仍待第二个可用模型）。Phase 1 的
 “本地看板 + Observer 提案 + 证据门 + 单一写图者”闭环已具备；提案默认关闭。Phase 2
 的触发持久化、意图优先级/预算、单项目 token/成本与并发配额、只读慢层观测、逐 Fact
 成本归因与因果链，以及 reason 的 Hint/去重输出、人工重规划与资源压力触发均已落地，并
@@ -1214,7 +1214,7 @@ M6 的跨进程恢复 gate 不调用模型：它先写下一台崩溃控制面�
 bun run tools/gate/m6-restart-gate.ts
 ```
 
-## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a + M17a + M17b + M17c + M17d + M18a + M18b + M18c + M18d + M18e + M18f + M18g + M19a，2026-10-28，Bun 1.4.4）
+## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a + M17a + M17b + M17c + M17d + M18a + M18b + M18c + M18d + M18e + M18f + M18g + M19a + M19b，2026-10-28，Bun 1.4.4）
 
 - `bun test`：**655 passed**（69 个文件），0 failed。
 - `bun run typecheck`：`tsc --noEmit` 通过。
@@ -1525,6 +1525,11 @@ bun run tools/gate/m6-restart-gate.ts
   token 401 与跨源 403、GET 免 token、DELETE 恢复草稿；UI 测试确认 `loadWriteup` 只读、
   `generateWriteup` 走 POST 并置 `generating`、`resetWriteup` 走 DELETE、Markdown 下载
   链接与页签记忆。
+- **Writeup 面板修正（M19b）**：UI 测试断言面板内不再出现 `justify-between`、操作条为
+  `flex flex-wrap items-center gap-1.5`、`下载 Markdown` 按钮绑定 `downloadWriteup()`，
+  并验证下载只走 GET 路由与本地锚点点击（不发写请求）、`writeupFileName()` 生成
+  `writeup-proj_008.md` 并过滤 `../` 等非法字符。浏览器实测点击后锚点 href 指向
+  `?format=markdown`、`download` 为 `writeup-proj_008.md` 并弹出“已下载”提示。
 
 golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定时钟、`TZ=UTC`）。
 重新生成方法与约束见 `docs/PORTING.md`。
@@ -1595,6 +1600,7 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M18f ✅ | challenge/Flag 自动校验：`TCH_CHALLENGE_ID` 存在时新建项目自动选择 challenge 策略（显式请求体优先），新建弹窗提供校验选择与题目编号校验，`/flag` 附带 `verification` 快照并在横幅显示通过计数/失败原因，未通过时继续轮询 | 624 passed / 67 files（2026-10-28） |
 | M18g ✅ | Flag 原文展示：prompt 改为要求把真实 flag 原样写入 Fact 描述与证据（凭据/token 仍禁止），`/flag` 拒绝 `[REDACTED]`/`masked`/`[hidden]` 等占位符，证据只剩占位符时只读回退扫描 solver-session JSONL（限文件数/字节数、跳过二进制）恢复真实值 | 631 passed / 67 files（2026-10-28）；浏览器实测 proj_008 显示真实 flag |
 | M19a ✅ | 中文 Writeup：`buildProjectWriteup` 从图数据确定性渲染中文 Markdown 草稿（结论/目标/攻击路径/当前事实/取代/Hint/Flag 与校验/统计/证据附录），`GET\|POST\|DELETE /projects/{id}/writeup` 读取草稿、用 `completeText` 生成并存储模型撰写版（`project_writeups`）、清除回草稿；prompt 与正文限长、90 秒超时、写操作受 operator token 与同源约束、失败不覆盖旧正文；侧栏「Writeup」页签支持复制/下载/AI 撰写/恢复草稿 | 655 passed / 69 files（2026-10-28） |
+| M19b ✅ | Writeup 面板显示修正：标题行/摘要/操作条改为三段纵向布局（操作条自身 `flex-wrap`），不再与标题争宽度导致窄侧栏里竖排字符；`Markdown` 链接改为 `下载 Markdown` 按钮，下载走 `?format=markdown` 并固定文件名 `writeup-<项目id>.md`（非法字符替换为 `_`），正文卡片头部改列显示来源与规模 | 655 passed / 69 files（2026-10-28）；浏览器实测下载锚点与文件名、模型撰写版显示 |
 
 ## 与 Phase 0 的关系
 

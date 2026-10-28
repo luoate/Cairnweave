@@ -181,6 +181,35 @@ describe("static operations UI", () => {
     // Generation is disabled while in flight and reports failures inline.
     expect(html).toContain("writeupPanel.generating || !writeupPanel.loadedFor");
     expect(html).toContain("writeupPanel.error");
+
+    // The action bar is its own wrapping row: a title column squeezed beside five
+    // controls wrapped one character per line in the narrow side panel.
+    const panelStart = html.indexOf(`x-show="sideTab === 'writeup'"`);
+    const panel = html.slice(panelStart, html.indexOf("<!-- ", panelStart + 200));
+    expect(panel).not.toContain("justify-between");
+    expect(panel).toContain("flex flex-wrap items-center gap-1.5");
+    expect(panel).toContain("下载 Markdown");
+    expect(panel).toContain("@click=\"downloadWriteup()\"");
+    expect(panel).toContain("x-text=\"writeupSummary()\"");
+
+    const downloadStart = appScript.indexOf("downloadWriteup()");
+    expect(downloadStart).toBeGreaterThan(-1);
+    const downloadBody = appScript.slice(downloadStart, appScript.indexOf("\n    },", downloadStart));
+    // Downloading is a GET of the markdown route plus a local anchor click, never a write.
+    expect(downloadBody).toContain("this.writeupMarkdownHref()");
+    expect(downloadBody).toContain("link.download = this.writeupFileName()");
+    expect(downloadBody).not.toMatch(/this\.api\('(POST|DELETE)'/);
+
+    const app = loadApp() as unknown as {
+      selectedProjectId: string | null;
+      writeupFileName(): string;
+    };
+    app.selectedProjectId = "proj_008";
+    expect(app.writeupFileName()).toBe("writeup-proj_008.md");
+    app.selectedProjectId = "proj/../008";
+    expect(app.writeupFileName()).toBe("writeup-proj_.._008.md");
+    app.selectedProjectId = null;
+    expect(app.writeupFileName()).toBe("writeup-project.md");
   });
 });
 

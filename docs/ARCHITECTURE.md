@@ -730,11 +730,13 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
   同一响应带 `verification` 快照，横幅追加校验徽标（题目通过 n/n、失败原因或
   “校验已关闭”），challenge 未通过时轮询继续刷新。M18g 起显示的是真实 flag 原文，
   而不是 `[REDACTED]` 占位符。它不进入报告页，避免把工件内容带进可分享快照。
-- `Writeup`（M19a）读取 `GET /projects/{id}/writeup`，用 `<pre>` 原样展示中文 Markdown
-  正文，头部标注“中文草稿”或“模型撰写”及所用模型与生成时间；提供复制、指向
-  `?format=markdown` 的下载链接、“AI 撰写”（POST，生成期间按钮禁用）与仅在模型版下
-  出现的“恢复草稿”（DELETE）。页签同样按项目记在 `localStorage`，只在激活时加载，
-  失败给行内错误与重试。前端不自行拼接正文，也不把 Writeup 混入报告快照。
+- `Writeup`（M19a/M19b）读取 `GET /projects/{id}/writeup`，用 `<pre>` 原样展示中文 Markdown
+  正文，标题行、状态摘要与操作条分三段纵向排列（操作条自身 `flex-wrap`，不与标题争
+  宽度），标注“中文草稿”或“模型撰写”及所用模型与生成时间；提供刷新、复制、
+  `下载 Markdown`（指向 `?format=markdown`，文件名 `writeup-<项目id>.md`）、`AI 撰写`
+  （POST，生成期间禁用）与仅在模型版下出现的`恢复草稿`（DELETE）。页签同样按项目记在
+  `localStorage`，只在激活时加载，失败给行内错误与重试。前端不自行拼接正文，也不把
+  Writeup 混入报告快照。
 - Fact 详情（M15d）在 `GET /facts/{id}/meta` 返回 `superseded_by` 或非空 `supersedes`
   时额外显示“取代关系”：点取代者可跳到新 Fact，点旧 Fact 可回到被取代项。
 - `Cost`（成本，M13b）读取 `GET /projects/{id}/cost`，显示项目总量与归因完整性、
