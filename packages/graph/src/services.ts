@@ -126,7 +126,14 @@ export function nextHintId(conn: Database, projectId: string): string {
 }
 
 export function nextRunId(conn: Database, projectId: string): string {
-  return nextScopedId(conn, "run", "run_", projectId);
+  // runs.id is a global primary key while counters are project-scoped, so a second
+  // project would otherwise start again at run_001 and collide.
+  for (;;) {
+    const id = nextScopedId(conn, "run", "run_", projectId);
+    if (get<{ id: string }>(conn, "SELECT id FROM runs WHERE id = ?", id) === null) {
+      return id;
+    }
+  }
 }
 
 export function getProjectOr404(conn: Database, projectId: string): ProjectRow {

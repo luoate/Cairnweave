@@ -1150,7 +1150,7 @@ bun run tools/gate/m6-restart-gate.ts
 
 ## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a + M17a + M17b + M17c + M17d + M18a + M18b + M18c，2026-10-28，Bun 1.4.4）
 
-- `bun test`：**605 passed**（66 个文件），0 failed。
+- `bun test`：**606 passed**（66 个文件），0 failed。
 - `bun run typecheck`：`tsc --noEmit` 通过。
 - **HTTP 对照**：`api.golden.json` 的 60 步请求（成功路径、400/403/404/405/409、租约过期、
   删除级联、导出、路由错误）由 Python FastAPI + 固定时钟生成；TS 重放后状态码、content-type
@@ -1429,7 +1429,9 @@ bun run tools/gate/m6-restart-gate.ts
   （`provider-prefs.json`/`model-prefs.json` 无密钥与 header 值，`auth.json` 持有密钥，
   `models.json` 的 `provider:<id>` 含协议/Base URL/模型）→ 无 force 删除 409 → 强制
   删除回收两个条目 → 快照清空。整轮收集的响应文本均不含密钥或 header 值。操作手册
-  `docs/MODELS.md` 覆盖同一路径及 M16b 解锁条件。
+  `docs/MODELS.md` 覆盖同一路径及 M16b 解锁条件。修复 `runs.id` 是全局主键、而编号
+  计数器按项目各从 1 开始导致的跨项目 `run_001` 冲突：分配时跳过已被其他项目占用的
+  id，新增用例覆盖两个项目的连续分配。
 
 golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定时钟、`TZ=UTC`）。
 重新生成方法与约束见 `docs/PORTING.md`。

@@ -15,6 +15,7 @@ import {
   heartbeatIntent,
   listFactEvidence,
   listProjectRuns,
+  nextRunId,
   recordFactMeta,
   startRun,
   type CairnDatabase,
@@ -95,6 +96,49 @@ function concludeWithEvidence(runId: string | null): string {
 }
 
 describe("runs", () => {
+  test("allocates run ids uniquely across projects", () => {
+    const otherProjectId = db.withConn(
+      (conn) =>
+        createProject(conn, {
+          title: "other",
+          origin: "origin",
+          goal: "goal",
+          hints: null,
+          bootstrap_enabled: false,
+          scope: { targets: ["127.0.0.1:8081"] },
+        }).project.id,
+    );
+
+    const first = db.withConn((conn) => {
+      const id = nextRunId(conn, projectId);
+      startRun(conn, {
+        id,
+        projectId,
+        taskId: "task-a",
+        kind: "explore",
+        worker: "cairn-worker",
+        startedAt: "2026-01-02T03:00:00Z",
+      });
+      return id;
+    });
+    const second = db.withConn((conn) => {
+      const id = nextRunId(conn, otherProjectId);
+      startRun(conn, {
+        id,
+        projectId: otherProjectId,
+        taskId: "task-b",
+        kind: "explore",
+        worker: "cairn-worker",
+        startedAt: "2026-01-02T03:00:01Z",
+      });
+      return id;
+    });
+
+    expect(first).toBe("run_001");
+    expect(second).toBe("run_002");
+    expect(second).not.toBe(first);
+  });
+
   test("records a running task and finishes it in place", () => {
     start();
     expect(db.withConn((conn) => listProjectRuns(conn, projectId))).toMatchObject([
