@@ -6,8 +6,8 @@
 skills / Observer）合并成**一个 Bun/TypeScript 代码库**，不再维护 Python ↔ TypeScript
 之间的进程桥、JSONL RPC 和 worker 适配器。
 
-状态：**M18f（challenge/Flag 自动校验）**；M0–M4、M5a–M5c、
-M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e、M18f 的计划项全部完成（M16b 真实 A/B 仍待第二个可用模型）。Phase 1 的
+状态：**M19a（中文 Writeup 生成）**；M0–M4、M5a–M5c、
+M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e、M18f、M18g、M19a 的计划项全部完成（M16b 真实 A/B 仍待第二个可用模型）。Phase 1 的
 “本地看板 + Observer 提案 + 证据门 + 单一写图者”闭环已具备；提案默认关闭。Phase 2
 的触发持久化、意图优先级/预算、单项目 token/成本与并发配额、只读慢层观测、逐 Fact
 成本归因与因果链，以及 reason 的 Hint/去重输出、人工重规划与资源压力触发均已落地，并
@@ -112,6 +112,14 @@ M18g 修复 Flag 被改成 `CTF2{[REDACTED]}` 的问题：worker prompt 不再�
 `/flag` 过滤 `redacted`、`masked`、`[hidden]` 等占位符，证据里只剩占位符时再以只读、
 限量的方式回退扫描 `.cairn/sessions/*/solver-session/*.jsonl`，恢复旧任务被改写的
 真实 flag。UI 横幅直接显示真实值，不回显日志内容或凭据。
+M19a 增加中文 Writeup：`packages/graph/src/writeup.ts` 从图中数据（项目、scope、
+当前 Fact、攻击路径、取代关系、Hint、Flag 与校验、run 统计、证据文件附录）确定性地
+渲染一份简体中文 Markdown 草稿，只读、不调用模型、不新增未经核实的内容；
+`GET /projects/{id}/writeup` 返回草稿（`format=markdown` 直接下载）。`POST` 可让所选
+模型按草稿重写一份模型撰写版并存入新表 `project_writeups`，`DELETE` 回到草稿。
+草稿同时作为模型 prompt 的唯一素材，Flag 原文照抄、凭据仍禁止；prompt ≤60000 字符、
+正文 ≤200000 字符、默认 90 秒超时，失败沿用已存正文并返回 502/504。UI 新增
+「Writeup」页签，支持复制、下载与“AI 撰写/恢复草稿”。详见 `docs/WRITEUP.md`。
 `cairn serve` 是可运行的 Cairn 兼容服务：SQLite schema、领域服务、全部
 五个路由、YAML/timeline 导出、静态 Web UI 均已就位，并用 Python Cairn 生成的 golden
 做了逐字对照。进程内 scheduler、任务/结果文件 worker 协议、BreachWeave Solver 接入已在 M2
@@ -445,6 +453,25 @@ M18f 增加（自动 challenge 校验）：
 - **demo 配置**：`runs/demo/dispatch.yaml` 仍保留 `evidence_enforcement: off` 作为
   本地演练逃生口；设置 `TCH_CHALLENGE_ID` 后新建项目仍会自动走 challenge 校验。
 
+M19a 增加（中文 Writeup 生成）：
+
+- **确定性中文草稿**：`buildProjectWriteup` 只组合既有读取（`getProjectDetail`、
+  `getProjectScope`、`listFactSupersessions`、`buildProjectRunStats`、
+  `summarizeProjectVerification`、`listProjectArtifacts`、`fact_meta` 与 `runs`），
+  渲染结论、题目与目标、攻击路径、当前有效事实清单、被取代的判断、Hint、Flag 与
+  校验、执行统计与证据文件附录；除 `generated_at` 外输出稳定，不写图、不写旁路。
+- **草稿与 Flag 一致**：草稿复用 `/flag` 的 `collectProjectFlag`，artifacts 优先、
+  solver-session 回退，两个视图不会给出不同的 Flag。
+- **模型撰写版可选**：`POST /projects/{id}/writeup` 用 `completeText`（无工具的
+  单轮补全）按草稿重写，正文写入 `project_writeups`（每项目一行）；prompt 硬性要求
+  全程简体中文、只使用草稿里的事实/证据/Flag、Flag 逐字符照抄、不得写入凭据。
+  生成失败或被替换前，已存正文保持不变。
+- **边界与守卫**：prompt ≤60000 字符、正文 ≤200000 字符、附录 ≤200 个文件、默认
+  90 秒超时；写请求需 operator token 且拒绝跨源；provider 报错文本经 `sanitizeText`
+  脱敏后才会出现在 `detail` 中。
+- **UI**：侧栏「Writeup」页签按项目记忆，显示中文草稿或模型撰写版，提供复制、
+  Markdown 下载、“AI 撰写”与“恢复草稿”。
+
 M14b 增加（Phase 2 补全）：
 
 - **reason 输出扩展**：一次 reason 可同时返回 `intents` 与 `hints`，也可在仍有未结束
@@ -727,6 +754,7 @@ docs/OBSERVER.md         Observer 实现、配置、权限、flush 语义与已�
 docs/STRATEGIST.md       慢层触发、意图优先级/预算、Hint/去重、人工/资源触发、成本归因（M12a–M14b）
 docs/VERIFICATION.md     完成验证：策略、oracle、路由、失败语义与安全边界（M14a）
 docs/REPORT.md           项目报告：JSON 结构、来源、排序、脱敏与边界（M15c）
+docs/WRITEUP.md          中文 Writeup：草稿组成、模型撰写、路由、边界与用法（M19a）
 docs/CONTRACT.md         worker 契约：task/result/usage/audit、退出码与校验边界（M15f）
 docs/PORTING.md          Python 模块 → TS 模块映射与对照测试策略
 ```
@@ -1186,9 +1214,9 @@ M6 的跨进程恢复 gate 不调用模型：它先写下一台崩溃控制面�
 bun run tools/gate/m6-restart-gate.ts
 ```
 
-## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a + M17a + M17b + M17c + M17d + M18a + M18b + M18c + M18d + M18e + M18f，2026-10-28，Bun 1.4.4）
+## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a + M17a + M17b + M17c + M17d + M18a + M18b + M18c + M18d + M18e + M18f + M18g + M19a，2026-10-28，Bun 1.4.4）
 
-- `bun test`：**624 passed**（67 个文件），0 failed。
+- `bun test`：**655 passed**（69 个文件），0 failed。
 - `bun run typecheck`：`tsc --noEmit` 通过。
 - **HTTP 对照**：`api.golden.json` 的 60 步请求（成功路径、400/403/404/405/409、租约过期、
   删除级联、导出、路由错误）由 Python FastAPI + 固定时钟生成；TS 重放后状态码、content-type
@@ -1484,6 +1512,19 @@ bun run tools/gate/m6-restart-gate.ts
   `verification` 仍然优先；UI 测试确认校验徽标的通过/失败/关闭文案、challenge
   未通过时的继续轮询条件、新建弹窗的题目编号行内校验，以及 `auto`/`challenge`/
   `evidence`/`off` 到创建请求体的映射。
+- **Flag 原文（M18g）**：prompt 契约用例断言要求真实 flag 原样写入、凭据仍禁止；
+  扫描器用例覆盖 `[REDACTED]`/`masked`/`[hidden]` 与括号体占位符被拒、solver-session
+  JSONL 回退恢复真实值、二进制与超限文件跳过。浏览器在 proj_008 复核横幅显示真实 flag。
+- **中文 Writeup（M19a）**：`packages/graph/src/writeup.test.ts` 覆盖空项目草稿、
+  校验策略回退、攻击路径（run worker/model/outcome 与证据引用）、当前事实清单、
+  取代关系、Hint、challenge 校验渲染、附录 200 个文件截断、多行 Fact 折叠、prompt
+  硬性规则（简体中文、只用草稿素材、Flag 照抄、禁止凭据）与 `project_writeups`
+  存取/替换/清除；`apps/cairn/src/http/api.writeup.test.ts` 覆盖草稿 JSON/Markdown、
+  非法 `format` 与未知项目、模型撰写入库与回读、默认 model pref、生成失败保留旧正文
+  （502）、provider 错误脱敏为 `<redacted>`、20ms 超时 504、请求体校验 400、operator
+  token 401 与跨源 403、GET 免 token、DELETE 恢复草稿；UI 测试确认 `loadWriteup` 只读、
+  `generateWriteup` 走 POST 并置 `generating`、`resetWriteup` 走 DELETE、Markdown 下载
+  链接与页签记忆。
 
 golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定时钟、`TZ=UTC`）。
 重新生成方法与约束见 `docs/PORTING.md`。
@@ -1553,6 +1594,7 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M18e ✅ | 前端 Flag 展示：只读 `GET /projects/{id}/flag` 从已索引 artifacts 提取 Flag（过滤占位符、二进制、超大文件与越界路径，限制文件数/字节数/行长度），项目页头绿色横幅显示值、来源与复制按钮，轮询找到后停止重复扫描 | 619 passed / 67 files（2026-10-28）；浏览器实测 proj_008 显示、proj_007 不显示 |
 | M18f ✅ | challenge/Flag 自动校验：`TCH_CHALLENGE_ID` 存在时新建项目自动选择 challenge 策略（显式请求体优先），新建弹窗提供校验选择与题目编号校验，`/flag` 附带 `verification` 快照并在横幅显示通过计数/失败原因，未通过时继续轮询 | 624 passed / 67 files（2026-10-28） |
 | M18g ✅ | Flag 原文展示：prompt 改为要求把真实 flag 原样写入 Fact 描述与证据（凭据/token 仍禁止），`/flag` 拒绝 `[REDACTED]`/`masked`/`[hidden]` 等占位符，证据只剩占位符时只读回退扫描 solver-session JSONL（限文件数/字节数、跳过二进制）恢复真实值 | 631 passed / 67 files（2026-10-28）；浏览器实测 proj_008 显示真实 flag |
+| M19a ✅ | 中文 Writeup：`buildProjectWriteup` 从图数据确定性渲染中文 Markdown 草稿（结论/目标/攻击路径/当前事实/取代/Hint/Flag 与校验/统计/证据附录），`GET\|POST\|DELETE /projects/{id}/writeup` 读取草稿、用 `completeText` 生成并存储模型撰写版（`project_writeups`）、清除回草稿；prompt 与正文限长、90 秒超时、写操作受 operator token 与同源约束、失败不覆盖旧正文；侧栏「Writeup」页签支持复制/下载/AI 撰写/恢复草稿 | 655 passed / 69 files（2026-10-28） |
 
 ## 与 Phase 0 的关系
 

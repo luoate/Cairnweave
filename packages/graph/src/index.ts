@@ -267,6 +267,19 @@ export {
 } from "./report";
 
 export {
+  buildProjectWriteup,
+  clearProjectWriteup,
+  getProjectWriteup,
+  renderProjectWriteupMarkdown,
+  renderProjectWriteupPrompt,
+  saveProjectWriteup,
+  type BuildProjectWriteupOptions,
+  type ProjectWriteupRecord,
+  type ProjectWriteupSnapshot,
+  type WriteupFlag,
+} from "./writeup";
+
+export {
   getProjectArtifact,
   listProjectArtifacts,
   recordProjectArtifacts,

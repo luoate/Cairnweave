@@ -267,6 +267,23 @@ export function scanSolverSessionFlags(options: SessionFlagScanOptions): Project
   return rankMatches(matches, scannedFiles, truncated);
 }
 
+/**
+ * Artifact scan first, then the solver-session fallback. Shared by `/flag` and the writeup
+ * draft so the two views can never disagree about which flag was captured.
+ */
+export function collectProjectFlag(
+  options: FlagScanOptions & SessionFlagScanOptions,
+): ProjectFlagResult {
+  const artifactResult = scanProjectFlag(options);
+  if (artifactResult.found) return artifactResult;
+  const sessionResult = scanSolverSessionFlags(options);
+  return {
+    ...sessionResult,
+    scanned_files: artifactResult.scanned_files + sessionResult.scanned_files,
+    truncated: artifactResult.truncated || sessionResult.truncated,
+  };
+}
+
 function rankMatches(
   matches: Map<string, ProjectFlagMatch>,
   scannedFiles: number,

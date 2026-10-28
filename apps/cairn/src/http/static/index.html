@@ -716,6 +716,10 @@
             :class="sideTab === 'report' ? 'text-brand-600 border-brand-500 bg-white' : 'text-slate-400 border-transparent hover:text-slate-600'">
             报告 <span class="ml-0.5 text-[10px] opacity-60" x-show="reportPanel.loadedFor && reportPanel.data" x-text="reportPanel.data ? reportPanel.data.graph.current_facts : ''"></span>
           </button>
+          <button @click="selectSideTab('writeup')" class="shrink-0 whitespace-nowrap px-2.5 py-2 text-[11px] font-medium transition border-b-2"
+            :class="sideTab === 'writeup' ? 'text-brand-600 border-brand-500 bg-white' : 'text-slate-400 border-transparent hover:text-slate-600'">
+            Writeup <span class="ml-0.5 text-[10px] opacity-60" x-show="writeupPanel.loadedFor" x-text="writeupPanel.data ? (writeupPanel.data.source === 'model' ? 'AI' : '草稿') : ''"></span>
+          </button>
         </div>
       </div>
 
@@ -2161,6 +2165,66 @@
           </div>
         </template>
       </div>
+
+      <!-- Chinese writeup (M19a) -->
+      <div x-show="sideTab === 'writeup'" class="flex-1 overflow-y-auto p-3 space-y-3 bg-slate-50/30">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <div class="flex items-center gap-1.5">
+              <span class="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Writeup</span>
+              <span class="px-1.5 py-0.5 rounded-full border text-[9px] font-medium"
+                :class="writeupPanel.data && writeupPanel.data.source === 'model' ? 'border-brand-200 bg-brand-50 text-brand-600' : 'border-slate-200 bg-white text-slate-400'"
+                x-text="writeupPanel.data && writeupPanel.data.source === 'model' ? '模型撰写' : '中文草稿'"></span>
+            </div>
+            <p class="mt-1 text-xs text-slate-500" x-text="writeupSummary()"></p>
+          </div>
+          <div class="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+            <button type="button" @click="loadWriteup()" :disabled="writeupPanel.loading || writeupPanel.generating"
+              title="刷新 Writeup" aria-label="刷新 Writeup"
+              class="h-7 w-7 rounded-lg border border-slate-200 bg-white text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition disabled:opacity-40 inline-flex items-center justify-center">
+              <svg class="w-3.5 h-3.5" :class="{ 'animate-spin': writeupPanel.loading }" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5"/><path d="M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5"/></svg>
+            </button>
+            <button type="button" @click="copyWriteup()" :disabled="!writeupMarkdown()"
+              class="h-7 rounded-lg border border-slate-200 bg-white px-2 text-[10px] font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-600 transition disabled:opacity-40">复制</button>
+            <a :href="writeupMarkdownHref()" download
+              class="h-7 rounded-lg border border-slate-200 bg-white px-2 text-[10px] font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-600 transition inline-flex items-center">Markdown</a>
+            <button type="button" @click="generateWriteup()" :disabled="writeupPanel.generating || !writeupPanel.loadedFor"
+              class="h-7 rounded-lg border border-brand-200 bg-brand-50 px-2 text-[10px] font-medium text-brand-600 hover:bg-brand-100 transition disabled:opacity-40"
+              x-text="writeupPanel.generating ? '撰写中…' : 'AI 撰写'"></button>
+            <button type="button" @click="resetWriteup()" x-show="writeupPanel.data && writeupPanel.data.source === 'model'"
+              :disabled="writeupPanel.generating"
+              class="h-7 rounded-lg border border-slate-200 bg-white px-2 text-[10px] font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-600 transition disabled:opacity-40">恢复草稿</button>
+          </div>
+        </div>
+
+        <template x-if="writeupPanel.error">
+          <div class="rounded-xl border border-rose-200 bg-rose-50/80 px-3 py-2.5">
+            <p class="text-[11px] text-rose-600 break-words" x-text="writeupPanel.error"></p>
+            <button type="button" @click="loadWriteup()" class="mt-1.5 text-[11px] font-medium text-rose-600 hover:text-rose-700">重试</button>
+          </div>
+        </template>
+
+        <template x-if="writeupPanel.loading && !writeupPanel.data">
+          <div class="space-y-2 animate-pulse">
+            <div class="h-16 rounded-2xl border border-slate-200 bg-white"></div>
+            <div class="h-48 rounded-2xl border border-slate-200 bg-white"></div>
+          </div>
+        </template>
+
+        <template x-if="writeupPanel.data">
+          <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+            <div class="px-3 py-2.5 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between gap-2">
+              <span class="text-[11px] font-semibold text-slate-600">正文</span>
+              <span class="text-[10px] text-slate-400" x-text="writeupMetaLabel()"></span>
+            </div>
+            <pre class="px-3 py-2.5 text-[11px] leading-relaxed text-slate-600 whitespace-pre-wrap break-words font-mono" x-text="writeupMarkdown()"></pre>
+          </section>
+        </template>
+
+        <p class="text-[10px] text-slate-400 leading-relaxed">
+          中文草稿完全由图中数据生成，始终可用；“AI 撰写”只会让模型重写草稿里已记录的事实，不会新增未经核实的内容，也不会读取凭据。
+        </p>
+      </div>
     </div>
   </div>
 </div>
@@ -3027,6 +3091,13 @@ function cairnApp() {
       error: '',
       loadedFor: '',
     },
+    writeupPanel: {
+      data: null,
+      loading: false,
+      generating: false,
+      error: '',
+      loadedFor: '',
+    },
 
     async init() {
       this._panelResizeMove = (e) => this.onPanelResize(e);
@@ -3841,10 +3912,11 @@ function cairnApp() {
       this.costPanel = { data: null, loading: false, error: '', loadedFor: '' };
       this.statsPanel = { data: null, loading: false, error: '', loadedFor: '' };
       this.reportPanel = { data: null, loading: false, error: '', loadedFor: '' };
+      this.writeupPanel = { data: null, loading: false, generating: false, error: '', loadedFor: '' };
     },
 
     opsTabs() {
-      return ['runs', 'strategist', 'audit', 'evidence', 'proposals', 'cost', 'stats', 'report'];
+      return ['runs', 'strategist', 'audit', 'evidence', 'proposals', 'cost', 'stats', 'report', 'writeup'];
     },
 
     isOpsTab(tab) {
@@ -3878,6 +3950,7 @@ function cairnApp() {
       else if (this.sideTab === 'cost') this.loadCost();
       else if (this.sideTab === 'stats') this.loadStats();
       else if (this.sideTab === 'report') this.loadReport();
+      else if (this.sideTab === 'writeup') this.loadWriteup();
     },
 
     async loadRuns() {
@@ -4041,6 +4114,93 @@ function cairnApp() {
     reportMarkdownHref() {
       if (!this.selectedProjectId) return '#';
       return `/projects/${encodeURIComponent(this.selectedProjectId)}/report?format=markdown`;
+    },
+
+    async loadWriteup() {
+      const projectId = this.selectedProjectId;
+      if (!projectId) return;
+      this.writeupPanel.loading = true;
+      this.writeupPanel.error = '';
+      try {
+        const data = await this.api('GET', `/projects/${encodeURIComponent(projectId)}/writeup`);
+        if (this.selectedProjectId !== projectId) return;
+        this.writeupPanel.data = data && typeof data === 'object' ? data : null;
+        this.writeupPanel.loadedFor = projectId;
+      } catch (e) {
+        if (this.selectedProjectId === projectId) this.writeupPanel.error = this.errorText(e);
+      } finally {
+        if (this.selectedProjectId === projectId) this.writeupPanel.loading = false;
+      }
+    },
+
+    writeupMarkdown() {
+      const data = this.writeupPanel.data;
+      return data && typeof data.markdown === 'string' ? data.markdown : '';
+    },
+
+    writeupMarkdownHref() {
+      if (!this.selectedProjectId) return '#';
+      return `/projects/${encodeURIComponent(this.selectedProjectId)}/writeup?format=markdown`;
+    },
+
+    writeupSummary() {
+      const data = this.writeupPanel.data;
+      if (!data) return '依据图中数据生成的中文复盘草稿，可交给模型重写为成稿。';
+      const parts = [data.flag && data.flag.value ? '已记录 Flag' : '尚未记录 Flag'];
+      const latest = data.verification && data.verification.latest;
+      parts.push(latest ? (latest.ok ? '校验通过' : '校验未通过') : '校验尚无记录');
+      parts.push(`${data.source === 'model' ? '模型成稿' : '中文草稿'}`);
+      return parts.join(' · ');
+    },
+
+    writeupMetaLabel() {
+      const data = this.writeupPanel.data;
+      if (!data) return '';
+      const source = data.source === 'model' ? `模型 ${data.model || '未上报'}` : '控制面草稿';
+      const stamp = data.source === 'model' && data.created_at
+        ? this.formatTime(data.created_at)
+        : this.formatTime(data.generated_at);
+      return `${source} · ${this.writeupMarkdown().length} 字符 · ${stamp}`;
+    },
+
+    async copyWriteup() {
+      const text = this.writeupMarkdown();
+      if (!text) return;
+      try {
+        await this.copyText(text);
+        this.showToast('已复制 Writeup');
+      } catch {
+        this.showToast('复制失败', 'error');
+      }
+    },
+
+    async generateWriteup() {
+      const projectId = this.selectedProjectId;
+      if (!projectId || this.writeupPanel.generating) return;
+      this.writeupPanel.generating = true;
+      this.writeupPanel.error = '';
+      try {
+        const data = await this.api('POST', `/projects/${encodeURIComponent(projectId)}/writeup`, {});
+        if (this.selectedProjectId === projectId) this.writeupPanel.data = data;
+        this.showToast('模型撰写完成');
+      } catch (e) {
+        if (this.selectedProjectId === projectId) this.writeupPanel.error = this.errorText(e);
+        else this.showToast(this.errorText(e), 'error');
+      } finally {
+        this.writeupPanel.generating = false;
+      }
+    },
+
+    async resetWriteup() {
+      const projectId = this.selectedProjectId;
+      if (!projectId || this.writeupPanel.generating) return;
+      try {
+        const data = await this.api('DELETE', `/projects/${encodeURIComponent(projectId)}/writeup`);
+        if (this.selectedProjectId === projectId) this.writeupPanel.data = data;
+        this.showToast('已恢复中文草稿');
+      } catch (e) {
+        this.showToast(this.errorText(e), 'error');
+      }
     },
 
     async loadAudit(preferredTaskId = null) {

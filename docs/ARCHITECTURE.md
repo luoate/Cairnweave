@@ -1,4 +1,4 @@
-# 架构（M18f 更新）
+# 架构（M19a 更新）
 
 本文固定合并后的角色边界、数据所有权和失败语义。实现以本文为准；需要改动时先改本文并
 记录原因。
@@ -233,7 +233,7 @@ scheduler 与 HTTP API 共用 `packages/graph/src/commands.ts` 的命令，不�
 | 数据 | 写入者 | 读取者 | 位置 |
 | --- | --- | --- | --- |
 | SQLite（projects/facts/intents/hints/settings/project_scopes/project_artifacts） | 控制面 | 控制面 | 控制面主机 |
-| SQLite 旁路表（`runs` / `fact_meta` / `fact_evidence` / `pending_concludes` / `audit_events` / `audit_stream_lost` / `proposals` / `intent_meta` / `strategist_state` / `project_verification` / `verification_checks`） | 控制面（不进入图模型与 YAML） | 控制面 | 控制面主机 |
+| SQLite 旁路表（`runs` / `fact_meta` / `fact_evidence` / `pending_concludes` / `audit_events` / `audit_stream_lost` / `proposals` / `intent_meta` / `strategist_state` / `project_verification` / `verification_checks` / `project_writeups`） | 控制面（不进入图模型与 YAML） | 控制面 | 控制面主机 |
 | `graph.yaml` 快照 | 控制面 | worker | 项目工作区/容器内绝对路径 |
 | `task.json` | 控制面 | worker | `sessionDir` |
 | `result.json` | worker（临时文件 + rename 原子写） | 控制面 | `sessionDir` |
@@ -534,7 +534,7 @@ stderr 归档到 `sessionDir/{stdout,stderr}.log`。需要 UI 实时进度时再
   一样由控制面从 SQLite 读取。
 - 索引失败只记日志，不影响任务结果；下一次扫描会重建。
 
-### 5.6 旁路表：runs、fact_meta、fact_evidence、pending_concludes、audit_events、audit_stream_lost、intent_meta、strategist_state 与 verification
+### 5.6 旁路表：runs、fact_meta、fact_evidence、pending_concludes、audit_events、audit_stream_lost、intent_meta、strategist_state、verification 与 project_writeups
 
 这些表都在 `packages/graph/src/db.ts` 中创建，既不属于图导出，也不参与任何既有命令：
 
@@ -589,6 +589,10 @@ stderr 归档到 `sessionDir/{stdout,stderr}.log`。需要 UI 实时进度时再
   flag_got_count, evidence_refs, checked_at)`（M14a），按 `(project_id, checked_at)`
   建索引，项目删除时级联删除。每次 oracle 调用（含失败与 `off`）追加一行；
   `evidence_refs` 以 JSON 数组存储，`challenge_code` 是外部挑战的标识，不是 flag。
+- `project_writeups(project_id, markdown, model, created_at)`（M19a），主键
+  `project_id`，外键指向项目并级联删除。只在 `POST /projects/{id}/writeup` 成功后
+  upsert 一行，`DELETE` 清除；中文草稿不落库，始终由图数据现算。表不进入图模型、
+  YAML 导出或 worker 契约。
 
 HTTP（除实时追加外均为只读，均在控制面进程内直接查库）：
 
@@ -618,6 +622,14 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
   `.cairn/sessions/*/solver-session/*.jsonl`，只返回 flag 值与路径，不返回日志内容。
   未命中返回 `found:false` 的 200；未知项目 404；只有 GET。`verification` 与
   `/verification` 同源，供页头横幅显示校验状态。
+- `GET|POST|DELETE /projects/{id}/writeup`（M19a）→
+  `{project_id, source: draft|model, model, created_at, markdown, flag, generated_at,
+  verification}`。GET 只读、免 operator token，`format=markdown` 用 `text/markdown`
+  返回同一份正文；草稿每次现算，未知项目 404，非法 `format` 400。POST 请求体可选
+  `{model_pref}`（默认 `cairn-worker`），用无工具的单轮补全按草稿重写中文正文并
+  upsert `project_writeups`，返回存储后的视图；生成失败 502、超时 504，两者都不清除
+  已存正文。DELETE 只删除存储行，让 GET 回到草稿。POST/DELETE 需 operator token
+  （配置时）并拒绝跨源写；详见 §5.10 与 `docs/WRITEUP.md`。
 - `GET /projects/{id}/strategist?limit=20`（M12c，只读）→
   `{state, budget, intents, reason_runs}`。`state` 为 `strategist_state` 或 `null`；
   `budget` 含 `used_tokens` / `used_cost_usd` / `running_tasks`、配置上限（纯 HTTP
@@ -718,6 +730,11 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
   同一响应带 `verification` 快照，横幅追加校验徽标（题目通过 n/n、失败原因或
   “校验已关闭”），challenge 未通过时轮询继续刷新。M18g 起显示的是真实 flag 原文，
   而不是 `[REDACTED]` 占位符。它不进入报告页，避免把工件内容带进可分享快照。
+- `Writeup`（M19a）读取 `GET /projects/{id}/writeup`，用 `<pre>` 原样展示中文 Markdown
+  正文，头部标注“中文草稿”或“模型撰写”及所用模型与生成时间；提供复制、指向
+  `?format=markdown` 的下载链接、“AI 撰写”（POST，生成期间按钮禁用）与仅在模型版下
+  出现的“恢复草稿”（DELETE）。页签同样按项目记在 `localStorage`，只在激活时加载，
+  失败给行内错误与重试。前端不自行拼接正文，也不把 Writeup 混入报告快照。
 - Fact 详情（M15d）在 `GET /facts/{id}/meta` 返回 `superseded_by` 或非空 `supersedes`
   时额外显示“取代关系”：点取代者可跳到新 Fact，点旧 Fact 可回到被取代项。
 - `Cost`（成本，M13b）读取 `GET /projects/{id}/cost`，显示项目总量与归因完整性、
@@ -840,6 +857,37 @@ scheduler 的 housekeeping sweep 由 `scheduler/retention.ts` 与 `loop.ts` 共�
   不参与对账。
 - **效果**：上一控制面崩溃遗留的无效队列项不会阻塞新工作；有效项在首次 tick 前保留，
   由正常派发分支优先执行。清理与对账都不要求图可写，也不修改 Fact / intent 历史。
+
+### 5.10 项目 Writeup 生成（M19a）
+
+Writeup 是面向人的中文复盘文本，分两层，全部逻辑在 `packages/graph/src/writeup.ts`
+与 `apps/cairn/src/http/project-writeup.ts`：
+
+- **草稿（默认，永远可用）**：`buildProjectWriteup` 只读组合 `getProjectDetail`、
+  `getProjectScope`、`listFactSupersessions`、`buildProjectRunStats`、
+  `summarizeProjectVerification`、`listProjectArtifacts`、`fact_meta`（证据引用与
+  产出 run）与 `runs` 的精简投影。`renderProjectWriteupMarkdown` 渲染结论、题目与
+  目标、攻击路径（按意图 → Fact 排序，附 worker/model/outcome 与证据路径）、尚未完成
+  的探索、当前有效事实清单、被取代的判断、Hint、Flag 与校验、执行统计（worker/model
+  两张表）与证据文件附录（≤200 项，超出标记 `artifacts_truncated`）。除 `generated_at`
+  外输出确定；不写图、不写旁路、不改调度。
+- **Flag 一致性**：草稿的 Flag 与校验段复用 `/flag` 的 `collectProjectFlag`（artifacts
+  优先、solver-session 回退），两个视图不会给出不同结论；M18g 的原文展示策略同样适用
+  于 Writeup，草稿与 prompt 都保留 flag 原文，不做脱敏。
+- **模型撰写版（可选）**：`renderProjectWriteupPrompt` 把同一份草稿作为唯一素材交给
+  `@cairn/agent` 的 `completeText`（`tools: []`、`SessionManager.inMemory()` 的单轮
+  补全，不授予任何工具），system prompt 要求全程简体中文、只使用草稿中的事实/证据/
+  Flag、Flag 逐字符照抄、如实标注未验证与未完成、不得写入凭据或内网敏感地址。结果
+  upsert 进 `project_writeups`（每项目一行），GET 随即服务存储版；DELETE 清除后回到
+  草稿。生成失败或超时都不会覆盖已存正文。
+- **限额与守卫**：prompt ≤60000 字符、正文 ≤200000 字符、请求体 ≤4 KiB、model pref id
+  受 `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$` 约束、默认 90 秒超时（`writeupTimeoutMs`）。
+  POST/DELETE 走 `requireOperator` 与 `isCrossOrigin`；上游报错文本先经 `sanitizeText`
+  掩掉密钥样式再放进 `detail`。`@cairn/graph` 不依赖 `@cairn/agent`：生成器由 HTTP 层
+  注入，测试用 fake generator 覆盖成功、失败、超时与脱敏路径。
+- **与报告的分工**：`/report` 仍是可分享的只读快照，不含工件路径与 Flag；Writeup
+  面向复盘，含证据路径与 Flag 原文，因此只在同源/operator 守卫下写入，且不提供跨项目
+  汇总。
 
 ## 6. 沙箱与 Scope Policy
 

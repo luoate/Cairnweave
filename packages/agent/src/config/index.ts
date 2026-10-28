@@ -1027,6 +1027,70 @@ export class ConfigManager {
         }
     }
 
+    /**
+     * 一次「无工具」的文生文调用，供 Writeup 等离线整稿场景使用。
+     * 模型仍按 model-prefs 解析，凭据只在该内存会话内使用，结果不由本方法落盘。
+     */
+    async completeText(options: {
+        modelPrefId: string
+        systemPrompt: string
+        prompt: string
+    }): Promise<{ ok: boolean; text?: string; error?: string; model?: string }> {
+        let model: Model<Api>
+        let thinking: PiAiThinkingLevel | undefined
+        try {
+            const resolved = await this.resolveModelPref(options.modelPrefId)
+            model = resolved.model
+            thinking = toPiAiThinkingLevel(resolved.thinkingLevel)
+        } catch (e: any) {
+            return { ok: false, error: e?.message ?? String(e) }
+        }
+
+        const auth = await this.models.getApiKeyAndHeaders(model)
+        if (!auth.ok) return { ok: false, error: auth.error }
+
+        const resourceLoader = new DefaultResourceLoader({
+            agentDir: this.dir,
+            settingsManager: this.settings,
+            systemPromptOverride: () => options.systemPrompt,
+        })
+        try {
+            await resourceLoader.reload()
+            const { session } = await createAgentSession({
+                model,
+                ...(thinking ? { thinkingLevel: thinking } : {}),
+                tools: [],
+                customTools: [],
+                resourceLoader,
+                authStorage: this.auth,
+                modelRegistry: this.models,
+                settingsManager: this.settings,
+                sessionManager: SessionManager.inMemory(),
+            })
+            try {
+                await session.bindExtensions({})
+                await session.prompt(options.prompt, { source: "interactive" })
+                const answer = [...session.messages].reverse().find((message) => message.role === "assistant")
+                if (!answer) return { ok: false, error: "empty assistant response" }
+                const text = answer.content
+                    .filter((c): c is { type: "text"; text: string } => c.type === "text")
+                    .map((c) => c.text)
+                    .join("")
+                    .trim()
+                if (answer.stopReason === "error") {
+                    const errorMessage = typeof answer.errorMessage === "string" ? answer.errorMessage.trim() : ""
+                    return { ok: false, error: errorMessage || text || "model returned an error" }
+                }
+                if (!text) return { ok: false, error: "empty assistant response" }
+                return { ok: true, text, model: `${answer.provider}/${answer.model}` }
+            } finally {
+                session.dispose()
+            }
+        } catch (e: any) {
+            return { ok: false, error: e?.message ?? String(e) }
+        }
+    }
+
     // ── Tools (SDK 内置 + 自定义 + MCP) ──
 
     /** 注册自定义工具 */

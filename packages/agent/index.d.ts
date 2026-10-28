@@ -158,6 +158,12 @@ export class ConfigManager {
     response?: string;
     details?: TestModelDetails;
   }>;
+  /** Tool-less single-turn text completion for offline narrative work (writeups). */
+  completeText(options: {
+    modelPrefId: string;
+    systemPrompt: string;
+    prompt: string;
+  }): Promise<{ ok: boolean; text?: string; error?: string; model?: string }>;
 }
 
 export function createSolverSession(init: SolverInitPayload): Promise<SolverSession>;

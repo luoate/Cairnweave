@@ -39,6 +39,7 @@ describe("static operations UI", () => {
     expect(html).toContain("selectSideTab('cost')");
     expect(html).toContain("selectSideTab('stats')");
     expect(html).toContain("selectSideTab('report')");
+    expect(html).toContain("selectSideTab('writeup')");
 
     const favicon = await api.handle(new Request("http://cairn.test/static/favicon.svg"));
     expect(favicon.status).toBe(200);
@@ -146,6 +147,40 @@ describe("static operations UI", () => {
     expect(appScript).toContain("cairn.listPrefs");
     expect(appScript).toContain("cairn.sideTabs");
     expect(appScript).toContain("opsTabs()");
+  });
+
+  test("wires the Chinese writeup tab with draft, generation and reset actions", () => {
+    const html = readFileSync(INDEX_PATH, "utf8");
+    const appScript = html.match(/<script>\s*(function cairnApp\(\)[\s\S]*?)<\/script>/)![1]!;
+
+    // The loader is read-only; only the two operator actions mutate the stored narrative.
+    const loadStart = appScript.indexOf("async loadWriteup(");
+    expect(loadStart).toBeGreaterThan(-1);
+    const loadBody = appScript.slice(loadStart, appScript.indexOf("\n    },", loadStart));
+    expect(loadBody).toContain("this.api('GET'");
+    expect(loadBody).not.toMatch(/this\.api\('(POST|DELETE)'/);
+
+    const generateStart = appScript.indexOf("async generateWriteup(");
+    expect(generateStart).toBeGreaterThan(-1);
+    const generateBody = appScript.slice(generateStart, appScript.indexOf("\n    },", generateStart));
+    expect(generateBody).toContain("this.api('POST'");
+    expect(generateBody).toContain("writeupPanel.generating");
+
+    const resetStart = appScript.indexOf("async resetWriteup(");
+    expect(resetStart).toBeGreaterThan(-1);
+    const resetBody = appScript.slice(resetStart, appScript.indexOf("\n    },", resetStart));
+    expect(resetBody).toContain("this.api('DELETE'");
+
+    expect(appScript).toContain("/writeup`");
+    expect(appScript).toContain("/writeup?format=markdown");
+    expect(html).toContain(`sideTab === 'writeup'`);
+    expect(html).toContain("AI 撰写");
+    expect(html).toContain("恢复草稿");
+    expect(html).toContain("中文草稿");
+    expect(html).toContain("x-text=\"writeupMarkdown()\"");
+    // Generation is disabled while in flight and reports failures inline.
+    expect(html).toContain("writeupPanel.generating || !writeupPanel.loadedFor");
+    expect(html).toContain("writeupPanel.error");
   });
 });
 

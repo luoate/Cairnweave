@@ -386,6 +386,11 @@ async function loadManager(options: AgentConfigOptions): Promise<ConfigManager> 
   return agent.ConfigManager.getInstance(configDir);
 }
 
+/** Shared with the writeup routes so one config directory serves every model call. */
+export function loadAgentConfigManager(options: AgentConfigOptions = {}): Promise<ConfigManager> {
+  return loadManager(options);
+}
+
 function resolveConfigDir(explicit: string | undefined): string {
   const fromOption = explicit?.trim();
   if (fromOption !== undefined && fromOption !== "") return resolve(fromOption);
@@ -846,7 +851,7 @@ function maskKey(key: string): string {
   return `${key.slice(0, 10)}...${key.slice(-8)}`;
 }
 
-function sanitizeText(text: string, secret?: string): string {
+export function sanitizeText(text: string, secret?: string): string {
   let out = text;
   if (secret !== undefined && secret.length >= 4) {
     out = out.split(secret).join("<redacted>");

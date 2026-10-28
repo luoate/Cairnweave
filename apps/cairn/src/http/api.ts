@@ -82,11 +82,15 @@ import {
 } from "./agent-config";
 import { requireOperator } from "./auth";
 import {
+  collectProjectFlag,
   emptyFlagResult,
-  scanProjectFlag,
-  scanSolverSessionFlags,
   type ProjectFlagResult,
 } from "./project-flag";
+import {
+  registerWriteupRoutes,
+  type WriteupGenerator,
+  type WriteupRouteOptions,
+} from "./project-writeup";
 
 export interface ApiOptions {
   db: CairnDatabase;
@@ -122,6 +126,16 @@ export interface ApiOptions {
   agentModelReferences?: AgentConfigOptions["references"];
   /** Upper bound for a model connectivity test; defaults to 60s. */
   agentTestTimeoutMs?: number;
+  /**
+   * Test seam for the Chinese writeup generator. When omitted the route calls the
+   * configured model through `@cairn/agent`'s ConfigManager; the Markdown draft fallback
+   * never needs it.
+   */
+  writeupGenerator?: WriteupGenerator;
+  /** Wall-clock bound for one writeup generation; defaults to 90s. */
+  writeupTimeoutMs?: number;
+  /** model-prefs entry used when the writeup request does not name one. */
+  writeupModelPref?: string;
 }
 
 export interface Api {
@@ -304,6 +318,17 @@ export function createApi(options: ApiOptions): Api {
     verification,
     operatorToken,
     agentConfig,
+    {
+      ...(options.writeupGenerator === undefined
+        ? {}
+        : { generator: options.writeupGenerator }),
+      ...(options.writeupTimeoutMs === undefined
+        ? {}
+        : { timeoutMs: options.writeupTimeoutMs }),
+      ...(options.writeupModelPref === undefined
+        ? {}
+        : { modelPref: options.writeupModelPref }),
+    },
   );
 
   async function handle(request: Request): Promise<Response> {
@@ -407,6 +432,7 @@ function buildRoutes(
   verification?: VerificationService,
   operatorToken?: string,
   agentConfig: AgentConfigOptions = {},
+  writeup: Pick<WriteupRouteOptions, "generator" | "timeoutMs" | "modelPref"> = {},
 ): Route[] {
   const routes: Route[] = [];
   const oracle = verification ?? new VerificationService(db, DEFAULT_VERIFICATION);
@@ -421,6 +447,14 @@ function buildRoutes(
   }
 
   registerAgentConfigRoutes(route, agentConfig);
+  registerWriteupRoutes(route, {
+    db,
+    ...(workspaceRoot === undefined ? {} : { workspaceRoot }),
+    verificationFallback: oracle.defaultKind,
+    ...(operatorToken === undefined ? {} : { operatorToken }),
+    agentConfig,
+    ...writeup,
+  });
 
   route("GET", "/settings", () =>
     db.withConn((conn) => {
@@ -508,20 +542,13 @@ function buildRoutes(
       });
       if (workspaceRoot === undefined) return json(withVerification(emptyFlagResult()));
       const workspace = projectWorkspace(workspaceRoot, projectId);
-      const artifactResult = scanProjectFlag({
-        workspace,
-        artifacts: listProjectArtifacts(conn, projectId),
-      });
-      if (artifactResult.found) return json(withVerification(artifactResult));
-      // Older workers redacted flags in artifacts; their solver-session logs still hold
-      // the raw value, so look there before reporting not found.
-      const sessionResult = scanSolverSessionFlags({ workspace });
       return json(
-        withVerification({
-          ...sessionResult,
-          scanned_files: artifactResult.scanned_files + sessionResult.scanned_files,
-          truncated: artifactResult.truncated || sessionResult.truncated,
-        }),
+        withVerification(
+          collectProjectFlag({
+            workspace,
+            artifacts: listProjectArtifacts(conn, projectId),
+          }),
+        ),
       );
     }),
   );

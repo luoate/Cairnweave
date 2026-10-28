@@ -106,6 +106,15 @@ CREATE TABLE IF NOT EXISTS project_artifacts (
     PRIMARY KEY (project_id, path)
 );
 
+-- The latest model-written writeup per project. Drafts are rendered on read from the
+-- graph, so only a generated narrative needs a row here.
+CREATE TABLE IF NOT EXISTS project_writeups (
+    project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+    markdown TEXT NOT NULL,
+    model TEXT,
+    created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS runs (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
