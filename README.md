@@ -107,6 +107,11 @@ M18f 打开 challenge/Flag 自动校验：服务端环境存在 `TCH_CHALLENGE_I
 `verification: {policy, latest}`，页头 Flag 横幅显示“题目校验：通过 n/n”或失败原因；
 challenge 项目未通过时轮询会持续刷新校验状态，直到调度器写入通过检查。策略仍在
 创建时固定，已有项目不会因环境变量变化而切换。
+M18g 修复 Flag 被改成 `CTF2{[REDACTED]}` 的问题：worker prompt 不再要求隐藏 flag，
+而是要求把真实值原样写进 Fact 描述与证据文件（凭据、token 与其他密钥仍然禁止）；
+`/flag` 过滤 `redacted`、`masked`、`[hidden]` 等占位符，证据里只剩占位符时再以只读、
+限量的方式回退扫描 `.cairn/sessions/*/solver-session/*.jsonl`，恢复旧任务被改写的
+真实 flag。UI 横幅直接显示真实值，不回显日志内容或凭据。
 `cairn serve` 是可运行的 Cairn 兼容服务：SQLite schema、领域服务、全部
 五个路由、YAML/timeline 导出、静态 Web UI 均已就位，并用 Python Cairn 生成的 golden
 做了逐字对照。进程内 scheduler、任务/结果文件 worker 协议、BreachWeave Solver 接入已在 M2
@@ -414,7 +419,8 @@ M14a 增加（Phase 3 收口）：
   `flag_got_count`，只有 `flag_got_count == flag_count > 0` 才通过（计数不一致也失败）。
   基址与 Agent-Token 只按**环境变量名**读取（默认 `TCH_CHALLENGE_API_BASE_URL` /
   `TCH_CHALLENGE_AGENT_TOKEN`，可在 `verification.challenge` 改名）；配置、任务文件、
-  日志和数据库只保存计数，不保存 flag 明文或 token。
+  日志和数据库只保存计数，不保存 flag 明文或 token。flag 明文只出现在 worker 的
+  Fact/证据与 solver-session 日志中，供项目页展示；oracle 从不读取它。
 - **evidence oracle**：reason 的 `complete.from` 中每个非种子 Fact 必须关联到一次
   run（`fact_meta.run_id` 非空）、`evidence_status = provided`、`evidence_refs` 非空
   且至少一条 `fact_evidence`；`origin` / `goal` 是前提，不作为证据要求，但只有种子
@@ -424,8 +430,8 @@ M14a 增加（Phase 3 收口）：
   `POST /projects/{id}/verify` 可手动重跑（可带 `facts` 子集）。两种策略的判定都会入
   `verification_checks`。
 - **prompt 契约**：每个任务的 prompt 末尾追加 Completion Verification 段；
-  BreachWeave 入口也明确要求 `evidence_refs`，并提示不要写 flag 明文或凭据。
-  详见 `docs/VERIFICATION.md`。
+  BreachWeave 入口也明确要求 `evidence_refs`，并要求拿到 flag 时原样写入描述与证据
+  （不得脱敏），同时严禁写入凭据、token 与其他密钥。详见 `docs/VERIFICATION.md`。
 
 M18f 增加（自动 challenge 校验）：
 
@@ -1546,6 +1552,7 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M18d ✅ | 连通性测试可用化：Provider 卡片“测试连通性”，优先测试该 provider 的 `cairn-worker` 条目并回显实际模型；无模型条目给可读提示；服务端 60 秒上限（`agentTestTimeoutMs` 可调）与超时文案；`Bun.serve` 空闲超时 120 秒，避免默认 10 秒先中断 | 609 passed / 66 files（2026-10-28） |
 | M18e ✅ | 前端 Flag 展示：只读 `GET /projects/{id}/flag` 从已索引 artifacts 提取 Flag（过滤占位符、二进制、超大文件与越界路径，限制文件数/字节数/行长度），项目页头绿色横幅显示值、来源与复制按钮，轮询找到后停止重复扫描 | 619 passed / 67 files（2026-10-28）；浏览器实测 proj_008 显示、proj_007 不显示 |
 | M18f ✅ | challenge/Flag 自动校验：`TCH_CHALLENGE_ID` 存在时新建项目自动选择 challenge 策略（显式请求体优先），新建弹窗提供校验选择与题目编号校验，`/flag` 附带 `verification` 快照并在横幅显示通过计数/失败原因，未通过时继续轮询 | 624 passed / 67 files（2026-10-28） |
+| M18g ✅ | Flag 原文展示：prompt 改为要求把真实 flag 原样写入 Fact 描述与证据（凭据/token 仍禁止），`/flag` 拒绝 `[REDACTED]`/`masked`/`[hidden]` 等占位符，证据只剩占位符时只读回退扫描 solver-session JSONL（限文件数/字节数、跳过二进制）恢复真实值 | 631 passed / 67 files（2026-10-28）；浏览器实测 proj_008 显示真实 flag |
 
 ## 与 Phase 0 的关系
 

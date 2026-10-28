@@ -154,7 +154,9 @@ describe("intent budgets", () => {
 
     expect(prepared.task.prompt).toContain("# Completion Verification");
     expect(prepared.task.prompt).toContain("evidence_refs");
-    expect(prepared.task.prompt).toContain("flag values or credentials");
+    expect(prepared.task.prompt).toContain("exact flag string verbatim");
+    expect(prepared.task.prompt).toContain("Credentials, tokens and other secrets");
+    expect(prepared.task.prompt).toContain("never redact, mask or shorten");
   });
 
   test("never extends the configured task timeout", () => {

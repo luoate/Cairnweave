@@ -11,7 +11,12 @@ import {
 } from "@cairn/graph";
 
 import { createApi, type Api } from "./api";
-import { findFlags, scanProjectFlag, type ProjectFlagResult } from "./project-flag";
+import {
+  findFlags,
+  scanProjectFlag,
+  scanSolverSessionFlags,
+  type ProjectFlagResult,
+} from "./project-flag";
 
 const FIXTURE_FLAG = "CTF2{fixture_flag_value}";
 const SECOND_FLAG = "flag{secondary_fixture}";
@@ -154,7 +159,50 @@ describe("GET /projects/{id}/flag", () => {
     const response = await get("/projects/nope/flag");
     expect(response.status).toBe(404);
   });
+
+  test("falls back to solver-session logs when artifacts only hold redacted placeholders", async () => {
+    writeFileSync(join(artifacts, "findings.md"), "captured CTF2{[REDACTED]}\n", "utf8");
+    record();
+    writeSession("explore-111111111111", "session.jsonl", FIXTURE_FLAG);
+
+    const body = (await (await get(`/projects/${projectId}/flag`)).json()) as ProjectFlagResult;
+    expect(body).toMatchObject({
+      found: true,
+      flag: FIXTURE_FLAG,
+      source: ".cairn/sessions/explore-111111111111/solver-session/session.jsonl",
+      occurrences: 1,
+      sources: [".cairn/sessions/explore-111111111111/solver-session/session.jsonl"],
+      scanned_files: 2,
+      truncated: false,
+    });
+  });
+
+  test("prefers a real artifact flag over session logs", async () => {
+    writeFileSync(join(artifacts, "findings.md"), `${FIXTURE_FLAG}\n`, "utf8");
+    record();
+    writeSession("explore-222222222222", "session.jsonl", SECOND_FLAG);
+
+    const body = (await (await get(`/projects/${projectId}/flag`)).json()) as ProjectFlagResult;
+    expect(body.flag).toBe(FIXTURE_FLAG);
+    expect(body.source).toBe("findings.md");
+    expect(body.scanned_files).toBe(1);
+  });
+
+  test("reports not-found when redacted artifacts have no session logs", async () => {
+    writeFileSync(join(artifacts, "findings.md"), "CTF2{[REDACTED]}\n", "utf8");
+    record();
+
+    const body = (await (await get(`/projects/${projectId}/flag`)).json()) as ProjectFlagResult;
+    expect(body.found).toBe(false);
+    expect(body.flag).toBeNull();
+  });
 });
+
+function writeSession(taskId: string, name: string, content: string): void {
+  const directory = join(workspaceRoot, projectId, ".cairn", "sessions", taskId, "solver-session");
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(join(directory, name), `${JSON.stringify({ output: content })}\n`, "utf8");
+}
 
 describe("findFlags", () => {
   test("accepts common CTF prefixes and ignores unrelated braces", () => {
@@ -174,9 +222,55 @@ describe("findFlags", () => {
       "flag{<value>}",
       "flag{flag_here}",
       "flag{redacted}",
+      "CTF2{[REDACTED]}",
+      "flag{masked_value}",
+      "flag{[hidden]}",
+      "flag{[REDACTED]}",
     ]) {
       expect(findFlags(placeholder)).toEqual([]);
     }
+  });
+
+  test("does not truncate long session lines", () => {
+    const padding = "a".repeat(20 * 1024);
+    expect(findFlags(`${padding} ${FIXTURE_FLAG}`, 64 * 1024)).toEqual([FIXTURE_FLAG]);
+  });
+});
+
+describe("scanSolverSessionFlags", () => {
+  test("returns not-found without a sessions directory", () => {
+    const result = scanSolverSessionFlags({ workspace: join(workspaceRoot, projectId) });
+    expect(result.found).toBe(false);
+    expect(result.scanned_files).toBe(0);
+  });
+
+  test("picks the real flag over redacted placeholders across sessions", () => {
+    writeSession("explore-333333333333", "a.jsonl", "CTF2{[REDACTED]}");
+    writeSession("explore-444444444444", "b.jsonl", FIXTURE_FLAG);
+
+    const result = scanSolverSessionFlags({ workspace: join(workspaceRoot, projectId) });
+    expect(result.found).toBe(true);
+    expect(result.flag).toBe(FIXTURE_FLAG);
+    expect(result.scanned_files).toBe(2);
+  });
+
+  test("ignores missing and binary session files", () => {
+    const directory = join(
+      workspaceRoot,
+      projectId,
+      ".cairn",
+      "sessions",
+      "explore-555555555555",
+    );
+    mkdirSync(join(directory, "solver-session"), { recursive: true });
+    writeFileSync(
+      join(directory, "solver-session", "blob.jsonl"),
+      Buffer.from(`\0${FIXTURE_FLAG}\0`, "utf8"),
+    );
+
+    const result = scanSolverSessionFlags({ workspace: join(workspaceRoot, projectId) });
+    expect(result.found).toBe(false);
+    expect(result.scanned_files).toBe(0);
   });
 });
 

@@ -67,9 +67,12 @@ header `Agent-Token: <token>`，超时默认 5000ms。响应必须是：
 flag_count`）同样失败。以下情况一律失败（fail closed）：环境变量缺失、网络错误、
 超时、非 2xx、非法 JSON、`code != 0`、列表或字段形状错误、挑战不存在。
 
-**flag 明文不进入控制面。** oracle 只读取两个计数，`verification_checks` 只存
+**oracle 不读取 flag 明文。** oracle 只读取两个计数，`verification_checks` 只存
 `flag_count` / `flag_got_count`；token 只从环境变量读取，不写配置、task.json、日志或
-数据库。prompt 也明确要求不要输出 flag 值。
+数据库。从 M18g 起，worker 被要求把拿到的 flag 原样写进 Fact 描述与证据文件，便于
+操作员在项目页直接查看；prompt 仍严禁写入凭据、token 或其他密钥。`GET /flag` 优先
+展示证据中的真实 flag，只有证据里只剩 `[REDACTED]` 等占位符时才回退读取 worker 的
+solver-session 日志（只返回 flag 值与路径，不返回日志内容）。
 
 ## 3. 配置
 
@@ -102,9 +105,13 @@ verification:
   evidence_refs, checked_at, check}`。未知项目 404；body 不是对象或 `facts` 非法 400。
 - `GET /projects/{id}/verification`：`{policy, latest}`。`policy` 对没有旁路行的项目
   合成 `evidence` 默认值；`latest` 是最近一次检查或 `null`。
-- `GET /projects/{id}/flag`（M18f 扩展）：在原有 Flag 扫描结果上附带
+- `GET /projects/{id}/flag`（M18f/M18g 扩展）：在原有 Flag 扫描结果上附带
   `verification: {policy, latest}`，与上一条同源。项目页头横幅据此显示校验状态，
   challenge 策略且尚未通过时轮询会持续刷新，直到调度器写入一次通过的检查。
+  M18g 起，证据中没有真实 flag 时回退扫描 `.cairn/sessions/*/solver-session/*.jsonl`
+  （同样的文件数/字节数/二进制限制，仅返回 flag 与相对路径），以恢复旧任务因
+  prompt 要求而被改写成 `CTF2{[REDACTED]}` 的真实值；`[REDACTED]`、`masked`、
+  `[hidden]` 等占位符永不作为结果返回。
 - 新建项目弹窗（M18f）提供“完成校验”选择：`auto`（默认，题目环境优先）、
   `challenge`（需填写题目编号）、`evidence`、`off`。选择只影响创建请求；已有项目的
   策略仍按 `project_verification` 固定，需要改策略时应新建项目。

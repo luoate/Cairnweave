@@ -84,6 +84,7 @@ import { requireOperator } from "./auth";
 import {
   emptyFlagResult,
   scanProjectFlag,
+  scanSolverSessionFlags,
   type ProjectFlagResult,
 } from "./project-flag";
 
@@ -506,13 +507,21 @@ function buildRoutes(
         },
       });
       if (workspaceRoot === undefined) return json(withVerification(emptyFlagResult()));
+      const workspace = projectWorkspace(workspaceRoot, projectId);
+      const artifactResult = scanProjectFlag({
+        workspace,
+        artifacts: listProjectArtifacts(conn, projectId),
+      });
+      if (artifactResult.found) return json(withVerification(artifactResult));
+      // Older workers redacted flags in artifacts; their solver-session logs still hold
+      // the raw value, so look there before reporting not found.
+      const sessionResult = scanSolverSessionFlags({ workspace });
       return json(
-        withVerification(
-          scanProjectFlag({
-            workspace: projectWorkspace(workspaceRoot, projectId),
-            artifacts: listProjectArtifacts(conn, projectId),
-          }),
-        ),
+        withVerification({
+          ...sessionResult,
+          scanned_files: artifactResult.scanned_files + sessionResult.scanned_files,
+          truncated: artifactResult.truncated || sessionResult.truncated,
+        }),
       );
     }),
   );

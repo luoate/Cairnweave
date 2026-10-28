@@ -72,7 +72,8 @@ token 上限耗尽后停止派发；同时修复 `startup.json` 把认证存储�
 `docs/STRATEGIST.md` 第 11 节。M14a 已落地：完成验证从模型自证改为控制面 oracle。
 项目可选择 `evidence`（默认）/ `challenge` / `off`；scheduler 在关项目前检查证据或
 外部挑战 API 的 `flag_count` / `flag_got_count`，失败只推迟完成并写
-`verification_checks`。flag 明文与 token 不进入配置、任务文件、日志或数据库。详见
+`verification_checks`。oracle、配置、任务文件与数据库都不保存 flag 明文或 token；
+flag 原文只由 worker 写入 Fact/证据，M18g 起也用于项目页展示。详见
 `docs/VERIFICATION.md`。M14b 已落地：reason 输出增加 `hints`、意图 `dedupe_key` 与
 runtime prompt 扩展（priority/budget/dedupe/Hint 语义）；`POST /projects/{id}/replan`
 把人工重规划持久化到 `strategist_state` 并作为 urgent 触发，`strategist` 配置新增
@@ -158,10 +159,14 @@ M18e 增加前端 Flag 展示，同时保持报告的“可分享”契约不变
 `project_artifacts` 索引里的路径，在 `<workspace>/artifacts/` 下重新校验普通文件与
 realpath 包含关系（拒绝 `..`、绝对路径、符号链接和越界父目录），跳过含 NUL 的二进制
 与超过 256 KiB 的文件，单次最多 200 个文件 / 8 MiB 总读取量、单行 8 KiB；匹配
-`CTF{…}` / `flag{…}` / `picoCTF{…}` 一类前缀，过滤 `CTF2{...}` 等占位符，并按出现
-文件数、次数、长度排序取第一名。未命中、无 scheduler workspace 或 artifacts 目录
-缺失都返回 200 + `found:false`，未知项目 404。UI 在项目页头下方显示绿色横幅（值、
-来源、复制按钮），打开项目时加载、轮询期间在未命中时重试，找到后停止重复扫描。
+`CTF{…}` / `flag{…}` / `picoCTF{…}` 一类前缀，过滤 `CTF2{...}`、`[REDACTED]`、
+`masked`、`[hidden]` 等占位符，并按出现文件数、次数、长度排序取第一名。未命中、
+无 scheduler workspace 或 artifacts 目录缺失都返回 200 + `found:false`，未知项目
+404。UI 在项目页头下方显示绿色横幅（值、来源、复制按钮），打开项目时加载、轮询期间
+在未命中时重试，找到后停止重复扫描。M18g 起，artifacts 未命中时 `/flag` 仅读取
+`.cairn/sessions/<task>/solver-session/*.jsonl` 作为回退（拒绝符号链接越界、跳过
+二进制，限 64 个文件 / 单文件 2 MiB / 总计 8 MiB），只返回 flag 与相对路径，
+用于恢复旧 prompt 下被改写为 `CTF2{[REDACTED]}` 的真实值。
 M18f 打开 challenge/Flag 自动校验：`POST /projects` 未给 `verification` 时，控制面读
 `verification.challenge.code_env`（默认 `TCH_CHALLENGE_ID`）；非空即写入
 `{kind: challenge, challenge_code}`，否则按 `evidence_enforcement` 落 `evidence` /
@@ -436,7 +441,8 @@ M5a/M5b 只增加旁路数据，不改图模型、YAML 导出和既有 HTTP 响�
   按 `challenge_code` 匹配，要求 `flag_count > 0` 且
   `flag_got_count == flag_count`。环境缺失、网络/超时、非 2xx、非法 JSON、
   `code != 0`、形状错误或计数不一致一律失败。
-  **只保存计数，不保存 flag 明文或 token。**
+  **oracle 只保存计数，不读取、不保存 flag 明文或 token**；flag 原文由 worker 写入
+  Fact/证据，供项目页展示。
 - **失败**：reason 释放租约并保持 active；bootstrap 保留 Fact、推迟完成；oracle 抛错
   按任务失败处理。手工 `POST /complete` 仍是操作员覆盖，不经过 oracle；配置
   `CAIRN_OPERATOR_TOKEN` 后要求 `X-Cairn-Operator-Token`。
@@ -604,12 +610,14 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
   默认 `json`；`markdown` 用 `text/markdown` 返回同一对象的渲染结果。`audit` 与
   `artifacts` 只有汇总（任务数、事件数、时间边界、文件数与字节数），不含审计事件
   原文、工件路径或证据内容。未知项目 404；非法 `format` 400；其他方法 405。
-- `GET /projects/{id}/flag`（M18e/M18f，只读）→
+- `GET /projects/{id}/flag`（M18e/M18f/M18g，只读）→
   `{found, flag, source, occurrences, sources, scanned_files, truncated,
-  verification: {policy, latest}}`。只扫描
+  verification: {policy, latest}}`。扫描
   `project_artifacts` 中登记且仍在 `<workspace>/artifacts/` 内的普通文件；占位符、
-  二进制、超大文件与越界路径被跳过。未命中返回 `found:false` 的 200；未知项目 404；
-  只有 GET。`verification` 与 `/verification` 同源，供页头横幅显示校验状态。
+  二进制、超大文件与越界路径被跳过。artifacts 无结果时再限量扫描
+  `.cairn/sessions/*/solver-session/*.jsonl`，只返回 flag 值与路径，不返回日志内容。
+  未命中返回 `found:false` 的 200；未知项目 404；只有 GET。`verification` 与
+  `/verification` 同源，供页头横幅显示校验状态。
 - `GET /projects/{id}/strategist?limit=20`（M12c，只读）→
   `{state, budget, intents, reason_runs}`。`state` 为 `strategist_state` 或 `null`；
   `budget` 含 `used_tokens` / `used_cost_usd` / `running_tasks`、配置上限（纯 HTTP
@@ -705,10 +713,11 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
   失败、最近检查、题目编号）、图状态、当前 Fact、取代边、run 总量与按 worker/model/
   profile 分桶、审计与工件计数；右上角链接到同一路由的 `format=markdown` 由浏览器
   下载。它只展示报告快照，不在前端重新组合数据。
-- `Flag` 横幅（M18e/M18f）读取 `GET /projects/{id}/flag`，在项目页头下方显示命中的
-  Flag、来源工件与复制按钮；未命中时不占位。M18f 起同一响应带 `verification` 快照，
-  横幅追加校验徽标（题目通过 n/n、失败原因或“校验已关闭”），challenge 未通过时轮询
-  继续刷新。它不进入报告页，避免把工件内容带进可分享快照。
+- `Flag` 横幅（M18e/M18f/M18g）读取 `GET /projects/{id}/flag`，在项目页头下方显示
+  命中的 Flag、来源工件或 solver-session 路径与复制按钮；未命中时不占位。M18f 起
+  同一响应带 `verification` 快照，横幅追加校验徽标（题目通过 n/n、失败原因或
+  “校验已关闭”），challenge 未通过时轮询继续刷新。M18g 起显示的是真实 flag 原文，
+  而不是 `[REDACTED]` 占位符。它不进入报告页，避免把工件内容带进可分享快照。
 - Fact 详情（M15d）在 `GET /facts/{id}/meta` 返回 `superseded_by` 或非空 `supersedes`
   时额外显示“取代关系”：点取代者可跳到新 Fact，点旧 Fact 可回到被取代项。
 - `Cost`（成本，M13b）读取 `GET /projects/{id}/cost`，显示项目总量与归因完整性、

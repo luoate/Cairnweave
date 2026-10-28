@@ -6,15 +6,24 @@
  * indexed artifacts under `<workspace>/artifacts/`, rejects paths that escape that
  * directory (including symlinked parents), skips binary files, and caps files, bytes and
  * line length so a hostile or huge workspace cannot pin the HTTP handler.
+ *
+ * Older workers redacted captured flags inside artifacts after the prompt asked them not
+ * to paste flag values. Those artifacts now only contain placeholders, so when no real
+ * flag is found there the scanner falls back to the worker solver-session JSONL logs,
+ * where tool output still holds the exact value. The fallback is read-only and returns
+ * only flag strings and session paths, never log contents.
  */
 
-import { lstatSync, readFileSync, realpathSync } from "node:fs";
+import { lstatSync, readFileSync, readdirSync, realpathSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 
 const MAX_FILES = 200;
 const MAX_FILE_BYTES = 256 * 1024;
 const MAX_TOTAL_BYTES = 8 * 1024 * 1024;
 const MAX_LINE_LENGTH = 8 * 1024;
+const SESSION_MAX_FILES = 64;
+const SESSION_MAX_FILE_BYTES = 2 * 1024 * 1024;
+const SESSION_MAX_TOTAL_BYTES = 8 * 1024 * 1024;
 const FLAG_PATTERN = /([A-Za-z0-9_-]{1,64})\{([^{}\s]{4,200})\}/g;
 const PLACEHOLDER_BODIES = new Set([
   "flag",
@@ -36,6 +45,14 @@ export interface FlagScanOptions {
   /** Host path of the project workspace. */
   workspace: string;
   artifacts: ReadonlyArray<FlagArtifact>;
+  maxFiles?: number;
+  maxFileBytes?: number;
+  maxTotalBytes?: number;
+}
+
+export interface SessionFlagScanOptions {
+  /** Host path of the project workspace. */
+  workspace: string;
   maxFiles?: number;
   maxFileBytes?: number;
   maxTotalBytes?: number;
@@ -133,6 +150,128 @@ export function scanProjectFlag(options: FlagScanOptions): ProjectFlagResult {
     }
   }
 
+  return rankMatches(matches, scannedFiles, truncated);
+}
+
+/**
+ * Recovers a captured flag from worker solver-session logs. Used only when artifacts
+ * hold nothing but placeholders, because the logs keep the raw tool output.
+ */
+export function scanSolverSessionFlags(options: SessionFlagScanOptions): ProjectFlagResult {
+  const maxFiles = options.maxFiles ?? SESSION_MAX_FILES;
+  const maxFileBytes = options.maxFileBytes ?? SESSION_MAX_FILE_BYTES;
+  const maxTotalBytes = options.maxTotalBytes ?? SESSION_MAX_TOTAL_BYTES;
+  const root = resolve(options.workspace, ".cairn", "sessions");
+
+  let realRoot: string;
+  try {
+    const stats = lstatSync(root);
+    if (!stats.isDirectory() || stats.isSymbolicLink()) return emptyFlagResult();
+    realRoot = realpathSync(root);
+  } catch {
+    return emptyFlagResult();
+  }
+
+  let sessionNames: string[];
+  try {
+    sessionNames = readdirSync(realRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && !entry.isSymbolicLink())
+      .map((entry) => entry.name)
+      .sort()
+      .reverse();
+  } catch {
+    return emptyFlagResult();
+  }
+
+  const matches = new Map<string, ProjectFlagMatch>();
+  let scannedFiles = 0;
+  let totalBytes = 0;
+  let truncated = false;
+
+  for (const name of sessionNames) {
+    if (scannedFiles >= maxFiles || totalBytes >= maxTotalBytes) {
+      truncated = true;
+      break;
+    }
+    const sessionDir = resolve(realRoot, name);
+    if (!isInside(realRoot, sessionDir)) continue;
+    const solverDir = resolve(sessionDir, "solver-session");
+    let realSolverDir: string;
+    try {
+      const stats = lstatSync(solverDir);
+      if (!stats.isDirectory() || stats.isSymbolicLink()) continue;
+      realSolverDir = realpathSync(solverDir);
+      if (!isInside(realRoot, realSolverDir)) continue;
+    } catch {
+      continue;
+    }
+
+    let files: string[];
+    try {
+      files = readdirSync(realSolverDir, { withFileTypes: true })
+        .filter(
+          (entry) =>
+            entry.isFile() && !entry.isSymbolicLink() && entry.name.endsWith(".jsonl"),
+        )
+        .map((entry) => entry.name)
+        .sort()
+        .reverse();
+    } catch {
+      continue;
+    }
+
+    for (const file of files) {
+      if (scannedFiles >= maxFiles || totalBytes >= maxTotalBytes) {
+        truncated = true;
+        break;
+      }
+      const target = resolve(realSolverDir, file);
+      let content: string;
+      try {
+        const stats = lstatSync(target);
+        if (!stats.isFile() || stats.isSymbolicLink()) continue;
+        if (stats.size === 0 || stats.size > maxFileBytes) continue;
+        if (totalBytes + stats.size > maxTotalBytes) {
+          truncated = true;
+          break;
+        }
+        const realTarget = realpathSync(target);
+        if (!isInside(realRoot, realTarget)) continue;
+        const buffer = readFileSync(target);
+        if (buffer.includes(0)) continue;
+        content = buffer.toString("utf8");
+        totalBytes += stats.size;
+        scannedFiles += 1;
+      } catch {
+        continue;
+      }
+
+      const path = `.cairn/sessions/${name}/solver-session/${file}`;
+      for (const flag of findFlags(content, maxFileBytes)) {
+        const existing = matches.get(flag);
+        if (existing === undefined) {
+          matches.set(flag, {
+            flag,
+            source: path,
+            occurrences: 1,
+            sources: [path],
+          });
+          continue;
+        }
+        existing.occurrences += 1;
+        if (!existing.sources.includes(path)) existing.sources.push(path);
+      }
+    }
+  }
+
+  return rankMatches(matches, scannedFiles, truncated);
+}
+
+function rankMatches(
+  matches: Map<string, ProjectFlagMatch>,
+  scannedFiles: number,
+  truncated: boolean,
+): ProjectFlagResult {
   const ranked = [...matches.values()].sort(
     (left, right) =>
       right.sources.length - left.sources.length ||
@@ -155,10 +294,10 @@ export function scanProjectFlag(options: FlagScanOptions): ProjectFlagResult {
   };
 }
 
-export function findFlags(content: string): string[] {
+export function findFlags(content: string, maxLineLength: number = MAX_LINE_LENGTH): string[] {
   const found: string[] = [];
   for (const line of content.split(/\r?\n/)) {
-    const scoped = line.length > MAX_LINE_LENGTH ? line.slice(0, MAX_LINE_LENGTH) : line;
+    const scoped = line.length > maxLineLength ? line.slice(0, maxLineLength) : line;
     for (const match of scoped.matchAll(FLAG_PATTERN)) {
       const prefix = match[1]!.toLowerCase();
       if (prefix !== "flag" && !prefix.endsWith("flag") && !prefix.includes("ctf")) continue;
@@ -173,8 +312,10 @@ export function findFlags(content: string): string[] {
 function isPlaceholder(body: string): boolean {
   const lower = body.toLowerCase();
   if (PLACEHOLDER_BODIES.has(lower)) return true;
+  if (lower.includes("redact") || lower.includes("masked") || lower.includes("hidden")) return true;
   if (/^[._-]+$/.test(body)) return true;
   if (/^x+$/i.test(body)) return true;
+  if (/^\[.*\]$/.test(body)) return true;
   return body.includes("<") || body.includes(">");
 }
 
