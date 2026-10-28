@@ -2476,9 +2476,19 @@
                 <p x-show="p.headerNames && p.headerNames.length" class="text-[10px] text-slate-400 mt-0.5 break-all" x-text="'请求头：' + p.headerNames.join(', ')"></p>
               </div>
               <div class="flex shrink-0 items-center gap-1.5">
+                <button @click="testAgentProvider(p.id)" :disabled="agentProviderTest.loading"
+                  class="px-2 py-1 text-[11px] text-slate-500 border border-slate-200 rounded-lg hover:bg-slate-50 transition disabled:opacity-40"
+                  x-text="agentProviderTest.loading && agentProviderTest.providerId === p.id ? '测试中…' : '测试连通性'"></button>
                 <button @click="selectAgentProvider(p)" class="px-2 py-1 text-[11px] text-slate-500 border border-slate-200 rounded-lg hover:bg-slate-50 transition">编辑</button>
                 <button @click="requestAgentDelete('provider', p.id, p.name)" class="px-2 py-1 text-[11px] text-rose-500 border border-rose-200 rounded-lg hover:bg-rose-50 transition">删除</button>
               </div>
+            </div>
+            <div x-show="agentProviderTest.providerId === p.id && !agentProviderTest.loading" class="mt-2 rounded-lg border px-2 py-1.5 text-[11px] break-words"
+              :class="agentProviderTest.ok ? 'border-teal-200 bg-teal-50 text-teal-700' : 'border-rose-200 bg-rose-50 text-rose-700'">
+              <span x-text="agentProviderTest.ok ? '连通性测试通过' : '测试失败'"></span>
+              <span x-show="agentProviderTest.modelId" class="text-slate-500" x-text="'（模型：' + agentProviderTest.modelId + '）'"></span>
+              <span x-show="agentProviderTest.error" x-text="'：' + agentProviderTest.error"></span>
+              <div x-show="agentProviderTest.response" class="mt-1 max-h-24 overflow-auto font-mono text-[10px] whitespace-pre-wrap" x-text="agentProviderTest.response"></div>
             </div>
             <div x-show="agentDelete.kind === 'provider' && agentDelete.id === p.id" class="mt-2 rounded-lg border border-rose-200 bg-rose-50 p-2">
               <p class="text-[11px] text-rose-700" x-text="agentDeletePrompt()"></p>
@@ -2853,6 +2863,7 @@ function cairnApp() {
     isSettingAgentDefault: false,
     agentDiscover: { providerId: '', loading: false, error: '', models: [] },
     agentTest: { modelId: '', loading: false, ok: null, error: '', response: '' },
+    agentProviderTest: { providerId: '', modelId: '', loading: false, ok: null, error: '', response: '' },
     agentDelete: { kind: '', id: '', name: '', force: false, loading: false, error: '' },
     deleteConfirm: { id: '', title: '' },
     isDeletingProject: false,
@@ -6962,6 +6973,26 @@ function cairnApp() {
         if (data.ok !== true) this.showToast(data.error || '模型连通性测试失败', 'error');
       } catch (e) {
         this.agentTest = { modelId: modelPrefId, loading: false, ok: false, error: e.message, response: '' };
+        this.showToast(e.message, 'error');
+      }
+    },
+
+    async testAgentProvider(providerId) {
+      if (!providerId || this.agentProviderTest.loading) return;
+      this.agentProviderTest = { providerId, modelId: '', loading: true, ok: null, error: '', response: '' };
+      try {
+        const data = await this.api('POST', `/settings/agent/providers/${encodeURIComponent(providerId)}/test`, {});
+        this.agentProviderTest = {
+          providerId,
+          modelId: (data.summary && data.summary.modelPrefId) || '',
+          loading: false,
+          ok: data.ok === true,
+          error: data.error || '',
+          response: data.response || '',
+        };
+        if (data.ok !== true) this.showToast(data.error || 'Provider 连通性测试失败', 'error');
+      } catch (e) {
+        this.agentProviderTest = { providerId, modelId: '', loading: false, ok: false, error: e.message, response: '' };
         this.showToast(e.message, 'error');
       }
     },

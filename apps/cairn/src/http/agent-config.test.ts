@@ -435,4 +435,94 @@ describe("agent config route sanitization", () => {
     expect(discovery.status).toBe(200);
     expect(await discovery.json()).toEqual({ models: [{ id: "m1", name: "M1" }] });
   });
+
+  test("caps a hung connectivity test at the configured timeout", async () => {
+    const fake = {
+      listModelPrefs: async () => [
+        { id: "cairn-worker", provider: "lab", providerId: "lab", modelId: "lab-model" },
+      ],
+      listProviderPrefs: async () => [
+        { id: "lab", name: "lab", api: "openai-completions", baseUrl: "https://lab.invalid/v1" },
+      ],
+      getApiKeyValue: () => "sk-fake-timeout-key",
+      testModel: () => new Promise(() => {}),
+    };
+    api = createApi({
+      db,
+      agentConfigDir: configDir,
+      agentConfigFactory: async () => fake as unknown as ConfigManager,
+      agentTestTimeoutMs: 20,
+    });
+
+    const started = Date.now();
+    const response = await call("POST", "/settings/agent/models/cairn-worker/test");
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      ok: boolean;
+      error: string;
+      summary: { modelPrefId: string };
+    };
+    expect(body.ok).toBe(false);
+    expect(body.error).toBe("connectivity test timed out after 20ms");
+    expect(body.summary.modelPrefId).toBe("cairn-worker");
+  });
+
+  test("tests a provider through its default model and reports missing models", async () => {
+    let models: Array<{ id: string; provider: string; providerId?: string; modelId: string }> = [
+      { id: "other-model", provider: "lab", providerId: "lab", modelId: "other" },
+      { id: "cairn-worker", provider: "lab", providerId: "lab", modelId: "lab-model" },
+    ];
+    const tested: string[] = [];
+    const fake = {
+      listModelPrefs: async () => models,
+      listProviderPrefs: async () => [
+        { id: "lab", name: "lab", api: "openai-completions", baseUrl: "https://lab.invalid/v1" },
+      ],
+      getApiKeyValue: () => "sk-fake-provider-key",
+      testModel: async (id: string) => {
+        tested.push(id);
+        return {
+          ok: true,
+          response: "pong",
+          details: {
+            modelPrefId: id,
+            provider: "lab",
+            providerLabel: "lab",
+            runtimeProvider: "provider:lab",
+            modelId: "lab-model",
+            api: "openai-completions",
+            baseUrl: "https://lab.invalid/v1",
+            apiKeySummary: "sk-fake-...-key",
+            headers: {},
+          },
+        };
+      },
+    };
+    api = createApi({
+      db,
+      agentConfigDir: configDir,
+      agentConfigFactory: async () => fake as unknown as ConfigManager,
+    });
+
+    const response = await call("POST", "/settings/agent/providers/lab/test");
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      ok: boolean;
+      response: string;
+      summary: { modelPrefId: string };
+    };
+    expect(body.ok).toBe(true);
+    expect(body.response).toBe("pong");
+    expect(body.summary.modelPrefId).toBe("cairn-worker");
+    expect(tested).toEqual(["cairn-worker"]);
+
+    models = [];
+    const empty = await call("POST", "/settings/agent/providers/lab/test");
+    expect(empty.status).toBe(200);
+    const emptyBody = (await empty.json()) as { ok: boolean; error: string };
+    expect(emptyBody.ok).toBe(false);
+    expect(emptyBody.error).toContain("no model config");
+    expect(tested).toEqual(["cairn-worker"]);
+  });
 });

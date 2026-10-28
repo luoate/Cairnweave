@@ -17,6 +17,8 @@ const MAX_BASE_URL = 2048;
 const MAX_API_KEY = 4096;
 const MAX_HEADER_VALUE = 4096;
 const MAX_HEADER_COUNT = 32;
+const DEFAULT_TEST_TIMEOUT_MS = 60_000;
+const TEST_TIMEOUT = Symbol("test-timeout");
 const THINKING_LEVELS = new Set(["minimal", "low", "medium", "high", "xhigh"]);
 const INPUT_MODALITIES = new Set(["text", "image"]);
 const MODEL_PREF_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -35,6 +37,8 @@ export interface AgentConfigOptions {
   operatorToken?: string;
   /** model-pref references from the dispatch config, used by delete guards. */
   references?: AgentModelReferences;
+  /** Upper bound for a connectivity test; a hung provider must not pin the request. */
+  testTimeoutMs?: number;
 }
 
 type RouteRegistrar = (
@@ -102,6 +106,7 @@ export function registerAgentConfigRoutes(
   }
 
   const references = (): AgentModelReferences => options.references ?? {};
+  const testTimeoutMs = normalizeTestTimeout(options.testTimeoutMs);
 
   guarded("GET", "/settings/agent", async () => {
     const store = await manager();
@@ -234,6 +239,31 @@ export function registerAgentConfigRoutes(
     }
   });
 
+  guarded("POST", "/settings/agent/providers/{id}/test", async ({ params }) => {
+    const store = await manager();
+    const providerPref = (await store.listProviderPrefs()).find(
+      (pref) => pref.id === params.id,
+    );
+    if (!providerPref) throw new HttpError(404, "provider not found");
+
+    const bound = (await store.listModelPrefs()).filter(
+      (pref) =>
+        pref.providerId === providerPref.id ||
+        (pref.providerId === undefined && pref.provider === providerPref.name),
+    );
+    if (bound.length === 0) {
+      return json({
+        ok: false,
+        error: "provider has no model config; add a model before testing",
+        providerId: providerPref.id,
+      });
+    }
+    // Prefer the default worker model so the test reflects what the scheduler will use.
+    const target =
+      bound.find((pref) => pref.id === DEFAULT_WORKER_MODEL_PREF) ?? bound[0]!;
+    return testModelResponse(store, target, testTimeoutMs);
+  });
+
   guarded("POST", "/settings/agent/models", async ({ request }) => {
     const store = await manager();
     const body = await readBody(request);
@@ -307,50 +337,7 @@ export function registerAgentConfigRoutes(
     const store = await manager();
     const existing = (await store.listModelPrefs()).find((pref) => pref.id === params.id);
     if (!existing) throw new HttpError(404, "model config not found");
-
-    const providerPrefs = await store.listProviderPrefs();
-    const providerPref =
-      existing.providerId === undefined
-        ? providerPrefs.find((pref) => pref.name === existing.provider)
-        : providerPrefs.find((pref) => pref.id === existing.providerId);
-    if (
-      providerPref !== undefined &&
-      !store.getApiKeyValue(`provider:${providerPref.id}`)
-    ) {
-      return json({
-        ok: false,
-        error: "provider has no API key; save one before testing",
-        summary: testSummary(existing),
-      });
-    }
-
-    let result: Awaited<ReturnType<ConfigManager["testModel"]>>;
-    try {
-      result = await store.testModel(existing.id);
-    } catch (error) {
-      return json({ ok: false, error: sanitizeText(describe(error)), summary: testSummary(existing) });
-    }
-
-    const details = result.details;
-    const secret =
-      details?.runtimeProvider === undefined
-        ? undefined
-        : store.getApiKeyValue(details.runtimeProvider);
-    const summary = {
-      ...testSummary(existing),
-      ...(details?.api === undefined ? {} : { api: details.api }),
-      ...(details?.baseUrl === undefined ? {} : { baseUrl: details.baseUrl }),
-      apiKeySummary:
-        details?.apiKeySummary ?? (secret === undefined ? null : maskKey(secret)),
-    };
-    return json({
-      ok: result.ok === true,
-      ...(result.error === undefined ? {} : { error: sanitizeText(result.error, secret) }),
-      ...(result.response === undefined
-        ? {}
-        : { response: truncate(sanitizeText(result.response, secret), 4000) }),
-      summary,
-    });
+    return testModelResponse(store, existing, testTimeoutMs);
   });
 
   guarded("PUT", "/settings/agent/default-model", async ({ request }) => {
@@ -477,6 +464,96 @@ function testSummary(pref: ModelConfigEntry) {
     maxTokens: typeof pref.maxTokens === "number" ? pref.maxTokens : null,
     apiKeySummary: null as string | null,
   };
+}
+
+type ModelTestResult = Awaited<ReturnType<ConfigManager["testModel"]>>;
+
+async function testModelResponse(
+  store: ConfigManager,
+  existing: ModelConfigEntry,
+  timeoutMs: number,
+): Promise<Response> {
+  const providerPrefs = await store.listProviderPrefs();
+  const providerPref =
+    existing.providerId === undefined
+      ? providerPrefs.find((pref) => pref.name === existing.provider)
+      : providerPrefs.find((pref) => pref.id === existing.providerId);
+  if (
+    providerPref !== undefined &&
+    !store.getApiKeyValue(`provider:${providerPref.id}`)
+  ) {
+    return json({
+      ok: false,
+      error: "provider has no API key; save one before testing",
+      summary: testSummary(existing),
+    });
+  }
+
+  let result: ModelTestResult;
+  try {
+    const raced = await raceTimeout(
+      (async () => store.testModel(existing.id))(),
+      timeoutMs,
+    );
+    if (raced === TEST_TIMEOUT) {
+      return json({
+        ok: false,
+        error: `connectivity test timed out after ${formatDuration(timeoutMs)}`,
+        summary: testSummary(existing),
+      });
+    }
+    result = raced;
+  } catch (error) {
+    return json({ ok: false, error: sanitizeText(describe(error)), summary: testSummary(existing) });
+  }
+
+  const details = result.details;
+  const secret =
+    details?.runtimeProvider === undefined
+      ? undefined
+      : store.getApiKeyValue(details.runtimeProvider);
+  const summary = {
+    ...testSummary(existing),
+    ...(details?.api === undefined ? {} : { api: details.api }),
+    ...(details?.baseUrl === undefined ? {} : { baseUrl: details.baseUrl }),
+    apiKeySummary:
+      details?.apiKeySummary ?? (secret === undefined ? null : maskKey(secret)),
+  };
+  return json({
+    ok: result.ok === true,
+    ...(result.error === undefined ? {} : { error: sanitizeText(result.error, secret) }),
+    ...(result.response === undefined
+      ? {}
+      : { response: truncate(sanitizeText(result.response, secret), 4000) }),
+    summary,
+  });
+}
+
+async function raceTimeout<T>(
+  task: Promise<T>,
+  timeoutMs: number,
+): Promise<T | typeof TEST_TIMEOUT> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<typeof TEST_TIMEOUT>((resolve) => {
+    timer = setTimeout(() => resolve(TEST_TIMEOUT), timeoutMs);
+  });
+  try {
+    return await Promise.race([task, timeout]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+function normalizeTestTimeout(value: number | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return DEFAULT_TEST_TIMEOUT_MS;
+  }
+  return Math.max(1, Math.floor(value));
+}
+
+function formatDuration(ms: number): string {
+  if (ms % 1000 === 0) return `${ms / 1000}s`;
+  return `${ms}ms`;
 }
 
 function headerNamesOf(value: unknown): string[] {

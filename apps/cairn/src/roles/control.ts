@@ -155,6 +155,9 @@ export async function runControl(args: readonly string[]): Promise<number> {
     server = Bun.serve({
       hostname: host,
       port,
+      // Model connectivity tests wait on a provider response; the 10s Bun default
+      // aborted them before the route's own 60s timeout could report a result.
+      idleTimeout: 120,
       fetch: (request) => api.handle(request),
     });
     if (config !== null) {

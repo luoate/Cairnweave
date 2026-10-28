@@ -1,4 +1,4 @@
-# 模型与密钥操作手册（M18c）
+# 模型与密钥操作手册（M18d）
 
 面向需要给 Cairn 接入真实模型的运维者：从空配置走到“默认 worker 模型可用”，再到用
 第二个模型解除 M16b 的 A/B 阻塞。界面入口是页头 CPU 图标的“模型与密钥”弹窗；纯 HTTP
@@ -28,7 +28,10 @@
 4. **设为默认**：把当前条目复制为 `cairn-worker`，`cairn-worker.md` 的
    `model: "cairn-worker"` 始终指向这份副本。`worker_profiles` 仍可按任务覆盖模型。
 5. **测试**：对目标条目真实调用一次模型。未保存密钥时返回可读提示而不是 SDK 文件路径
-   错误；失败文本会先替换真实密钥再遮蔽常见凭据形态。
+   错误；失败文本会先替换真实密钥再遮蔽常见凭据形态。模型行与 Provider 卡片都有入口：
+   Provider 级会优先测试该 provider 的 `cairn-worker` 默认条目（否则第一条），并在结果
+   里标明实际测试的模型；该 provider 还没有模型条目时直接提示，不会调用上游。服务端
+   60 秒未返回就报 `connectivity test timed out after 60s`，不会无限挂起。
 
 ## 3. HTTP 速查
 
@@ -46,6 +49,7 @@ curl -s -X POST "$BASE/settings/agent/models" -H 'content-type: application/json
 curl -s -X PUT "$BASE/settings/agent/default-model" -H 'content-type: application/json' -H "$H" \
   -d '{"modelPrefId":"<model-pref-id>"}'
 curl -s -X POST "$BASE/settings/agent/models/<model-pref-id>/test" -H "$H"
+curl -s -X POST "$BASE/settings/agent/providers/<provider-id>/test" -H "$H"
 ```
 
 把含密钥的请求体先写进权限 600 的临时文件、用 `--data @file` 提交，避免留在 shell
@@ -73,6 +77,8 @@ curl -s -X POST "$BASE/settings/agent/models/<model-pref-id>/test" -H "$H"
 | 400 提到 URL 非法或内嵌凭据 | Base URL 必须是 http(s)，且不能带 `user:pass@` |
 | `API key is required before discovering models` | 先保存 provider 密钥再拉取 |
 | 测试返回 `provider has no API key; save one before testing` | 保存密钥后重试；这不是网络错误 |
+| `connectivity test timed out after 60s` | 上游 60 秒内没有响应；检查 Base URL、代理与网关负载 |
+| Provider 测试返回 `provider has no model config` | 先在该 provider 下添加模型条目；Provider 测试按默认/首条模型执行 |
 | 401 / 403 | 写请求缺 operator token，或 Origin 与请求 host 不一致 |
 | 409 删除被拒 | 条目仍被模型/`worker_profiles`/Observer/prompt 默认引用；确认后加 `?force=true` |
 | `model discovery failed: ...` | 上游不可达或返回形状不符；错误已脱敏，检查 Base URL 与协议 |
@@ -88,8 +94,9 @@ DEMO=$(mktemp -d)
 CAIRN_AGENT_CONFIG_DIR="$DEMO/agent" bun run cairn serve --port 8017 --db-path "$DEMO/cairn.db"
 ```
 
-打开 `http://127.0.0.1:8017`，依次建 provider、拉模型、加模型、设为默认、测试。用占位
-密钥时“测试”应返回鉴权错误——这证明链路已通，只是上游拒绝。停止服务后删除 `$DEMO`。
+打开 `http://127.0.0.1:8017`，依次建 provider、拉模型、加模型、设为默认、测试。模型行
+的“测试”和 Provider 卡片的“测试连通性”都应给出结果（后者会显示实际测试的模型）。用
+占位密钥时“测试”应返回鉴权错误——这证明链路已通，只是上游拒绝。停止服务后删除 `$DEMO`。
 同一序列的离线版本由 `apps/cairn/src/http/agent-config.flow.test.ts` 覆盖（空配置 →
 provider/密钥 → 模型 → 默认 → 文件校验 → 强制删除），纳入 `bun test`。
 

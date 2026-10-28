@@ -1,4 +1,4 @@
-# 架构（M18c 更新）
+# 架构（M18d 更新）
 
 本文固定合并后的角色边界、数据所有权和失败语义。实现以本文为准；需要改动时先改本文并
 记录原因。
@@ -146,6 +146,13 @@ M18c 收尾：`docs/MODELS.md` 是一页操作手册（五步接入、HTTP 速�
 临时目录演练、M16b 解锁条件），`agent-config.flow.test.ts` 在全新临时配置目录上按同一
 顺序跑完整链路，并逐步断言响应不含密钥或 header 值。真实 A/B 仍以第二个可用模型为前提，
 gate 不会用占位凭据放行。
+M18d 补齐连通性测试：新增 `POST /settings/agent/providers/{id}/test`，按
+`providerId`（或同名 provider）找到绑定模型，优先用 `cairn-worker`，否则取第一条；
+没有模型条目时返回可读提示而不调用上游。模型级与 provider 级测试共用
+`testModelResponse`，以 `agentTestTimeoutMs`（默认 60 秒）为上限，
+`Promise.race` 超时后返回 `connectivity test timed out after …` 并保留摘要，底层调用
+不再拖住 HTTP 请求。控制面的 `Bun.serve` 将 `idleTimeout` 设为 120 秒，避免 Bun 默认
+10 秒在测试完成前中断连接；Provider 卡片显示测试中/结果与实际测试的模型。
 
 ## 1. 范围
 

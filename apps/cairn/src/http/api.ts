@@ -114,6 +114,8 @@ export interface ApiOptions {
   agentConfigFactory?: AgentConfigOptions["factory"];
   /** Dispatch config references used by the model delete guard. */
   agentModelReferences?: AgentConfigOptions["references"];
+  /** Upper bound for a model connectivity test; defaults to 60s. */
+  agentTestTimeoutMs?: number;
 }
 
 export interface Api {
@@ -284,6 +286,9 @@ export function createApi(options: ApiOptions): Api {
     ...(options.agentModelReferences === undefined
       ? {}
       : { references: options.agentModelReferences }),
+    ...(options.agentTestTimeoutMs === undefined
+      ? {}
+      : { testTimeoutMs: options.agentTestTimeoutMs }),
   };
   const routes = buildRoutes(
     db,

@@ -938,6 +938,38 @@ describe("model and key settings", () => {
     expect(app.agentDiscover.error).toContain("没有拉到模型");
   });
 
+  test("tests a provider through its default model and surfaces failures", async () => {
+    const app = loadState();
+    const calls: any[] = [];
+    const toasts: string[] = [];
+    app.showToast = (message: string) => { toasts.push(message); };
+    app.api = async (method: string, path: string, body: unknown) => {
+      calls.push([method, path, body]);
+      return { ok: true, response: "pong", summary: { modelPrefId: "cairn-worker" } };
+    };
+
+    await app.testAgentProvider("lab");
+    expect(calls).toEqual([["POST", "/settings/agent/providers/lab/test", {}]]);
+    expect(app.agentProviderTest).toEqual({
+      providerId: "lab",
+      modelId: "cairn-worker",
+      loading: false,
+      ok: true,
+      error: "",
+      response: "pong",
+    });
+
+    app.api = async (method: string, path: string, body: unknown) => {
+      calls.push([method, path, body]);
+      return { ok: false, error: "provider has no model config; add a model before testing" };
+    };
+    await app.testAgentProvider("lab");
+    expect(app.agentProviderTest.ok).toBe(false);
+    expect(app.agentProviderTest.error).toContain("no model config");
+    expect(app.agentProviderTest.loading).toBe(false);
+    expect(toasts.at(-1)).toContain("no model config");
+  });
+
   test("turns a 409 delete into an explicit force action", async () => {
     const app = loadState();
     const calls: string[] = [];
