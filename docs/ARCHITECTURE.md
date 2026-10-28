@@ -1,4 +1,4 @@
-# 架构（M18d 更新）
+# 架构（M18e 更新）
 
 本文固定合并后的角色边界、数据所有权和失败语义。实现以本文为准；需要改动时先改本文并
 记录原因。
@@ -153,6 +153,15 @@ M18d 补齐连通性测试：新增 `POST /settings/agent/providers/{id}/test`�
 `Promise.race` 超时后返回 `connectivity test timed out after …` 并保留摘要，底层调用
 不再拖住 HTTP 请求。控制面的 `Bun.serve` 将 `idleTimeout` 设为 120 秒，避免 Bun 默认
 10 秒在测试完成前中断连接；Provider 卡片显示测试中/结果与实际测试的模型。
+M18e 增加前端 Flag 展示，同时保持报告的“可分享”契约不变：`/report` 仍不含工件
+路径或内容，Flag 由独立的只读 `GET /projects/{id}/flag` 提供。该路由只读取
+`project_artifacts` 索引里的路径，在 `<workspace>/artifacts/` 下重新校验普通文件与
+realpath 包含关系（拒绝 `..`、绝对路径、符号链接和越界父目录），跳过含 NUL 的二进制
+与超过 256 KiB 的文件，单次最多 200 个文件 / 8 MiB 总读取量、单行 8 KiB；匹配
+`CTF{…}` / `flag{…}` / `picoCTF{…}` 一类前缀，过滤 `CTF2{...}` 等占位符，并按出现
+文件数、次数、长度排序取第一名。未命中、无 scheduler workspace 或 artifacts 目录
+缺失都返回 200 + `found:false`，未知项目 404。UI 在项目页头下方显示绿色横幅（值、
+来源、复制按钮），打开项目时加载、轮询期间在未命中时重试，找到后停止重复扫描。
 
 ## 1. 范围
 
@@ -587,6 +596,11 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
   默认 `json`；`markdown` 用 `text/markdown` 返回同一对象的渲染结果。`audit` 与
   `artifacts` 只有汇总（任务数、事件数、时间边界、文件数与字节数），不含审计事件
   原文、工件路径或证据内容。未知项目 404；非法 `format` 400；其他方法 405。
+- `GET /projects/{id}/flag`（M18e，只读）→
+  `{found, flag, source, occurrences, sources, scanned_files, truncated}`。只扫描
+  `project_artifacts` 中登记且仍在 `<workspace>/artifacts/` 内的普通文件；占位符、
+  二进制、超大文件与越界路径被跳过。未命中返回 `found:false` 的 200；未知项目 404；
+  只有 GET。
 - `GET /projects/{id}/strategist?limit=20`（M12c，只读）→
   `{state, budget, intents, reason_runs}`。`state` 为 `strategist_state` 或 `null`；
   `budget` 含 `used_tokens` / `used_cost_usd` / `running_tasks`、配置上限（纯 HTTP
@@ -682,6 +696,8 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
   失败、最近检查、题目编号）、图状态、当前 Fact、取代边、run 总量与按 worker/model/
   profile 分桶、审计与工件计数；右上角链接到同一路由的 `format=markdown` 由浏览器
   下载。它只展示报告快照，不在前端重新组合数据。
+- `Flag` 横幅（M18e）读取 `GET /projects/{id}/flag`，在项目页头下方显示命中的 Flag、
+  来源工件与复制按钮；未命中时不占位。它不进入报告页，避免把工件内容带进可分享快照。
 - Fact 详情（M15d）在 `GET /facts/{id}/meta` 返回 `superseded_by` 或非空 `supersedes`
   时额外显示“取代关系”：点取代者可跳到新 Fact，点旧 Fact 可回到被取代项。
 - `Cost`（成本，M13b）读取 `GET /projects/{id}/cost`，显示项目总量与归因完整性、

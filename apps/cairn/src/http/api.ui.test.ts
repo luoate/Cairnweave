@@ -65,6 +65,7 @@ describe("static operations UI", () => {
       "loadCost",
       "loadStats",
       "loadReport",
+      "loadProjectFlag",
     ]) {
       const start = appScript.indexOf(`async ${method}(`);
       expect(start).toBeGreaterThan(-1);
@@ -97,6 +98,7 @@ describe("static operations UI", () => {
     expect(appScript).toContain("/stats`");
     expect(appScript).toContain("/report`");
     expect(appScript).toContain("format=markdown");
+    expect(appScript).toContain("/flag`");
     expect(html).toContain("慢层");
     expect(html).toContain("单项目预算");
     expect(html).toContain("推理历史");
@@ -968,6 +970,40 @@ describe("model and key settings", () => {
     expect(app.agentProviderTest.error).toContain("no model config");
     expect(app.agentProviderTest.loading).toBe(false);
     expect(toasts.at(-1)).toContain("no model config");
+  });
+
+  test("loads a captured flag and copies it from the project header", async () => {
+    const app = loadState();
+    const calls: any[] = [];
+    app.api = async (method: string, path: string) => {
+      calls.push([method, path]);
+      return {
+        found: true,
+        flag: "CTF2{ui_fixture}",
+        source: "findings.md",
+        occurrences: 2,
+        sources: ["findings.md", "notes.txt"],
+      };
+    };
+
+    await app.loadProjectFlag("proj_1");
+    expect(calls).toEqual([["GET", "/projects/proj_1/flag"]]);
+    expect(app.projectFlag.found).toBe(true);
+    expect(app.projectFlag.flag).toBe("CTF2{ui_fixture}");
+    expect(app.projectFlagSourceLabel()).toContain("2 个文件");
+
+    const copied: string[] = [];
+    const toasts: string[] = [];
+    app.copyText = async (text: string) => { copied.push(text); };
+    app.showToast = (message: string) => { toasts.push(message); };
+    await app.copyProjectFlag();
+    expect(copied).toEqual(["CTF2{ui_fixture}"]);
+    expect(toasts).toEqual(["已复制 Flag"]);
+
+    app.api = async () => ({ found: false, flag: null, source: null, occurrences: 0, sources: [] });
+    await app.loadProjectFlag("proj_1");
+    expect(app.projectFlag.found).toBe(false);
+    expect(app.projectFlag.flag).toBe("");
   });
 
   test("turns a 409 delete into an explicit force action", async () => {

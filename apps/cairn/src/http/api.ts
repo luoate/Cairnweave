@@ -81,6 +81,7 @@ import {
   type AgentConfigOptions,
 } from "./agent-config";
 import { requireOperator } from "./auth";
+import { emptyFlagResult, scanProjectFlag } from "./project-flag";
 
 export interface ApiOptions {
   db: CairnDatabase;
@@ -481,6 +482,22 @@ function buildRoutes(
       const projectId = params["project_id"]!;
       getProjectOr404(conn, projectId);
       return json(listProjectArtifacts(conn, projectId));
+    }),
+  );
+
+  // Read-only flag view. It scans indexed artifacts instead of the shareable report,
+  // and answering "not found" is a normal 200 so the UI can poll while a project runs.
+  route("GET", "/projects/{project_id}/flag", ({ params }) =>
+    db.withConn((conn) => {
+      const projectId = params["project_id"]!;
+      getProjectOr404(conn, projectId);
+      if (workspaceRoot === undefined) return json(emptyFlagResult());
+      return json(
+        scanProjectFlag({
+          workspace: projectWorkspace(workspaceRoot, projectId),
+          artifacts: listProjectArtifacts(conn, projectId),
+        }),
+      );
     }),
   );
 

@@ -6,8 +6,8 @@
 skills / Observer）合并成**一个 Bun/TypeScript 代码库**，不再维护 Python ↔ TypeScript
 之间的进程桥、JSONL RPC 和 worker 适配器。
 
-状态：**M18d（连通性测试可用化）**；M0–M4、M5a–M5c、
-M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d 的计划项全部完成（M16b 真实 A/B 仍待第二个可用模型）。Phase 1 的
+状态：**M18e（前端 Flag 展示）**；M0–M4、M5a–M5c、
+M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e 的计划项全部完成（M16b 真实 A/B 仍待第二个可用模型）。Phase 1 的
 “本地看板 + Observer 提案 + 证据门 + 单一写图者”闭环已具备；提案默认关闭。Phase 2
 的触发持久化、意图优先级/预算、单项目 token/成本与并发配额、只读慢层观测、逐 Fact
 成本归因与因果链，以及 reason 的 Hint/去重输出、人工重规划与资源压力触发均已落地，并
@@ -93,6 +93,12 @@ M18d 让连通性测试真正可用：Provider 卡片新增“测试连通性”
 模型条目时返回可读提示。服务端给测试加 60 秒上限（`agentTestTimeoutMs` 可调），超时
 返回 `connectivity test timed out after 60s` 而不是无限挂起；`Bun.serve` 的
 `idleTimeout` 从默认 10 秒放宽到 120 秒，避免请求先被框架中断、拿不到脱敏结果。
+M18e 把拿到的 Flag 显示到项目页：新增只读 `GET /projects/{id}/flag`，从已索引的
+`artifacts/**` 中提取 `CTF{…}` / `flag{…}` 一类字符串，跳过二进制、超大文件和占位符
+（如 `CTF2{...}`），并按出现文件数排序；不改变可分享的 `/report` 契约，也不暴露
+任意文件读取。项目页头下方在命中时显示绿色 Flag 横幅，标注来源工件并提供复制按钮，
+轮询期间找到后不再重复扫描。浏览器已用 proj_008 实测显示，proj_007 等无 Flag 项目
+不显示横幅。
 `cairn serve` 是可运行的 Cairn 兼容服务：SQLite schema、领域服务、全部
 五个路由、YAML/timeline 导出、静态 Web UI 均已就位，并用 Python Cairn 生成的 golden
 做了逐字对照。进程内 scheduler、任务/结果文件 worker 协议、BreachWeave Solver 接入已在 M2
@@ -1154,9 +1160,9 @@ M6 的跨进程恢复 gate 不调用模型：它先写下一台崩溃控制面�
 bun run tools/gate/m6-restart-gate.ts
 ```
 
-## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a + M17a + M17b + M17c + M17d + M18a + M18b + M18c + M18d，2026-10-28，Bun 1.4.4）
+## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a + M17a + M17b + M17c + M17d + M18a + M18b + M18c + M18d + M18e，2026-10-28，Bun 1.4.4）
 
-- `bun test`：**609 passed**（66 个文件），0 failed。
+- `bun test`：**619 passed**（67 个文件），0 failed。
 - `bun run typecheck`：`tsc --noEmit` 通过。
 - **HTTP 对照**：`api.golden.json` 的 60 步请求（成功路径、400/403/404/405/409、租约过期、
   删除级联、导出、路由错误）由 Python FastAPI + 固定时钟生成；TS 重放后状态码、content-type
@@ -1443,6 +1449,10 @@ bun run tools/gate/m6-restart-gate.ts
   `cairn-worker`、无模型条目时给出可读提示且不调用上游；UI 测试确认 Provider 卡片按钮
   调用 `/settings/agent/providers/{id}/test`、展示实际测试的模型并在失败时提示。服务端
   测试上限默认 60 秒，`Bun.serve` 的 `idleTimeout` 放宽到 120 秒。
+- **Flag 展示（M18e）**：路由测试覆盖命中并回显来源、占位符过滤、二进制/超大文件跳过、
+  `../` 越界路径拒绝、无 workspace 与未知项目 404；UI 测试确认 `loadProjectFlag` 调用
+  `GET /projects/{id}/flag`、横幅来源文案与复制动作。浏览器在 proj_008 实测显示真实
+  Flag，proj_007 不显示横幅。
 
 golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定时钟、`TZ=UTC`）。
 重新生成方法与约束见 `docs/PORTING.md`。
@@ -1509,6 +1519,7 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M18b ✅ | 模型与密钥管理 UI：页头入口与弹窗栈集成（14 overlay）；Provider/模型页签、密钥只写、请求头逐行解析、协议/Base URL、拉取或手工录入模型、thinkingLevel/reasoning/输入模态/成本/上下文/最大 Token、默认标记与引用方、设为默认、测试、行内删除确认与 409 强制删除；内置 provider 继承协议与 Base URL，无密钥测试给可读提示 | 604 passed / 65 files（2026-10-28）；浏览器实测完整 CRUD/拉取/默认/测试/强制删除流程 |
 | M18c ✅ | 模型管理收尾：`docs/MODELS.md` 一页操作手册（五步接入、HTTP 速查、文件落点、错误排查、临时目录演练、M16b 解锁）；端到端流程测试覆盖空目录 → provider/密钥 → 模型 → 默认 → 文件落点 → 强制删除，并断言全程响应无密钥/header 值 | 605 passed / 66 files（2026-10-28）；真实 A/B（M16b）仍待第二个可用模型 |
 | M18d ✅ | 连通性测试可用化：Provider 卡片“测试连通性”，优先测试该 provider 的 `cairn-worker` 条目并回显实际模型；无模型条目给可读提示；服务端 60 秒上限（`agentTestTimeoutMs` 可调）与超时文案；`Bun.serve` 空闲超时 120 秒，避免默认 10 秒先中断 | 609 passed / 66 files（2026-10-28） |
+| M18e ✅ | 前端 Flag 展示：只读 `GET /projects/{id}/flag` 从已索引 artifacts 提取 Flag（过滤占位符、二进制、超大文件与越界路径，限制文件数/字节数/行长度），项目页头绿色横幅显示值、来源与复制按钮，轮询找到后停止重复扫描 | 619 passed / 67 files（2026-10-28）；浏览器实测 proj_008 显示、proj_007 不显示 |
 
 ## 与 Phase 0 的关系
 

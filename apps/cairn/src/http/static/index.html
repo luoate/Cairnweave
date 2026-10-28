@@ -562,6 +562,16 @@
     </div>
   </header>
 
+  <template x-if="projectFlag.found && projectFlag.projectId === project.project.id">
+    <div class="shrink-0 flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-emerald-200 bg-emerald-50/90 px-4 py-1.5 text-xs text-emerald-800">
+      <span class="text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-600">Flag</span>
+      <code class="max-w-full break-all rounded bg-white/80 px-1.5 py-0.5 font-mono text-[12px] font-semibold text-emerald-900" x-text="projectFlag.flag"></code>
+      <button type="button" @click="copyProjectFlag()"
+        class="rounded-md border border-emerald-200 bg-white px-2 py-0.5 text-[11px] font-medium text-emerald-700 hover:bg-emerald-50 transition">复制</button>
+      <span class="text-[11px] text-emerald-700/70" x-text="projectFlagSourceLabel()"></span>
+    </div>
+  </template>
+
   <template x-if="projectError">
     <div class="shrink-0 flex items-center justify-between gap-3 border-b border-rose-200 bg-rose-50 px-4 py-1.5 text-[11px] text-rose-700">
       <span class="min-w-0 break-words">无法刷新项目：<span x-text="projectError"></span></span>
@@ -2910,6 +2920,16 @@ function cairnApp() {
     isLoadingProjects: false,
     listError: '',
     projectError: '',
+    projectFlag: {
+      projectId: '',
+      loading: false,
+      found: false,
+      flag: '',
+      source: '',
+      occurrences: 0,
+      sources: [],
+      error: '',
+    },
     lastProjectListAt: 0,
     pollFailures: 0,
     isPollingTick: false,
@@ -5016,6 +5036,7 @@ function cairnApp() {
       }
       await this.loadProject(id);
       await this.loadProjectScope(id);
+      this.loadProjectFlag(id);
       this.view = 'graph';
       this.focusGraphHeading();
       if (this.opsTabs().includes(this.sideTab)) this.loadActiveOpsTab();
@@ -5069,6 +5090,10 @@ function cairnApp() {
     async refreshCurrentView({ quiet = true } = {}) {
       if (this.view === 'graph' && this.selectedProjectId) {
         await this.loadProject(this.selectedProjectId, { quiet });
+        if (!this.projectFlag.loading &&
+            (!this.projectFlag.found || this.projectFlag.projectId !== this.selectedProjectId)) {
+          this.loadProjectFlag(this.selectedProjectId);
+        }
         this.updateGraph();
       } else {
         await this.loadProjects({ quiet });
@@ -6302,6 +6327,66 @@ function cairnApp() {
         if (this.scopePanel.projectId === projectId) {
           this.scopePanel = { projectId, scope: null, loading: false, error: this.errorText(e) };
         }
+      }
+    },
+
+    async loadProjectFlag(projectId) {
+      if (!projectId) {
+        this.projectFlag = {
+          projectId: '', loading: false, found: false, flag: '',
+          source: '', occurrences: 0, sources: [], error: '',
+        };
+        return;
+      }
+      if (this.projectFlag.loading && this.projectFlag.projectId === projectId) return;
+      const same = this.projectFlag.projectId === projectId;
+      this.projectFlag = {
+        projectId,
+        loading: true,
+        found: same ? this.projectFlag.found : false,
+        flag: same ? this.projectFlag.flag : '',
+        source: same ? this.projectFlag.source : '',
+        occurrences: same ? this.projectFlag.occurrences : 0,
+        sources: same ? this.projectFlag.sources : [],
+        error: '',
+      };
+      try {
+        const data = await this.api('GET', `/projects/${encodeURIComponent(projectId)}/flag`);
+        if (this.projectFlag.projectId !== projectId) return;
+        const flag = typeof data?.flag === 'string' ? data.flag : '';
+        this.projectFlag = {
+          projectId,
+          loading: false,
+          found: data?.found === true && flag !== '',
+          flag,
+          source: typeof data?.source === 'string' ? data.source : '',
+          occurrences: Number(data?.occurrences) || 0,
+          sources: Array.isArray(data?.sources) ? data.sources : [],
+          error: '',
+        };
+      } catch (e) {
+        if (this.projectFlag.projectId !== projectId) return;
+        this.projectFlag = {
+          projectId, loading: false, found: false, flag: '',
+          source: '', occurrences: 0, sources: [], error: this.errorText(e),
+        };
+      }
+    },
+
+    projectFlagSourceLabel() {
+      const sources = Array.isArray(this.projectFlag.sources) ? this.projectFlag.sources : [];
+      if (!this.projectFlag.source) return '';
+      if (sources.length > 1) return `来自 ${this.projectFlag.source} 等 ${sources.length} 个文件`;
+      return `来自 ${this.projectFlag.source}`;
+    },
+
+    async copyProjectFlag() {
+      if (!this.projectFlag.found || !this.projectFlag.flag) return;
+      try {
+        await this.copyText(this.projectFlag.flag);
+        this.showToast('已复制 Flag');
+      } catch {
+        this.showToast('复制失败', 'error');
       }
     },
 
