@@ -25,6 +25,7 @@ import {
   saveProjectWriteup,
   selectWriteupPayloadArtifacts,
   type CairnDatabase,
+  type ProjectArtifact,
   type ProjectWriteupRecord,
   type ProjectWriteupSnapshot,
   type VerificationKind,
@@ -42,6 +43,7 @@ import {
   type AgentConfigOptions,
 } from "./agent-config";
 import { collectProjectFlag } from "./project-flag";
+import { buildWriteupArchive } from "./project-archive";
 import { collectWriteupPayloads } from "./project-payload";
 
 /** `cairn-worker.md` binds the default worker to this model-prefs entry. */
@@ -104,6 +106,22 @@ function markdown(value: string): Response {
   });
 }
 
+function zip(bytes: Uint8Array, filename: string): Response {
+  return new Response(bytes, {
+    headers: {
+      "content-type": "application/zip",
+      "content-disposition": `attachment; filename="${filename}"`,
+      "content-length": String(bytes.byteLength),
+    },
+  });
+}
+
+/** `writeup-proj_008.zip`; only safe filename characters reach the header. */
+function archiveFilename(projectId: string): string {
+  const safe = projectId.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 64) || "project";
+  return `writeup-${safe}.zip`;
+}
+
 interface FlagView {
   value: string;
   source: string | null;
@@ -132,11 +150,18 @@ interface PayloadView {
   truncated: boolean;
 }
 
+/** Whether `GET .../writeup/archive` can serve bytes, and how many files it would bundle. */
+interface ArchiveView {
+  available: boolean;
+  files: number;
+}
+
 interface Draft {
   snapshot: ProjectWriteupSnapshot;
   markdown: string;
   flag: FlagView | null;
   payloads: PayloadView;
+  artifacts: ProjectArtifact[];
   generated_at: string;
 }
 
@@ -165,7 +190,7 @@ function payloadView(snapshot: ProjectWriteupSnapshot): PayloadView {
 }
 
 /** The payload every writeup route answers with; `source` records which text is served. */
-function view(record: ProjectWriteupRecord | null, draft: Draft) {
+function view(record: ProjectWriteupRecord | null, draft: Draft, archive: ArchiveView) {
   return {
     project_id: draft.snapshot.project.id,
     source: record === null ? "draft" : "model",
@@ -174,6 +199,7 @@ function view(record: ProjectWriteupRecord | null, draft: Draft) {
     markdown: record?.markdown ?? draft.markdown,
     flag: draft.flag,
     payloads: draft.payloads,
+    archive,
     generated_at: draft.generated_at,
     verification: draft.snapshot.verification,
   };
@@ -198,6 +224,13 @@ export function registerWriteupRoutes(
     requireOperator(request, options.operatorToken);
   }
 
+  function archiveView(draft: Draft): ArchiveView {
+    return {
+      available: workspaceRoot !== undefined && draft.artifacts.length > 0,
+      files: draft.artifacts.length,
+    };
+  }
+
   register("GET", "/projects/{project_id}/writeup", ({ params, url }) => {
     const format = url.searchParams.get("format") ?? "json";
     if (format !== "json" && format !== "markdown") {
@@ -209,7 +242,27 @@ export function registerWriteupRoutes(
       if (format === "markdown") {
         return markdown(stored === null ? draft.markdown : stored.markdown);
       }
-      return json(view(stored, draft));
+      return json(view(stored, draft, archiveView(draft)));
+    });
+  });
+
+  register("GET", "/projects/{project_id}/writeup/archive", ({ params }) => {
+    const projectId = params["project_id"]!;
+    if (workspaceRoot === undefined) {
+      throw new HttpError(409, "workspace root is not mounted, so attachments cannot be read");
+    }
+    return db.withConn((conn) => {
+      const draft = buildDraft(conn, projectId);
+      const stored = getProjectWriteup(conn, draft.snapshot.project.id);
+      const archive = buildWriteupArchive({
+        workspace: projectWorkspace(workspaceRoot, projectId),
+        artifacts: draft.artifacts,
+        snapshot: draft.snapshot,
+        markdown: stored === null ? draft.markdown : stored.markdown,
+        source: stored === null ? "draft" : "model",
+        generatedAt: new Date(),
+      });
+      return zip(archive.bytes, archiveFilename(draft.snapshot.project.id));
     });
   });
 
@@ -264,7 +317,7 @@ export function registerWriteupRoutes(
         model: outcome.model ?? modelPref,
       }),
     );
-    return json({ ...view(stored, draft), ok: true }, 200);
+    return json({ ...view(stored, draft, archiveView(draft)), ok: true }, 200);
   });
 
   register("DELETE", "/projects/{project_id}/writeup", ({ params, request }) => {
@@ -273,7 +326,7 @@ export function registerWriteupRoutes(
     return db.withConn((conn) => {
       const draft = buildDraft(conn, projectId);
       clearProjectWriteup(conn, projectId);
-      return json(view(null, draft));
+      return json(view(null, draft, archiveView(draft)));
     });
   });
 
@@ -307,6 +360,7 @@ export function registerWriteupRoutes(
       markdown: renderProjectWriteupMarkdown(snapshot),
       flag: flagView,
       payloads: payloadView(snapshot),
+      artifacts,
       generated_at: snapshot.generated_at,
     };
   }

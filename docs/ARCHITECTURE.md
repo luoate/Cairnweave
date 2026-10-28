@@ -631,6 +631,12 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
   upsert `project_writeups`，返回存储后的视图；生成失败 502、超时 504，两者都不清除
   已存正文。DELETE 只删除存储行，让 GET 回到草稿。POST/DELETE 需 operator token
   （配置时）并拒绝跨源写；详见 §5.10 与 `docs/WRITEUP.md`。
+- `GET /projects/{id}/writeup/archive`（M20b，只读）→ `application/zip`，
+  `content-disposition: attachment; filename="writeup-<id>.zip"`，内含 `writeup.md`、
+  `MANIFEST.md` 与 `artifacts/<索引路径>`。未挂载 workspace root 时 409，未知项目 404。
+  三个 writeup 视图的 JSON 都多带 `payloads`（M20a，`total/count/inlined/binary/unread/
+  truncated` 与 `files[]`）和 `archive:{available,files}`（M20b），侧栏据此显示载荷摘要与
+  下载按钮。
 - `GET /projects/{id}/strategist?limit=20`（M12c，只读）→
   `{state, budget, intents, reason_runs}`。`state` 为 `strategist_state` 或 `null`；
   `budget` 含 `used_tokens` / `used_cost_usd` / `running_tasks`、配置上限（纯 HTTP
@@ -731,10 +737,13 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
   同一响应带 `verification` 快照，横幅追加校验徽标（题目通过 n/n、失败原因或
   “校验已关闭”），challenge 未通过时轮询继续刷新。M18g 起显示的是真实 flag 原文，
   而不是 `[REDACTED]` 占位符。它不进入报告页，避免把工件内容带进可分享快照。
-- `Writeup`（M19a/M19b）读取 `GET /projects/{id}/writeup`，用 `<pre>` 原样展示中文 Markdown
-  正文，标题行、状态摘要与操作条分三段纵向排列（操作条自身 `flex-wrap`，不与标题争
-  宽度），标注“中文草稿”或“模型撰写”及所用模型与生成时间；提供刷新、复制、
-  `下载 Markdown`（指向 `?format=markdown`，文件名 `writeup-<项目id>.md`）、`AI 撰写`
+- `Writeup`（M19a/M19b/M20a/M20b）读取 `GET /projects/{id}/writeup`，用 `<pre>` 原样展示中文
+  Markdown 正文，标题行、状态摘要与操作条分三段纵向排列（操作条自身 `flex-wrap`，不与标题争
+  宽度），标注“中文草稿”或“模型撰写”及所用模型与生成时间；状态摘要含 Flag 是否记录、校验
+  状态与“载荷 N 个（内联 K）”（M20a）。操作条提供刷新、复制、
+  `下载 Markdown`（指向 `?format=markdown`，文件名 `writeup-<项目id>.md`）、
+  `附件包 N`（M20b，GET `.../writeup/archive`，文件名 `writeup-<项目id>.zip`，按下后 toast
+  汇报附件数；`archive.available` 为假时整个按钮不出现）、`AI 撰写`
   （POST，生成期间禁用）与仅在模型版下出现的`恢复草稿`（DELETE）。页签同样按项目记在
   `localStorage`，只在激活时加载，失败给行内错误与重试。前端不自行拼接正文，也不把
   Writeup 混入报告快照。
@@ -861,7 +870,7 @@ scheduler 的 housekeeping sweep 由 `scheduler/retention.ts` 与 `loop.ts` 共�
 - **效果**：上一控制面崩溃遗留的无效队列项不会阻塞新工作；有效项在首次 tick 前保留，
   由正常派发分支优先执行。清理与对账都不要求图可写，也不修改 Fact / intent 历史。
 
-### 5.10 项目 Writeup 生成（M19a/M20a）
+### 5.10 项目 Writeup 生成（M19a/M20a/M20b）
 
 Writeup 是面向人的中文复盘文本，分两层，全部逻辑在 `packages/graph/src/writeup.ts`
 与 `apps/cairn/src/http/project-writeup.ts`：
@@ -890,6 +899,18 @@ Writeup 是面向人的中文复盘文本，分两层，全部逻辑在 `package
   二进制与未挂载工作区分别写“未内联”“内容未读取”，从不留空或编造；每条载荷带
   `referenced_by`（哪些 Fact 的 `evidence_refs` 引用它），快照另有 `payloads_total` 说明
   一共识别到多少个，JSON 视图给出 `state: inline|binary|unread` 的投影。
+- **附件包（M20b）**：正文只内联 ≤20 条载荷，剩余字节由
+  `GET /projects/{id}/writeup/archive` 一次交付。打包布局与正文引用一一对应——
+  `writeup.md`（当前服务的正文，模型版或草稿）、`MANIFEST.md`（中文清单：项目、打包时间、
+  Flag、载荷统计、逐文件 sha256 与「未打包文件 + 原因」两张表）、
+  `artifacts/<索引路径>`。打包范围取该项目的**全部** `project_artifacts`（上限 500 个文件 /
+  单文件 4 MiB / 总量 64 MiB），读取复用同一套收敛函数 `openArtifactRoot` +
+  `readArtifactFile`，因此索引里指向包外、目录或已清理文件的路径只会进未打包表。ZIP 由
+  `apps/cairn/src/http/zip.ts` 自己写：store 与 raw deflate 取更短者、CRC-32、单一中央目录、
+  文件名 UTF-8 标志位、时间戳由调用方固定，所以同一批输入产出同一份字节；`readZip()` 读回并
+  校验 CRC，既是格式自检也是测试断言入口。条目名先归一化再拒绝空段与 `..`，解包不会逃出根
+  目录。该路由只读，不设 operator token（与其余读取端点一致），未挂载 workspace 时返回 409；
+  JSON 视图用 `archive: {available, files}` 告诉前端能不能下、大概多少文件。
 - **模型撰写版（可选）**：`renderProjectWriteupPrompt` 把同一份草稿作为唯一素材交给
   `@cairn/agent` 的 `completeText`（`tools: []`、`SessionManager.inMemory()` 的单轮
   补全，不授予任何工具），system prompt 要求全程简体中文、只使用草稿中的事实/证据/

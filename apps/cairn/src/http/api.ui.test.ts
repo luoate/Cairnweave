@@ -211,6 +211,46 @@ describe("static operations UI", () => {
     app.selectedProjectId = null;
     expect(app.writeupFileName()).toBe("writeup-project.md");
   });
+
+  test("offers the attachment bundle only when artifacts are indexed", () => {
+    const html = readFileSync(INDEX_PATH, "utf8");
+    const appScript = html.match(/<script>\s*(function cairnApp\(\)[\s\S]*?)<\/script>/)![1]!;
+
+    const panelStart = html.indexOf(`x-show="sideTab === 'writeup'"`);
+    const panel = html.slice(panelStart, html.indexOf("<!-- ", panelStart + 200));
+    expect(panel).toContain("<template x-if=\"writeupArchive()\">");
+    expect(panel).toContain("@click=\"downloadWriteupArchive()\"");
+    expect(panel).toContain("附件包");
+
+    const archiveStart = appScript.indexOf("downloadWriteupArchive()");
+    expect(archiveStart).toBeGreaterThan(-1);
+    const archiveBody = appScript.slice(archiveStart, appScript.indexOf("\n    },", archiveStart));
+    expect(archiveBody).toContain("this.writeupArchiveHref()");
+    expect(archiveBody).toContain("link.download = this.writeupArchiveFileName()");
+    expect(archiveBody).not.toMatch(/this\.api\('(POST|DELETE)'/);
+
+    const app = loadApp() as unknown as {
+      selectedProjectId: string | null;
+      writeupPanel: { data: unknown };
+      writeupArchive(): { available: boolean; files: number } | null;
+      writeupArchiveHref(): string;
+      writeupArchiveFileName(): string;
+      writeupSummary(): string;
+    };
+    app.selectedProjectId = "proj_008";
+
+    app.writeupPanel = { data: { archive: { available: true, files: 139 }, payloads: { total: 79, inlined: 7 } } };
+    expect(app.writeupArchive()).toEqual({ available: true, files: 139 });
+    expect(app.writeupArchiveHref()).toBe("/projects/proj_008/writeup/archive");
+    expect(app.writeupArchiveFileName()).toBe("writeup-proj_008.zip");
+    expect(app.writeupSummary()).toContain("载荷 79 个（内联 7）");
+
+    // No mounted workspace, or an empty index: the panel hides a bundle it cannot serve.
+    app.writeupPanel = { data: { archive: { available: false, files: 0 } } };
+    expect(app.writeupArchive()).toBeNull();
+    app.selectedProjectId = null;
+    expect(app.writeupArchiveHref()).toBe("#");
+  });
 });
 
 interface TestProject {

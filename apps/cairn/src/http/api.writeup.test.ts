@@ -15,6 +15,7 @@ import {
 
 import { createApi, type Api } from "./api";
 import type { WriteupGenerationInput, WriteupGenerator } from "./project-writeup";
+import { readZip } from "./zip";
 
 const FIXTURE_FLAG = "CTF2{fixture_flag_value}";
 
@@ -183,6 +184,87 @@ describe("GET /projects/{id}/writeup payloads", () => {
     expect(body.payloads.count).toBe(1);
     expect(body.payloads.unread).toBe(1);
     expect(body.markdown).toContain("内容未读取");
+  });
+});
+
+describe("GET /projects/{id}/writeup/archive", () => {
+  function indexArtifacts(): void {
+    writeFileSync(join(workspace, "artifacts", "forge.py"), "print('demo payload')\n", "utf8");
+    writeFileSync(join(workspace, "artifacts", "shot.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]), "utf8");
+    db.withConn((conn) =>
+      recordProjectArtifacts(conn, { projectId, taskId: "task-1", workspace }),
+    );
+  }
+
+  test("bundles the draft and every indexed artifact as one zip", async () => {
+    indexArtifacts();
+
+    const response = await get(`/projects/${projectId}/writeup/archive`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("application/zip");
+    expect(response.headers.get("content-disposition")).toBe(
+      `attachment; filename="writeup-${projectId}.zip"`,
+    );
+
+    const packed = new Map(
+      readZip(new Uint8Array(await response.arrayBuffer())).map((entry) => [entry.name, entry.data]),
+    );
+    expect([...packed.keys()]).toEqual([
+      "writeup.md",
+      "MANIFEST.md",
+      "artifacts/forge.py",
+      "artifacts/shot.png",
+    ]);
+    expect(packed.get("writeup.md")?.toString("utf8")).toContain("# Writeup：签到题复盘");
+    expect(packed.get("artifacts/forge.py")?.toString("utf8")).toBe("print('demo payload')\n");
+    expect(packed.get("artifacts/shot.png")).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    expect(packed.get("MANIFEST.md")?.toString("utf8")).toContain("| `artifacts/forge.py` |");
+  });
+
+  test("packages the stored model narrative once one exists", async () => {
+    indexArtifacts();
+    const api = start({
+      writeupGenerator: async () => ({ ok: true, text: "# 模型撰写版\n\n完整中文复盘。\n" }),
+    });
+    await post(api, {});
+
+    const packed = readZip(
+      new Uint8Array(await (await get(`/projects/${projectId}/writeup/archive`, api)).arrayBuffer()),
+    );
+    expect(new Map(packed.map((entry) => [entry.name, entry.data]))
+      .get("writeup.md")
+      ?.toString("utf8"))
+      .toContain("# 模型撰写版");
+  });
+
+  test("reports the bundle through the JSON view", async () => {
+    const before = (await (await get(`/projects/${projectId}/writeup`)).json()) as {
+      archive: { available: boolean; files: number };
+    };
+    expect(before.archive).toEqual({ available: false, files: 0 });
+
+    indexArtifacts();
+    const after = (await (await get(`/projects/${projectId}/writeup`)).json()) as {
+      archive: { available: boolean; files: number };
+    };
+    expect(after.archive).toEqual({ available: true, files: 2 });
+
+    const unmounted = (await (
+      await createApi({ db }).handle(new Request(`http://cairn.test/projects/${projectId}/writeup`))
+    ).json()) as { archive: { available: boolean; files: number } };
+    expect(unmounted.archive).toEqual({ available: false, files: 2 });
+  });
+
+  test("answers 409 when no workspace root is mounted", async () => {
+    const response = await createApi({ db }).handle(
+      new Request(`http://cairn.test/projects/${projectId}/writeup/archive`),
+    );
+    expect(response.status).toBe(409);
+    expect(((await response.json()) as { detail: string }).detail).toContain("workspace root");
+  });
+
+  test("returns 404 for an unknown project", async () => {
+    expect((await get("/projects/proj_missing/writeup/archive")).status).toBe(404);
   });
 });
 

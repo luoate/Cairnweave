@@ -1,4 +1,4 @@
-# 中文 Writeup 生成（M19a / M20a）
+# 中文 Writeup 生成（M19a / M20a / M20b）
 
 Writeup 是给人看的中文复盘文本。它有两种形态：**中文草稿**由控制面依据图中数据确定
 性渲染，永远可用、只读、不需要模型；**模型撰写版**可选，让配置的模型把同一份草稿重写
@@ -21,6 +21,9 @@ curl -s -X POST http://127.0.0.1:8787/projects/proj_001/writeup \
 
 # 删除模型撰写版，回到草稿
 curl -s -X DELETE http://127.0.0.1:8787/projects/proj_001/writeup | jq .source  # => "draft"
+
+# 附件包：Writeup 正文 + 清单 + 全部已登记工件，打成一个 zip
+curl -s http://127.0.0.1:8787/projects/proj_001/writeup/archive -o writeup-proj_001.zip
 ```
 
 ## 1. 草稿包含什么
@@ -94,6 +97,35 @@ JSON 视图里的 `payloads` 是同一份清单的投影（不含正文）：`fi
 `total / count / inlined / binary / unread / truncated` 汇总（`total` 是识别到的全部载荷数，
 `count` 是实际列出的条数），侧栏摘要用它显示“载荷 N 个（内联 K）”。
 
+### 1.2 附件包（M20b）
+
+「载荷」章节受内联预算约束，正文之外的字节由 `GET /projects/{id}/writeup/archive` 一次
+交付。打包布局刻意与 Writeup 的引用一致，读者照着正文里的路径就能在压缩包里找到同一个
+文件：
+
+```
+writeup.md                        # 当前服务的正文：有存储版就是模型版，否则是草稿
+MANIFEST.md                       # 中文清单：项目、打包时间、Flag、载荷统计、逐文件校验
+artifacts/<任务目录>/<文件>        # 工件索引里的每个文件，路径与正文引用一致
+```
+
+写入器是自己实现的极简 ZIP（`apps/cairn/src/http/zip.ts`）：store 与 raw deflate 两种
+method（deflate 不省字节时回退 store）、CRC-32、单一中央目录、文件名字段带 UTF-8 标志位、
+DOS 时间戳由调用方固定，因此同一批输入产出同一份字节。配套的 `readZip()` 会校验 CRC，
+测试用它当格式自检，Windows `Expand-Archive` 与常见解压器都能直接打开。条目名先归一化
+（`\`→`/`、去掉前导 `/`），出现空段或 `..` 直接拒绝，防止解包时逃出根目录。
+
+打包范围是**该项目的全部已登记工件**（`project_artifacts`），不是正文里列出的那 ≤20 个
+载荷——图片、响应转储、脚本都进包，上限见 §3。读取沿用 Flag 扫描与载荷读取同一套收敛
+函数（`openArtifactRoot` + `readArtifactFile`）：只读 `<workspace>/artifacts` 里的常规
+非符号链接文件，索引里指向包外、目录或已被清理的路径一律跳过。
+
+`MANIFEST.md` 把「没打进包」写成显式信息：`## 文件与校验` 表逐条列打包成功的路径、字节、
+sha256 与来源任务；`## 未打包文件` 表给出被跳过的路径与中文原因（`附件目录不可读`、
+`超出附件包上限`、`单文件超过 N 字节`、`文件缺失或不是普通文件`）。触发过文件数或字节上限
+时，头部标注「附件文件：N 个已打包（受上限约束，未全部打包）」。校验列取工件索引登记的
+值（索引时算出的 sha256），因此它与正文「附录：证据文件」里的哈希完全对得上。
+
 ## 2. 模型撰写版
 
 `renderProjectWriteupPrompt` 把整份草稿作为唯一素材交给模型，硬性要求写在 prompt 里：
@@ -121,6 +153,9 @@ JSON 视图里的 `payloads` 是同一份清单的投影（不含正文）：`fi
 | 附录文件数 | 200（超出置 `artifacts_truncated`） |
 | 载荷条目 | 20（`MAX_WRITEUP_PAYLOADS`，超出置 `payloads_truncated`） |
 | 载荷内联 | 单条 4000 字符、单项目 24000 字符、单文件读取窗口 128 KiB |
+| 附件包条目 | 500 个文件（`MAX_ARCHIVE_FILES`），超出后余条记为「超出附件包上限」 |
+| 附件包单文件 | 4 MiB（`MAX_ARCHIVE_FILE_BYTES`），同时是解引用后的读取上限 |
+| 附件包总量 | 64 MiB（`MAX_ARCHIVE_TOTAL_BYTES`），在内存里一次成型，无 zip64 |
 | 请求体 | ≤4 KiB，`model` 必须匹配 `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$` |
 | 超时 | 默认 90 秒（`writeupTimeoutMs`），到时返回 504 |
 | 写守卫 | POST/DELETE 需 operator token（配置时）且拒绝跨源写 |
@@ -147,6 +182,7 @@ generator 覆盖成功、失败、超时与脱敏路径。
                           "sha256": "…", "task_id": "explore-1a2b3c4d5e6f",
                           "language": "python", "state": "inline", "truncated": false,
                           "referenced_by": ["f003"]}]},
+  "archive": {"available": true, "files": 139},
   "generated_at": "2026-10-28T09:00:00Z",
   "verification": {"kind": "evidence",
                    "checks": {"total": 1, "passed": 1, "failed": 0, "last_checked_at": "..."},
@@ -165,6 +201,13 @@ generator 覆盖成功、失败、超时与脱敏路径。
 | `POST` 超时 | `504`，`writeup generation timed out after Ns` |
 | `POST` 请求体非法 | `400`；超过 4 KiB 为 `413` |
 | `PUT` / `PATCH` 等其他方法 | `405` |
+| `GET .../writeup/archive` | `200`，`application/zip`，`content-disposition: attachment; filename="writeup-<id>.zip"`（id 非法字符换成 `_`） |
+| 附件包遇到未挂载 workspace | `409`，`workspace root is not mounted, so attachments cannot be read` |
+| 附件包遇到未知项目 | `404`（与其它方法一样先构建草稿） |
+
+JSON 视图的 `archive` 只回答「能不能下载、大概多少文件」：`available` 要求既挂载了
+workspace root 又至少登记了一个工件，`files` 则是已登记工件的条数（未挂载时也照实上报，
+便于排查）。它不预扫磁盘，真实打包结果以 zip 里的 `MANIFEST.md` 为准。
 
 草稿是只读的，但与其它读取项目详情的端点一样会顺带让过期租约失效；只有 POST/DELETE
 会写 `project_writeups`，不写图、不写旁路历史、不改变调度。
@@ -180,6 +223,10 @@ generator 覆盖成功、失败、超时与脱敏路径。
 - `复制`：把正文写入剪贴板；
 - `下载 Markdown`：指向 `?format=markdown` 的同源下载，文件名固定为
   `writeup-<项目id>.md`（id 里的非法字符替换为 `_`），保存下来即带扩展名；
+- `附件包 N`：GET `.../writeup/archive` 的同源下载，文件名 `writeup-<项目id>.zip`，按下时
+  toast 汇报「已下载 …（N 个附件）」。`archive.available` 为假（没挂载 workspace 或一个
+  工件都没登记）时整个按钮不出现，避免给出一包只有 `writeup.md` 的空附件包；悬停标题写明
+  「打包 Writeup 与 N 个证据/载荷附件」；
 - `AI 撰写`：POST 生成模型撰写版，生成期间按钮禁用并显示“撰写中…”；
 - `恢复草稿`：仅在模型版下出现，DELETE 存储行后回到草稿。
 
@@ -199,6 +246,12 @@ Writeup 面向复盘，包含证据文件路径与 Flag 原文，因此写操作
 - 载荷识别是命名与扩展名规则：worker 把载荷存成 `notes-2.txt` 这类名字时，它只会出现在
   附录与附件包里，不会进「载荷」章节。
 - 工作区被 retention 清理或控制面没挂载 workspace 时，载荷条目仍在，但正文显示“内容未读取”。
+- 附件包是单次请求内在内存里成型再整体发出的，不流式；上限见 §3，超大 pcap 之类只会以
+  「单文件超过 N 字节」出现在清单的未打包表里。
+- 清单的 sha256 列取自工件索引登记值，与正文附录同源同值；若文件在索引之后被改写，包内
+  字节会与登记哈希不一致，这属于工作区被外部改动的信号，不是打包器的重算结果。
+- 附件包与其余读取端点一样不设写守卫：GET 就能取走全部证据原文（含 Flag 命中文件与探测
+  转储），安全边界仍然是「控制面只绑本机或受控网络」。需要对外交接时先发 `/report`。
 - 没有 workspace root 时无法扫描 Flag。
 - 模型撰写版按项目只存一份，后写覆盖前者；历史版本需要外部存档。
 - 撰写调用不落 `runs`，因此它的 Token 与成本不出现在 `/stats` 与 `/cost` 里；需要核
