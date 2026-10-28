@@ -6,8 +6,8 @@
 skills / Observer）合并成**一个 Bun/TypeScript 代码库**，不再维护 Python ↔ TypeScript
 之间的进程桥、JSONL RPC 和 worker 适配器。
 
-状态：**M19b（Writeup 面板布局与下载）**；M0–M4、M5a–M5c、
-M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e、M18f、M18g、M19a、M19b 的计划项全部完成（M16b 真实 A/B 仍待第二个可用模型）。Phase 1 的
+状态：**M16b（第二个模型接入与真实 A/B）**；M0–M4、M5a–M5c、
+M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M16b、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e、M18f、M18g、M19a、M19b 的计划项全部完成。Phase 1 的
 “本地看板 + Observer 提案 + 证据门 + 单一写图者”闭环已具备；提案默认关闭。Phase 2
 的触发持久化、意图优先级/预算、单项目 token/成本与并发配额、只读慢层观测、逐 Fact
 成本归因与因果链，以及 reason 的 Hint/去重输出、人工重规划与资源压力触发均已落地，并
@@ -43,8 +43,8 @@ M16a 加持续集成门槛：`.github/workflows/ci.yml` 在 Ubuntu 上用 Bun 1.
 `tools/gate/m16-model-ab.ts` 为两个 arm 各建独立数据库与工作区、用单 profile 统计配置
 （`min_runs: 0`、`epsilon: 0`）跑同一组 marker 项目，比较成功率、Token、成本与耗时；
 启动前校验两个 model-prefs 条目存在且解析到不同 provider/model，观测到的 run.model
-集合必须不重叠，否则拒绝运行。当前 agent 配置只有 `deepseek-flash` 一个可用模型，真实
-对比留到 M16b——需要先把第二个模型加进 `model-prefs.json`。
+集合必须不重叠，否则拒绝运行。第二个真实模型（`GLM-5.3-Flash`）的接入与首次真实对比
+在 M16b 完成。
 M17a 修复前端 P0：此前 UI 新建项目不带 `scope`，而调度器对无范围项目 fail-closed，页面
 创建的项目永远不会派发。现在「新建项目」必须填写至少一个授权目标，按行去重后作为
 `scope` 提交；项目列表对无范围项目显示“未授权”，项目详情常驻授权范围卡片，可对既有
@@ -84,10 +84,10 @@ M18b 把这套 API 接进静态 UI：页头的 CPU 图标打开“模型与密�
 内置 provider 只填名称时，同步到 `models.json` 的 `provider:<id>` 会继承内置协议与
 Base URL；测试前若 provider 尚未保存密钥，直接给出可读提示而不是 SDK 的文件路径错误。
 M18c 收尾模型管理：新增 `docs/MODELS.md` 一页操作手册（五步接入、HTTP 速查、文件落点、
-常见错误、临时目录演练与 M16b 解锁步骤），并用
+常见错误、临时目录演练与 M16b 真实 A/B 步骤），并用
 `apps/cairn/src/http/agent-config.flow.test.ts` 在空配置目录上串起“provider/密钥 →
 模型 → 默认 → 配置文件校验 → 强制删除回收”的端到端流程，断言每一步响应都不含密钥与
-header 值。真实 A/B 仍需用户提供一个可用的第二模型，gate 不会用占位凭据放行。
+header 值。gate 不会用占位凭据放行——M16b 就是用它当时留下的入口接入第二个模型的。
 M18d 让连通性测试真正可用：Provider 卡片新增“测试连通性”，服务端优先选用该 provider
 的 `cairn-worker` 默认条目（否则第一条）真实调用一次，响应标明实际测试的模型；没有
 模型条目时返回可读提示。服务端给测试加 60 秒上限（`agentTestTimeoutMs` 可调），超时
@@ -634,12 +634,31 @@ M16a 增加（CI 门槛与真实模型 A/B 工具）：
 - **拒跑条件**：缺少 `CAIRN_AB_MODEL_A` / `CAIRN_AB_MODEL_B`、两个条目相同、或两个
   条目解析到同一 `provider/model` 时直接失败（退出 2）；跑完后还要求两侧上报的
   `run.model` 集合不重叠、任务数相同。这样不会把“同一个模型跑两次”记成 A/B。
-- **当前状态**：agent 配置里只有 `deepseek-flash`，且网关对 `deepseek-chat` 等常见
-  候选返回 `MODEL_NOT_SUPPORTED`；真实对比（M16b）阻塞在第二个模型配置上，工具本身
-  已就绪并验证了拒跑路径。`CAIRN_AB_SOLVER=fake` 可离线演练两个 arm 的派发与报告，
-  此时模型相关断言（`run.model`、模型集合不重叠）会按预期失败。
+- **当前状态**：M16b 已用两个真实模型跑通（见下），`deepseek-chat` 等未被网关支持的
+  候选仍会返回 `MODEL_NOT_SUPPORTED`，工具不会用占位凭据放行。`CAIRN_AB_SOLVER=fake`
+  可离线演练两个 arm 的派发与报告，此时模型相关断言（`run.model`、模型集合不重叠）
+  会按预期失败。
 - **验证**：`bun run tools/gate/m16-model-ab.ts` 在缺参和同条目两种情况下均以退出码 2
   结束并写出 `runs/m16-model-ab.json`；全量测试与 typecheck 通过。
+
+M16b 增加（第二个模型接入与真实 A/B）：
+
+- **第二个真实模型**：在同一网关的另一协议路径上注册 provider（示例名 `gw-zhipu`，
+  协议 `openai-completions`，Base URL 形如 `https://<gateway-host>/ai/<vendor>/openai/v1`；
+  真实 provider 名与主机名只留在本机配置目录，不进公共仓库）与模型条目
+  `zhipu-glm-flash`（`GLM-5.3-Flash`），复用已有密钥、不改默认 `cairn-worker`。
+  这一步只用 M18a/M18b 已交付的 `/settings/agent` 路由，没有新增产品代码。
+- **连通性先于 gate**：`POST /settings/agent/models/zhipu-glm-flash/test` 返回
+  `ok: true`，证明同一把密钥在该协议路径上被上游接受；该网关不提供 `<baseUrl>/models`，
+  模型发现返回 502，因此模型名按运维者给定值手填。
+- **一次真实对比**：A/B 取 `CAIRN_AB_MODEL_A=cairn-worker`、
+  `CAIRN_AB_MODEL_B=zhipu-glm-flash`、`CAIRN_AB_TASKS=2`，12 项检查全部通过、退出码 0，
+  两侧观测模型集合不重叠。arm A（`deepseek-flash`）2 个 run 全成功、74,227 Token、
+  墙钟 29.5 s；arm B（`GLM-5.3-Flash`）2 个 run 全成功、75,141 Token、墙钟 150.9 s。
+  网关未上报成本，两侧 `cost_usd` 都是 0，比较落在 Token 与耗时上。
+- **不把它当结论**：单样本 2 任务只证明链路可用与量级差异，`outcome=success` 表示
+  worker 返回值被接受并写入图，不代表 marker 值逐字符正确；判定任务质量仍要回看项目
+  事实与证据。报告文件在 `runs/`（已 gitignore），数字记录在 `docs/MODELS.md` 第 7 节。
 
 默认仍是确定性 fake solver，测试与离线运行不需要模型凭据。Observer 只接在
 `CAIRN_SOLVER=breachweave` 的真实 Solver 路径上，fake solver 会忽略它。
@@ -1122,7 +1141,7 @@ provider 与密钥，模型页签负责拉取/手工录入、设为默认、测�
 `models.json`。通过 API 保存的密钥会按上游 SDK 要求同步到 `models.json`；若要求该文件
 不落明文密钥，请手工把该字段改为环境变量名（见上），API 不做这种转换。设置
 `CAIRN_OPERATOR_TOKEN` 后，所有写路由都要求 `X-Cairn-Operator-Token`，并拒绝 Origin
-与请求 host 不一致的浏览器写请求。完整操作步骤、常见错误与 M16b 解锁条件见
+与请求 host 不一致的浏览器写请求。完整操作步骤、常见错误与 M16b 真实 A/B 记录见
 `docs/MODELS.md`。
 
 真实模型 gate 不在
@@ -1163,14 +1182,14 @@ CAIRN_GATE_MAX_TASKS=2 CAIRN_GATE_MAX_MINUTES=8 \
 M16a 的 A/B gate 需要两个不同的 model-prefs 条目，分别跑独立的 marker 项目：
 
 ```bash
-CAIRN_AB_MODEL_A=<pref-a> CAIRN_AB_MODEL_B=<pref-b> \
+CAIRN_AB_MODEL_A=cairn-worker CAIRN_AB_MODEL_B=zhipu-glm-flash \
   CAIRN_AB_TASKS=2 bun run tools/gate/m16-model-ab.ts
 ```
 
 报告默认写到 `runs/m16-model-ab.json`。gate 在条目缺失、相同或解析到同一模型时直接
-退出 2；跑完后要求两侧 `run.model` 不重叠、任务数相同。当前配置只有一个可用模型，
-真实对比留到 M16b；用 M18a/M18b 的入口添加第二个真实模型的具体步骤见
-`docs/MODELS.md` 第 7 节。
+退出 2；跑完后要求两侧 `run.model` 不重叠、任务数相同。M16b 已用上面这条命令跑通一次
+（`gw-deepseek/deepseek-flash` 对 `gw-zhipu/GLM-5.3-Flash`，12 项检查
+全通过），添加第二个真实模型的具体步骤与数字见 `docs/MODELS.md` 第 7 节。
 
 容器 + 真实模型的联调 gate 是 `tools/gate/m3-real-container-gate.ts`，同样不在
 `bun test` 中。它要求 Docker、`cairn-worker:latest` 与本机模型凭据，会真实调用模型并
@@ -1214,7 +1233,7 @@ M6 的跨进程恢复 gate 不调用模型：它先写下一台崩溃控制面�
 bun run tools/gate/m6-restart-gate.ts
 ```
 
-## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a + M17a + M17b + M17c + M17d + M18a + M18b + M18c + M18d + M18e + M18f + M18g + M19a + M19b，2026-10-28，Bun 1.4.4）
+## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a + M17a + M17b + M17c + M17d + M18a + M18b + M18c + M18d + M18e + M18f + M18g + M19a + M19b + M16b，2026-10-28，Bun 1.4.4）
 
 - `bun test`：**655 passed**（69 个文件），0 failed。
 - `bun run typecheck`：`tsc --noEmit` 通过。
@@ -1439,7 +1458,14 @@ bun run tools/gate/m6-restart-gate.ts
 - **CI 与 A/B 工具（M16a）**：`.github/workflows/ci.yml` 与 `bun run check` 执行同一
   typecheck + test 门槛；Linux 容器用 Bun 镜像复跑同一命令验证不依赖 Windows 路径。
   `tools/gate/m16-model-ab.ts` 在缺少两个 model-prefs、条目相同或同模型时以退出码 2
-  拒跑，并写出失败报告；真实 A/B 需要第二个可用模型，列入 M16b。
+  拒跑，并写出失败报告；真实 A/B（M16b）已用两个真实模型跑通，见下一条。
+- **真实 A/B（M16b）**：新模型条目 `zhipu-glm-flash`（`gw-zhipu/GLM-5.3-Flash`）
+  的连通性测试返回 `ok: true`；A 臂取 `cairn-worker`、B 臂取该条目、每臂 2 个任务，gate
+  以退出码 0 结束，`passed: true`、12 项检查 0 失败，两侧 `run.model` 集合不重叠。
+  arm A 2 个 run 全成功 / 74,227 Token / 29.5 s，arm B 2 个 run 全成功 / 75,141 Token /
+  150.9 s。该网关不提供 `<baseUrl>/models`（发现返回 502）也不上报成本，因此两侧
+  `cost_usd` 为 0，比较只看 Token 与耗时；`runs/` 已在 `.gitignore` 中，报告不入仓库，
+  数字记录在 `docs/MODELS.md` 第 7 节。
 - **前端授权范围（M17a）**：UI 静态测试断言新建表单要求至少一个目标、`scope` 随
   `POST /projects` 提交、范围读写只走 `GET/PUT /projects/{id}/scope`、列表
   `has_scope` 徽章与详情卡片；HTTP 测试覆盖范围的默认空值、去重/裁剪、替换、空目标
@@ -1495,7 +1521,7 @@ bun run tools/gate/m6-restart-gate.ts
   （`provider-prefs.json`/`model-prefs.json` 无密钥与 header 值，`auth.json` 持有密钥，
   `models.json` 的 `provider:<id>` 含协议/Base URL/模型）→ 无 force 删除 409 → 强制
   删除回收两个条目 → 快照清空。整轮收集的响应文本均不含密钥或 header 值。操作手册
-  `docs/MODELS.md` 覆盖同一路径及 M16b 解锁条件。修复 `runs.id` 是全局主键、而编号
+  `docs/MODELS.md` 覆盖同一路径及 M16b 真实 A/B 步骤。修复 `runs.id` 是全局主键、而编号
   计数器按项目各从 1 开始导致的跨项目 `run_001` 冲突：分配时跳过已被其他项目占用的
   id，新增用例覆盖两个项目的连续分配。
 - **连通性测试（M18d）**：路由测试用永不 resolve 的 fake manager 和 20ms 上限断言返回
@@ -1587,14 +1613,15 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M15d ✅ | 报告页与取代视图：「报告」页签展示完成判定、当前事实、取代边、run/成本与审计/工件汇总，提供 Markdown 下载；Fact 详情显示 `superseded_by`/`supersedes` 并可跳转 | 540 passed / 62 files（2026-10-27） |
 | M15e ✅ | 真实模型校准 + epsilon 探索/衰减：采样后按解析式预算探索（最少样本优先），`epsilon`/`epsilon_decay`/`epsilon_min` 可配；`tools/gate/m15e-calibration.ts` 用真实 model-prefs 核对 profile/model 记账与统计/报告一致 | 545 passed / 62 files（2026-10-27） |
 | M15f ✅ | Phase 4 收尾：Phase 0 对照副本移除的现状说明、UI 常驻“无身份认证”提示与非回环绑定警告、`docs/CONTRACT.md` 汇总 task/result/usage/audit 契约与退出码 | 545 passed / 62 files（2026-10-27） |
-| M16a ✅ | CI 门槛与真实模型 A/B 工具：GitHub Actions 执行 install/typecheck/test，`bun run check` 本地复现；`tools/gate/m16-model-ab.ts` 双 arm 独立数据库/工作区、同 marker、单 profile，强制两个不同 model-prefs 且两侧 run.model 不重叠 | 548 passed / 63 files（2026-10-27）；Linux 容器同门槛通过；真实 A/B 待第二个模型（M16b） |
+| M16a ✅ | CI 门槛与真实模型 A/B 工具：GitHub Actions 执行 install/typecheck/test，`bun run check` 本地复现；`tools/gate/m16-model-ab.ts` 双 arm 独立数据库/工作区、同 marker、单 profile，强制两个不同 model-prefs 且两侧 run.model 不重叠 | 548 passed / 63 files（2026-10-27）；Linux 容器同门槛通过；真实 A/B 见 M16b |
+| M16b ✅ | 第二个真实模型接入与首次真实 A/B：用 M18a/M18b 的 `/settings/agent` 路由在同网关另一协议路径注册 `gw-zhipu` + `zhipu-glm-flash`（`GLM-5.3-Flash`，复用既有密钥、默认 worker 不变，真实 provider 名与主机名不入库），先跑连通性测试再跑 gate；无新增产品代码，步骤与结果记入 `docs/MODELS.md` 第 7 节 | 655 passed / 69 files（2026-10-28）；gate `passed: true`、12 检查 0 失败，arm A 74,227 Token / 29.5 s 对 arm B 75,141 Token / 150.9 s，两侧模型集合不重叠 |
 | M17a ✅ | 前端 P0：新建项目强制授权范围并随 `scope` 提交；`GET/PUT /projects/{id}/scope`；`GET /projects` 增加 `has_scope`；列表“未授权”徽章与详情范围卡片支持补配/修改 | 556 passed / 64 files（2026-10-27）；浏览器实测创建、编辑与补配 |
 | M17b ✅ | 列表与轮询：搜索标题/ID/状态、可点击状态筛选、三种排序与 `localStorage` 记忆；页面隐藏暂停轮询、可见即刷新、失败 5s→60s 退避；列表/项目错误横幅与重试、最后更新时间；侧栏页签横向滚动并按项目记忆 | 558 passed / 64 files（2026-10-27）；浏览器实测筛选、错误横幅与页签恢复 |
 | M17c ✅ | 表单与弹窗一致性：13 个 overlay 共用模态栈（Esc 关最上层、Tab 焦点陷阱、关闭回焦、显示后重试 autofocus）；新建/范围/重命名/设置逐字段行内校验并聚焦首个错误；写操作提交期间禁用并显示进度；停止单个与“停止全部”改为二次确认 | 578 passed / 64 files（2026-10-28）；浏览器实测 Esc/Tab/回焦、校验、确认与背景取消 |
 | M17d ✅ | 详情/图交互一致性：项目卡片键盘可达（Tab + Enter/Space，内部按钮不冒泡）；进入项目聚焦图标题、返回列表回焦来源卡片（缺失回落搜索框）；返回按钮补可访问名称；图视图 Esc 清除选择、多选面板“已选 N 个事实/清空选择”；图页头删除统一走 `deleteProjectById` | 582 passed / 64 files（2026-10-28）；浏览器实测 Enter/Space 打开、标题/卡片回焦、Esc 与清空按钮、弹窗内 Esc 不清选择 |
 | M18a ✅ | 模型与密钥管理 API：`GET /settings/agent` 汇总 provider/模型（密钥与请求头只回掩码/名称）；provider 与模型的增删改、默认模型设置（复制为 `cairn-worker`）、内置目录与远端 `/models` 发现、单模型连通性测试；删除被引用条目 409（`?force=true` 放行）；写请求要求 operator token 且拒绝跨源；测试/发现错误输出脱敏 | 592 passed / 65 files（2026-10-28）；入口弹窗与拉取模型列表 UI 列入 M18b |
 | M18b ✅ | 模型与密钥管理 UI：页头入口与弹窗栈集成（14 overlay）；Provider/模型页签、密钥只写、请求头逐行解析、协议/Base URL、拉取或手工录入模型、thinkingLevel/reasoning/输入模态/成本/上下文/最大 Token、默认标记与引用方、设为默认、测试、行内删除确认与 409 强制删除；内置 provider 继承协议与 Base URL，无密钥测试给可读提示 | 604 passed / 65 files（2026-10-28）；浏览器实测完整 CRUD/拉取/默认/测试/强制删除流程 |
-| M18c ✅ | 模型管理收尾：`docs/MODELS.md` 一页操作手册（五步接入、HTTP 速查、文件落点、错误排查、临时目录演练、M16b 解锁）；端到端流程测试覆盖空目录 → provider/密钥 → 模型 → 默认 → 文件落点 → 强制删除，并断言全程响应无密钥/header 值 | 605 passed / 66 files（2026-10-28）；真实 A/B（M16b）仍待第二个可用模型 |
+| M18c ✅ | 模型管理收尾：`docs/MODELS.md` 一页操作手册（五步接入、HTTP 速查、文件落点、错误排查、临时目录演练、M16b 真实 A/B 步骤）；端到端流程测试覆盖空目录 → provider/密钥 → 模型 → 默认 → 文件落点 → 强制删除，并断言全程响应无密钥/header 值 | 605 passed / 66 files（2026-10-28）；该入口在 M16b 被用来接入第二模型 |
 | M18d ✅ | 连通性测试可用化：Provider 卡片“测试连通性”，优先测试该 provider 的 `cairn-worker` 条目并回显实际模型；无模型条目给可读提示；服务端 60 秒上限（`agentTestTimeoutMs` 可调）与超时文案；`Bun.serve` 空闲超时 120 秒，避免默认 10 秒先中断 | 609 passed / 66 files（2026-10-28） |
 | M18e ✅ | 前端 Flag 展示：只读 `GET /projects/{id}/flag` 从已索引 artifacts 提取 Flag（过滤占位符、二进制、超大文件与越界路径，限制文件数/字节数/行长度），项目页头绿色横幅显示值、来源与复制按钮，轮询找到后停止重复扫描 | 619 passed / 67 files（2026-10-28）；浏览器实测 proj_008 显示、proj_007 不显示 |
 | M18f ✅ | challenge/Flag 自动校验：`TCH_CHALLENGE_ID` 存在时新建项目自动选择 challenge 策略（显式请求体优先），新建弹窗提供校验选择与题目编号校验，`/flag` 附带 `verification` 快照并在横幅显示通过计数/失败原因，未通过时继续轮询 | 624 passed / 67 files（2026-10-28） |

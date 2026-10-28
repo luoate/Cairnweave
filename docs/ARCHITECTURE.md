@@ -144,9 +144,10 @@ provider（名称/协议/Base URL/密钥/请求头，删除 409 时就地切换�
 内置 provider 能被 SDK 直接加载；测试路由在 provider 尚无密钥时返回可读提示，避免把
 `models.json` 的文件系统错误暴露到页面。
 M18c 收尾：`docs/MODELS.md` 是一页操作手册（五步接入、HTTP 速查、文件落点、常见错误、
-临时目录演练、M16b 解锁条件），`agent-config.flow.test.ts` 在全新临时配置目录上按同一
-顺序跑完整链路，并逐步断言响应不含密钥或 header 值。真实 A/B 仍以第二个可用模型为前提，
-gate 不会用占位凭据放行。
+临时目录演练、M16b 真实 A/B 步骤），`agent-config.flow.test.ts` 在全新临时配置目录上按同一
+顺序跑完整链路，并逐步断言响应不含密钥或 header 值。真实 A/B 的前提是两个可用模型，
+gate 不会用占位凭据放行；M16b 就是按这条路径接入第二个模型（同网关的 zhipu 协议路径）
+并跑通首次对比的，步骤与数字见 `docs/MODELS.md` 第 7 节。
 M18d 补齐连通性测试：新增 `POST /settings/agent/providers/{id}/test`，按
 `providerId`（或同名 provider）找到绑定模型，优先用 `cairn-worker`，否则取第一条；
 没有模型条目时返回可读提示而不调用上游。模型级与 provider 级测试共用
