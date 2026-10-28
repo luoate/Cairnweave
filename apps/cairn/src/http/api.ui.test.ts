@@ -250,6 +250,16 @@ describe("static operations UI", () => {
     expect(app.writeupArchive()).toBeNull();
     app.selectedProjectId = null;
     expect(app.writeupArchiveHref()).toBe("#");
+
+    // The summary says *why* there is no flag instead of only "尚未记录".
+    app.writeupPanel = {
+      data: { flag: null, flag_suspects: ["CTF2{c8xxxx}", "CTF2{uuid}"] },
+    };
+    expect(app.writeupSummary()).toContain("尚未记录 Flag（2 处疑似占位）");
+    app.writeupPanel = {
+      data: { flag: { value: "CTF2{real_one}", alternatives: ["flag{second}"] }, flag_suspects: [] },
+    };
+    expect(app.writeupSummary()).toContain("已记录 Flag（另有 1 个候选）");
   });
 });
 
@@ -1126,6 +1136,59 @@ describe("model and key settings", () => {
     expect(app.projectFlag.flag).toBe("");
     // A response without a verification snapshot degrades to "no policy", not a crash.
     expect(app.projectFlagVerificationLabel()).toBe("");
+    expect(app.projectFlag.candidates).toEqual([]);
+    expect(app.projectFlagSuspect()).toBe(false);
+  });
+
+  test("shows flag candidates and warns when only masks were found", async () => {
+    const app = loadState();
+    app.api = async () => ({
+      found: true,
+      flag: "CTF2{ui_fixture}",
+      source: "findings.md",
+      occurrences: 2,
+      sources: ["findings.md"],
+      candidates: [
+        { value: "CTF2{ui_fixture}", occurrences: 2, sources: 1, placeholder: false },
+        { value: "flag{ui_second}", occurrences: 1, sources: 1, placeholder: false },
+      ],
+      placeholder_suspect: false,
+      verification: { policy: null, latest: null },
+    });
+
+    await app.loadProjectFlag("proj_1");
+    expect(app.projectFlagSuspect()).toBe(false);
+    expect(app.projectFlagConfidenceLabel()).toBe("另有 1 个候选");
+
+    app.api = async () => ({
+      found: false,
+      flag: null,
+      source: null,
+      occurrences: 0,
+      sources: [],
+      candidates: [
+        { value: "CTF2{c8xxxx}", occurrences: 3, sources: 2, placeholder: true },
+        { value: "CTF2{uuid}", occurrences: 1, sources: 1, placeholder: true },
+      ],
+      placeholder_suspect: true,
+      verification: { policy: null, latest: null },
+    });
+
+    await app.loadProjectFlag("proj_1");
+    expect(app.projectFlag.found).toBe(false);
+    expect(app.projectFlagSuspect()).toBe(true);
+    expect(app.projectFlagSuspectLabel()).toContain("2 处");
+    expect(app.projectFlagSuspectValues()).toBe("CTF2{c8xxxx} / CTF2{uuid}");
+    expect(app.projectFlagConfidenceLabel()).toBe("");
+
+    // The suspect banner is a separate strip: it never renders as a captured flag.
+    const html = readFileSync(INDEX_PATH, "utf8");
+    const suspectStart = html.indexOf('x-if="projectFlagSuspect()"');
+    expect(suspectStart).toBeGreaterThan(-1);
+    const banner = html.slice(suspectStart, html.indexOf("</template>", suspectStart));
+    expect(banner).toContain("Flag 可疑");
+    expect(banner).toContain("border-amber-200");
+    expect(banner).not.toContain("copyProjectFlag()");
   });
 
   test("shows challenge verification progress and polls until it passes", async () => {

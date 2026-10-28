@@ -1,4 +1,4 @@
-# 架构（M20a 更新）
+# 架构（M21 更新）
 
 本文固定合并后的角色边界、数据所有权和失败语义。实现以本文为准；需要改动时先改本文并
 记录原因。
@@ -168,6 +168,15 @@ realpath 包含关系（拒绝 `..`、绝对路径、符号链接和越界父目
 `.cairn/sessions/<task>/solver-session/*.jsonl` 作为回退（拒绝符号链接越界、跳过
 二进制，限 64 个文件 / 单文件 2 MiB / 总计 8 MiB），只返回 flag 与相对路径，
 用于恢复旧 prompt 下被改写为 `CTF2{[REDACTED]}` 的真实值。
+M21 把这条回退收紧成「只有工具输出算证据」：逐行只取 `message.role === "toolResult"` 的文本块
+（`sessionToolText`），assistant/user 消息不再进候选池——模型在自己叙述里写下的 `CTF2{c8xxxx}`
+曾按出现次数压过工具返回的真实值，横幅与 Writeup 因此给出不同的 Flag。`isPlaceholder` 同时新增
+掩码判定（`...`、`…`、`**`、`x{3,}` 连写，以及 `uuid`/`guid`/`frag`/`partial`/`truncat*`/
+`sample`/`dummy`/`tbd`/`unknown`/`missing` 等替身词，两侧按词段匹配以免误杀
+`flag{fragment_of_the_flag}`）。被拒的值不静默丢弃：`candidates`（≤3 条，带 `occurrences`、
+`sources`、`placeholder`；artifacts 与会话两路按值合并、次数相加）与 `placeholder_suspect`
+一起上报，UI 据此显示琥珀色「FLAG 可疑」条；Writeup 草稿的 `flag_suspects` 与 prompt 里
+「不得把占位串当成答案」的硬规则同源于此。
 M18f 打开 challenge/Flag 自动校验：`POST /projects` 未给 `verification` 时，控制面读
 `verification.challenge.code_env`（默认 `TCH_CHALLENGE_ID`）；非空即写入
 `{kind: challenge, challenge_code}`，否则按 `evidence_enforcement` 落 `evidence` /
@@ -615,12 +624,14 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
   默认 `json`；`markdown` 用 `text/markdown` 返回同一对象的渲染结果。`audit` 与
   `artifacts` 只有汇总（任务数、事件数、时间边界、文件数与字节数），不含审计事件
   原文、工件路径或证据内容。未知项目 404；非法 `format` 400；其他方法 405。
-- `GET /projects/{id}/flag`（M18e/M18f/M18g，只读）→
-  `{found, flag, source, occurrences, sources, scanned_files, truncated,
-  verification: {policy, latest}}`。扫描
-  `project_artifacts` 中登记且仍在 `<workspace>/artifacts/` 内的普通文件；占位符、
+- `GET /projects/{id}/flag`（M18e/M18f/M18g/M21，只读）→
+  `{found, flag, source, occurrences, sources, scanned_files, truncated, candidates,
+  placeholder_suspect, verification: {policy, latest}}`。扫描
+  `project_artifacts` 中登记且仍在 `<workspace>/artifacts/` 内的普通文件；占位符、掩码、
   二进制、超大文件与越界路径被跳过。artifacts 无结果时再限量扫描
-  `.cairn/sessions/*/solver-session/*.jsonl`，只返回 flag 值与路径，不返回日志内容。
+  `.cairn/sessions/*/solver-session/*.jsonl`，M21 起只取其中 `role:"toolResult"` 的消息正文，
+  只返回 flag 值与路径，不返回日志内容。`candidates` 是最多 3 条的排名结果（命中时为通过筛选
+  的值，否则为被拒的掩码），`placeholder_suspect` 表示「看到过 flag 形状文本，但一个都没采纳」。
   未命中返回 `found:false` 的 200；未知项目 404；只有 GET。`verification` 与
   `/verification` 同源，供页头横幅显示校验状态。
 - `GET|POST|DELETE /projects/{id}/writeup`（M19a）→
@@ -732,15 +743,18 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
   失败、最近检查、题目编号）、图状态、当前 Fact、取代边、run 总量与按 worker/model/
   profile 分桶、审计与工件计数；右上角链接到同一路由的 `format=markdown` 由浏览器
   下载。它只展示报告快照，不在前端重新组合数据。
-- `Flag` 横幅（M18e/M18f/M18g）读取 `GET /projects/{id}/flag`，在项目页头下方显示
+- `Flag` 横幅（M18e/M18f/M18g/M21）读取 `GET /projects/{id}/flag`，在项目页头下方显示
   命中的 Flag、来源工件或 solver-session 路径与复制按钮；未命中时不占位。M18f 起
   同一响应带 `verification` 快照，横幅追加校验徽标（题目通过 n/n、失败原因或
   “校验已关闭”），challenge 未通过时轮询继续刷新。M18g 起显示的是真实 flag 原文，
-  而不是 `[REDACTED]` 占位符。它不进入报告页，避免把工件内容带进可分享快照。
-- `Writeup`（M19a/M19b/M20a/M20b）读取 `GET /projects/{id}/writeup`，用 `<pre>` 原样展示中文
+  而不是 `[REDACTED]` 占位符。M21 起横幅还会标注“另有 N 个候选”，并且在没有 Flag 但
+  `placeholder_suspect` 为真时于其下方显示琥珀色「FLAG 可疑」条，逐字列出被拒的 flag 形状
+  文本（该条不给复制按钮，避免把掩码当答案提交）。它不进入报告页，避免把工件内容带进可分享快照。
+- `Writeup`（M19a/M19b/M20a/M20b/M21）读取 `GET /projects/{id}/writeup`，用 `<pre>` 原样展示中文
   Markdown 正文，标题行、状态摘要与操作条分三段纵向排列（操作条自身 `flex-wrap`，不与标题争
-  宽度），标注“中文草稿”或“模型撰写”及所用模型与生成时间；状态摘要含 Flag 是否记录、校验
-  状态与“载荷 N 个（内联 K）”（M20a）。操作条提供刷新、复制、
+  宽度），标注“中文草稿”或“模型撰写”及所用模型与生成时间；状态摘要含 Flag 是否记录（M21 起区分
+  “已记录 Flag（另有 N 个候选）”与“尚未记录 Flag（N 处疑似占位）”）、校验状态与
+  “载荷 N 个（内联 K）”（M20a）。操作条提供刷新、复制、
   `下载 Markdown`（指向 `?format=markdown`，文件名 `writeup-<项目id>.md`）、
   `附件包 N`（M20b，GET `.../writeup/archive`，文件名 `writeup-<项目id>.zip`，按下后 toast
   汇报附件数；`archive.available` 为假时整个按钮不出现）、`AI 撰写`
@@ -884,8 +898,11 @@ Writeup 是面向人的中文复盘文本，分两层，全部逻辑在 `package
   两张表）与证据文件附录（≤200 项，超出标记 `artifacts_truncated`）。除 `generated_at`
   外输出确定；不写图、不写旁路、不改调度。
 - **Flag 一致性**：草稿的 Flag 与校验段复用 `/flag` 的 `collectProjectFlag`（artifacts
-  优先、solver-session 回退），两个视图不会给出不同结论；M18g 的原文展示策略同样适用
-  于 Writeup，草稿与 prompt 都保留 flag 原文，不做脱敏。
+  优先、solver-session 的工具输出回退），两个视图不会给出不同结论；M18g 的原文展示策略同样适用
+  于 Writeup，草稿与 prompt 都保留 flag 原文，不做脱敏。M21 起扫描结果里的 `candidates` 也接进
+  草稿：命中时把较弱的同前缀值列成「其他候选」（`flag.alternatives`），只扫到掩码时列
+  `flag_suspects` 并把结论改成「尚未记录到可信 Flag」，prompt 明确禁止把占位串当答案或自己拼出
+  一个看起来完整的 Flag。
 - **载荷（M20a）**：`isWriteupPayloadPath` 用扩展名表（脚本、模板、SQL/HTML、zip/pkl
   等投递容器与图片）与文件名关键字（`payload exploit poc inject sqli xss ssrf ssti xxe
   traver webshell deserial forg bypass` 等）从 `project_artifacts` 里确定性筛出载荷，

@@ -509,6 +509,41 @@ describe("buildProjectWriteup payloads", () => {
   });
 });
 
+describe("writeup flag confidence", () => {
+  test("records no suspects by default", () => {
+    const result = snapshot();
+    expect(result.flag_suspects).toEqual([]);
+    const markdown = renderProjectWriteupMarkdown(result);
+    expect(markdown).toContain("- Flag：未捕获");
+    expect(markdown).not.toContain("疑似占位");
+  });
+
+  test("names the masks when the scanner found nothing trustworthy", () => {
+    const result = snapshot({ flagSuspects: ["CTF2{c8xxxx}", "CTF2{uuid}"] });
+    expect(result.flag).toBeNull();
+
+    const markdown = renderProjectWriteupMarkdown(result);
+    expect(markdown).toContain("- Flag：未捕获");
+    expect(markdown).toContain("- 只扫描到疑似占位或截断的 flag 文本：`CTF2{c8xxxx}`、`CTF2{uuid}`");
+    expect(markdown).toContain("本项目尚未记录到可信 Flag（只扫描到疑似占位或截断的文本）");
+    expect(renderProjectWriteupPrompt(result)).toContain(
+      "不得把占位串当成答案，也不得自己拼出一个看起来完整的 Flag",
+    );
+  });
+
+  test("lists the other accepted candidates beside the chosen flag", () => {
+    const result = snapshot({
+      flag: { value: FIXTURE_FLAG, source: "findings.md", alternatives: ["flag{second_guess}"] },
+    });
+
+    const markdown = renderProjectWriteupMarkdown(result);
+    expect(markdown).toContain("- Flag：`" + FIXTURE_FLAG + "`");
+    expect(markdown).toContain("- 其他候选：`flag{second_guess}`");
+    expect(markdown).toContain("另有 1 个候选");
+    expect(markdown).not.toContain("疑似占位");
+  });
+});
+
 describe("renderProjectWriteupPrompt", () => {
   test("wraps the draft with the Chinese hard rules", () => {
     const result = snapshot({ flag: { value: FIXTURE_FLAG, source: "findings.md" } });

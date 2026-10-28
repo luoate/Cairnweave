@@ -1,4 +1,4 @@
-# 中文 Writeup 生成（M19a / M20a / M20b）
+# 中文 Writeup 生成（M19a / M20a / M20b / M21）
 
 Writeup 是给人看的中文复盘文本。它有两种形态：**中文草稿**由控制面依据图中数据确定
 性渲染，永远可用、只读、不需要模型；**模型撰写版**可选，让配置的模型把同一份草稿重写
@@ -45,7 +45,7 @@ curl -s http://127.0.0.1:8787/projects/proj_001/writeup/archive -o writeup-proj_
 | 载荷（Payload） | 工件索引里命中载荷/脚本特征的文件：文本逐字内联，二进制只登记路径，见 §1.1 |
 | 被取代的判断 | `fact_meta.supersedes` 推导的反向边 |
 | 提示 | Hint 按 `created_at, id` 排序 |
-| Flag 与校验 | Flag 原文与来源、校验策略、最近一次检查与 flag 计数 |
+| Flag 与校验 | Flag 原文与来源、其它候选、疑似占位文本、校验策略、最近一次检查与 flag 计数 |
 | 执行统计 | 运行数、结束/成功/失败、Token、成本，附 worker 与 model 两张表 |
 | 附录：证据文件 | 工件索引的路径、大小、sha256 前 12 位与来源任务，最多 200 项 |
 
@@ -54,8 +54,9 @@ curl -s http://127.0.0.1:8787/projects/proj_001/writeup/archive -o writeup-proj_
 表格单元格里的 `|` 会被转义。
 
 Flag 由 `/flag` 同一个 `collectProjectFlag` 提供（artifacts 优先，未命中时限量回退扫描
-`solver-session` JSONL），所以横幅与 Writeup 不会给出不同的 Flag。按 M18g 的策略，
-Flag 保留原文、不做脱敏；没有 workspace root 的纯 HTTP 模式下 Flag 段为“未捕获”。
+`solver-session` 的**工具输出**），所以横幅与 Writeup 不会给出不同的 Flag。按 M18g 的策略，
+Flag 保留原文、不做脱敏；被判定为占位或截断的 flag 形状文本不会当成 Flag，只作为
+`flag_suspects` 列出，见 §1.3。没有 workspace root 的纯 HTTP 模式下 Flag 段为“未捕获”。
 
 ### 1.1 载荷（Payload）章节（M20a）
 
@@ -126,6 +127,41 @@ sha256 与来源任务；`## 未打包文件` 表给出被跳过的路径与中�
 时，头部标注「附件文件：N 个已打包（受上限约束，未全部打包）」。校验列取工件索引登记的
 值（索引时算出的 sha256），因此它与正文「附录：证据文件」里的哈希完全对得上。
 
+### 1.3 Flag 置信度（M21）
+
+Flag 只有一个来源：`collectProjectFlag`（`apps/cairn/src/http/project-flag.ts`），`/flag` 横幅、
+Writeup 草稿与撰写 prompt 共用它，所以三处不会给出不同的 Flag。M21 收紧两件事——**什么算证据**
+和**什么算 Flag**。
+
+**证据只来自工具输出。** 先扫 `project_artifacts` 登记的工件正文；都没命中才回退读
+`.cairn/sessions/<task>/solver-session/*.jsonl`，且只取 `message.role === "toolResult"` 的文本块
+（`sessionToolText`）。此前逐行扫描原始 JSONL，模型在自己叙述进度时写下的 `CTF2{c8xxxx}`、
+`CTF2{c8...}` 同样进候选池，并按出现次数与来源数压过工具真正返回的值，横幅于是显示一个提交
+不进去的假 Flag。叙述不是证据：它既不会被采纳，也不会触发下面的可疑提示。
+
+**掩码一律拒收。** `isPlaceholder` 在原有词表（`flag`/`example`/`placeholder`/`redacted`/`todo`/
+`your_flag`/`flag_here`/`changeme`）与 `redact`/`mask`/`hidden` 关键字之外新增两条：
+
+- `MASK_MARK`：正文含 `...`、`…`、`**` 或三个以上连续 `x`。取 `x{3,}` 而非 `x{2,}`，因为 base64
+  正文合法地可能出现两个 `x`；
+- `MASK_WORD`：出现 `uuid`、`guid`、`frag`、`partial`、`truncat*`、`sample`、`dummy`、`tbd`、
+  `unknown`、`missing` 等替身词，两侧按词段匹配，所以 `flag{fragment_of_the_flag}`、
+  `CTF2{maxi_xx_service}` 这类真实值仍被保留。
+
+**被拒的文本要看得见。** 拒收不等于静默丢弃：`/flag` 返回 `candidates`（最多 3 条，每条带
+`occurrences`、`sources`、`placeholder`；artifacts 与会话两路按值合并去重、次数相加）与
+`placeholder_suspect`（看到 flag 形状文本但一个都没采纳时为 `true`）。草稿据此渲染两种文案：
+
+- 命中 Flag 但还有较弱的候选 → `- 其他候选：\`A\`、\`B\``，结论段加「另有 N 个候选」；
+- 只看到掩码 → Flag 段写 `- 只扫描到疑似占位或截断的 flag 文本：\`A\`、\`B\``，结论段改成
+  「本项目尚未记录到可信 Flag（只扫描到疑似占位或截断的文本）」；JSON 里对应
+  `flag.alternatives` 与 `flag_suspects`。
+
+UI 在没有 Flag 而 `placeholder_suspect` 为真时于页头下方显示琥珀色「FLAG 可疑」条并逐字列出原文
+（不给复制按钮，避免把假值当答案提交），命中时绿色横幅标注「另有 N 个候选」。prompt 同步加一条
+硬规则：草稿标注为疑似占位的文本不是已拿到的 Flag，要照实写「尚未拿到可确认的 Flag」，不得把
+占位串当成答案，也不得自己拼出一个看起来完整的 Flag。
+
 ## 2. 模型撰写版
 
 `renderProjectWriteupPrompt` 把整份草稿作为唯一素材交给模型，硬性要求写在 prompt 里：
@@ -134,6 +170,7 @@ sha256 与来源任务；`## 未打包文件` 表给出被跳过的路径与中�
 - 只使用草稿中出现的事实、证据路径与 Flag，不补充未记录的利用细节；
 - 证据不足或未完成要如实写“未验证”“未完成”；
 - Flag 逐字符照抄，不改写、不脱敏、不截断；
+- 草稿的 Flag 段若标注“疑似占位或截断”，那些文本不是已拿到的 Flag：照实写“尚未拿到可确认的 Flag”，不得把占位串当成答案，也不得自己拼出一个看起来完整的 Flag（M21）；
 - 载荷与 payload 同样逐字符照抄；草稿只给了路径或标注“未内联”时，只说附件包里有这个文件，不得虚构内容；
 - 不得写入凭据、token、cookie、API key 或内网敏感地址（草稿授权范围内的目标除外）；
 - 建议结构：题目概述 → 信息收集 → 利用链 → 获取 Flag → 复盘与遗留问题；
@@ -176,7 +213,8 @@ generator 覆盖成功、失败、超时与脱敏路径。
   "model": null,
   "created_at": null,
   "markdown": "# Writeup：…",
-  "flag": {"value": "CTF{...}", "source": "artifacts/flag.txt", "occurrences": 1},
+  "flag": {"value": "CTF{...}", "source": "artifacts/flag.txt", "occurrences": 1, "alternatives": []},
+  "flag_suspects": [],
   "payloads": {"total": 2, "count": 1, "inlined": 1, "binary": 0, "unread": 0, "truncated": false,
                "files": [{"path": "explore-1a2b3c4d5e6f/forge.py", "size": 571,
                           "sha256": "…", "task_id": "explore-1a2b3c4d5e6f",
@@ -232,6 +270,8 @@ workspace root 又至少登记了一个工件，`files` 则是已登记工件的
 
 正文卡片头部显示来源与规模（`控制面草稿 · N 字符 · 时间` 或
 `撰写模型 <model> · N 字符 · 时间`）。失败给行内错误与重试，前端不自行拼接正文。
+状态摘要的 Flag 一项按 §1.3 区分两种情形：`已记录 Flag（另有 N 个候选）` 与
+`尚未记录 Flag（N 处疑似占位）`，后者对应草稿里的 `flag_suspects`。
 
 ## 6. 与报告的分工
 
@@ -253,6 +293,9 @@ Writeup 面向复盘，包含证据文件路径与 Flag 原文，因此写操作
 - 附件包与其余读取端点一样不设写守卫：GET 就能取走全部证据原文（含 Flag 命中文件与探测
   转储），安全边界仍然是「控制面只绑本机或受控网络」。需要对外交接时先发 `/report`。
 - 没有 workspace root 时无法扫描 Flag。
+- Flag 判定是启发式（§1.3）：worker 若把真实 Flag 缩写成 `CTF2{c8xxxx}` 存进工件，它会被当作
+  掩码拒收，只在可疑条与 `flag_suspects` 里出现——宁可不显示，也不给一个提交不进去的值；反过来，
+  一个恰好像十六进制的假值仍可能被采纳，最终结论以题目校验或人工提交为准。
 - 模型撰写版按项目只存一份，后写覆盖前者；历史版本需要外部存档。
 - 撰写调用不落 `runs`，因此它的 Token 与成本不出现在 `/stats` 与 `/cost` 里；需要核
   对时看模型提供方自己的用量面板。

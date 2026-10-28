@@ -126,6 +126,8 @@ interface FlagView {
   value: string;
   source: string | null;
   occurrences: number;
+  /** Other accepted flag-shaped values, ranked below `value`. */
+  alternatives: string[];
 }
 
 /** JSON projection of the payload list: the Markdown body carries the text itself. */
@@ -198,6 +200,7 @@ function view(record: ProjectWriteupRecord | null, draft: Draft, archive: Archiv
     created_at: record?.created_at ?? null,
     markdown: record?.markdown ?? draft.markdown,
     flag: draft.flag,
+    flag_suspects: draft.snapshot.flag_suspects,
     payloads: draft.payloads,
     archive,
     generated_at: draft.generated_at,
@@ -337,9 +340,19 @@ export function registerWriteupRoutes(
       workspace === null
         ? null
         : collectProjectFlag({ workspace, artifacts });
+    const suspects =
+      flag === null ? [] : flag.candidates.filter((c) => c.placeholder).map((c) => c.value);
     const flagView: FlagView | null =
       flag !== null && flag.found && flag.flag !== null
-        ? { value: flag.flag, source: flag.source, occurrences: flag.occurrences }
+        ? {
+            value: flag.flag,
+            source: flag.source,
+            occurrences: flag.occurrences,
+            alternatives: flag.candidates
+              .filter((candidate) => !candidate.placeholder)
+              .slice(1)
+              .map((candidate) => candidate.value),
+          }
         : null;
     const payloadContents: WriteupPayloadContent[] =
       workspace === null
@@ -351,9 +364,16 @@ export function registerWriteupRoutes(
     const snapshot = buildProjectWriteup(conn, projectId, {
       verificationFallback,
       payloadContents,
+      flagSuspects: suspects,
       ...(flagView === null
         ? {}
-        : { flag: { value: flagView.value, source: flagView.source ?? "" } }),
+        : {
+            flag: {
+              value: flagView.value,
+              source: flagView.source ?? "",
+              alternatives: flagView.alternatives,
+            },
+          }),
     });
     return {
       snapshot,

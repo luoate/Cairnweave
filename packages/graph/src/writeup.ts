@@ -103,6 +103,8 @@ const PAYLOAD_NAME_PATTERN =
 export interface WriteupFlag {
   value: string;
   source: string;
+  /** Other accepted flag-shaped values, ranked below `value`. */
+  alternatives?: string[];
 }
 
 /** One payload file whose bytes the HTTP layer already read and capped. */
@@ -120,6 +122,8 @@ export interface WriteupPayloadContent {
 export interface BuildProjectWriteupOptions {
   /** Captured flag plus the file it was read from. */
   flag?: WriteupFlag | null;
+  /** Flag-shaped text the scanner rejected as a mask, newest evidence first. */
+  flagSuspects?: string[];
   /** Payload file contents keyed by artifact path; absent entries render as unread. */
   payloadContents?: readonly WriteupPayloadContent[];
   /** Injectable clock for deterministic rendering. */
@@ -192,6 +196,8 @@ export interface ProjectWriteupSnapshot {
   supersessions: FactSupersession[];
   hints: Hint[];
   flag: WriteupFlag | null;
+  /** Flag-shaped text the scanner rejected as a mask; empty when nothing looked like a flag. */
+  flag_suspects: string[];
   verification: {
     kind: VerificationKind;
     checks: {
@@ -406,6 +412,7 @@ export function buildProjectWriteup(
       return byTime === 0 ? left.id.localeCompare(right.id) : byTime;
     }),
     flag: options.flag ?? null,
+    flag_suspects: [...(options.flagSuspects ?? [])],
     verification: {
       kind: verification.policy.kind,
       checks: verification.checks,
@@ -583,9 +590,21 @@ export function renderProjectWriteupMarkdown(snapshot: ProjectWriteupSnapshot): 
   push("", "## Flag 与校验");
   if (snapshot.flag === null) {
     push("- Flag：未捕获");
+    if (snapshot.flag_suspects.length > 0) {
+      push(
+        `- 只扫描到疑似占位或截断的 flag 文本：${snapshot.flag_suspects
+          .map((value) => `\`${value}\``)
+          .join("、")}`,
+      );
+    }
   } else {
     push(`- Flag：\`${snapshot.flag.value}\``);
     push(`- 来源：\`${snapshot.flag.source}\``);
+    if (snapshot.flag.alternatives !== undefined && snapshot.flag.alternatives.length > 0) {
+      push(
+        `- 其他候选：${snapshot.flag.alternatives.map((value) => `\`${value}\``).join("、")}`,
+      );
+    }
   }
   push(`- 校验策略：${snapshot.verification.kind}`);
   const latest = snapshot.verification.latest;
@@ -659,6 +678,8 @@ export function renderProjectWriteupPrompt(snapshot: ProjectWriteupSnapshot): st
     "- 只使用草稿中出现的事实、证据路径与 Flag。不得补充草稿里没有的利用细节、工具版本或结论。",
     "- 证据不足或尚未完成的环节要如实写成“未验证”“未完成”，不要写成已成功。",
     "- 保留草稿里的 Flag 原文，逐字符照抄，不要改写、脱敏或截断。",
+    "- 草稿的 Flag 段落若标注“疑似占位或截断”，那些文本不是已拿到的 Flag：照实写“尚未拿到可确认的 Flag”，" +
+      "不得把占位串当成答案，也不得自己拼出一个看起来完整的 Flag。",
     "- 草稿的“载荷（Payload）”章节给出脚本与 payload 原文：引用时同样逐字符照抄，" +
       "不得改写、补全或自己编造；只登记了路径或标注未内联的载荷，就照实说附件包里有这个文件，不要虚构内容。",
     "- 不得写入任何凭据、token、cookie、API key 或内网敏感地址（草稿里授权范围内的目标地址除外）。",
@@ -758,9 +779,17 @@ function listRunsLite(conn: Database, projectId: string): LiteRunRow[] {
 function snapshotVerdict(snapshot: ProjectWriteupSnapshot): string {
   const parts: string[] = [];
   if (snapshot.flag === null) {
-    parts.push("本项目尚未记录到 Flag");
+    parts.push(
+      snapshot.flag_suspects.length > 0
+        ? "本项目尚未记录到可信 Flag（只扫描到疑似占位或截断的文本）"
+        : "本项目尚未记录到 Flag",
+    );
   } else {
-    parts.push(`本项目已拿到 Flag \`${snapshot.flag.value}\``);
+    const alternatives = snapshot.flag.alternatives ?? [];
+    parts.push(
+      `本项目已拿到 Flag \`${snapshot.flag.value}\`` +
+        (alternatives.length > 0 ? `，另有 ${alternatives.length} 个候选` : ""),
+    );
   }
   const latest = snapshot.verification.latest;
   if (latest === null) {

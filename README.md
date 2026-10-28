@@ -6,8 +6,8 @@
 skills / Observer）合并成**一个 Bun/TypeScript 代码库**，不再维护 Python ↔ TypeScript
 之间的进程桥、JSONL RPC 和 worker 适配器。
 
-状态：**M20b（Writeup 附件包下载）**；M0–M4、M5a–M5c、
-M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M16b、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e、M18f、M18g、M19a、M19b、M20a、M20b 的计划项全部完成。Phase 1 的
+状态：**M21（Flag 扫描的置信度：占位符过滤、只看工具输出、候选披露）**；M0–M4、M5a–M5c、
+M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M16b、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e、M18f、M18g、M19a、M19b、M20a、M20b、M21 的计划项全部完成。Phase 1 的
 “本地看板 + Observer 提案 + 证据门 + 单一写图者”闭环已具备；提案默认关闭。Phase 2
 的触发持久化、意图优先级/预算、单项目 token/成本与并发配额、只读慢层观测、逐 Fact
 成本归因与因果链，以及 reason 的 Hint/去重输出、人工重规划与资源压力触发均已落地，并
@@ -141,6 +141,17 @@ M20b 把 Writeup 引用的附件真的送到人手里：新增只读路由
 CRC-32、单一中央目录、文件名 UTF-8 标志位、固定时间戳所以字节确定），同文件的 `readZip()` 读回
 并校验 CRC 作为格式自检，Windows `Expand-Archive` 实测能直接解开。UI 的操作条加
 「附件包 N」按钮，`archive:{available,files}` 为假时不出现。详见 `docs/WRITEUP.md` §1.2。
+M21 修掉 Flag 扫描自己造出的假阳性：`/flag` 的 solver-session 回退原先逐行扫描 JSONL 原文，
+模型在 assistant 叙述里写下的缩写（`CTF2{c8xxxx}`、`CTF2{c8...}`）因此也进候选池，并按出现
+次数压过工具真正返回的那个值——横幅显示半截 Flag，Writeup 里却是正确的。现在回退只解析
+`role: "toolResult"` 的消息正文（`sessionToolText`），assistant/user 文本不再算证据；
+`isPlaceholder` 加上掩码判定（`...`、`…`、`**`、`xxx` 连写，以及 `uuid`/`partial`/`truncat*`
+这类替身词按词段匹配，`flag{fragment_of_the_flag}` 与 base64 里的 `xx` 不会被误杀）。被拒的
+值不静默消失：`/flag` 新增 `candidates`（≤3 条，含 `occurrences`/`sources`/`placeholder`）与
+`placeholder_suspect`，UI 在没有采纳任何值、却看到 flag 形状文本时显示琥珀色「FLAG 可疑」条并
+列出原文，绿色横幅则标注“另有 N 个候选”；Writeup 草稿的 Flag 段写“只扫描到疑似占位或截断的
+flag 文本”，撰写 prompt 同步禁止把占位串当答案或自己拼一个看起来完整的 Flag。
+详见 `docs/WRITEUP.md` §1.3。
 `cairn serve` 是可运行的 Cairn 兼容服务：SQLite schema、领域服务、全部
 五个路由、YAML/timeline 导出、静态 Web UI 均已就位，并用 Python Cairn 生成的 golden
 做了逐字对照。进程内 scheduler、任务/结果文件 worker 协议、BreachWeave Solver 接入已在 M2
@@ -794,7 +805,7 @@ docs/OBSERVER.md         Observer 实现、配置、权限、flush 语义与已�
 docs/STRATEGIST.md       慢层触发、意图优先级/预算、Hint/去重、人工/资源触发、成本归因（M12a–M14b）
 docs/VERIFICATION.md     完成验证：策略、oracle、路由、失败语义与安全边界（M14a）
 docs/REPORT.md           项目报告：JSON 结构、来源、排序、脱敏与边界（M15c）
-docs/WRITEUP.md          中文 Writeup：草稿组成、载荷、附件包、模型撰写、路由、边界与用法（M19a/M20a/M20b）
+docs/WRITEUP.md          中文 Writeup：草稿组成、载荷、附件包、Flag 置信度、模型撰写、路由、边界与用法（M19a/M20a/M20b/M21）
 docs/CONTRACT.md         worker 契约：task/result/usage/audit、退出码与校验边界（M15f）
 docs/PORTING.md          Python 模块 → TS 模块映射与对照测试策略
 ```
@@ -1254,9 +1265,9 @@ M6 的跨进程恢复 gate 不调用模型：它先写下一台崩溃控制面�
 bun run tools/gate/m6-restart-gate.ts
 ```
 
-## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a + M17a + M17b + M17c + M17d + M18a + M18b + M18c + M18d + M18e + M18f + M18g + M19a + M19b + M16b + M20a + M20b，2026-10-28，Bun 1.4.4）
+## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a + M17a + M17b + M17c + M17d + M18a + M18b + M18c + M18d + M18e + M18f + M18g + M19a + M19b + M16b + M20a + M20b + M21，2026-10-29，Bun 1.4.4）
 
-- `bun test`：**692 passed**（72 个文件），0 failed。
+- `bun test`：**703 passed**（72 个文件），0 failed。
 - `bun run typecheck`：`tsc --noEmit` 通过。
 - **HTTP 对照**：`api.golden.json` 的 60 步请求（成功路径、400/403/404/405/409、租约过期、
   删除级联、导出、路由错误）由 Python FastAPI + 固定时钟生成；TS 重放后状态码、content-type
@@ -1600,6 +1611,23 @@ bun run tools/gate/m6-restart-gate.ts
   DB 副本上启动 `serve --config`，proj_008 打包出 141 个条目、103465 字节，
   Windows `Expand-Archive` 成功解压（不只依赖自研 `readZip`），浏览器实测按钮弹出
   “已下载 …（141 个附件）”提示，未挂载工作区的项目按钮不出现。
+- **Flag 置信度（M21）**：`api.flag.test.ts` 断言占位符与掩码全部被拒（`CTF2{c8xxxx}`、
+  `CTF2{c8...}`、`CTF2{c8…}`、`CTF2{uuid}`、截断 UUID、`flag{partial_value}`、`flag{****}`），
+  形似真值的文本保留（`flag{fragment_of_the_flag}`、`flag{deadbeefcafe1x}`、完整合成 UUID、
+  `CTF2{maxi_xx_service}`）；`toolLine()`/`assistantLine()` 构造真实 JSONL 信封，新测试证明回退
+  只取 `role:"toolResult"` 的正文、assistant 叙述里的 flag 形状既不采纳也不触发
+  `placeholder_suspect`，两次扫描都只见掩码时候选合并去重（≤3 条、次数相加）且
+  `placeholder_suspect:true`，采纳成功时候选按证据强度排名且第一名与 `flag` 一致；
+  `writeup.test.ts` 覆盖 `flag_suspects` 默认空、疑似占位文案 + 判定语 + prompt 硬规则、
+  `alternatives` 行与“另有 N 个候选”；`api.writeup.test.ts` 覆盖 JSON 的 `flag.alternatives` 与
+  `flag_suspects` 投影，以及“未捕获 + 逐字列出原文”的草稿文案；`api.ui.test.ts` 断言四个赋值点
+  都带 `candidates`/`suspect`、琥珀色「FLAG 可疑」条的文案与原文列表、绿色横幅的“另有 N 个
+  候选”徽标，且可疑条不含复制按钮。真实运行：在 `runs/` 之外的 DB 副本 + 工件副本上起
+  `serve --config`，proj_010 的 `/flag` 返回 8 次命中 / 5 个来源的真实值、
+  `placeholder_suspect:false`，Writeup 正文与浏览器绿色横幅同源一致（原报告里的 `CTF2{c8xxxx}`
+  不再出现在横幅上）；给 proj_007 注入只含 `CTF2{c8xxxx}`、`CTF2{uuid}` 的工件后，`/flag` 报
+  `placeholder_suspect:true` + 两条候选，草稿写“只扫描到疑似占位或截断的 flag 文本”，浏览器
+  显示琥珀色提示条并逐字列出这两个串。
 
 golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定时钟、`TZ=UTC`）。
 重新生成方法与约束见 `docs/PORTING.md`。
@@ -1674,6 +1702,7 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M19b ✅ | Writeup 面板显示修正：标题行/摘要/操作条改为三段纵向布局（操作条自身 `flex-wrap`），不再与标题争宽度导致窄侧栏里竖排字符；`Markdown` 链接改为 `下载 Markdown` 按钮，下载走 `?format=markdown` 并固定文件名 `writeup-<项目id>.md`（非法字符替换为 `_`），正文卡片头部改列显示来源与规模 | 655 passed / 69 files（2026-10-28）；浏览器实测下载锚点与文件名、模型撰写版显示 |
 | M20a ✅ | Writeup 写明载荷：`isWriteupPayloadPath` 用扩展名/关键字从工件索引确定性选出脚本、投递容器与 payload，`## 载荷（Payload）` 章节逐字内联文本（自动加长围栏、截断标注）、二进制只登记路径、读不到写“内容未读取”；超过 20 条时 `selectWriteupPayloadArtifacts` 让被 `evidence_refs` 引用的载荷排在截断之前，快照带 `payloads_total`；每条载荷带 `referenced_by`（哪条 Fact 引用），HTTP 层 `collectWriteupPayloads` 复用 Flag 的路径收敛与限额（只读选中的 ≤20 条、单文件 128 KiB、总计 24000 字符）；prompt 增加“载荷照抄、未内联不得虚构”，侧栏摘要显示“载荷 N 个（内联 K）” | 670 passed / 70 files（2026-10-28） |
 | M20b ✅ | Writeup 附件包下载：`GET /projects/{id}/writeup/archive`（只读）用自研最小 ZIP 写入器（`zip.ts`：store/deflate 取小者、CRC-32、单一中央目录、固定 DOS 时间戳 → 字节确定）把 `writeup.md`（模型成稿优先）、中文 `MANIFEST.md`（项目/来源/Flag/载荷统计/目录结构/`文件与校验`表/`未打包文件`表）与**全部**已索引工件 `artifacts/<任务>/<文件>` 打成 `writeup-<id>.zip`；上限 500 条目 / 单文件 4 MiB / 总量 64 MiB（无 zip64），跳过项在清单里给中文原因；读取沿用 Flag 的路径收敛（真实目录、非符号链接、不逃逸）；JSON 增 `archive:{available,files}`，UI「附件包 N」按钮据此显示并走同源 GET，未挂载工作区 409 | 692 passed / 72 files（2026-10-28）；浏览器实测下载与 `Expand-Archive` 解压 141 个附件 |
+| M21 ✅ | Flag 扫描置信度：solver-session 回退改为只解析 `role:"toolResult"` 的消息正文（`sessionToolText`），模型自己的 assistant 叙述不再是证据——它在叙述里写下的 `CTF2{c8xxxx}` 曾按出现次数压过工具返回的真实值；`isPlaceholder` 增加掩码判定（`...`/`…`/`**`/`x{3,}` 连写与 `uuid`/`guid`/`frag`/`partial`/`truncat*`/`sample`/`dummy`/`tbd`/`unknown`/`missing` 词段匹配，`fragment_of_the_flag` 与 base64 里的 `xx` 不误杀）；被拒文本不静默丢弃：`/flag` 新增 `candidates`（≤3 条，带 `occurrences`/`sources`/`placeholder`，artifacts 与会话两路合并去重、次数相加）与 `placeholder_suspect`；Writeup 草稿的 `flag_suspects` 逐字列出它们并写“只扫描到疑似占位或截断的 flag 文本”，判定语与撰写 prompt 同步禁止把占位串当答案或拼一个看似完整的 Flag；UI 在未采纳任何值时显示琥珀色「FLAG 可疑」条（列出原文、不给复制按钮），命中时绿色横幅加“另有 N 个候选”徽标 | 703 passed / 72 files（2026-10-29）；`bun run typecheck` 通过；浏览器实测 proj_010 绿色横幅为真实 Flag、注入掩码的 proj_007 显示琥珀色可疑条 |
 
 ## 与 Phase 0 的关系
 

@@ -113,12 +113,52 @@ describe("GET /projects/{id}/writeup", () => {
     );
 
     const body = (await (await get(`/projects/${projectId}/writeup`)).json()) as {
-      flag: { value: string; source: string } | null;
+      flag: { value: string; source: string; alternatives: string[] } | null;
+      flag_suspects: string[];
       markdown: string;
     };
     expect(body.flag?.value).toBe(FIXTURE_FLAG);
     expect(body.flag?.source).toBe("findings.md");
+    expect(body.flag?.alternatives).toEqual([]);
+    expect(body.flag_suspects).toEqual([]);
     expect(body.markdown).toContain(`- Flag：\`${FIXTURE_FLAG}\``);
+  });
+
+  test("names placeholder-shaped text instead of claiming a flag", async () => {
+    writeFileSync(
+      join(workspace, "artifacts", "notes.txt"),
+      "guessed CTF2{c8xxxx} then CTF2{uuid}\n",
+      "utf8",
+    );
+    db.withConn((conn) =>
+      recordProjectArtifacts(conn, { projectId, taskId: "task-1", workspace }),
+    );
+
+    const body = (await (await get(`/projects/${projectId}/writeup`)).json()) as {
+      flag: unknown;
+      flag_suspects: string[];
+      markdown: string;
+    };
+    expect(body.flag).toBeNull();
+    expect(body.flag_suspects).toEqual(["CTF2{c8xxxx}", "CTF2{uuid}"]);
+    expect(body.markdown).toContain("- Flag：未捕获");
+    expect(body.markdown).toContain("只扫描到疑似占位或截断的 flag 文本：`CTF2{c8xxxx}`、`CTF2{uuid}`");
+  });
+
+  test("lists weaker candidates when two real-looking flags exist", async () => {
+    writeFileSync(join(workspace, "artifacts", "a.txt"), `${FIXTURE_FLAG} ${FIXTURE_FLAG}\n`, "utf8");
+    writeFileSync(join(workspace, "artifacts", "b.txt"), "flag{weaker_candidate}\n", "utf8");
+    db.withConn((conn) =>
+      recordProjectArtifacts(conn, { projectId, taskId: "task-1", workspace }),
+    );
+
+    const body = (await (await get(`/projects/${projectId}/writeup`)).json()) as {
+      flag: { value: string; alternatives: string[] } | null;
+      markdown: string;
+    };
+    expect(body.flag?.value).toBe(FIXTURE_FLAG);
+    expect(body.flag?.alternatives).toEqual(["flag{weaker_candidate}"]);
+    expect(body.markdown).toContain("- 其他候选：`flag{weaker_candidate}`");
   });
 
   test("serves the draft as Markdown and rejects unknown formats", async () => {

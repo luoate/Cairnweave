@@ -163,7 +163,7 @@ describe("GET /projects/{id}/flag", () => {
   test("falls back to solver-session logs when artifacts only hold redacted placeholders", async () => {
     writeFileSync(join(artifacts, "findings.md"), "captured CTF2{[REDACTED]}\n", "utf8");
     record();
-    writeSession("explore-111111111111", "session.jsonl", FIXTURE_FLAG);
+    writeSession("explore-111111111111", "session.jsonl", toolLine(FIXTURE_FLAG));
 
     const body = (await (await get(`/projects/${projectId}/flag`)).json()) as ProjectFlagResult;
     expect(body).toMatchObject({
@@ -180,7 +180,7 @@ describe("GET /projects/{id}/flag", () => {
   test("prefers a real artifact flag over session logs", async () => {
     writeFileSync(join(artifacts, "findings.md"), `${FIXTURE_FLAG}\n`, "utf8");
     record();
-    writeSession("explore-222222222222", "session.jsonl", SECOND_FLAG);
+    writeSession("explore-222222222222", "session.jsonl", toolLine(SECOND_FLAG));
 
     const body = (await (await get(`/projects/${projectId}/flag`)).json()) as ProjectFlagResult;
     expect(body.flag).toBe(FIXTURE_FLAG);
@@ -195,13 +195,64 @@ describe("GET /projects/{id}/flag", () => {
     const body = (await (await get(`/projects/${projectId}/flag`)).json()) as ProjectFlagResult;
     expect(body.found).toBe(false);
     expect(body.flag).toBeNull();
+    expect(body.placeholder_suspect).toBe(true);
+    expect(body.candidates).toEqual([
+      { value: "CTF2{[REDACTED]}", occurrences: 1, sources: 1, placeholder: true },
+    ]);
+  });
+
+  test("shows the masks both scans saw when nothing trustworthy exists", async () => {
+    writeFileSync(join(artifacts, "notes.txt"), "guessed CTF2{c8xxxx} and CTF2{uuid}\n", "utf8");
+    record();
+    writeSession(
+      "explore-666666666666",
+      "session.jsonl",
+      assistantLine("prose only: CTF2{c8...}") + toolLine("still no hit, saw CTF2{c8xxxx}"),
+    );
+
+    const body = (await (await get(`/projects/${projectId}/flag`)).json()) as ProjectFlagResult;
+    expect(body.found).toBe(false);
+    expect(body.placeholder_suspect).toBe(true);
+    expect(body.candidates).toEqual([
+      { value: "CTF2{c8xxxx}", occurrences: 2, sources: 2, placeholder: true },
+      { value: "CTF2{uuid}", occurrences: 1, sources: 1, placeholder: true },
+    ]);
   });
 });
 
-function writeSession(taskId: string, name: string, content: string): void {
+/**
+ * One `toolResult` entry of a pi solver-session log: this is the only shape the fallback
+ * is allowed to read.
+ */
+function toolLine(text: string): string {
+  return `${JSON.stringify({
+    type: "message",
+    message: {
+      role: "toolResult",
+      toolCallId: "call_0001",
+      toolName: "bash",
+      content: [{ type: "text", text }],
+      isError: false,
+    },
+  })}\n`;
+}
+
+/** One assistant entry: model narration, which may hold truncated or guessed flags. */
+function assistantLine(text: string): string {
+  return `${JSON.stringify({
+    type: "message",
+    message: {
+      role: "assistant",
+      model: "worker-model",
+      content: [{ type: "thinking", text: "planning" }, { type: "text", text }],
+    },
+  })}\n`;
+}
+
+function writeSession(taskId: string, name: string, lines: string): void {
   const directory = join(workspaceRoot, projectId, ".cairn", "sessions", taskId, "solver-session");
   mkdirSync(directory, { recursive: true });
-  writeFileSync(join(directory, name), `${JSON.stringify({ output: content })}\n`, "utf8");
+  writeFileSync(join(directory, name), lines, "utf8");
 }
 
 describe("findFlags", () => {
@@ -226,8 +277,26 @@ describe("findFlags", () => {
       "flag{masked_value}",
       "flag{[hidden]}",
       "flag{[REDACTED]}",
+      "CTF2{c8xxxx}",
+      "CTF2{c8...}",
+      "CTF2{c8…}",
+      "CTF2{uuid}",
+      "CTF2{a1b2c3d4-49xx-...}",
+      "flag{partial_value}",
+      "flag{****}",
     ]) {
       expect(findFlags(placeholder)).toEqual([]);
+    }
+  });
+
+  test("keeps real-looking values that merely contain masked-looking fragments", () => {
+    for (const value of [
+      "flag{fragment_of_the_flag}",
+      "flag{deadbeefcafe1x}",
+      "flag{1f7c2a90-3b64-4d2e-8a15-0c9bd7e6f421}",
+      "CTF2{maxi_xx_service}",
+    ]) {
+      expect(findFlags(value)).toEqual([value]);
     }
   });
 
@@ -245,13 +314,48 @@ describe("scanSolverSessionFlags", () => {
   });
 
   test("picks the real flag over redacted placeholders across sessions", () => {
-    writeSession("explore-333333333333", "a.jsonl", "CTF2{[REDACTED]}");
-    writeSession("explore-444444444444", "b.jsonl", FIXTURE_FLAG);
+    writeSession("explore-333333333333", "a.jsonl", toolLine("CTF2{[REDACTED]}"));
+    writeSession("explore-444444444444", "b.jsonl", toolLine(FIXTURE_FLAG));
 
     const result = scanSolverSessionFlags({ workspace: join(workspaceRoot, projectId) });
     expect(result.found).toBe(true);
     expect(result.flag).toBe(FIXTURE_FLAG);
     expect(result.scanned_files).toBe(2);
+  });
+
+  test("reads tool output only, never the assistant narration around it", () => {
+    writeSession(
+      "explore-777777777777",
+      "c.jsonl",
+      [
+        assistantLine("the answer looks like CTF2{c8xxxx}, truncated"),
+        assistantLine("maybe CTF2{uuid} is the whole value"),
+        toolLine("body: CTF2{c8<br>next hint<html>"),
+        toolLine(`submitting ${FIXTURE_FLAG} now`),
+      ].join(""),
+    );
+
+    const result = scanSolverSessionFlags({ workspace: join(workspaceRoot, projectId) });
+    expect(result.found).toBe(true);
+    expect(result.flag).toBe(FIXTURE_FLAG);
+    expect(result.placeholder_suspect).toBe(false);
+    expect(result.candidates).toEqual([
+      { value: FIXTURE_FLAG, occurrences: 1, sources: 1, placeholder: false },
+    ]);
+  });
+
+  test("reports a suspect when the only flag shapes sit in assistant prose", () => {
+    writeSession(
+      "explore-888888888888",
+      "d.jsonl",
+      assistantLine("so far CTF2{c8xxxx} and CTF2{c8...}"),
+    );
+
+    const result = scanSolverSessionFlags({ workspace: join(workspaceRoot, projectId) });
+    expect(result.found).toBe(false);
+    expect(result.placeholder_suspect).toBe(false);
+    expect(result.candidates).toEqual([]);
+    expect(result.scanned_files).toBe(1);
   });
 
   test("ignores missing and binary session files", () => {
@@ -292,5 +396,36 @@ describe("scanProjectFlag limits", () => {
     expect(result.flag).toBe(FIXTURE_FLAG);
     expect(result.scanned_files).toBe(1);
     expect(result.truncated).toBe(true);
+  });
+
+  test("lists the accepted candidates ranked by evidence", () => {
+    writeFileSync(join(artifacts, "a.txt"), `${FIXTURE_FLAG} ${FIXTURE_FLAG}\n`, "utf8");
+    writeFileSync(join(artifacts, "b.txt"), `${SECOND_FLAG} ${FIXTURE_FLAG}\n`, "utf8");
+    writeFileSync(join(artifacts, "c.txt"), "flag{third_fixture}\n", "utf8");
+    writeFileSync(join(artifacts, "d.txt"), "flag{fourth_fixture}\n", "utf8");
+    record();
+
+    const result = scanProjectFlag({
+      workspace: join(workspaceRoot, projectId),
+      artifacts: [
+        { path: "a.txt", size: 1 },
+        { path: "b.txt", size: 1 },
+        { path: "c.txt", size: 1 },
+        { path: "d.txt", size: 1 },
+      ],
+    });
+    expect(result.flag).toBe(FIXTURE_FLAG);
+    expect(result.candidates.map((candidate) => candidate.value)).toEqual([
+      FIXTURE_FLAG,
+      SECOND_FLAG,
+      "flag{fourth_fixture}",
+    ]);
+    expect(result.candidates[0]).toEqual({
+      value: FIXTURE_FLAG,
+      occurrences: 3,
+      sources: 2,
+      placeholder: false,
+    });
+    expect(result.placeholder_suspect).toBe(false);
   });
 });

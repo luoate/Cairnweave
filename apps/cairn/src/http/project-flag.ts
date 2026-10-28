@@ -12,6 +12,12 @@
  * flag is found there the scanner falls back to the worker solver-session JSONL logs,
  * where tool output still holds the exact value. The fallback is read-only and returns
  * only flag strings and session paths, never log contents.
+ *
+ * The fallback reads tool results only. A model narrating its own progress writes truncated
+ * or guessed flag shapes (`CTF2{c8xxxx}`, `CTF2{c8...}`) into assistant messages, and those
+ * strings would otherwise outrank the real value that a tool returned earlier. Anything the
+ * scanner rejects as a mask is still reported through `placeholder_suspect` and `candidates`
+ * so the UI can say "flag-shaped text seen, none of it trustworthy" instead of going quiet.
  */
 
 import { lstatSync, readFileSync, readdirSync, realpathSync } from "node:fs";
@@ -35,6 +41,12 @@ const PLACEHOLDER_BODIES = new Set([
   "flag_here",
   "changeme",
 ]);
+/** Marks a model uses when it abbreviates a value: `c8...`, `c8…`, `c8xxx`, `**`. */
+const MASK_MARK = /(\.{2,}|…|\*{2,}|x{3,})/i;
+/** Stand-in words for a value, matched on segments so `fragmented` stays a real word. */
+const MASK_WORD =
+  /(^|[^a-z])(uuid|guid|frag|partial|truncat\w*|sample|dummy|tbd|unknown|missing)([^a-z]|$)/;
+const MAX_CANDIDATES = 3;
 
 export interface FlagArtifact {
   path: string;
@@ -65,6 +77,16 @@ export interface ProjectFlagMatch {
   sources: string[];
 }
 
+/** One ranked flag-shaped string, with how much evidence stands behind it. */
+export interface FlagCandidate {
+  value: string;
+  occurrences: number;
+  /** Number of distinct files this value was seen in. */
+  sources: number;
+  /** True when the value was rejected as a mask or redaction placeholder. */
+  placeholder: boolean;
+}
+
 export interface ProjectFlagResult {
   found: boolean;
   flag: string | null;
@@ -73,6 +95,10 @@ export interface ProjectFlagResult {
   sources: string[];
   scanned_files: number;
   truncated: boolean;
+  /** Top values that passed the placeholder filter, or the masks when none did. */
+  candidates: FlagCandidate[];
+  /** Flag-shaped text was seen, but every value looked like a mask or redaction. */
+  placeholder_suspect: boolean;
 }
 
 export function emptyFlagResult(): ProjectFlagResult {
@@ -84,6 +110,8 @@ export function emptyFlagResult(): ProjectFlagResult {
     sources: [],
     scanned_files: 0,
     truncated: false,
+    candidates: [],
+    placeholder_suspect: false,
   };
 }
 
@@ -94,7 +122,7 @@ export function scanProjectFlag(options: FlagScanOptions): ProjectFlagResult {
   const realRoot = openArtifactRoot(options.workspace);
   if (realRoot === null) return emptyFlagResult();
 
-  const matches = new Map<string, ProjectFlagMatch>();
+  const groups = newFlagGroups();
   let scannedFiles = 0;
   let totalBytes = 0;
   let truncated = false;
@@ -115,29 +143,18 @@ export function scanProjectFlag(options: FlagScanOptions): ProjectFlagResult {
     totalBytes += file.length;
     scannedFiles += 1;
 
-    const path = normalizePath(artifact.path);
-    for (const flag of findFlags(content)) {
-      const existing = matches.get(flag);
-      if (existing === undefined) {
-        matches.set(flag, {
-          flag,
-          source: path,
-          occurrences: 1,
-          sources: [path],
-        });
-        continue;
-      }
-      existing.occurrences += 1;
-      if (!existing.sources.includes(path)) existing.sources.push(path);
-    }
+    recordFlags(groups, content, normalizePath(artifact.path));
   }
 
-  return rankMatches(matches, scannedFiles, truncated);
+  return rankMatches(groups, scannedFiles, truncated);
 }
 
 /**
  * Recovers a captured flag from worker solver-session logs. Used only when artifacts
  * hold nothing but placeholders, because the logs keep the raw tool output.
+ *
+ * Only `toolResult` entries are scanned: assistant messages are where the model narrates
+ * truncated guesses, and those must not compete with what a tool really printed.
  */
 export function scanSolverSessionFlags(options: SessionFlagScanOptions): ProjectFlagResult {
   const maxFiles = options.maxFiles ?? SESSION_MAX_FILES;
@@ -165,7 +182,7 @@ export function scanSolverSessionFlags(options: SessionFlagScanOptions): Project
     return emptyFlagResult();
   }
 
-  const matches = new Map<string, ProjectFlagMatch>();
+  const groups = newFlagGroups();
   let scannedFiles = 0;
   let totalBytes = 0;
   let truncated = false;
@@ -229,24 +246,16 @@ export function scanSolverSessionFlags(options: SessionFlagScanOptions): Project
       }
 
       const path = `.cairn/sessions/${name}/solver-session/${file}`;
-      for (const flag of findFlags(content, maxFileBytes)) {
-        const existing = matches.get(flag);
-        if (existing === undefined) {
-          matches.set(flag, {
-            flag,
-            source: path,
-            occurrences: 1,
-            sources: [path],
-          });
-          continue;
-        }
-        existing.occurrences += 1;
-        if (!existing.sources.includes(path)) existing.sources.push(path);
+      for (const line of content.split(/\r?\n/)) {
+        if (line.length === 0) continue;
+        const text = sessionToolText(line);
+        if (text === null) continue;
+        recordFlags(groups, text, path);
       }
     }
   }
 
-  return rankMatches(matches, scannedFiles, truncated);
+  return rankMatches(groups, scannedFiles, truncated);
 }
 
 /**
@@ -259,50 +268,158 @@ export function collectProjectFlag(
   const artifactResult = scanProjectFlag(options);
   if (artifactResult.found) return artifactResult;
   const sessionResult = scanSolverSessionFlags(options);
-  return {
+  const combined: ProjectFlagResult = {
     ...sessionResult,
     scanned_files: artifactResult.scanned_files + sessionResult.scanned_files,
     truncated: artifactResult.truncated || sessionResult.truncated,
   };
+  if (combined.found) return combined;
+  // Nothing trustworthy anywhere: report the masks both scans saw, artifacts first.
+  const candidates = mergeCandidates(artifactResult.candidates, sessionResult.candidates);
+  return { ...combined, candidates, placeholder_suspect: candidates.length > 0 };
+}
+
+interface FlagGroups {
+  accepted: Map<string, ProjectFlagMatch>;
+  suspects: Map<string, ProjectFlagMatch>;
+}
+
+function newFlagGroups(): FlagGroups {
+  return { accepted: new Map(), suspects: new Map() };
+}
+
+function recordFlags(groups: FlagGroups, content: string, path: string): void {
+  for (const sighting of classifyFlags(content)) {
+    recordMatch(sighting.placeholder ? groups.suspects : groups.accepted, sighting.flag, path);
+  }
+}
+
+function recordMatch(
+  matches: Map<string, ProjectFlagMatch>,
+  flag: string,
+  path: string,
+): void {
+  const existing = matches.get(flag);
+  if (existing === undefined) {
+    matches.set(flag, { flag, source: path, occurrences: 1, sources: [path] });
+    return;
+  }
+  existing.occurrences += 1;
+  if (!existing.sources.includes(path)) existing.sources.push(path);
+}
+
+/**
+ * Pulls tool output out of one solver-session JSONL entry, or null when the entry is not a
+ * tool result. `content` is either a string or blocks; only text blocks count.
+ */
+function sessionToolText(line: string): string | null {
+  let entry: unknown;
+  try {
+    entry = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  const message = (entry as { message?: unknown })?.message;
+  if (typeof message !== "object" || message === null) return null;
+  const record = message as { role?: unknown; content?: unknown };
+  if (record.role !== "toolResult") return null;
+  const content = record.content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return null;
+  const text = content
+    .filter(
+      (block): block is { text: string } =>
+        typeof block === "object" &&
+        block !== null &&
+        (block as { type?: unknown }).type === "text" &&
+        typeof (block as { text?: unknown }).text === "string",
+    )
+    .map((block) => block.text)
+    .join("\n");
+  return text === "" ? null : text;
 }
 
 function rankMatches(
-  matches: Map<string, ProjectFlagMatch>,
+  groups: FlagGroups,
   scannedFiles: number,
   truncated: boolean,
 ): ProjectFlagResult {
-  const ranked = [...matches.values()].sort(
+  const accepted = rankList(groups.accepted);
+  const suspects = rankList(groups.suspects);
+  const best = accepted[0] ?? null;
+  const candidates = (accepted.length > 0 ? accepted : suspects)
+    .slice(0, MAX_CANDIDATES)
+    .map((match) => toCandidate(match, accepted.length === 0));
+  return {
+    found: best !== null,
+    flag: best === null ? null : best.flag,
+    source: best === null ? null : best.source,
+    occurrences: best === null ? 0 : best.occurrences,
+    sources: best === null ? [] : best.sources,
+    scanned_files: scannedFiles,
+    truncated,
+    candidates,
+    placeholder_suspect: best === null && suspects.length > 0,
+  };
+}
+
+function rankList(matches: Map<string, ProjectFlagMatch>): ProjectFlagMatch[] {
+  return [...matches.values()].sort(
     (left, right) =>
       right.sources.length - left.sources.length ||
       right.occurrences - left.occurrences ||
       right.flag.length - left.flag.length ||
       left.flag.localeCompare(right.flag),
   );
-  const best = ranked[0];
-  if (best === undefined) {
-    return { ...emptyFlagResult(), scanned_files: scannedFiles, truncated };
-  }
+}
+
+function toCandidate(match: ProjectFlagMatch, placeholder: boolean): FlagCandidate {
   return {
-    found: true,
-    flag: best.flag,
-    source: best.source,
-    occurrences: best.occurrences,
-    sources: best.sources,
-    scanned_files: scannedFiles,
-    truncated,
+    value: match.flag,
+    occurrences: match.occurrences,
+    sources: match.sources.length,
+    placeholder,
   };
 }
 
+function mergeCandidates(left: FlagCandidate[], right: FlagCandidate[]): FlagCandidate[] {
+  const merged = new Map<string, FlagCandidate>();
+  for (const candidate of [...left, ...right]) {
+    const existing = merged.get(candidate.value);
+    if (existing === undefined) {
+      merged.set(candidate.value, { ...candidate });
+      continue;
+    }
+    existing.occurrences += candidate.occurrences;
+    existing.sources += candidate.sources;
+  }
+  return [...merged.values()]
+    .sort(
+      (a, b) =>
+        b.sources - a.sources || b.occurrences - a.occurrences || a.value.localeCompare(b.value),
+    )
+    .slice(0, MAX_CANDIDATES);
+}
+
 export function findFlags(content: string, maxLineLength: number = MAX_LINE_LENGTH): string[] {
-  const found: string[] = [];
+  return classifyFlags(content, maxLineLength)
+    .filter((sighting) => !sighting.placeholder)
+    .map((sighting) => sighting.flag);
+}
+
+/** Every flag-shaped string in `content`, marked as a mask when it looks redacted or truncated. */
+function classifyFlags(
+  content: string,
+  maxLineLength: number = MAX_LINE_LENGTH,
+): Array<{ flag: string; placeholder: boolean }> {
+  const found: Array<{ flag: string; placeholder: boolean }> = [];
   for (const line of content.split(/\r?\n/)) {
     const scoped = line.length > maxLineLength ? line.slice(0, maxLineLength) : line;
     for (const match of scoped.matchAll(FLAG_PATTERN)) {
       const prefix = match[1]!.toLowerCase();
       if (prefix !== "flag" && !prefix.endsWith("flag") && !prefix.includes("ctf")) continue;
       const body = match[2]!;
-      if (isPlaceholder(body)) continue;
-      found.push(`${match[1]}{${body}}`);
+      found.push({ flag: `${match[1]}{${body}}`, placeholder: isPlaceholder(body) });
     }
   }
   return found;
@@ -312,8 +429,9 @@ function isPlaceholder(body: string): boolean {
   const lower = body.toLowerCase();
   if (PLACEHOLDER_BODIES.has(lower)) return true;
   if (lower.includes("redact") || lower.includes("masked") || lower.includes("hidden")) return true;
+  if (MASK_MARK.test(body)) return true;
+  if (MASK_WORD.test(lower)) return true;
   if (/^[._-]+$/.test(body)) return true;
-  if (/^x+$/i.test(body)) return true;
   if (/^\[.*\]$/.test(body)) return true;
   return body.includes("<") || body.includes(">");
 }

@@ -569,7 +569,16 @@
       <button type="button" @click="copyProjectFlag()"
         class="rounded-md border border-emerald-200 bg-white px-2 py-0.5 text-[11px] font-medium text-emerald-700 hover:bg-emerald-50 transition">复制</button>
       <span class="rounded-full border px-2 py-0.5 text-[10px] font-medium" :class="projectFlagVerificationClass()" x-text="projectFlagVerificationLabel()"></span>
+      <span x-show="projectFlagConfidenceLabel()" class="rounded-full border border-emerald-200 bg-white/70 px-2 py-0.5 text-[10px] font-medium text-emerald-700" x-text="projectFlagConfidenceLabel()"></span>
       <span class="text-[11px] text-emerald-700/70" x-text="projectFlagSourceLabel()"></span>
+    </div>
+  </template>
+
+  <template x-if="projectFlagSuspect()">
+    <div class="shrink-0 flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-amber-200 bg-amber-50/90 px-4 py-1.5 text-xs text-amber-800">
+      <span class="text-[10px] font-semibold uppercase tracking-[0.16em] text-amber-600">Flag 可疑</span>
+      <span x-text="projectFlagSuspectLabel()"></span>
+      <code class="max-w-full break-all rounded bg-white/80 px-1.5 py-0.5 font-mono text-[11px] text-amber-900" x-text="projectFlagSuspectValues()"></code>
     </div>
   </template>
 
@@ -3027,6 +3036,8 @@ function cairnApp() {
       source: '',
       occurrences: 0,
       sources: [],
+      candidates: [],
+      suspect: false,
       verification: { policy: null, latest: null },
       error: '',
     },
@@ -4200,7 +4211,12 @@ function cairnApp() {
     writeupSummary() {
       const data = this.writeupPanel.data;
       if (!data) return '依据图中数据生成的中文复盘草稿，可交给模型重写为成稿。';
-      const parts = [data.flag && data.flag.value ? '已记录 Flag' : '尚未记录 Flag'];
+      const suspects = Array.isArray(data.flag_suspects) ? data.flag_suspects : [];
+      const parts = [
+        data.flag && data.flag.value
+          ? `已记录 Flag${data.flag.alternatives && data.flag.alternatives.length > 0 ? `（另有 ${data.flag.alternatives.length} 个候选）` : ''}`
+          : (suspects.length > 0 ? `尚未记录 Flag（${suspects.length} 处疑似占位）` : '尚未记录 Flag'),
+      ];
       const latest = data.verification && data.verification.latest;
       parts.push(latest ? (latest.ok ? '校验通过' : '校验未通过') : '校验尚无记录');
       const payloads = data.payloads;
@@ -6580,7 +6596,7 @@ function cairnApp() {
       if (!projectId) {
         this.projectFlag = {
           projectId: '', loading: false, found: false, flag: '',
-          source: '', occurrences: 0, sources: [],
+          source: '', occurrences: 0, sources: [], candidates: [], suspect: false,
           verification: { policy: null, latest: null }, error: '',
         };
         return;
@@ -6595,6 +6611,8 @@ function cairnApp() {
         source: same ? this.projectFlag.source : '',
         occurrences: same ? this.projectFlag.occurrences : 0,
         sources: same ? this.projectFlag.sources : [],
+        candidates: same ? this.projectFlag.candidates : [],
+        suspect: same ? this.projectFlag.suspect : false,
         verification: same ? this.projectFlag.verification : { policy: null, latest: null },
         error: '',
       };
@@ -6610,6 +6628,8 @@ function cairnApp() {
           source: typeof data?.source === 'string' ? data.source : '',
           occurrences: Number(data?.occurrences) || 0,
           sources: Array.isArray(data?.sources) ? data.sources : [],
+          candidates: Array.isArray(data?.candidates) ? data.candidates : [],
+          suspect: data?.placeholder_suspect === true,
           verification: {
             policy: data?.verification?.policy ?? null,
             latest: data?.verification?.latest ?? null,
@@ -6620,10 +6640,33 @@ function cairnApp() {
         if (this.projectFlag.projectId !== projectId) return;
         this.projectFlag = {
           projectId, loading: false, found: false, flag: '',
-          source: '', occurrences: 0, sources: [],
+          source: '', occurrences: 0, sources: [], candidates: [], suspect: false,
           verification: { policy: null, latest: null }, error: this.errorText(e),
         };
       }
+    },
+
+    projectFlagCandidates() {
+      return Array.isArray(this.projectFlag.candidates) ? this.projectFlag.candidates : [];
+    },
+
+    projectFlagSuspect() {
+      return this.projectFlag.found !== true && this.projectFlag.suspect === true;
+    },
+
+    projectFlagSuspectLabel() {
+      const count = this.projectFlagCandidates().length;
+      return `扫描到 ${count} 处 flag 形状文本，但都像占位或截断，没有当作 Flag 展示`;
+    },
+
+    projectFlagSuspectValues() {
+      return this.projectFlagCandidates().map((candidate) => candidate?.value ?? '').filter(Boolean).join(' / ');
+    },
+
+    projectFlagConfidenceLabel() {
+      if (this.projectFlag.found !== true) return '';
+      const extra = this.projectFlagCandidates().filter((candidate) => candidate?.placeholder !== true).length - 1;
+      return extra > 0 ? `另有 ${extra} 个候选` : '';
     },
 
     projectFlagSourceLabel() {
