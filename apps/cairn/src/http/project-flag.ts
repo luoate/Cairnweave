@@ -91,16 +91,8 @@ export function scanProjectFlag(options: FlagScanOptions): ProjectFlagResult {
   const maxFiles = options.maxFiles ?? MAX_FILES;
   const maxFileBytes = options.maxFileBytes ?? MAX_FILE_BYTES;
   const maxTotalBytes = options.maxTotalBytes ?? MAX_TOTAL_BYTES;
-  const root = resolve(options.workspace, "artifacts");
-
-  let realRoot: string;
-  try {
-    const stats = lstatSync(root);
-    if (!stats.isDirectory() || stats.isSymbolicLink()) return emptyFlagResult();
-    realRoot = realpathSync(root);
-  } catch {
-    return emptyFlagResult();
-  }
+  const realRoot = openArtifactRoot(options.workspace);
+  if (realRoot === null) return emptyFlagResult();
 
   const matches = new Map<string, ProjectFlagMatch>();
   let scannedFiles = 0;
@@ -112,26 +104,16 @@ export function scanProjectFlag(options: FlagScanOptions): ProjectFlagResult {
       truncated = true;
       break;
     }
-    const target = resolveArtifact(realRoot, artifact.path, maxFileBytes);
-    if (target === null) continue;
-
-    let content: string;
-    try {
-      const stats = lstatSync(target);
-      if (!stats.isFile() || stats.isSymbolicLink()) continue;
-      if (stats.size === 0 || stats.size > maxFileBytes) continue;
-      if (totalBytes + stats.size > maxTotalBytes) {
-        truncated = true;
-        break;
-      }
-      const buffer = readFileSync(target);
-      if (buffer.includes(0)) continue;
-      content = buffer.toString("utf8");
-      totalBytes += stats.size;
-      scannedFiles += 1;
-    } catch {
-      continue;
+    if (artifact.size === 0 || artifact.size > maxFileBytes) continue;
+    if (totalBytes + artifact.size > maxTotalBytes) {
+      truncated = true;
+      break;
     }
+    const file = readArtifactFile(realRoot, artifact.path, maxFileBytes);
+    if (file === null || file.includes(0) || file.length === 0) continue;
+    const content = file.toString("utf8");
+    totalBytes += file.length;
+    scannedFiles += 1;
 
     const path = normalizePath(artifact.path);
     for (const flag of findFlags(content)) {
@@ -334,6 +316,32 @@ function isPlaceholder(body: string): boolean {
   if (/^x+$/i.test(body)) return true;
   if (/^\[.*\]$/.test(body)) return true;
   return body.includes("<") || body.includes(">");
+}
+
+/** Realpath of `<workspace>/artifacts`; null when it is absent, symlinked or not a directory. */
+export function openArtifactRoot(workspace: string): string | null {
+  const root = resolve(workspace, "artifacts");
+  try {
+    const stats = lstatSync(root);
+    if (!stats.isDirectory() || stats.isSymbolicLink()) return null;
+    return realpathSync(root);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Reads one indexed artifact: a regular non-symlink file that stays inside `realRoot` and
+ * is at most `maxFileBytes` on disk. Returns null when any check fails.
+ */
+export function readArtifactFile(realRoot: string, rawPath: string, maxFileBytes: number): Buffer | null {
+  const target = resolveArtifact(realRoot, rawPath, maxFileBytes);
+  if (target === null) return null;
+  try {
+    return readFileSync(target);
+  } catch {
+    return null;
+  }
 }
 
 function resolveArtifact(realRoot: string, raw: string, maxFileBytes: number): string | null {

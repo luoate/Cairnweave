@@ -1,4 +1,4 @@
-# 中文 Writeup 生成（M19a）
+# 中文 Writeup 生成（M19a / M20a）
 
 Writeup 是给人看的中文复盘文本。它有两种形态：**中文草稿**由控制面依据图中数据确定
 性渲染，永远可用、只读、不需要模型；**模型撰写版**可选，让配置的模型把同一份草稿重写
@@ -39,6 +39,7 @@ curl -s -X DELETE http://127.0.0.1:8787/projects/proj_001/writeup | jq .source  
 | 攻击路径 | 已结束的意图按 `created_at, id` 排序，逐步列出基于哪些 Fact、产出的 Fact、worker / model / 结果、证据引用 |
 | 尚未完成的探索 | 仍开放的意图（有则出现） |
 | 关键发现 | 全部当前有效事实（排除 origin/goal 与被取代者），附证据引用 |
+| 载荷（Payload） | 工件索引里命中载荷/脚本特征的文件：文本逐字内联，二进制只登记路径，见 §1.1 |
 | 被取代的判断 | `fact_meta.supersedes` 推导的反向边 |
 | 提示 | Hint 按 `created_at, id` 排序 |
 | Flag 与校验 | Flag 原文与来源、校验策略、最近一次检查与 flag 计数 |
@@ -53,6 +54,46 @@ Flag 由 `/flag` 同一个 `collectProjectFlag` 提供（artifacts 优先，未�
 `solver-session` JSONL），所以横幅与 Writeup 不会给出不同的 Flag。按 M18g 的策略，
 Flag 保留原文、不做脱敏；没有 workspace root 的纯 HTTP 模式下 Flag 段为“未捕获”。
 
+### 1.1 载荷（Payload）章节（M20a）
+
+Writeup 必须写明攻击用到的载荷与脚本。哪些工件算载荷由一条确定性规则决定，写在
+`packages/graph/src/writeup.ts`，`@cairn/graph` 与测试共用同一个 `isWriteupPayloadPath`：
+
+- **脚本与投递格式扩展名**：`py sh bash zsh php php5 phtml phar js ts rb pl pm ps1 bat cmd c cpp go rs java jsp asp aspx sql html htm xml svg xsl xslt yaml yml pkl pickle zip tar gz bz2 xz 7z rar jar war class png jpg jpeg gif bmp ico webp pdf`；
+- **文件名关键字**：`payload exploit attack poc inject sqli xss ssrf ssti xxe pickle pkl traver webshell reverse[-_]shell bind[-_]shell deserial forg bypass`。
+
+普通响应转储（`.txt`、`.out`、`.resp`、`.md`、`.json`，除非文件名命中关键字）不算载荷，
+它们留在「附录：证据文件」里。这样「载荷」章节给的是**打向目标的东西**，而不是 worker
+保存下来的所有字节。
+
+命中载荷的文件可以很多，章节只放前 `MAX_WRITEUP_PAYLOADS` 个，顺序是先排**被某条 Fact 的
+`evidence_refs` 引用过的**（引用数多的更前），再按路径字典序——`selectWriteupPayloadArtifacts`
+实现这条排序。这样 20 条上限不会把真正支撑结论的载荷挤掉，纯探测脚本才会被截到附件包里。
+HTTP 层只读这份选出来的清单，不再自己筛选或计数。
+
+读文件由 HTTP 层负责（`apps/cairn/src/http/project-payload.ts`），`@cairn/graph` 不碰文件
+系统：它只把路径、大小、sha256、来源任务与「哪条 Fact 的 `evidence_refs` 引用了它」
+（`referenced_by`）组装进快照。读取沿用 Flag 扫描的收敛规则——`<workspace>/artifacts`
+真实目录、非符号链接的普通文件、路径不逃逸、单文件 ≤128 KiB；含 NUL 的字节判定为二进制，
+只登记路径不内联。渲染规则：
+
+| 情况 | 章节里显示 |
+| --- | --- |
+| 文本载荷且已读到 | 带语言的围栏代码块，逐字引用（正文含反引号时自动加长围栏） |
+| 文本载荷但超预算 | 截断到上限并标注“内容已截断，完整文件见附件包” |
+| 二进制载荷 | “二进制载荷，未内联，完整文件见附件包” |
+| 工作区未挂载或文件已被清理 | “内容未读取：工作区未挂载或文件已被清理” |
+| 一个都没命中 | “（没有识别到载荷或脚本文件）” |
+
+章节开头写明“识别到 N 个、此处列出 M 个、其中 K 个逐字内联”（N 是 `payloads_total`，
+包含被上限截掉的那些），截断时结尾追加“…其余 N-M 个载荷文件见附件包。”，读者据此知道
+附件包里还有更多内容。
+
+JSON 视图里的 `payloads` 是同一份清单的投影（不含正文）：`files[]` 每项带
+`state: inline|binary|unread`、`language`、`truncated` 与 `referenced_by`，外加
+`total / count / inlined / binary / unread / truncated` 汇总（`total` 是识别到的全部载荷数，
+`count` 是实际列出的条数），侧栏摘要用它显示“载荷 N 个（内联 K）”。
+
 ## 2. 模型撰写版
 
 `renderProjectWriteupPrompt` 把整份草稿作为唯一素材交给模型，硬性要求写在 prompt 里：
@@ -61,6 +102,7 @@ Flag 保留原文、不做脱敏；没有 workspace root 的纯 HTTP 模式下 F
 - 只使用草稿中出现的事实、证据路径与 Flag，不补充未记录的利用细节；
 - 证据不足或未完成要如实写“未验证”“未完成”；
 - Flag 逐字符照抄，不改写、不脱敏、不截断；
+- 载荷与 payload 同样逐字符照抄；草稿只给了路径或标注“未内联”时，只说附件包里有这个文件，不得虚构内容；
 - 不得写入凭据、token、cookie、API key 或内网敏感地址（草稿授权范围内的目标除外）；
 - 建议结构：题目概述 → 信息收集 → 利用链 → 获取 Flag → 复盘与遗留问题；
 - 输出正文，篇幅约 1200 字以内。
@@ -77,6 +119,8 @@ Flag 保留原文、不做脱敏；没有 workspace root 的纯 HTTP 模式下 F
 | prompt 上限 | 60000 字符，超出则截断草稿尾部 |
 | 正文上限 | 200000 字符，超出则截断并标注 |
 | 附录文件数 | 200（超出置 `artifacts_truncated`） |
+| 载荷条目 | 20（`MAX_WRITEUP_PAYLOADS`，超出置 `payloads_truncated`） |
+| 载荷内联 | 单条 4000 字符、单项目 24000 字符、单文件读取窗口 128 KiB |
 | 请求体 | ≤4 KiB，`model` 必须匹配 `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$` |
 | 超时 | 默认 90 秒（`writeupTimeoutMs`），到时返回 504 |
 | 写守卫 | POST/DELETE 需 operator token（配置时）且拒绝跨源写 |
@@ -98,6 +142,11 @@ generator 覆盖成功、失败、超时与脱敏路径。
   "created_at": null,
   "markdown": "# Writeup：…",
   "flag": {"value": "CTF{...}", "source": "artifacts/flag.txt", "occurrences": 1},
+  "payloads": {"total": 2, "count": 1, "inlined": 1, "binary": 0, "unread": 0, "truncated": false,
+               "files": [{"path": "explore-1a2b3c4d5e6f/forge.py", "size": 571,
+                          "sha256": "…", "task_id": "explore-1a2b3c4d5e6f",
+                          "language": "python", "state": "inline", "truncated": false,
+                          "referenced_by": ["f003"]}]},
   "generated_at": "2026-10-28T09:00:00Z",
   "verification": {"kind": "evidence",
                    "checks": {"total": 1, "passed": 1, "failed": 0, "last_checked_at": "..."},
@@ -147,6 +196,9 @@ Writeup 面向复盘，包含证据文件路径与 Flag 原文，因此写操作
 
 - 草稿质量受图中数据限制：Fact 描述含糊或没有 `evidence_refs` 时，Writeup 只能照实
   呈现，不会替它补全利用细节。
+- 载荷识别是命名与扩展名规则：worker 把载荷存成 `notes-2.txt` 这类名字时，它只会出现在
+  附录与附件包里，不会进「载荷」章节。
+- 工作区被 retention 清理或控制面没挂载 workspace 时，载荷条目仍在，但正文显示“内容未读取”。
 - 没有 workspace root 时无法扫描 Flag。
 - 模型撰写版按项目只存一份，后写覆盖前者；历史版本需要外部存档。
 - 撰写调用不落 `runs`，因此它的 Token 与成本不出现在 `/stats` 与 `/cost` 里；需要核

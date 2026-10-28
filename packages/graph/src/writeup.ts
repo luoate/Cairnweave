@@ -7,6 +7,11 @@
  * outcome and the run statistics. This module only reads; rendering the snapshot into
  * Chinese Markdown adds no graph semantics.
  *
+ * Payload candidates (M20a) are selected from the artifact index by deterministic naming and
+ * extension rules; their bytes are read by the HTTP layer, which passes the already capped
+ * text in through `payloadContents`. This module never touches the filesystem, so the
+ * writeup stays reproducible from the database plus one injected list.
+ *
  * The Markdown draft doubles as the input for the model-written variant: the HTTP layer
  * asks a model to rewrite the draft as prose and stores the result in `project_writeups`,
  * so a project without model credentials still has a complete Chinese writeup.
@@ -14,7 +19,7 @@
 
 import type { Database } from "bun:sqlite";
 
-import { listProjectArtifacts } from "./artifacts";
+import { listProjectArtifacts, type ProjectArtifact } from "./artifacts";
 import { getProjectDetail, getProjectScope } from "./commands";
 import { all, get, run } from "./db";
 import type { FactSupersession, Hint, VerificationKind } from "./models";
@@ -25,14 +30,98 @@ import { summarizeProjectVerification } from "./verification";
 
 const MAX_WRITEUP_ARTIFACTS = 200;
 
+/** Payload list size and inline-text cap, shared with the HTTP layer that reads the bytes. */
+export const MAX_WRITEUP_PAYLOADS = 20;
+export const MAX_WRITEUP_PAYLOAD_CHARS = 4_000;
+
+/**
+ * File names and extensions that mark a worker-written exploit artifact: scripts, delivery
+ * containers and the usual attack keywords. Response dumps (`.txt`, `.out`, `.resp`, `.md`,
+ * `.json`) stay out of the list, so the payload section records what was thrown at the
+ * target rather than everything the worker saved.
+ */
+const PAYLOAD_EXTENSION_LANGUAGES = new Map<string, string | null>([
+  ["py", "python"],
+  ["sh", "bash"],
+  ["bash", "bash"],
+  ["zsh", "bash"],
+  ["php", "php"],
+  ["php5", "php"],
+  ["phtml", "php"],
+  ["phar", null],
+  ["js", "javascript"],
+  ["ts", "typescript"],
+  ["rb", "ruby"],
+  ["pl", "perl"],
+  ["pm", "perl"],
+  ["ps1", "powershell"],
+  ["bat", "bat"],
+  ["cmd", "bat"],
+  ["c", "c"],
+  ["cpp", "cpp"],
+  ["go", "go"],
+  ["rs", "rust"],
+  ["java", "java"],
+  ["jsp", null],
+  ["asp", null],
+  ["aspx", null],
+  ["sql", "sql"],
+  ["html", "html"],
+  ["htm", "html"],
+  ["xml", "xml"],
+  ["svg", "xml"],
+  ["xsl", "xml"],
+  ["xslt", "xml"],
+  ["yaml", "yaml"],
+  ["yml", "yaml"],
+  ["pkl", null],
+  ["pickle", null],
+  ["zip", null],
+  ["tar", null],
+  ["gz", null],
+  ["bz2", null],
+  ["xz", null],
+  ["7z", null],
+  ["rar", null],
+  ["jar", null],
+  ["war", null],
+  ["class", null],
+  ["png", null],
+  ["jpg", null],
+  ["jpeg", null],
+  ["gif", null],
+  ["bmp", null],
+  ["ico", null],
+  ["webp", null],
+  ["pdf", null],
+]);
+
+/** Keywords that make a file a payload even when its extension is not on the list. */
+const PAYLOAD_NAME_PATTERN =
+  /(payload|exploit|attack|\bpoc\b|inject|sqli|xss|ssrf|ssti|xxe|pickle|pkl|traver|webshell|reverse[-_]?shell|bind[-_]?shell|deserial|forg|bypass)/i;
+
 export interface WriteupFlag {
   value: string;
   source: string;
 }
 
+/** One payload file whose bytes the HTTP layer already read and capped. */
+export interface WriteupPayloadContent {
+  /** Artifact-index-relative path, for example `explore-1a2b3c4d5e6f/forge.py`. */
+  path: string;
+  /** True when the bytes are not text, so only the path is recorded. */
+  binary: boolean;
+  /** Inlined text, or null for a binary or unreadable file. */
+  text: string | null;
+  /** True when the caller cut the text because the file is larger than its cap. */
+  truncated: boolean;
+}
+
 export interface BuildProjectWriteupOptions {
   /** Captured flag plus the file it was read from. */
   flag?: WriteupFlag | null;
+  /** Payload file contents keyed by artifact path; absent entries render as unread. */
+  payloadContents?: readonly WriteupPayloadContent[];
   /** Injectable clock for deterministic rendering. */
   generatedAt?: string;
   /** Policy reported for legacy projects without a `project_verification` row. */
@@ -65,6 +154,22 @@ export interface WriteupArtifact {
   size: number;
   sha256: string;
   task_id: string;
+}
+
+export interface WriteupPayload {
+  path: string;
+  size: number;
+  sha256: string;
+  task_id: string;
+  /** Fenced-block language inferred from the extension; null for containers and binaries. */
+  language: string | null;
+  /** True when the read bytes are not text, so the writeup records the path only. */
+  binary: boolean;
+  /** Inlined payload text, or null when nothing could be inlined. */
+  text: string | null;
+  truncated: boolean;
+  /** Fact ids whose `evidence_refs` cite this file. */
+  referenced_by: string[];
 }
 
 export interface ProjectWriteupSnapshot {
@@ -115,6 +220,11 @@ export interface ProjectWriteupSnapshot {
   };
   artifacts: WriteupArtifact[];
   artifacts_truncated: boolean;
+  /** Worker-written payload and script files, capped to `MAX_WRITEUP_PAYLOADS`. */
+  payloads: WriteupPayload[];
+  /** Payload artifacts recognised in the index, including the ones the cap dropped. */
+  payloads_total: number;
+  payloads_truncated: boolean;
 }
 
 interface FactMetaRow {
@@ -122,6 +232,58 @@ interface FactMetaRow {
   run_id: string | null;
   evidence_refs: string;
   evidence_status: string;
+}
+
+/**
+ * The payload artifacts a writeup should inline, capped to `MAX_WRITEUP_PAYLOADS`. Files
+ * cited by a fact's `evidence_refs` come first, then by path, so the cap cannot drop the
+ * payloads that carry the conclusion. The HTTP layer reads exactly these paths.
+ */
+export function selectWriteupPayloadArtifacts(
+  conn: Database,
+  projectId: string,
+): ProjectArtifact[] {
+  const ordered = orderWriteupPayloadArtifacts(
+    listProjectArtifacts(conn, projectId),
+    factsByEvidencePath(
+      all<Pick<FactMetaRow, "fact_id" | "evidence_refs">>(
+        conn,
+        "SELECT fact_id, evidence_refs FROM fact_meta WHERE project_id = ?",
+        projectId,
+      ),
+    ),
+  );
+  return ordered.slice(0, MAX_WRITEUP_PAYLOADS);
+}
+
+function orderWriteupPayloadArtifacts(
+  artifacts: readonly ProjectArtifact[],
+  factsByArtifact: ReadonlyMap<string, string[]>,
+): ProjectArtifact[] {
+  return artifacts
+    .filter((artifact) => isWriteupPayloadPath(artifact.path))
+    .sort((left, right) => {
+      const byEvidence =
+        (factsByArtifact.get(normalizeArtifactPath(right.path))?.length ?? 0) -
+        (factsByArtifact.get(normalizeArtifactPath(left.path))?.length ?? 0);
+      return byEvidence !== 0 ? byEvidence : left.path.localeCompare(right.path);
+    });
+}
+
+function factsByEvidencePath(
+  rows: readonly Pick<FactMetaRow, "fact_id" | "evidence_refs">[],
+): Map<string, string[]> {
+  const byPath = new Map<string, string[]>();
+  for (const row of rows) {
+    for (const ref of parseRefs(row.evidence_refs)) {
+      const key = normalizeArtifactPath(ref);
+      if (key === "") continue;
+      const known = byPath.get(key);
+      if (known === undefined) byPath.set(key, [row.fact_id]);
+      else if (!known.includes(row.fact_id)) known.push(row.fact_id);
+    }
+  }
+  return byPath;
 }
 
 export function buildProjectWriteup(
@@ -197,6 +359,28 @@ export function buildProjectWriteup(
 
   const artifacts = listProjectArtifacts(conn, projectId);
 
+  const factsByArtifact = factsByEvidencePath(metaRows);
+  const contents = new Map(
+    (options.payloadContents ?? []).map((entry) => [normalizeArtifactPath(entry.path), entry]),
+  );
+  const orderedPayloads = orderWriteupPayloadArtifacts(artifacts, factsByArtifact);
+  const payloads: WriteupPayload[] = orderedPayloads.slice(0, MAX_WRITEUP_PAYLOADS).map((row) => {
+    const content = contents.get(normalizeArtifactPath(row.path));
+    const raw = content?.text ?? null;
+    const text = raw === null ? null : clampText(raw, MAX_WRITEUP_PAYLOAD_CHARS);
+    return {
+      path: row.path,
+      size: row.size,
+      sha256: row.sha256,
+      task_id: row.task_id,
+      language: payloadLanguage(row.path),
+      binary: content?.binary ?? false,
+      text,
+      truncated: (content?.truncated ?? false) || (raw !== null && text !== raw),
+      referenced_by: [...(factsByArtifact.get(normalizeArtifactPath(row.path)) ?? [])].sort(),
+    };
+  });
+
   return {
     generated_at: options.generatedAt ?? utcnow(),
     project: {
@@ -265,6 +449,9 @@ export function buildProjectWriteup(
         task_id: artifact.task_id,
       })),
     artifacts_truncated: artifacts.length > MAX_WRITEUP_ARTIFACTS,
+    payloads,
+    payloads_total: orderedPayloads.length,
+    payloads_truncated: orderedPayloads.length > MAX_WRITEUP_PAYLOADS,
   };
 }
 
@@ -337,6 +524,41 @@ export function renderProjectWriteupMarkdown(snapshot: ProjectWriteupSnapshot): 
       ? ""
       : `（证据：${finding.evidence.map((ref) => `\`${ref}\``).join("、")}）`;
     push(`- \`${finding.id}\`：${inline(finding.description)}${evidence}`);
+  }
+
+  push("", "## 载荷（Payload）");
+  if (snapshot.payloads.length === 0) {
+    push("（没有识别到载荷或脚本文件）");
+  } else {
+    const inlined = snapshot.payloads.filter((payload) => payload.text !== null).length;
+    push(
+      `（识别到 ${snapshot.payloads_total} 个载荷/脚本文件，此处列出 ${snapshot.payloads.length} 个，` +
+        `其中 ${inlined} 个逐字内联；完整附件请从 Writeup 附件包下载。）`,
+    );
+    for (const payload of snapshot.payloads) {
+      push("", `### \`${payload.path}\``);
+      push(
+        `- ${payload.size} 字节，sha256 ${payload.sha256.slice(0, 12)}…，` +
+          `来自 \`${payload.task_id}\``,
+      );
+      if (payload.referenced_by.length > 0) {
+        push(`- 关联事实：${payload.referenced_by.map((id) => `\`${id}\``).join("、")}`);
+      }
+      if (payload.text !== null) {
+        const fence = codeFence(payload.text);
+        push("", `${fence}${payload.language ?? ""}`);
+        for (const line of payload.text.replace(/\n$/, "").split("\n")) push(line);
+        push(fence);
+        if (payload.truncated) push("（内容已截断，完整文件见附件包。）");
+      } else if (payload.binary) {
+        push("（二进制载荷，未内联，完整文件见附件包。）");
+      } else {
+        push("（内容未读取：工作区未挂载或文件已被清理，完整文件见附件包。）");
+      }
+    }
+    if (snapshot.payloads_truncated) {
+      push("", `…其余 ${snapshot.payloads_total - snapshot.payloads.length} 个载荷文件见附件包。`);
+    }
   }
 
   push("", "## 被取代的判断");
@@ -437,6 +659,8 @@ export function renderProjectWriteupPrompt(snapshot: ProjectWriteupSnapshot): st
     "- 只使用草稿中出现的事实、证据路径与 Flag。不得补充草稿里没有的利用细节、工具版本或结论。",
     "- 证据不足或尚未完成的环节要如实写成“未验证”“未完成”，不要写成已成功。",
     "- 保留草稿里的 Flag 原文，逐字符照抄，不要改写、脱敏或截断。",
+    "- 草稿的“载荷（Payload）”章节给出脚本与 payload 原文：引用时同样逐字符照抄，" +
+      "不得改写、补全或自己编造；只登记了路径或标注未内联的载荷，就照实说附件包里有这个文件，不要虚构内容。",
     "- 不得写入任何凭据、token、cookie、API key 或内网敏感地址（草稿里授权范围内的目标地址除外）。",
     "- 结构建议：题目概述 → 信息收集 → 利用链（按攻击路径顺序）→ 获取 Flag → 复盘与遗留问题。",
     "- 允许使用 Markdown 标题、列表和代码块；输出正文，不要包裹在 JSON 或额外说明里。",
@@ -568,6 +792,55 @@ function parseRefs(raw: string): string[] {
   } catch {
     return [];
   }
+}
+
+/**
+ * Artifact paths reach this module in two shapes: the index stores them relative to
+ * `artifacts/` with forward slashes, `evidence_refs` stores them with the `artifacts/`
+ * prefix and whatever separator the worker wrote. Normalizing both makes the join work.
+ */
+function normalizeArtifactPath(path: string): string {
+  let value = path.replaceAll("\\", "/").trim();
+  while (value.startsWith("./")) value = value.slice(2);
+  if (value.startsWith("artifacts/")) value = value.slice("artifacts/".length);
+  return value;
+}
+
+function extensionOf(path: string): string {
+  const base = path.slice(path.lastIndexOf("/") + 1);
+  const dot = base.lastIndexOf(".");
+  if (dot <= 0) return "";
+  return base.slice(dot + 1).toLowerCase();
+}
+
+/** Fenced-block language for a payload path; null for containers and binary formats. */
+export function payloadLanguage(path: string): string | null {
+  const normalized = normalizeArtifactPath(path);
+  const language = PAYLOAD_EXTENSION_LANGUAGES.get(extensionOf(normalized));
+  return language === undefined ? null : language;
+}
+
+/** True when an artifact looks like something the worker threw at the target. */
+export function isWriteupPayloadPath(path: string): boolean {
+  const normalized = normalizeArtifactPath(path);
+  if (normalized === "") return false;
+  if (PAYLOAD_NAME_PATTERN.test(normalized)) return true;
+  return PAYLOAD_EXTENSION_LANGUAGES.has(extensionOf(normalized));
+}
+
+/** Cuts long text at a line boundary so a fenced block never ends mid-character. */
+function clampText(value: string, maxChars: number): string {
+  if (value.length <= maxChars) return value;
+  const head = value.slice(0, maxChars);
+  const newline = head.lastIndexOf("\n");
+  return newline > maxChars / 2 ? head.slice(0, newline) : head;
+}
+
+/** A fence longer than any run of backticks inside the quoted text. */
+function codeFence(text: string): string {
+  let length = 3;
+  while (text.includes("`".repeat(length))) length += 1;
+  return "`".repeat(length);
 }
 
 function table(headers: string[], rows: string[][]): string[] {

@@ -6,8 +6,8 @@
 skills / Observer）合并成**一个 Bun/TypeScript 代码库**，不再维护 Python ↔ TypeScript
 之间的进程桥、JSONL RPC 和 worker 适配器。
 
-状态：**M16b（第二个模型接入与真实 A/B）**；M0–M4、M5a–M5c、
-M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M16b、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e、M18f、M18g、M19a、M19b 的计划项全部完成。Phase 1 的
+状态：**M20a（Writeup 写明载荷）**；M0–M4、M5a–M5c、
+M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M16b、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e、M18f、M18g、M19a、M19b、M20a 的计划项全部完成。Phase 1 的
 “本地看板 + Observer 提案 + 证据门 + 单一写图者”闭环已具备；提案默认关闭。Phase 2
 的触发持久化、意图优先级/预算、单项目 token/成本与并发配额、只读慢层观测、逐 Fact
 成本归因与因果链，以及 reason 的 Hint/去重输出、人工重规划与资源压力触发均已落地，并
@@ -120,6 +120,17 @@ M19a 增加中文 Writeup：`packages/graph/src/writeup.ts` 从图中数据（�
 草稿同时作为模型 prompt 的唯一素材，Flag 原文照抄、凭据仍禁止；prompt ≤60000 字符、
 正文 ≤200000 字符、默认 90 秒超时，失败沿用已存正文并返回 502/504。UI 新增
 「Writeup」页签，支持复制、下载与“AI 撰写/恢复草稿”。详见 `docs/WRITEUP.md`。
+M20a 让 Writeup 写明载荷：`isWriteupPayloadPath` 用扩展名与文件名关键字从工件索引里确定
+性地挑出脚本、投递容器与 payload（普通响应转储 `.txt/.out/.resp/.md/.json` 不算），
+`## 载荷（Payload）` 章节把文本逐字内联进带语言的代码块，二进制只登记路径，超预算截断并
+标注，没读到内容时写“内容未读取”而不是留空。条目多于 20 个时由
+`selectWriteupPayloadArtifacts` 排序截断：被某条 Fact 的 `evidence_refs` 引用过的载荷排最前，
+纯探测脚本才被截进附件包，章节首行同时写明“识别到 N 个、此处列出 M 个”（`payloads_total`）。
+读文件仍只在 HTTP 层发生
+（`apps/cairn/src/http/project-payload.ts`），沿用 Flag 扫描的路径收敛：必须落在
+`<workspace>/artifacts` 内、非符号链接、单文件 ≤128 KiB，只读选中的 ≤20 条、单项目 ≤24000 字符。
+JSON 视图新增 `payloads` 投影（`state: inline|binary|unread` 与 `referenced_by`），模型
+撰写 prompt 增加“载荷逐字符照抄、未内联不得虚构”的硬性要求。详见 `docs/WRITEUP.md` §1.1。
 `cairn serve` 是可运行的 Cairn 兼容服务：SQLite schema、领域服务、全部
 五个路由、YAML/timeline 导出、静态 Web UI 均已就位，并用 Python Cairn 生成的 golden
 做了逐字对照。进程内 scheduler、任务/结果文件 worker 协议、BreachWeave Solver 接入已在 M2
@@ -773,7 +784,7 @@ docs/OBSERVER.md         Observer 实现、配置、权限、flush 语义与已�
 docs/STRATEGIST.md       慢层触发、意图优先级/预算、Hint/去重、人工/资源触发、成本归因（M12a–M14b）
 docs/VERIFICATION.md     完成验证：策略、oracle、路由、失败语义与安全边界（M14a）
 docs/REPORT.md           项目报告：JSON 结构、来源、排序、脱敏与边界（M15c）
-docs/WRITEUP.md          中文 Writeup：草稿组成、模型撰写、路由、边界与用法（M19a）
+docs/WRITEUP.md          中文 Writeup：草稿组成、载荷、模型撰写、路由、边界与用法（M19a/M20a）
 docs/CONTRACT.md         worker 契约：task/result/usage/audit、退出码与校验边界（M15f）
 docs/PORTING.md          Python 模块 → TS 模块映射与对照测试策略
 ```
@@ -1233,7 +1244,7 @@ M6 的跨进程恢复 gate 不调用模型：它先写下一台崩溃控制面�
 bun run tools/gate/m6-restart-gate.ts
 ```
 
-## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a + M17a + M17b + M17c + M17d + M18a + M18b + M18c + M18d + M18e + M18f + M18g + M19a + M19b + M16b，2026-10-28，Bun 1.4.4）
+## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a + M17a + M17b + M17c + M17d + M18a + M18b + M18c + M18d + M18e + M18f + M18g + M19a + M19b + M16b + M20a，2026-10-28，Bun 1.4.4）
 
 - `bun test`：**655 passed**（69 个文件），0 failed。
 - `bun run typecheck`：`tsc --noEmit` 通过。
@@ -1556,6 +1567,14 @@ bun run tools/gate/m6-restart-gate.ts
   并验证下载只走 GET 路由与本地锚点点击（不发写请求）、`writeupFileName()` 生成
   `writeup-proj_008.md` 并过滤 `../` 等非法字符。浏览器实测点击后锚点 href 指向
   `?format=markdown`、`download` 为 `writeup-proj_008.md` 并弹出“已下载”提示。
+- **Writeup 载荷（M20a）**：`writeup.test.ts` 覆盖 `isWriteupPayloadPath` 的接受/拒绝清单、
+  文本内联与 `referenced_by`（`artifacts/` 前缀与反斜杠都归一化）、二进制只登记路径、
+  无字节时“内容未读取”、4000 字符截断、20 条上限与 `payloads_total`/附录不受影响、
+  被证据引用的载荷排在截断之前（`selectWriteupPayloadArtifacts` 首条即 `z-forge.py`）、
+  含反引号时加长围栏、空清单文案与 prompt 的载荷硬性规则；`project-payload.test.ts` 覆盖
+  读取分类、超窗口/缺失/`../` 逃逸路径全部跳过、无 artifacts 目录时返回空；
+  `api.writeup.test.ts` 覆盖 JSON `payloads` 投影的 total/inline/binary 计数与未挂载
+  工作区时的 unread 状态。
 
 golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定时钟、`TZ=UTC`）。
 重新生成方法与约束见 `docs/PORTING.md`。
@@ -1628,6 +1647,7 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M18g ✅ | Flag 原文展示：prompt 改为要求把真实 flag 原样写入 Fact 描述与证据（凭据/token 仍禁止），`/flag` 拒绝 `[REDACTED]`/`masked`/`[hidden]` 等占位符，证据只剩占位符时只读回退扫描 solver-session JSONL（限文件数/字节数、跳过二进制）恢复真实值 | 631 passed / 67 files（2026-10-28）；浏览器实测 proj_008 显示真实 flag |
 | M19a ✅ | 中文 Writeup：`buildProjectWriteup` 从图数据确定性渲染中文 Markdown 草稿（结论/目标/攻击路径/当前事实/取代/Hint/Flag 与校验/统计/证据附录），`GET\|POST\|DELETE /projects/{id}/writeup` 读取草稿、用 `completeText` 生成并存储模型撰写版（`project_writeups`）、清除回草稿；prompt 与正文限长、90 秒超时、写操作受 operator token 与同源约束、失败不覆盖旧正文；侧栏「Writeup」页签支持复制/下载/AI 撰写/恢复草稿 | 655 passed / 69 files（2026-10-28） |
 | M19b ✅ | Writeup 面板显示修正：标题行/摘要/操作条改为三段纵向布局（操作条自身 `flex-wrap`），不再与标题争宽度导致窄侧栏里竖排字符；`Markdown` 链接改为 `下载 Markdown` 按钮，下载走 `?format=markdown` 并固定文件名 `writeup-<项目id>.md`（非法字符替换为 `_`），正文卡片头部改列显示来源与规模 | 655 passed / 69 files（2026-10-28）；浏览器实测下载锚点与文件名、模型撰写版显示 |
+| M20a ✅ | Writeup 写明载荷：`isWriteupPayloadPath` 用扩展名/关键字从工件索引确定性选出脚本、投递容器与 payload，`## 载荷（Payload）` 章节逐字内联文本（自动加长围栏、截断标注）、二进制只登记路径、读不到写“内容未读取”；超过 20 条时 `selectWriteupPayloadArtifacts` 让被 `evidence_refs` 引用的载荷排在截断之前，快照带 `payloads_total`；每条载荷带 `referenced_by`（哪条 Fact 引用），HTTP 层 `collectWriteupPayloads` 复用 Flag 的路径收敛与限额（只读选中的 ≤20 条、单文件 128 KiB、总计 24000 字符）；prompt 增加“载荷照抄、未内联不得虚构”，侧栏摘要显示“载荷 N 个（内联 K）” | 670 passed / 70 files（2026-10-28） |
 
 ## 与 Phase 0 的关系
 

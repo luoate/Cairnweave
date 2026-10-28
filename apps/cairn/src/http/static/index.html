@@ -4166,6 +4166,8 @@ function cairnApp() {
       const parts = [data.flag && data.flag.value ? '已记录 Flag' : '尚未记录 Flag'];
       const latest = data.verification && data.verification.latest;
       parts.push(latest ? (latest.ok ? '校验通过' : '校验未通过') : '校验尚无记录');
+      const payloads = data.payloads;
+      parts.push(payloads && payloads.total > 0 ? `载荷 ${payloads.total} 个（内联 ${payloads.inlined}）` : '未识别到载荷');
       parts.push(`${data.source === 'model' ? '模型成稿' : '中文草稿'}`);
       return parts.join(' · ');
     },

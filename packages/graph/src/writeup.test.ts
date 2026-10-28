@@ -14,6 +14,7 @@ import {
   finishRun,
   getProjectWriteup,
   heartbeatIntent,
+  isWriteupPayloadPath,
   recordFactMeta,
   recordProjectArtifacts,
   recordVerificationCheck,
@@ -21,14 +22,17 @@ import {
   renderProjectWriteupPrompt,
   run,
   saveProjectWriteup,
+  selectWriteupPayloadArtifacts,
   setProjectVerification,
   startRun,
   type BuildProjectWriteupOptions,
   type CairnDatabase,
   type ProjectWriteupSnapshot,
+  type WriteupPayloadContent,
 } from "./index";
 
 const FIXTURE_FLAG = "CTF2{fixture_flag_value}";
+const TASK = "explore-1a2b3c4d5e6f";
 
 let directory: string;
 let workspace: string;
@@ -78,6 +82,17 @@ function snapshot(options: BuildProjectWriteupOptions = {}): ProjectWriteupSnaps
   return db.withConn((conn) =>
     buildProjectWriteup(conn, projectId, { generatedAt: "2026-10-28T12:00:00Z", ...options }),
   );
+}
+
+function writeArtifact(relativePath: string, content: string | Uint8Array): void {
+  const segments = relativePath.split("/");
+  const target = join(workspace, "artifacts", ...segments);
+  mkdirSync(join(target, ".."), { recursive: true });
+  writeFileSync(target, content);
+}
+
+function indexArtifacts(taskId = "task-1"): void {
+  db.withConn((conn) => recordProjectArtifacts(conn, { projectId, taskId, workspace }));
 }
 
 describe("buildProjectWriteup", () => {
@@ -313,6 +328,187 @@ describe("buildProjectWriteup", () => {
   });
 });
 
+describe("isWriteupPayloadPath", () => {
+  test("accepts scripts, delivery containers and attack keywords", () => {
+    for (const path of [
+      "explore-1a2b3c4d5e6f/forge.py",
+      "explore-1a2b3c4d5e6f/probe.sh",
+      "bootstrap-1a2b3c4d5e6f/ssti.zip",
+      "bootstrap-1a2b3c4d5e6f/pkl",
+      "raw/payload.txt",
+      "raw/exploit.sql",
+      "raw/shot.png",
+      "artifacts/exploit.html",
+    ]) {
+      expect(isWriteupPayloadPath(path)).toBe(true);
+    }
+  });
+
+  test("rejects plain evidence dumps", () => {
+    for (const path of [
+      "explore-1a2b3c4d5e6f/findings.md",
+      "explore-1a2b3c4d5e6f/base.txt",
+      "raw/r2_main.out",
+      "raw/ctl_host.resp",
+      "raw/response.json",
+      "README",
+    ]) {
+      expect(isWriteupPayloadPath(path)).toBe(false);
+    }
+  });
+});
+
+describe("buildProjectWriteup payloads", () => {
+  test("inlines payload text and records binaries plus the referencing fact", () => {
+    const fact = step("SSTI 模板注入读取环境信息");
+    writeArtifact(`${TASK}/forge.py`, "import hmac\nprint('demo')\n");
+    writeArtifact(`${TASK}/ssti.zip`, new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0x00, 0x01]));
+    writeArtifact(`${TASK}/base.txt`, "HTTP/1.1 200 OK\n");
+    db.withConn((conn) => {
+      recordProjectArtifacts(conn, { projectId, taskId: TASK, workspace });
+      recordFactMeta(conn, {
+        projectId,
+        factId: fact.factId,
+        runId: null,
+        evidenceRefs: [`artifacts/${TASK}/forge.py`, `artifacts\\${TASK}\\base.txt`],
+        evidenceStatus: "provided",
+      });
+    });
+
+    const contents: WriteupPayloadContent[] = [
+      { path: `${TASK}/forge.py`, binary: false, text: "import hmac\nprint('demo')\n", truncated: false },
+      { path: `${TASK}/ssti.zip`, binary: true, text: null, truncated: false },
+    ];
+    const result = snapshot({ payloadContents: contents });
+
+    expect(result.payloads.map((payload) => payload.path)).toEqual([
+      `${TASK}/forge.py`,
+      `${TASK}/ssti.zip`,
+    ]);
+    expect(result.payloads[0]).toMatchObject({
+      language: "python",
+      binary: false,
+      truncated: false,
+      referenced_by: [fact.factId],
+    });
+    expect(result.payloads[1]).toMatchObject({ language: null, binary: true, text: null });
+    expect(result.payloads_truncated).toBe(false);
+
+    const markdown = renderProjectWriteupMarkdown(result);
+    expect(markdown).toContain("## 载荷（Payload）");
+    expect(markdown).toContain(`### \`${TASK}/forge.py\``);
+    expect(markdown).toContain("```python\nimport hmac");
+    expect(markdown).toContain("二进制载荷，未内联");
+    expect(markdown).not.toContain(`### \`${TASK}/base.txt\``);
+  });
+
+  test("reports unread payloads when the caller provides no bytes", () => {
+    writeArtifact(`${TASK}/mkzip.py`, "print(1)\n");
+    indexArtifacts(TASK);
+
+    const result = snapshot();
+    expect(result.payloads).toHaveLength(1);
+    expect(result.payloads[0]).toMatchObject({ text: null, binary: false, truncated: false });
+    expect(renderProjectWriteupMarkdown(result)).toContain("内容未读取");
+  });
+
+  test("clamps long payload text and flags the truncation", () => {
+    writeArtifact(`${TASK}/big_payload.txt`, "A".repeat(9000));
+    indexArtifacts(TASK);
+
+    const result = snapshot({
+      payloadContents: [
+        { path: `${TASK}/big_payload.txt`, binary: false, text: "A".repeat(9000), truncated: false },
+      ],
+    });
+    expect(result.payloads[0]?.text).toHaveLength(4000);
+    expect(result.payloads[0]?.truncated).toBe(true);
+    expect(renderProjectWriteupMarkdown(result)).toContain("内容已截断");
+  });
+
+  test("caps the payload list and keeps the appendix intact", () => {
+    for (let index = 0; index < 25; index += 1) {
+      writeArtifact(`${TASK}/payload-${index}.sh`, `echo ${index}\n`);
+    }
+    indexArtifacts(TASK);
+
+    const result = snapshot();
+    expect(result.payloads).toHaveLength(20);
+    expect(result.payloads_total).toBe(25);
+    expect(result.payloads_truncated).toBe(true);
+    expect(result.artifacts).toHaveLength(25);
+    const markdown = renderProjectWriteupMarkdown(result);
+    expect(markdown).toContain("…其余 5 个载荷文件见附件包。");
+    expect(markdown).toContain("识别到 25 个载荷/脚本文件，此处列出 20 个");
+  });
+
+  test("lists evidence-cited payloads before the cap drops the rest", () => {
+    const fact = step("伪造会话 Cookie 拿到管理员身份");
+    for (let index = 0; index < 25; index += 1) {
+      writeArtifact(`${TASK}/a-payload-${String(index).padStart(2, "0")}.py`, `echo ${index}\n`);
+    }
+    writeArtifact(`${TASK}/z-forge.py`, "print('forged')\n");
+    db.withConn((conn) => {
+      recordProjectArtifacts(conn, { projectId, taskId: TASK, workspace });
+      recordFactMeta(conn, {
+        projectId,
+        factId: fact.factId,
+        runId: null,
+        evidenceRefs: [`artifacts/${TASK}/z-forge.py`],
+        evidenceStatus: "provided",
+      });
+    });
+
+    const selected = db.withConn((conn) => selectWriteupPayloadArtifacts(conn, projectId));
+    expect(selected[0]?.path).toBe(`${TASK}/z-forge.py`);
+    const result = snapshot();
+    expect(result.payloads[0]).toMatchObject({
+      path: `${TASK}/z-forge.py`,
+      referenced_by: [fact.factId],
+    });
+    expect(result.payloads.map((payload) => payload.path)).toContain(`${TASK}/a-payload-00.py`);
+    expect(result.payloads.map((payload) => payload.path)).not.toContain(`${TASK}/a-payload-24.py`);
+  });
+
+  test("uses a longer fence when the payload itself contains backticks", () => {
+    writeArtifact(`${TASK}/tick_payload.txt`, "```\ninner\n```\n");
+    indexArtifacts(TASK);
+
+    const markdown = renderProjectWriteupMarkdown(
+      snapshot({
+        payloadContents: [
+          {
+            path: `${TASK}/tick_payload.txt`,
+            binary: false,
+            text: "```\ninner\n```\n",
+            truncated: false,
+          },
+        ],
+      }),
+    );
+    expect(markdown).toContain("````\n```\ninner\n```\n````");
+  });
+
+  test("renders an empty payload section when nothing matches", () => {
+    const fact = step("只留下了响应文本");
+    writeArtifact(`${TASK}/findings.md`, "响应正文\n");
+    db.withConn((conn) => {
+      recordProjectArtifacts(conn, { projectId, taskId: TASK, workspace });
+      recordFactMeta(conn, {
+        projectId,
+        factId: fact.factId,
+        runId: null,
+        evidenceRefs: [`artifacts/${TASK}/findings.md`],
+        evidenceStatus: "provided",
+      });
+    });
+
+    const result = snapshot();
+    expect(result.payloads).toEqual([]);
+    expect(renderProjectWriteupMarkdown(result)).toContain("（没有识别到载荷或脚本文件）");
+  });
+});
+
 describe("renderProjectWriteupPrompt", () => {
   test("wraps the draft with the Chinese hard rules", () => {
     const result = snapshot({ flag: { value: FIXTURE_FLAG, source: "findings.md" } });
@@ -322,6 +518,8 @@ describe("renderProjectWriteupPrompt", () => {
     expect(prompt).toContain("全程使用简体中文");
     expect(prompt).toContain("保留草稿里的 Flag 原文，逐字符照抄");
     expect(prompt).toContain("不得写入任何凭据、token、cookie、API key");
+    expect(prompt).toContain("逐字符照抄");
+    expect(prompt).toContain("草稿的“载荷（Payload）”章节给出脚本与 payload 原文");
     expect(prompt).toContain("# 草稿");
     expect(prompt).toContain(FIXTURE_FLAG);
     expect(prompt).toContain("## 攻击路径");

@@ -270,13 +270,20 @@ export {
   buildProjectWriteup,
   clearProjectWriteup,
   getProjectWriteup,
+  isWriteupPayloadPath,
+  MAX_WRITEUP_PAYLOAD_CHARS,
+  MAX_WRITEUP_PAYLOADS,
+  payloadLanguage,
   renderProjectWriteupMarkdown,
   renderProjectWriteupPrompt,
   saveProjectWriteup,
+  selectWriteupPayloadArtifacts,
   type BuildProjectWriteupOptions,
   type ProjectWriteupRecord,
   type ProjectWriteupSnapshot,
   type WriteupFlag,
+  type WriteupPayload,
+  type WriteupPayloadContent,
 } from "./writeup";
 
 export {

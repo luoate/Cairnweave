@@ -1,4 +1,4 @@
-# 架构（M19a 更新）
+# 架构（M20a 更新）
 
 本文固定合并后的角色边界、数据所有权和失败语义。实现以本文为准；需要改动时先改本文并
 记录原因。
@@ -861,7 +861,7 @@ scheduler 的 housekeeping sweep 由 `scheduler/retention.ts` 与 `loop.ts` 共�
 - **效果**：上一控制面崩溃遗留的无效队列项不会阻塞新工作；有效项在首次 tick 前保留，
   由正常派发分支优先执行。清理与对账都不要求图可写，也不修改 Fact / intent 历史。
 
-### 5.10 项目 Writeup 生成（M19a）
+### 5.10 项目 Writeup 生成（M19a/M20a）
 
 Writeup 是面向人的中文复盘文本，分两层，全部逻辑在 `packages/graph/src/writeup.ts`
 与 `apps/cairn/src/http/project-writeup.ts`：
@@ -877,10 +877,24 @@ Writeup 是面向人的中文复盘文本，分两层，全部逻辑在 `package
 - **Flag 一致性**：草稿的 Flag 与校验段复用 `/flag` 的 `collectProjectFlag`（artifacts
   优先、solver-session 回退），两个视图不会给出不同结论；M18g 的原文展示策略同样适用
   于 Writeup，草稿与 prompt 都保留 flag 原文，不做脱敏。
+- **载荷（M20a）**：`isWriteupPayloadPath` 用扩展名表（脚本、模板、SQL/HTML、zip/pkl
+  等投递容器与图片）与文件名关键字（`payload exploit poc inject sqli xss ssrf ssti xxe
+  traver webshell deserial forg bypass` 等）从 `project_artifacts` 里确定性筛出载荷，
+  普通响应转储（`.txt/.out/.resp/.md/.json`）不算，仍留在附录。条目超过 20 条时按“被
+  `fact_meta.evidence_refs` 引用过的优先、再按路径”截断（`selectWriteupPayloadArtifacts`），
+  保证支撑结论的载荷不会被探测脚本挤掉。文件字节由 HTTP 层的
+  `collectWriteupPayloads` 读取——`@cairn/graph` 不碰文件系统，只把 `payloadContents`
+  注入快照——读取复用 Flag 扫描的收敛：`<workspace>/artifacts` 真实目录、非符号链接、
+  路径不逃逸、单文件 ≤128 KiB、只读选中的 ≤20 条、单项目 ≤24000 字符、含 NUL 判定为二进制。
+  `## 载荷（Payload）` 逐字内联文本（正文含反引号时自动加长围栏）、超预算标注截断、
+  二进制与未挂载工作区分别写“未内联”“内容未读取”，从不留空或编造；每条载荷带
+  `referenced_by`（哪些 Fact 的 `evidence_refs` 引用它），快照另有 `payloads_total` 说明
+  一共识别到多少个，JSON 视图给出 `state: inline|binary|unread` 的投影。
 - **模型撰写版（可选）**：`renderProjectWriteupPrompt` 把同一份草稿作为唯一素材交给
   `@cairn/agent` 的 `completeText`（`tools: []`、`SessionManager.inMemory()` 的单轮
   补全，不授予任何工具），system prompt 要求全程简体中文、只使用草稿中的事实/证据/
-  Flag、Flag 逐字符照抄、如实标注未验证与未完成、不得写入凭据或内网敏感地址。结果
+  Flag、Flag 与载荷逐字符照抄（草稿只给路径时不得虚构内容）、如实标注未验证与未完成、
+  不得写入凭据或内网敏感地址。结果
   upsert 进 `project_writeups`（每项目一行），GET 随即服务存储版；DELETE 清除后回到
   草稿。生成失败或超时都不会覆盖已存正文。
 - **限额与守卫**：prompt ≤60000 字符、正文 ≤200000 字符、请求体 ≤4 KiB、model pref id

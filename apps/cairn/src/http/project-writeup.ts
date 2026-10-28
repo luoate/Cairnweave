@@ -23,11 +23,13 @@ import {
   renderProjectWriteupMarkdown,
   renderProjectWriteupPrompt,
   saveProjectWriteup,
+  selectWriteupPayloadArtifacts,
   type CairnDatabase,
   type ProjectWriteupRecord,
   type ProjectWriteupSnapshot,
   type VerificationKind,
   type WriteupFlag,
+  type WriteupPayloadContent,
 } from "@cairn/graph";
 import { HttpError } from "@cairn/graph";
 
@@ -40,6 +42,7 @@ import {
   type AgentConfigOptions,
 } from "./agent-config";
 import { collectProjectFlag } from "./project-flag";
+import { collectWriteupPayloads } from "./project-payload";
 
 /** `cairn-worker.md` binds the default worker to this model-prefs entry. */
 const DEFAULT_WRITEUP_MODEL_PREF = "cairn-worker";
@@ -68,7 +71,7 @@ export type WriteupGenerator = (
 
 export interface WriteupRouteOptions {
   db: CairnDatabase;
-  /** Host workspace root; absent in pure HTTP mode, which simply omits the flag. */
+  /** Host workspace root; absent in pure HTTP mode, which omits the flag and payload bytes. */
   workspaceRoot?: string;
   /** Policy reported for legacy projects without a `project_verification` row. */
   verificationFallback: VerificationKind;
@@ -107,11 +110,58 @@ interface FlagView {
   occurrences: number;
 }
 
+/** JSON projection of the payload list: the Markdown body carries the text itself. */
+interface PayloadFileView {
+  path: string;
+  size: number;
+  sha256: string;
+  task_id: string;
+  language: string | null;
+  state: "inline" | "binary" | "unread";
+  truncated: boolean;
+  referenced_by: string[];
+}
+
+interface PayloadView {
+  files: PayloadFileView[];
+  total: number;
+  count: number;
+  inlined: number;
+  binary: number;
+  unread: number;
+  truncated: boolean;
+}
+
 interface Draft {
   snapshot: ProjectWriteupSnapshot;
   markdown: string;
   flag: FlagView | null;
+  payloads: PayloadView;
   generated_at: string;
+}
+
+function payloadView(snapshot: ProjectWriteupSnapshot): PayloadView {
+  const payloads = snapshot.payloads;
+  const files = payloads.map((payload) => ({
+    path: payload.path,
+    size: payload.size,
+    sha256: payload.sha256,
+    task_id: payload.task_id,
+    language: payload.language,
+    state:
+      payload.text !== null ? "inline" as const : payload.binary ? "binary" as const : "unread" as const,
+    truncated: payload.truncated,
+    referenced_by: payload.referenced_by,
+  }));
+  return {
+    files,
+    total: snapshot.payloads_total,
+    count: files.length,
+    inlined: files.filter((file) => file.state === "inline").length,
+    binary: files.filter((file) => file.state === "binary").length,
+    unread: files.filter((file) => file.state === "unread").length,
+    truncated: snapshot.payloads_truncated,
+  };
 }
 
 /** The payload every writeup route answers with; `source` records which text is served. */
@@ -123,6 +173,7 @@ function view(record: ProjectWriteupRecord | null, draft: Draft) {
     created_at: record?.created_at ?? null,
     markdown: record?.markdown ?? draft.markdown,
     flag: draft.flag,
+    payloads: draft.payloads,
     generated_at: draft.generated_at,
     verification: draft.snapshot.verification,
   };
@@ -227,19 +278,26 @@ export function registerWriteupRoutes(
   });
 
   function buildDraft(conn: Database, projectId: string): Draft {
+    const artifacts = listProjectArtifacts(conn, projectId);
+    const workspace = workspaceRoot === undefined ? null : projectWorkspace(workspaceRoot, projectId);
     const flag =
-      workspaceRoot === undefined
+      workspace === null
         ? null
-        : collectProjectFlag({
-            workspace: projectWorkspace(workspaceRoot, projectId),
-            artifacts: listProjectArtifacts(conn, projectId),
-          });
+        : collectProjectFlag({ workspace, artifacts });
     const flagView: FlagView | null =
       flag !== null && flag.found && flag.flag !== null
         ? { value: flag.flag, source: flag.source, occurrences: flag.occurrences }
         : null;
+    const payloadContents: WriteupPayloadContent[] =
+      workspace === null
+        ? []
+        : collectWriteupPayloads({
+            workspace,
+            artifacts: selectWriteupPayloadArtifacts(conn, projectId),
+          });
     const snapshot = buildProjectWriteup(conn, projectId, {
       verificationFallback,
+      payloadContents,
       ...(flagView === null
         ? {}
         : { flag: { value: flagView.value, source: flagView.source ?? "" } }),
@@ -248,6 +306,7 @@ export function registerWriteupRoutes(
       snapshot,
       markdown: renderProjectWriteupMarkdown(snapshot),
       flag: flagView,
+      payloads: payloadView(snapshot),
       generated_at: snapshot.generated_at,
     };
   }

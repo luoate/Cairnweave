@@ -136,6 +136,56 @@ describe("GET /projects/{id}/writeup", () => {
   });
 });
 
+describe("GET /projects/{id}/writeup payloads", () => {
+  test("inlines indexed payload files and reports their state", async () => {
+    mkdirSync(join(workspace, "artifacts"), { recursive: true });
+    writeFileSync(join(workspace, "artifacts", "forge.py"), "print('demo payload')\n", "utf8");
+    writeFileSync(join(workspace, "artifacts", "blob.zip"), Buffer.from([0x50, 0x4b, 0x00, 0x01]), "utf8");
+    db.withConn((conn) =>
+      recordProjectArtifacts(conn, { projectId, taskId: "task-1", workspace }),
+    );
+
+    const body = (await (await get(`/projects/${projectId}/writeup`)).json()) as {
+      markdown: string;
+      payloads: {
+        total: number;
+        count: number;
+        inlined: number;
+        binary: number;
+        unread: number;
+        files: { path: string; state: string; referenced_by: string[] }[];
+      };
+    };
+    expect(body.payloads.total).toBe(2);
+    expect(body.payloads.count).toBe(2);
+    expect(body.payloads.inlined).toBe(1);
+    expect(body.payloads.binary).toBe(1);
+    expect(body.payloads.unread).toBe(0);
+    expect(body.payloads.files.map((file) => [file.path, file.state])).toEqual([
+      ["blob.zip", "binary"],
+      ["forge.py", "inline"],
+    ]);
+    expect(body.markdown).toContain("## 载荷（Payload）");
+    expect(body.markdown).toContain("```python\nprint('demo payload')\n```");
+  });
+
+  test("lists payloads as unread when no workspace is mounted", async () => {
+    mkdirSync(join(workspace, "artifacts"), { recursive: true });
+    writeFileSync(join(workspace, "artifacts", "forge.py"), "print('demo')\n", "utf8");
+    db.withConn((conn) =>
+      recordProjectArtifacts(conn, { projectId, taskId: "task-1", workspace }),
+    );
+
+    const api = createApi({ db });
+    const body = (await (
+      await api.handle(new Request(`http://cairn.test/projects/${projectId}/writeup`))
+    ).json()) as { payloads: { unread: number; count: number }; markdown: string };
+    expect(body.payloads.count).toBe(1);
+    expect(body.payloads.unread).toBe(1);
+    expect(body.markdown).toContain("内容未读取");
+  });
+});
+
 describe("POST /projects/{id}/writeup", () => {
   test("stores the model-written narrative and serves it afterwards", async () => {
     const seen: WriteupGenerationInput[] = [];
