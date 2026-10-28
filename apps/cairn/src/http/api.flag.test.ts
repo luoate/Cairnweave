@@ -68,8 +68,10 @@ describe("GET /projects/{id}/flag", () => {
 
     const response = await get(`/projects/${projectId}/flag`);
     expect(response.status).toBe(200);
-    const body = (await response.json()) as ProjectFlagResult;
-    expect(body).toEqual({
+    const body = (await response.json()) as ProjectFlagResult & {
+      verification: { policy: { kind: string }; latest: unknown };
+    };
+    expect(body).toMatchObject({
       found: true,
       flag: FIXTURE_FLAG,
       source: "findings.md",
@@ -78,6 +80,8 @@ describe("GET /projects/{id}/flag", () => {
       scanned_files: 1,
       truncated: false,
     });
+    expect(body.verification.policy.kind).toBe("evidence");
+    expect(body.verification.latest).toBeNull();
   });
 
   test("ignores placeholders and prefers a flag seen in more files", async () => {
@@ -131,7 +135,10 @@ describe("GET /projects/{id}/flag", () => {
     const response = await httpOnly.handle(
       new Request(`http://cairn.test/projects/${projectId}/flag`),
     );
-    expect(await response.json()).toEqual({
+    const body = (await response.json()) as ProjectFlagResult & {
+      verification: { policy: { kind: string } };
+    };
+    expect(body).toMatchObject({
       found: false,
       flag: null,
       source: null,
@@ -140,6 +147,7 @@ describe("GET /projects/{id}/flag", () => {
       scanned_files: 0,
       truncated: false,
     });
+    expect(body.verification.policy.kind).toBe("evidence");
   });
 
   test("404s for an unknown project", async () => {

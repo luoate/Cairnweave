@@ -568,6 +568,7 @@
       <code class="max-w-full break-all rounded bg-white/80 px-1.5 py-0.5 font-mono text-[12px] font-semibold text-emerald-900" x-text="projectFlag.flag"></code>
       <button type="button" @click="copyProjectFlag()"
         class="rounded-md border border-emerald-200 bg-white px-2 py-0.5 text-[11px] font-medium text-emerald-700 hover:bg-emerald-50 transition">复制</button>
+      <span class="rounded-full border px-2 py-0.5 text-[10px] font-medium" :class="projectFlagVerificationClass()" x-text="projectFlagVerificationLabel()"></span>
       <span class="text-[11px] text-emerald-700/70" x-text="projectFlagSourceLabel()"></span>
     </div>
   </template>
@@ -2202,6 +2203,29 @@
         <input x-model="newProject.scopeNotes" placeholder="范围备注（可选）" class="mt-2 w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
         <p class="text-[11px] text-slate-400 mt-1">调度器只向这些目标派发任务；未配置范围的项目不会运行。</p>
       </div>
+      <div>
+        <div class="flex items-center justify-between mb-1">
+          <label class="text-[11px] text-slate-400 font-medium uppercase tracking-wider">完成校验</label>
+          <span class="text-[10px] text-slate-300">创建后固定</span>
+        </div>
+        <select x-model="newProject.verificationKind" aria-label="完成校验"
+          class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
+          <option value="auto">自动（题目环境优先，否则证据校验）</option>
+          <option value="challenge">题目 / Flag 自动校验</option>
+          <option value="evidence">证据校验</option>
+          <option value="off">关闭校验</option>
+        </select>
+        <template x-if="newProject.verificationKind === 'challenge'">
+          <div class="mt-2">
+            <input x-ref="newProjectChallengeCode" x-model="newProject.challengeCode" placeholder="题目编号（challenge_code）" aria-label="题目编号"
+              class="w-full px-3 py-2 border rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"
+              :class="newProjectShowErrors && newProjectErrors().challengeCode ? 'border-rose-300' : 'border-slate-200'">
+            <p x-show="newProjectShowErrors && newProjectErrors().challengeCode" class="text-[11px] text-rose-500 mt-1" x-text="newProjectErrors().challengeCode"></p>
+            <p class="text-[11px] text-slate-400 mt-1">需要服务端设置 TCH_CHALLENGE_API_BASE_URL 与 TCH_CHALLENGE_AGENT_TOKEN；完成时按平台 flag 计数自动判定。</p>
+          </div>
+        </template>
+        <p x-show="newProject.verificationKind === 'auto'" class="text-[11px] text-slate-400 mt-1">服务端存在 TCH_CHALLENGE_ID 时自动启用题目校验，否则默认按证据校验。</p>
+      </div>
       <label class="flex items-center gap-2 px-1 text-sm text-slate-600">
         <input type="checkbox" x-model="newProject.bootstrap" class="h-4 w-4 rounded border-slate-300 text-brand-500 focus:ring-brand-200">
         <span>立即执行初始探索</span>
@@ -2844,7 +2868,7 @@ function cairnApp() {
     exportProjectId: '',
     showDeleteModal: false,
 
-    newProject: { title: '', origin: '', goal: '', bootstrap: true, targetsText: '', scopeNotes: '', hints: [{ content: '' }] },
+    newProject: { title: '', origin: '', goal: '', bootstrap: true, targetsText: '', scopeNotes: '', hints: [{ content: '' }], verificationKind: 'auto', challengeCode: '' },
     isCreatingProject: false,
     scopeForm: { projectId: '', projectTitle: '', targetsText: '', notes: '' },
     isSavingScope: false,
@@ -2928,6 +2952,7 @@ function cairnApp() {
       source: '',
       occurrences: 0,
       sources: [],
+      verification: { policy: null, latest: null },
       error: '',
     },
     lastProjectListAt: 0,
@@ -5091,7 +5116,9 @@ function cairnApp() {
       if (this.view === 'graph' && this.selectedProjectId) {
         await this.loadProject(this.selectedProjectId, { quiet });
         if (!this.projectFlag.loading &&
-            (!this.projectFlag.found || this.projectFlag.projectId !== this.selectedProjectId)) {
+            (!this.projectFlag.found ||
+             this.projectFlag.projectId !== this.selectedProjectId ||
+             this.projectFlagVerificationPending())) {
           this.loadProjectFlag(this.selectedProjectId);
         }
         this.updateGraph();
@@ -6301,6 +6328,9 @@ function cairnApp() {
       const scope = this.validateScopeTargets(this.newProject.targetsText);
       if (scope.errors.length > 0) errors.targets = scope.errors[0];
       else if (scope.targets.length === 0) errors.targets = '请至少填写一个授权目标';
+      if (this.newProject.verificationKind === 'challenge' && !this.newProject.challengeCode.trim()) {
+        errors.challengeCode = '请填写题目编号';
+      }
       return errors;
     },
 
@@ -6334,7 +6364,8 @@ function cairnApp() {
       if (!projectId) {
         this.projectFlag = {
           projectId: '', loading: false, found: false, flag: '',
-          source: '', occurrences: 0, sources: [], error: '',
+          source: '', occurrences: 0, sources: [],
+          verification: { policy: null, latest: null }, error: '',
         };
         return;
       }
@@ -6348,6 +6379,7 @@ function cairnApp() {
         source: same ? this.projectFlag.source : '',
         occurrences: same ? this.projectFlag.occurrences : 0,
         sources: same ? this.projectFlag.sources : [],
+        verification: same ? this.projectFlag.verification : { policy: null, latest: null },
         error: '',
       };
       try {
@@ -6362,13 +6394,18 @@ function cairnApp() {
           source: typeof data?.source === 'string' ? data.source : '',
           occurrences: Number(data?.occurrences) || 0,
           sources: Array.isArray(data?.sources) ? data.sources : [],
+          verification: {
+            policy: data?.verification?.policy ?? null,
+            latest: data?.verification?.latest ?? null,
+          },
           error: '',
         };
       } catch (e) {
         if (this.projectFlag.projectId !== projectId) return;
         this.projectFlag = {
           projectId, loading: false, found: false, flag: '',
-          source: '', occurrences: 0, sources: [], error: this.errorText(e),
+          source: '', occurrences: 0, sources: [],
+          verification: { policy: null, latest: null }, error: this.errorText(e),
         };
       }
     },
@@ -6378,6 +6415,45 @@ function cairnApp() {
       if (!this.projectFlag.source) return '';
       if (sources.length > 1) return `来自 ${this.projectFlag.source} 等 ${sources.length} 个文件`;
       return `来自 ${this.projectFlag.source}`;
+    },
+
+    projectFlagVerificationLabel() {
+      const verification = this.projectFlag.verification || {};
+      const policy = verification.policy;
+      const latest = verification.latest;
+      if (!policy) return '';
+      if (policy.kind === 'challenge') {
+        if (!latest) return '题目校验：等待完成';
+        if (latest.kind !== 'challenge') return '题目校验：等待完成';
+        if (latest.ok && Number.isFinite(latest.flag_count)) {
+          return `题目校验：通过 ${latest.flag_got_count}/${latest.flag_count}`;
+        }
+        if (latest.ok) return '题目校验：通过';
+        return `题目校验：未通过（${latest.detail || '见报告'}）`;
+      }
+      if (policy.kind === 'evidence') {
+        if (!latest) return '证据校验：等待完成';
+        return latest.ok ? '证据校验：通过' : '证据校验：未通过';
+      }
+      return '校验已关闭';
+    },
+
+    projectFlagVerificationPending() {
+      const verification = this.projectFlag.verification || {};
+      if (verification.policy?.kind !== 'challenge') return false;
+      return verification.latest?.ok !== true;
+    },
+
+    projectFlagVerificationClass() {
+      const verification = this.projectFlag.verification || {};
+      const latest = verification.latest;
+      if (verification.policy?.kind === 'off') {
+        return 'border-slate-200 bg-slate-50 text-slate-500';
+      }
+      if (!latest) return 'border-slate-200 bg-white text-slate-500';
+      return latest.ok
+        ? 'border-emerald-300 bg-white text-emerald-700'
+        : 'border-amber-300 bg-white text-amber-700';
     },
 
     async copyProjectFlag() {
@@ -6465,8 +6541,9 @@ function cairnApp() {
         origin: 'newProjectOrigin',
         goal: 'newProjectGoal',
         targets: 'newProjectTargets',
+        challengeCode: 'newProjectChallengeCode',
       };
-      const key = ['title', 'origin', 'goal', 'targets'].find((item) => errors[item]);
+      const key = ['title', 'origin', 'goal', 'targets', 'challengeCode'].find((item) => errors[item]);
       if (key) this.$refs[refs[key]]?.focus();
     },
 
@@ -6491,12 +6568,18 @@ function cairnApp() {
           bootstrap_enabled: this.newProject.bootstrap,
           scope: { targets, ...(notes ? { notes } : {}) },
         };
+        const verificationKind = this.newProject.verificationKind;
+        if (verificationKind === 'challenge') {
+          body.verification = { kind: 'challenge', challenge_code: this.newProject.challengeCode.trim() };
+        } else if (verificationKind === 'evidence' || verificationKind === 'off') {
+          body.verification = { kind: verificationKind };
+        }
         const hints = hintContents.map(h => ({ content: h.content.trim(), creator: actor }));
         if (hints.length > 0) body.hints = hints;
         const data = await this.api('POST', '/projects', body);
         this.showNewProject = false;
         this.newProjectShowErrors = false;
-        this.newProject = { title:'', origin:'', goal:'', bootstrap: true, targetsText:'', scopeNotes:'', hints: [{ content:'' }] };
+        this.newProject = { title:'', origin:'', goal:'', bootstrap: true, targetsText:'', scopeNotes:'', hints: [{ content:'' }], verificationKind: 'auto', challengeCode: '' };
         await this.loadProjects();
         await this.openProject(data.project.id);
         this.showToast('项目已创建');

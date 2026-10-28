@@ -256,6 +256,53 @@ describe("evidence enforcement configuration", () => {
     expect(view.policy).toMatchObject({ kind: "off" });
   });
 
+  test("selects challenge verification automatically from the environment", async () => {
+    const service = new VerificationService(db, DEFAULT_VERIFICATION, {
+      env: {
+        TCH_CHALLENGE_ID: "web-01",
+        TCH_CHALLENGE_API_BASE_URL: "https://challenge.test",
+        TCH_CHALLENGE_AGENT_TOKEN: "token",
+      },
+    });
+    const response = await post(api(service), "/projects", {
+      title: "challenge by default",
+      origin: "origin",
+      goal: "goal",
+      scope: { targets: ["127.0.0.1:8080"] },
+    });
+    expect(response.status).toBe(201);
+    const created = (await response.json()) as { project: { id: string } };
+
+    const view = (await (
+      await api(service).handle(
+        new Request(`http://cairn.test/projects/${created.project.id}/verification`),
+      )
+    ).json()) as { policy: Record<string, unknown> };
+    expect(view.policy).toMatchObject({ kind: "challenge", challenge_code: "web-01" });
+  });
+
+  test("an explicit verification policy wins over the challenge environment", async () => {
+    const service = new VerificationService(db, DEFAULT_VERIFICATION, {
+      env: { TCH_CHALLENGE_ID: "web-01" },
+    });
+    const response = await post(api(service), "/projects", {
+      title: "explicit off",
+      origin: "origin",
+      goal: "goal",
+      verification: { kind: "off" },
+      scope: { targets: ["127.0.0.1:8080"] },
+    });
+    expect(response.status).toBe(201);
+    const created = (await response.json()) as { project: { id: string } };
+
+    const view = (await (
+      await api(service).handle(
+        new Request(`http://cairn.test/projects/${created.project.id}/verification`),
+      )
+    ).json()) as { policy: Record<string, unknown> };
+    expect(view.policy).toMatchObject({ kind: "off" });
+  });
+
   test("uses the configured policy for legacy projects without a row", async () => {
     db.withConn((conn) => {
       conn

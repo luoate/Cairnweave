@@ -81,7 +81,11 @@ import {
   type AgentConfigOptions,
 } from "./agent-config";
 import { requireOperator } from "./auth";
-import { emptyFlagResult, scanProjectFlag } from "./project-flag";
+import {
+  emptyFlagResult,
+  scanProjectFlag,
+  type ProjectFlagResult,
+} from "./project-flag";
 
 export interface ApiOptions {
   db: CairnDatabase;
@@ -445,11 +449,12 @@ function buildRoutes(
 
   route("POST", "/projects", async ({ request }) => {
     const body = parseCreateProjectRequest(await readBody(request));
-    // Pin the configured evidence policy at creation time. A later config change must not
-    // silently re-open or re-verify projects that already exist.
+    // Pin the policy at creation time. A challenge environment (TCH_CHALLENGE_ID)
+    // selects challenge automatically; otherwise the evidence switch decides. A later
+    // config change must not silently re-open or re-verify projects that already exist.
     const payload =
       body.verification === undefined || body.verification === null
-        ? { ...body, verification: { kind: oracle.defaultKind } }
+        ? { ...body, verification: oracle.defaultPolicy() }
         : body;
     return db.withConn((conn) => json(createProject(conn, payload), 201));
   });
@@ -487,16 +492,27 @@ function buildRoutes(
 
   // Read-only flag view. It scans indexed artifacts instead of the shareable report,
   // and answering "not found" is a normal 200 so the UI can poll while a project runs.
+  // The verification snapshot lets the banner show challenge/flag status without a
+  // second request.
   route("GET", "/projects/{project_id}/flag", ({ params }) =>
     db.withConn((conn) => {
       const projectId = params["project_id"]!;
       getProjectOr404(conn, projectId);
-      if (workspaceRoot === undefined) return json(emptyFlagResult());
+      const withVerification = (result: ProjectFlagResult) => ({
+        ...result,
+        verification: {
+          policy: getProjectVerification(conn, projectId, oracle.defaultKind),
+          latest: getLatestVerificationCheck(conn, projectId),
+        },
+      });
+      if (workspaceRoot === undefined) return json(withVerification(emptyFlagResult()));
       return json(
-        scanProjectFlag({
-          workspace: projectWorkspace(workspaceRoot, projectId),
-          artifacts: listProjectArtifacts(conn, projectId),
-        }),
+        withVerification(
+          scanProjectFlag({
+            workspace: projectWorkspace(workspaceRoot, projectId),
+            artifacts: listProjectArtifacts(conn, projectId),
+          }),
+        ),
       );
     }),
   );

@@ -25,7 +25,12 @@ import {
   type VerificationKind,
 } from "@cairn/graph";
 
-import { defaultVerificationKind, type VerificationConfig } from "../config";
+import {
+  defaultVerificationKind,
+  defaultVerificationPolicy,
+  type DefaultVerificationPolicy,
+  type VerificationConfig,
+} from "../config";
 
 export interface VerificationOptions {
   /** Fact ids that justify completion. Defaults to every non-seed fact. */
@@ -95,6 +100,14 @@ export class VerificationService {
     this.fetchImpl = options.fetch ?? fetch;
     this.env = options.env ?? process.env;
     this.defaultKind = defaultVerificationKind(config);
+  }
+
+  /**
+   * Policy used when a project is created without an explicit `verification` field.
+   * A challenge environment supplies the code automatically.
+   */
+  defaultPolicy(): DefaultVerificationPolicy {
+    return defaultVerificationPolicy(this.config, this.env);
   }
 
   async verify(

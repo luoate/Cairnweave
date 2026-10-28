@@ -122,6 +122,9 @@ describe("static operations UI", () => {
     expect(html).toContain("无身份认证");
     expect(html).toContain("127.0.0.1");
     expect(html).toContain("新建项目");
+    expect(html).toContain('x-model="newProject.verificationKind"');
+    expect(html).toContain("题目 / Flag 自动校验");
+    expect(html).toContain("自动（题目环境优先，否则证据校验）");
     expect(html).toContain("授权范围");
     expect(html).toContain("未配置授权范围");
     expect(html).toContain("未授权");
@@ -500,6 +503,13 @@ describe("form validation and submitting states", () => {
     app.newProject.targetsText = "10.0.0.1";
     app.newProject.title = "x".repeat(201);
     expect(app.newProjectErrors().title).toBe("标题不能超过 200 个字符");
+    app.newProject.title = "Alpha";
+    app.newProject.verificationKind = "challenge";
+    expect(app.newProjectErrors().challengeCode).toBe("请填写题目编号");
+    app.newProject.challengeCode = " web-01 ";
+    expect(app.newProjectErrors()).toEqual({});
+    app.newProject.verificationKind = "auto";
+    expect(app.newProjectErrors()).toEqual({});
   });
 
   test("validates scheduler timeouts before saving settings", () => {
@@ -983,6 +993,10 @@ describe("model and key settings", () => {
         source: "findings.md",
         occurrences: 2,
         sources: ["findings.md", "notes.txt"],
+        verification: {
+          policy: { kind: "evidence" },
+          latest: { kind: "evidence", ok: true, detail: "1 fact(s) have recorded evidence" },
+        },
       };
     };
 
@@ -991,6 +1005,8 @@ describe("model and key settings", () => {
     expect(app.projectFlag.found).toBe(true);
     expect(app.projectFlag.flag).toBe("CTF2{ui_fixture}");
     expect(app.projectFlagSourceLabel()).toContain("2 个文件");
+    expect(app.projectFlag.verification.policy.kind).toBe("evidence");
+    expect(app.projectFlagVerificationLabel()).toBe("证据校验：通过");
 
     const copied: string[] = [];
     const toasts: string[] = [];
@@ -1004,6 +1020,103 @@ describe("model and key settings", () => {
     await app.loadProjectFlag("proj_1");
     expect(app.projectFlag.found).toBe(false);
     expect(app.projectFlag.flag).toBe("");
+    // A response without a verification snapshot degrades to "no policy", not a crash.
+    expect(app.projectFlagVerificationLabel()).toBe("");
+  });
+
+  test("shows challenge verification progress and polls until it passes", async () => {
+    const app = loadState();
+    app.api = async () => ({
+      found: true,
+      flag: "CTF2{ui_fixture}",
+      source: "findings.md",
+      occurrences: 1,
+      sources: ["findings.md"],
+      verification: {
+        policy: { kind: "challenge", challenge_code: "web-01" },
+        latest: {
+          kind: "challenge",
+          ok: false,
+          flag_count: 3,
+          flag_got_count: 1,
+          detail: 'challenge "web-01" has 1/3 flags',
+        },
+      },
+    });
+    await app.loadProjectFlag("proj_1");
+    expect(app.projectFlagVerificationLabel()).toBe(
+      '题目校验：未通过（challenge "web-01" has 1/3 flags）',
+    );
+    expect(app.projectFlagVerificationClass()).toContain("amber");
+    expect(app.projectFlagVerificationPending()).toBe(true);
+
+    app.projectFlag.verification.latest = {
+      kind: "challenge",
+      ok: true,
+      flag_count: 3,
+      flag_got_count: 3,
+      detail: 'challenge "web-01" has all 3 flag(s)',
+    };
+    expect(app.projectFlagVerificationLabel()).toBe("题目校验：通过 3/3");
+    expect(app.projectFlagVerificationClass()).toContain("emerald");
+    expect(app.projectFlagVerificationPending()).toBe(false);
+
+    app.projectFlag.verification = { policy: { kind: "challenge", challenge_code: "web-01" }, latest: null };
+    expect(app.projectFlagVerificationLabel()).toBe("题目校验：等待完成");
+    expect(app.projectFlagVerificationPending()).toBe(true);
+
+    app.projectFlag.verification = { policy: { kind: "off" }, latest: null };
+    expect(app.projectFlagVerificationLabel()).toBe("校验已关闭");
+    expect(app.projectFlagVerificationClass()).toContain("slate");
+    expect(app.projectFlagVerificationPending()).toBe(false);
+  });
+
+  test("maps the new-project verification selector into the create payload", async () => {
+    const app = loadState();
+    const posts: any[] = [];
+    app.api = async (method: string, path: string, body: unknown) => {
+      if (method === "POST" && path === "/projects") {
+        posts.push(body);
+        return { project: { id: "proj_new" } };
+      }
+      return {};
+    };
+    app.loadProjects = async () => {};
+    app.openProject = async () => {};
+    app.showToast = () => {};
+    app.$refs = {};
+    const base = {
+      title: "T",
+      origin: "O",
+      goal: "G",
+      bootstrap: true,
+      targetsText: "10.0.0.5",
+      scopeNotes: "",
+      hints: [{ content: "" }],
+    };
+
+    app.newProject = { ...base, verificationKind: "auto", challengeCode: "" };
+    await app.createProject();
+    expect(posts.at(-1).verification).toBeUndefined();
+
+    app.newProject = { ...base, verificationKind: "challenge", challengeCode: " web-01 " };
+    await app.createProject();
+    expect(posts.at(-1).verification).toEqual({ kind: "challenge", challenge_code: "web-01" });
+    expect(app.newProject.verificationKind).toBe("auto");
+
+    app.newProject = { ...base, verificationKind: "challenge", challengeCode: "   " };
+    await app.createProject();
+    expect(posts.length).toBe(2);
+    expect(app.newProjectShowErrors).toBe(true);
+
+    app.newProject = { ...base, verificationKind: "evidence", challengeCode: "" };
+    await app.createProject();
+    expect(posts.at(-1).verification).toEqual({ kind: "evidence" });
+
+    app.newProject = { ...base, verificationKind: "off", challengeCode: "" };
+    await app.createProject();
+    expect(posts.at(-1).verification).toEqual({ kind: "off" });
+    expect(posts.length).toBe(4);
   });
 
   test("turns a 409 delete into an explicit force action", async () => {

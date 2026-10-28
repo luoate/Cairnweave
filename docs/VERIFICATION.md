@@ -1,4 +1,4 @@
-# 完成验证（M14a）
+# 完成验证（M14a + M18f）
 
 M14a 把“项目完成”从模型自证改为控制面可验证。worker 返回的 `complete` 只是声明；
 scheduler 在关项目之前运行 oracle，并把每次判定写入旁路表。验证失败不会丢工作：
@@ -29,6 +29,12 @@ reason 释放租约、项目保持 active；bootstrap 保留已产出的 Fact，
 `verification.evidence_enforcement` 处理（默认 `completion` → `evidence`；`off` →
 `off`）。`kind=challenge` 必须带非空 `challenge_code`（≤200 字符）；`evidence` / `off`
 不接受 `challenge_code`。
+
+`POST /projects` 未显式给出 `verification` 时（M18f），控制面先看环境变量
+`verification.challenge.code_env`（默认 `TCH_CHALLENGE_ID`）：非空即落库
+`{kind: challenge, challenge_code: <值>}`，否则回退到 `evidence_enforcement` 映射的
+`evidence` / `off`。显式请求体始终优先。策略在创建时固定；已有项目不会因环境变量或
+配置变化而切换。
 
 ## 2. 判定来源
 
@@ -75,15 +81,18 @@ verification:
   challenge:
     base_url_env: TCH_CHALLENGE_API_BASE_URL
     agent_token_env: TCH_CHALLENGE_AGENT_TOKEN
+    # 当前题目编号所在的环境变量名；非空时新项目自动使用 challenge 校验。
+    code_env: TCH_CHALLENGE_ID
     timeout_ms: 5000
 ```
 
-`base_url_env` / `agent_token_env` 是环境变量**名**，不是值。默认名与 `TCH` 挑战
-平台一致；换成其他平台时只改名字，凭据仍放在进程环境里。
+`base_url_env` / `agent_token_env` / `code_env` 是环境变量**名**，不是值。默认名与
+`TCH` 挑战平台一致；换成其他平台时只改名字，凭据与题目编号仍放在进程环境里。
 
 `evidence_enforcement` 只影响完成判定，不在探索阶段拦截；它同时作为没有
-`project_verification` 行的旧项目的回退策略。`POST /projects` 未显式给出
-`verification` 时，控制面会把当前配置映射成 `{kind: evidence|off}` 并落库。
+`project_verification` 行的旧项目的回退策略，也是 `code_env` 为空时新项目的默认
+（`completion` → `evidence`，`off` → `off`）。`POST /projects` 未显式给出
+`verification` 时，控制面按上一节的自动规则落库。
 
 ## 4. HTTP
 
@@ -93,6 +102,12 @@ verification:
   evidence_refs, checked_at, check}`。未知项目 404；body 不是对象或 `facts` 非法 400。
 - `GET /projects/{id}/verification`：`{policy, latest}`。`policy` 对没有旁路行的项目
   合成 `evidence` 默认值；`latest` 是最近一次检查或 `null`。
+- `GET /projects/{id}/flag`（M18f 扩展）：在原有 Flag 扫描结果上附带
+  `verification: {policy, latest}`，与上一条同源。项目页头横幅据此显示校验状态，
+  challenge 策略且尚未通过时轮询会持续刷新，直到调度器写入一次通过的检查。
+- 新建项目弹窗（M18f）提供“完成校验”选择：`auto`（默认，题目环境优先）、
+  `challenge`（需填写题目编号）、`evidence`、`off`。选择只影响创建请求；已有项目的
+  策略仍按 `project_verification` 固定，需要改策略时应新建项目。
 - 手工 `POST /projects/{id}/complete` 不经过 oracle，仍是操作员显式覆盖；调度器不会
   调用它。设置 `CAIRN_OPERATOR_TOKEN` 后，该路由要求
   `X-Cairn-Operator-Token` 匹配，否则返回 401；未设置时保持旧行为，兼容本地单用户
@@ -123,5 +138,8 @@ verification:
   文件内容能推出 Fact 描述；人工复核仍需要看证据文件。
 - challenge 的信任落在外部挑战 API 与 token 的保管上；控制面不校验 flag 明文。
 - 并发完成声明可能重复调用 oracle；每次都是一行新检查，`latest` 只反映最后一次。
+- 自动 challenge 选择只读取服务端进程环境；`TCH_CHALLENGE_ID` 存在但 API 凭据缺失时，
+  新项目仍会落库为 challenge 策略，并在完成时以“未设置”失败（fail closed），不会退回
+  evidence。
 - 手工 `/complete` 可绕过验证（配置 token 后至少要求操作员凭据），审计上仍需要把它
   当作操作员决策。

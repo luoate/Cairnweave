@@ -169,6 +169,8 @@ export const EVIDENCE_ENFORCEMENT_MODES: readonly EvidenceEnforcement[] = [
 export interface ChallengeVerifierConfig {
   baseUrlEnv: string;
   agentTokenEnv: string;
+  /** Environment variable naming the current challenge; enables automatic challenge policy. */
+  codeEnv: string;
   timeoutMs: number;
 }
 
@@ -183,6 +185,7 @@ export const DEFAULT_VERIFICATION: VerificationConfig = {
   challenge: {
     baseUrlEnv: "TCH_CHALLENGE_API_BASE_URL",
     agentTokenEnv: "TCH_CHALLENGE_AGENT_TOKEN",
+    codeEnv: "TCH_CHALLENGE_ID",
     timeoutMs: 5000,
   },
 };
@@ -192,6 +195,25 @@ export function defaultVerificationKind(
   config: VerificationConfig,
 ): "evidence" | "off" {
   return config.evidenceEnforcement === "off" ? "off" : "evidence";
+}
+
+export interface DefaultVerificationPolicy {
+  kind: "challenge" | "evidence" | "off";
+  challenge_code?: string;
+}
+
+/**
+ * Policy for `POST /projects` when the request omits `verification`. A challenge
+ * environment (BreachWeave's `TCH_CHALLENGE_ID`) is the strongest signal, so it wins
+ * over the generic evidence switch; otherwise the switch decides evidence vs off.
+ */
+export function defaultVerificationPolicy(
+  config: VerificationConfig,
+  env: Record<string, string | undefined>,
+): DefaultVerificationPolicy {
+  const code = env[config.challenge.codeEnv]?.trim() ?? "";
+  if (code !== "") return { kind: "challenge", challenge_code: code };
+  return { kind: defaultVerificationKind(config) };
 }
 
 export type ProposalMode = "off" | "dry_run" | "apply";
@@ -784,6 +806,9 @@ function parseVerification(value: unknown): VerificationConfig {
       agentTokenEnv: has(challenge, "agent_token_env")
         ? requiredString(challenge, "agent_token_env", "verification.challenge")
         : defaults.agentTokenEnv,
+      codeEnv: has(challenge, "code_env")
+        ? requiredString(challenge, "code_env", "verification.challenge")
+        : defaults.codeEnv,
       timeoutMs: has(challenge, "timeout_ms")
         ? requiredPositiveInt(challenge, "timeout_ms", "verification.challenge")
         : defaults.timeoutMs,

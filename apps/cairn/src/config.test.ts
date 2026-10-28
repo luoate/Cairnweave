@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   ConfigError,
+  DEFAULT_VERIFICATION,
+  defaultVerificationPolicy,
   loadDispatchConfig,
   parseDispatchConfig,
   type ConfigOptions,
@@ -100,6 +102,7 @@ describe("dispatcher config", () => {
       challenge: {
         baseUrlEnv: "TCH_CHALLENGE_API_BASE_URL",
         agentTokenEnv: "TCH_CHALLENGE_AGENT_TOKEN",
+        codeEnv: "TCH_CHALLENGE_ID",
         timeoutMs: 5000,
       },
     });
@@ -112,12 +115,14 @@ describe("dispatcher config", () => {
   challenge:
     base_url_env: CUSTOM_BASE_URL
     agent_token_env: CUSTOM_AGENT_TOKEN
+    code_env: CUSTOM_CHALLENGE_ID
     timeout_ms: 1500
 `,
     );
     expect(config.verification.challenge).toEqual({
       baseUrlEnv: "CUSTOM_BASE_URL",
       agentTokenEnv: "CUSTOM_AGENT_TOKEN",
+      codeEnv: "CUSTOM_CHALLENGE_ID",
       timeoutMs: 1500,
     });
   });
@@ -142,6 +147,24 @@ describe("dispatcher config", () => {
 `,
       ),
     ).toThrow("verification.evidence_enforcement");
+  });
+
+  test("defaults new projects to challenge when the environment names one", () => {
+    expect(
+      defaultVerificationPolicy(DEFAULT_VERIFICATION, { TCH_CHALLENGE_ID: "web-01" }),
+    ).toEqual({ kind: "challenge", challenge_code: "web-01" });
+    expect(
+      defaultVerificationPolicy(DEFAULT_VERIFICATION, { TCH_CHALLENGE_ID: "  " }),
+    ).toEqual({ kind: "evidence" });
+    expect(defaultVerificationPolicy(DEFAULT_VERIFICATION, {})).toEqual({
+      kind: "evidence",
+    });
+    expect(
+      defaultVerificationPolicy(
+        { ...DEFAULT_VERIFICATION, evidenceEnforcement: "off" },
+        {},
+      ),
+    ).toEqual({ kind: "off" });
   });
 
   test("rejects an invalid verification timeout", () => {

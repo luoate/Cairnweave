@@ -6,8 +6,8 @@
 skills / Observer）合并成**一个 Bun/TypeScript 代码库**，不再维护 Python ↔ TypeScript
 之间的进程桥、JSONL RPC 和 worker 适配器。
 
-状态：**M18e（前端 Flag 展示）**；M0–M4、M5a–M5c、
-M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e 的计划项全部完成（M16b 真实 A/B 仍待第二个可用模型）。Phase 1 的
+状态：**M18f（challenge/Flag 自动校验）**；M0–M4、M5a–M5c、
+M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e、M18f 的计划项全部完成（M16b 真实 A/B 仍待第二个可用模型）。Phase 1 的
 “本地看板 + Observer 提案 + 证据门 + 单一写图者”闭环已具备；提案默认关闭。Phase 2
 的触发持久化、意图优先级/预算、单项目 token/成本与并发配额、只读慢层观测、逐 Fact
 成本归因与因果链，以及 reason 的 Hint/去重输出、人工重规划与资源压力触发均已落地，并
@@ -99,6 +99,14 @@ M18e 把拿到的 Flag 显示到项目页：新增只读 `GET /projects/{id}/fla
 任意文件读取。项目页头下方在命中时显示绿色 Flag 横幅，标注来源工件并提供复制按钮，
 轮询期间找到后不再重复扫描。浏览器已用 proj_008 实测显示，proj_007 等无 Flag 项目
 不显示横幅。
+M18f 打开 challenge/Flag 自动校验：服务端环境存在 `TCH_CHALLENGE_ID`
+（`verification.challenge.code_env` 可改名）时，新建项目自动落库
+`verification.kind=challenge` 并以该值作为题目编号；显式请求体仍然优先，`code_env`
+为空时回退 `evidence_enforcement`。新建弹窗新增“完成校验”选择（自动 / 题目 /
+证据 / 关闭）与题目编号行内校验。`GET /projects/{id}/flag` 同时返回
+`verification: {policy, latest}`，页头 Flag 横幅显示“题目校验：通过 n/n”或失败原因；
+challenge 项目未通过时轮询会持续刷新校验状态，直到调度器写入通过检查。策略仍在
+创建时固定，已有项目不会因环境变量变化而切换。
 `cairn serve` 是可运行的 Cairn 兼容服务：SQLite schema、领域服务、全部
 五个路由、YAML/timeline 导出、静态 Web UI 均已就位，并用 Python Cairn 生成的 golden
 做了逐字对照。进程内 scheduler、任务/结果文件 worker 协议、BreachWeave Solver 接入已在 M2
@@ -418,6 +426,18 @@ M14a 增加（Phase 3 收口）：
 - **prompt 契约**：每个任务的 prompt 末尾追加 Completion Verification 段；
   BreachWeave 入口也明确要求 `evidence_refs`，并提示不要写 flag 明文或凭据。
   详见 `docs/VERIFICATION.md`。
+
+M18f 增加（自动 challenge 校验）：
+
+- **环境驱动默认策略**：`POST /projects` 时若请求体未给 `verification`，先读
+  `verification.challenge.code_env`（默认 `TCH_CHALLENGE_ID`）；非空即落库
+  `{kind: challenge, challenge_code}`，否则按 `evidence_enforcement` 落 `evidence` /
+  `off`。显式请求体优先；策略创建后固定。
+- **UI 创建与展示**：新建弹窗可选择自动 / 题目 / 证据 / 关闭，并校验题目编号；
+  Flag 横幅读取 `GET /projects/{id}/flag` 的 `verification` 快照，显示通过计数或失败
+  原因，challenge 未通过时轮询持续刷新。
+- **demo 配置**：`runs/demo/dispatch.yaml` 仍保留 `evidence_enforcement: off` 作为
+  本地演练逃生口；设置 `TCH_CHALLENGE_ID` 后新建项目仍会自动走 challenge 校验。
 
 M14b 增加（Phase 2 补全）：
 
@@ -1160,9 +1180,9 @@ M6 的跨进程恢复 gate 不调用模型：它先写下一台崩溃控制面�
 bun run tools/gate/m6-restart-gate.ts
 ```
 
-## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a + M17a + M17b + M17c + M17d + M18a + M18b + M18c + M18d + M18e，2026-10-28，Bun 1.4.4）
+## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a + M17a + M17b + M17c + M17d + M18a + M18b + M18c + M18d + M18e + M18f，2026-10-28，Bun 1.4.4）
 
-- `bun test`：**619 passed**（67 个文件），0 failed。
+- `bun test`：**624 passed**（67 个文件），0 failed。
 - `bun run typecheck`：`tsc --noEmit` 通过。
 - **HTTP 对照**：`api.golden.json` 的 60 步请求（成功路径、400/403/404/405/409、租约过期、
   删除级联、导出、路由错误）由 Python FastAPI + 固定时钟生成；TS 重放后状态码、content-type
@@ -1453,6 +1473,11 @@ bun run tools/gate/m6-restart-gate.ts
   `../` 越界路径拒绝、无 workspace 与未知项目 404；UI 测试确认 `loadProjectFlag` 调用
   `GET /projects/{id}/flag`、横幅来源文案与复制动作。浏览器在 proj_008 实测显示真实
   Flag，proj_007 不显示横幅。
+- **challenge/Flag 自动校验（M18f）**：配置测试覆盖 `code_env` 解析与默认值；
+  路由测试确认 `TCH_CHALLENGE_ID` 存在时新建项目自动落库 challenge 策略、显式
+  `verification` 仍然优先；UI 测试确认校验徽标的通过/失败/关闭文案、challenge
+  未通过时的继续轮询条件、新建弹窗的题目编号行内校验，以及 `auto`/`challenge`/
+  `evidence`/`off` 到创建请求体的映射。
 
 golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定时钟、`TZ=UTC`）。
 重新生成方法与约束见 `docs/PORTING.md`。
@@ -1520,6 +1545,7 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M18c ✅ | 模型管理收尾：`docs/MODELS.md` 一页操作手册（五步接入、HTTP 速查、文件落点、错误排查、临时目录演练、M16b 解锁）；端到端流程测试覆盖空目录 → provider/密钥 → 模型 → 默认 → 文件落点 → 强制删除，并断言全程响应无密钥/header 值 | 605 passed / 66 files（2026-10-28）；真实 A/B（M16b）仍待第二个可用模型 |
 | M18d ✅ | 连通性测试可用化：Provider 卡片“测试连通性”，优先测试该 provider 的 `cairn-worker` 条目并回显实际模型；无模型条目给可读提示；服务端 60 秒上限（`agentTestTimeoutMs` 可调）与超时文案；`Bun.serve` 空闲超时 120 秒，避免默认 10 秒先中断 | 609 passed / 66 files（2026-10-28） |
 | M18e ✅ | 前端 Flag 展示：只读 `GET /projects/{id}/flag` 从已索引 artifacts 提取 Flag（过滤占位符、二进制、超大文件与越界路径，限制文件数/字节数/行长度），项目页头绿色横幅显示值、来源与复制按钮，轮询找到后停止重复扫描 | 619 passed / 67 files（2026-10-28）；浏览器实测 proj_008 显示、proj_007 不显示 |
+| M18f ✅ | challenge/Flag 自动校验：`TCH_CHALLENGE_ID` 存在时新建项目自动选择 challenge 策略（显式请求体优先），新建弹窗提供校验选择与题目编号校验，`/flag` 附带 `verification` 快照并在横幅显示通过计数/失败原因，未通过时继续轮询 | 624 passed / 67 files（2026-10-28） |
 
 ## 与 Phase 0 的关系
 

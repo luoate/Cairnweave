@@ -1,4 +1,4 @@
-# 架构（M18e 更新）
+# 架构（M18f 更新）
 
 本文固定合并后的角色边界、数据所有权和失败语义。实现以本文为准；需要改动时先改本文并
 记录原因。
@@ -162,6 +162,13 @@ realpath 包含关系（拒绝 `..`、绝对路径、符号链接和越界父目
 文件数、次数、长度排序取第一名。未命中、无 scheduler workspace 或 artifacts 目录
 缺失都返回 200 + `found:false`，未知项目 404。UI 在项目页头下方显示绿色横幅（值、
 来源、复制按钮），打开项目时加载、轮询期间在未命中时重试，找到后停止重复扫描。
+M18f 打开 challenge/Flag 自动校验：`POST /projects` 未给 `verification` 时，控制面读
+`verification.challenge.code_env`（默认 `TCH_CHALLENGE_ID`）；非空即写入
+`{kind: challenge, challenge_code}`，否则按 `evidence_enforcement` 落 `evidence` /
+`off`。显式请求体优先，策略仍在创建时固定。`GET /projects/{id}/flag` 现在附带
+`verification: {policy, latest}`；页头横幅显示题目校验的通过计数或失败原因，challenge
+项目最近一次检查未通过时轮询继续刷新 `/flag`，直到调度器写入通过的检查。新建弹窗
+增加“完成校验”选择（自动 / 题目 / 证据 / 关闭）与题目编号行内校验。
 
 ## 1. 范围
 
@@ -418,8 +425,9 @@ M5a/M5b 只增加旁路数据，不改图模型、YAML 导出和既有 HTTP 响�
 判定结果随后单独写入 `verification_checks`。
 
 - **策略**：`project_verification.kind` 为 `evidence`（默认）/ `challenge` / `off`；
-  创建项目时可指定。`verification.evidence_enforcement`（`completion` 默认 / `off`）
-  是 API 新建项目的默认策略，也是旧项目无行时的回退；策略不进入图模型或 YAML。
+  创建项目时可指定。未指定时（M18f）先看 `code_env` 指向的环境变量，非空即
+  `challenge`；否则由 `verification.evidence_enforcement`（`completion` 默认 / `off`）
+  决定，也是旧项目无行时的回退。策略不进入图模型或 YAML。
 - **evidence**：reason 检查 `data.complete.from` 的每个 Fact 的 `fact_meta` 与
   `fact_evidence`：必须有 `run_id`、非空 `evidence_refs`、`evidence_status=provided`
   且至少一条证据文件。bootstrap 因为 Fact 在同一事务里创建，改用任务级
@@ -596,11 +604,12 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
   默认 `json`；`markdown` 用 `text/markdown` 返回同一对象的渲染结果。`audit` 与
   `artifacts` 只有汇总（任务数、事件数、时间边界、文件数与字节数），不含审计事件
   原文、工件路径或证据内容。未知项目 404；非法 `format` 400；其他方法 405。
-- `GET /projects/{id}/flag`（M18e，只读）→
-  `{found, flag, source, occurrences, sources, scanned_files, truncated}`。只扫描
+- `GET /projects/{id}/flag`（M18e/M18f，只读）→
+  `{found, flag, source, occurrences, sources, scanned_files, truncated,
+  verification: {policy, latest}}`。只扫描
   `project_artifacts` 中登记且仍在 `<workspace>/artifacts/` 内的普通文件；占位符、
   二进制、超大文件与越界路径被跳过。未命中返回 `found:false` 的 200；未知项目 404；
-  只有 GET。
+  只有 GET。`verification` 与 `/verification` 同源，供页头横幅显示校验状态。
 - `GET /projects/{id}/strategist?limit=20`（M12c，只读）→
   `{state, budget, intents, reason_runs}`。`state` 为 `strategist_state` 或 `null`；
   `budget` 含 `used_tokens` / `used_cost_usd` / `running_tasks`、配置上限（纯 HTTP
@@ -696,8 +705,10 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
   失败、最近检查、题目编号）、图状态、当前 Fact、取代边、run 总量与按 worker/model/
   profile 分桶、审计与工件计数；右上角链接到同一路由的 `format=markdown` 由浏览器
   下载。它只展示报告快照，不在前端重新组合数据。
-- `Flag` 横幅（M18e）读取 `GET /projects/{id}/flag`，在项目页头下方显示命中的 Flag、
-  来源工件与复制按钮；未命中时不占位。它不进入报告页，避免把工件内容带进可分享快照。
+- `Flag` 横幅（M18e/M18f）读取 `GET /projects/{id}/flag`，在项目页头下方显示命中的
+  Flag、来源工件与复制按钮；未命中时不占位。M18f 起同一响应带 `verification` 快照，
+  横幅追加校验徽标（题目通过 n/n、失败原因或“校验已关闭”），challenge 未通过时轮询
+  继续刷新。它不进入报告页，避免把工件内容带进可分享快照。
 - Fact 详情（M15d）在 `GET /facts/{id}/meta` 返回 `superseded_by` 或非空 `supersedes`
   时额外显示“取代关系”：点取代者可跳到新 Fact，点旧 Fact 可回到被取代项。
 - `Cost`（成本，M13b）读取 `GET /projects/{id}/cost`，显示项目总量与归因完整性、
@@ -970,11 +981,12 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
   `Σ ε·decay^k` 整数部分增长时改为探索，选已结束 run 最少的 profile；排队的 conclude
   复用失败任务的 profile。策略是确定性的：同样的 run 历史永远得到同样的选择。
   凭据仍只在 agent 配置中，派发表只出现 id 与模型名。
-- `verification` 是新增的可选段（M14a）：`evidence_enforcement` 为
+- `verification` 是新增的可选段（M14a/M18f）：`evidence_enforcement` 为
   `completion | off`（默认 `completion`），决定 API 新建项目与旧项目的完成证据策略；
-  `challenge.base_url_env` / `challenge.agent_token_env` 是**环境变量名**（默认
-  `TCH_CHALLENGE_API_BASE_URL` / `TCH_CHALLENGE_AGENT_TOKEN`），
-  `challenge.timeout_ms` 是正整数（默认 `5000`）。配置里不保存地址或 token 的值；
+  `challenge.base_url_env` / `challenge.agent_token_env` / `challenge.code_env` 是
+  **环境变量名**（默认 `TCH_CHALLENGE_API_BASE_URL` / `TCH_CHALLENGE_AGENT_TOKEN` /
+  `TCH_CHALLENGE_ID`），`challenge.timeout_ms` 是正整数（默认 `5000`）。`code_env`
+  非空时新项目自动选择 challenge。配置里不保存地址、token 或题目编号的值；
   缺省使用默认值，非法值以 `ConfigError` 拒绝。
 - `audit_stream` 是新增的可选段（M9，默认关闭）：`enabled`（布尔，默认 `false`）、
   `url`（可选的 http(s) 地址）。启用后 scheduler 才签发 bearer token 并注入 worker；
