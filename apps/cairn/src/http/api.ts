@@ -83,6 +83,10 @@ import {
 } from "./agent-config";
 import { requireOperator } from "./auth";
 import {
+  emptyProjectBoard,
+  readProjectBoard,
+} from "./project-board";
+import {
   collectProjectFlag,
   emptyFlagResult,
   type ProjectFlagResult,
@@ -719,6 +723,19 @@ function buildRoutes(
           ...(status === null ? {} : { status: status as "pending" | "applied" | "rejected" | "duplicate" | "dry_run" }),
           ...(kind === null ? {} : { kind: kind as "fact" | "intent" | "hint" }),
         }),
+      );
+    }),
+  );
+
+  // Read-only Observer board. It is workspace data rather than graph data, so a missing
+  // board (or pure HTTP mode) answers `available: false` instead of an error.
+  route("GET", "/projects/{project_id}/board", ({ params }) =>
+    db.withConn((conn) => {
+      const projectId = params["project_id"]!;
+      getProjectOr404(conn, projectId);
+      if (workspaceRoot === undefined) return json(emptyProjectBoard());
+      return json(
+        readProjectBoard({ workspace: projectWorkspace(workspaceRoot, projectId) }),
       );
     }),
   );

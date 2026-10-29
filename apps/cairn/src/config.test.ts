@@ -64,8 +64,8 @@ describe("dispatcher config", () => {
     });
     expect(config.auditStream).toEqual({ enabled: false, url: null });
     expect(config.proposals).toEqual({
-      enabled: false,
-      mode: "apply",
+      enabled: true,
+      mode: "dry_run",
       maxPerTask: 20,
       maxFileBytes: 16 * 1024,
       maxTotalBytes: 64 * 1024,

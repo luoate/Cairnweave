@@ -6,11 +6,11 @@
 skills / Observer）合并成**一个 Bun/TypeScript 代码库**，不再维护 Python ↔ TypeScript
 之间的进程桥、JSONL RPC 和 worker 适配器。
 
-状态：**M22（Observer 默认开启 + 运行配置前端可调）**；M0–M4、M5a–M5c、
-M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M16b、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e、M18f、M18g、M19a、M19b、M20a、M20b、M21、M22 的计划项全部完成。Phase 1 的
+状态：**M23（提案默认演练开启 + 看板只读页签）**；M0–M4、M5a–M5c、
+M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M16b、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e、M18f、M18g、M19a、M19b、M20a、M20b、M21、M22、M23 的计划项全部完成。Phase 1 的
 “本地看板 + Observer 提案 + 证据门 + 单一写图者”闭环已具备；Observer 复盘自 M22 起默认
-开启（只读复盘，不改任务结果），提案默认仍关闭。Phase 2
-的触发持久化、意图优先级/预算、单项目 token/成本与并发配额、只读慢层观测、逐 Fact
+开启（只读复盘，不改任务结果），提案自 M23 起默认 `dry_run`（完整校验并记录，不写图）。
+Phase 2 的触发持久化、意图优先级/预算、单项目 token/成本与并发配额、只读慢层观测、逐 Fact
 成本归因与因果链，以及 reason 的 Hint/去重输出、人工重规划与资源压力触发均已落地，并
 已用真实模型 gate 核对用量记账、预算耗尽、慢层 API 与 `/cost` 的一致性，见
 `docs/STRATEGIST.md`。Phase 3 的完成语义已收口：项目默认按证据验证，challenge 项目按
@@ -155,7 +155,8 @@ flag 文本”，撰写 prompt 同步禁止把占位串当答案或自己拼一�
 详见 `docs/WRITEUP.md` §1.3。
 M22 把运行期配置从“改文件再重启”变成“默认更可用、前端可调”：Observer 复盘默认开启
 （`observer.enabled` 默认 `true`；它只写看板与审计，不改变任务结果，提案仍由
-`proposals.enabled` 单独控制）。页头新增「运行配置」弹窗，可调调度并发与间隔、任务超时、
+`proposals` 段单独控制，M23 起该段默认 `enabled: true` + `mode: dry_run`）。页头新增
+「运行配置」弹窗，可调调度并发与间隔、任务超时、
 图切片、证据门、Worker 软截止与保留、保留/清理策略、预算、策略触发阈值、提案参数与
 Worker 选择策略。改动以 snake_case patch 存进 SQLite 的 `runtime_config_overrides`，
 不会被下一次进程启动覆盖；服务端把它深合并到 dispatch.yaml 的解析结果上并**复用同一套
@@ -165,6 +166,17 @@ tick 生效，间隔类字段会重新挂定时器。只读区展示 `server`、
 `worker_profiles`、Observer 与审计流等部署项，它们仍需改 YAML 并重启。`DELETE` 清空
 全部覆盖回到文件值；`PUT` 整组替换（UI 只提交与文件基线不同的字段）。详见
 `docs/CONFIG.md`。
+M23 把 Observer 的两类产物默认打开：`proposals` 默认 `enabled: true`、`mode: dry_run`，
+sidecar 仍只能提交候选，控制面照常做来源/证据/去重校验并把结果记进 `proposals` 表，
+但没有一条写入图——把「提案」页签从空列表变成可观察的审核流水，真正写图仍需运营者把
+`mode` 改成 `apply`。新增只读 `GET /projects/{id}/board`（`http/project-board.ts`）读取
+工作区 `.cairn/board/board/`：想法索引取 `ideas/index.json`，记忆逐条读
+`memory/entries/*.json`，未知状态/类型分别归一到 `pending` / `note`；工作区或看板目录是
+符号链接、越界路径、非普通文件、超限文件都会被拒绝或跳过，条目数与正文/引用长度也有
+上限，响应带 `ideas_total` / `memory_total` / `truncated`。没有看板（或纯 HTTP 模式）
+回答 `available: false` 而不是报错。UI 在「提案」与「成本」之间新增只读「看板」页签，
+按状态/类型着色展示想法与记忆，显示条目计数与截断标记；页签同样只发 GET，写看板仍只
+发生在 Observer 的 sidecar 会话里。
 `cairn serve` 是可运行的 Cairn 兼容服务：SQLite schema、领域服务、全部
 五个路由、YAML/timeline 导出、静态 Web UI 均已就位，并用 Python Cairn 生成的 golden
 做了逐字对照。进程内 scheduler、任务/结果文件 worker 协议、BreachWeave Solver 接入已在 M2
@@ -346,7 +358,7 @@ M10 增加：
 
 M11 增加：
 
-- **Observer 提案闭环（默认关闭）**：sidecar 新增 `propose_graph_change` 工具，只能把
+- **Observer 提案闭环（M23 起默认 dry_run）**：sidecar 新增 `propose_graph_change` 工具，只能把
   候选 fact / intent / hint 写成任务级
   `<session>/observer/proposals/<uuid>.json`；没有新增 HTTP 写路由，主 Solver 也不能写
   该目录（Host Bridge 把整个 `<session>/observer/` 视为只读）。任务结束时 scheduler
@@ -357,11 +369,12 @@ M11 增加：
   来源 Fact 与通过 `collectEvidence` 校验的证据，然后走与 worker 相同的
   `createIntent` + `concludeIntent` 写图，并记录 `run_id` 与证据摘要。项目非 active
   时拒绝（`project_inactive`）。
-- **三种模式**：`proposals.mode: off | dry_run | apply`。`dry_run` 完整执行来源、证据与
+- **三种模式**：`proposals.mode: off | dry_run | apply`，默认 `enabled: true` + `dry_run`。`dry_run` 完整执行来源、证据与
   重复校验，但只把结果记为 `dry_run`，不写图；`apply` 才真正写入。所有决策
   （`applied / rejected / duplicate / dry_run`）带 `decision_reason` 与 `applied_id`。
-- **只读观测**：`GET /projects/{id}/proposals` 支持 `status`/`kind` 过滤；UI 增加第四个
-  只读页签“提案”，显示候选内容、来源、证据、去重键、审核结果与写入 ID。提案文件与
+- **只读观测**：`GET /projects/{id}/proposals` 支持 `status`/`kind` 过滤；UI 增加只读页签
+  “提案”，显示候选内容、来源、证据、去重键、审核结果与写入 ID。M23 又增加只读“看板”
+  页签（`GET /projects/{id}/board`）直接展示 Observer 的想法与记忆。提案文件、看板文件与
   `proposals` 表都是旁路数据，YAML 导出与 Cairn 图语义不变。
 - **失败隔离**：候选解析/审核错误只记日志并落为 rejected，不影响任务结果、退出码或
   `result.json`；重新导入同一保留会话目录是幂等的（提案 ID 由项目、任务、文件名派生）。
@@ -1018,6 +1031,7 @@ observer:
   `CAIRN_OBSERVER_*`；关闭时显式注入 `CAIRN_OBSERVER_ENABLED=0`。
 - 看板是**项目级** `<workspace>/.cairn/board/`，跨任务持久；review 状态/队列/轮次是
   任务级 `<session>/observer/`。sidecar 的 JSONL 在 `<session>/observer/sidecar/`。
+  M23 起 UI 的「看板」页签通过只读 `GET /projects/{id}/board` 展示同一份想法与记忆。
 - 主 Solver 只有 `memory_list` / `idea_list` / `idea_search` 三个只读工具；写工具不在
   Host Bridge 白名单，文件工具对看板目录的 `write` / `edit` 也被拒绝。
 - sidecar 使用 `CAIRN_AGENT_CONFIG_DIR`，只注册看板工具与 `query_solver_history`，没有
@@ -1029,7 +1043,7 @@ observer:
   时由 M8 的项目级 review 租约串行化复核（拿不到租约就跳过本轮），但看板写入本身仍是
   策略级保护。详见 `docs/OBSERVER.md`。
 
-### 图提案（M11，可选，默认关闭）
+### 图提案（M11，M23 起默认演练）
 
 提案让 Observer 的结论进入 Cairn 图，但**不把写权限交给 worker**。sidecar 只能写候选
 文件；控制面是唯一审核者和写图者。
@@ -1041,7 +1055,7 @@ observer:
 
 proposals:
   enabled: true
-  mode: apply                 # off | dry_run | apply
+  mode: dry_run               # off | dry_run | apply（默认 dry_run）
   max_per_task: 20
   max_file_bytes: 16384
   max_total_bytes: 65536
@@ -1059,9 +1073,11 @@ proposals:
   `createIntent` + `concludeIntent` 写入；`intent` 必须有 `dedupe_key`，与未结束
   intent 或已应用提案重复时标为 `duplicate`；`hint` 按内容去重。项目非 active 时
   拒绝。审核失败只记录，不影响 worker 结果。
-- `dry_run` 适合先观察模型会提出什么：它执行全部校验，但只记录 `dry_run`，不写图。
+- `dry_run` 默认开启：它执行全部校验，但只记录 `dry_run`，不写图；需要写图时再改
+  `mode: apply`，或在「运行配置」弹窗里热切换。
 - 只读查询：`GET /projects/{id}/proposals[?status=&kind=]`；UI 的“提案”页签同样只发
-  GET。控制面 API 仍未认证，远程/容器部署必须加网络层访问控制。
+  GET。看板另走 `GET /projects/{id}/board`（M23）。控制面 API 仍未认证，远程/容器部署
+  必须加网络层访问控制。
 
 ### 慢层触发（M12a）
 
@@ -1293,9 +1309,9 @@ M6 的跨进程恢复 gate 不调用模型：它先写下一台崩溃控制面�
 bun run tools/gate/m6-restart-gate.ts
 ```
 
-## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a + M17a + M17b + M17c + M17d + M18a + M18b + M18c + M18d + M18e + M18f + M18g + M19a + M19b + M16b + M20a + M20b + M21 + M22，2026-10-29，Bun 1.4.4）
+## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a + M17a + M17b + M17c + M17d + M18a + M18b + M18c + M18d + M18e + M18f + M18g + M19a + M19b + M16b + M20a + M20b + M21 + M22 + M23，2026-10-29，Bun 1.4.4）
 
-- `bun test`：**703 passed**（72 个文件），0 failed。
+- `bun test`：**740 passed**（75 个文件），0 failed。
 - `bun run typecheck`：`tsc --noEmit` 通过。
 - **HTTP 对照**：`api.golden.json` 的 60 步请求（成功路径、400/403/404/405/409、租约过期、
   删除级联、导出、路由错误）由 Python FastAPI + 固定时钟生成；TS 重放后状态码、content-type
@@ -1668,6 +1684,13 @@ bun run tools/gate/m6-restart-gate.ts
   `CAIRN_OBSERVER_ENABLED=1`；`api.ui.test.ts` 断言弹窗与两个页头入口存在、可编辑路径
   每个恰有一个控件、最小 patch、空数字输入不改值、409/400 行内错误、二次确认重置与写入
   期间禁止关闭。真实运行见下方里程碑表的浏览器记录。
+- **提案默认与看板（M23）**：`config.test.ts` 断言 `DEFAULT_PROPOSALS` 为
+  `enabled: true` + `dry_run`，且显式 YAML 仍可覆盖；`tasks.test.ts` 断言默认注入
+  `CAIRN_OBSERVER_PROPOSALS_*`（含 `PROJECT_ID`/`TASK_ID`），关闭 `observer` 时只注入
+  `CAIRN_OBSERVER_ENABLED=0`；`api.board.test.ts` 覆盖缺失看板 `available:false`、未知
+  项目 404、想法/记忆归一化、坏条目跳过与 200 条上限（`ideas_total`/`truncated`）、
+  看板目录与记忆文件的符号链接拒绝、纯 HTTP 模式；`api.ui.test.ts` 断言页签、只发 GET、
+  计数文案、空看板与错误重试。
 
 golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定时钟、`TZ=UTC`）。
 重新生成方法与约束见 `docs/PORTING.md`。
@@ -1744,6 +1767,7 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M20b ✅ | Writeup 附件包下载：`GET /projects/{id}/writeup/archive`（只读）用自研最小 ZIP 写入器（`zip.ts`：store/deflate 取小者、CRC-32、单一中央目录、固定 DOS 时间戳 → 字节确定）把 `writeup.md`（模型成稿优先）、中文 `MANIFEST.md`（项目/来源/Flag/载荷统计/目录结构/`文件与校验`表/`未打包文件`表）与**全部**已索引工件 `artifacts/<任务>/<文件>` 打成 `writeup-<id>.zip`；上限 500 条目 / 单文件 4 MiB / 总量 64 MiB（无 zip64），跳过项在清单里给中文原因；读取沿用 Flag 的路径收敛（真实目录、非符号链接、不逃逸）；JSON 增 `archive:{available,files}`，UI「附件包 N」按钮据此显示并走同源 GET，未挂载工作区 409 | 692 passed / 72 files（2026-10-28）；浏览器实测下载与 `Expand-Archive` 解压 141 个附件 |
 | M21 ✅ | Flag 扫描置信度：solver-session 回退改为只解析 `role:"toolResult"` 的消息正文（`sessionToolText`），模型自己的 assistant 叙述不再是证据——它在叙述里写下的 `CTF2{c8xxxx}` 曾按出现次数压过工具返回的真实值；`isPlaceholder` 增加掩码判定（`...`/`…`/`**`/`x{3,}` 连写与 `uuid`/`guid`/`frag`/`partial`/`truncat*`/`sample`/`dummy`/`tbd`/`unknown`/`missing` 词段匹配，`fragment_of_the_flag` 与 base64 里的 `xx` 不误杀）；被拒文本不静默丢弃：`/flag` 新增 `candidates`（≤3 条，带 `occurrences`/`sources`/`placeholder`，artifacts 与会话两路合并去重、次数相加）与 `placeholder_suspect`；Writeup 草稿的 `flag_suspects` 逐字列出它们并写“只扫描到疑似占位或截断的 flag 文本”，判定语与撰写 prompt 同步禁止把占位串当答案或拼一个看似完整的 Flag；UI 在未采纳任何值时显示琥珀色「FLAG 可疑」条（列出原文、不给复制按钮），命中时绿色横幅加“另有 N 个候选”徽标 | 703 passed / 72 files（2026-10-29）；`bun run typecheck` 通过；浏览器实测 proj_010 绿色横幅为真实 Flag、注入掩码的 proj_007 显示琥珀色可疑条 |
 | M22 ✅ | Observer 默认开启（只读复盘、提案仍默认关闭）+ 运行配置前端可调：`RuntimeConfigStore` 把 snake_case patch 存入 SQLite `runtime_config_overrides`，深合并到 dispatch.yaml 解析前文档并复用 `parseDispatchConfig` 校验，成功后原地同步共享 `DispatchConfig`；新增 `GET/PUT/DELETE /settings/runtime`（operator token、同源、64 KiB、无 `--config` 409）；`Scheduler.reconfigure()` 重挂 tick/sweep 定时器，`evidence_enforcement` 改为 getter 热读；页头「运行配置」弹窗按七组渲染数字/开关/下拉/多选，标出覆盖项、只提交与文件基线的差异、二次确认恢复；新增 `docs/CONFIG.md` | 732 passed / 74 files（2026-10-29）；浏览器实测：临时 DB+配置起 `serve --port 8019`，把调度间隔 2→5 保存后 `GET` 返回 `overrides:["runtime.interval"]`、SQLite 落 `{"runtime":{"interval":5}}`，刷新页面后值与「已覆盖 1 项」仍在；把单项目 worker 数改成 9 被 400 行内拒绝（`runtime.max_project_workers cannot exceed runtime.max_workers`）且服务端仍是 1；两次点击恢复后回到 2 且覆盖清空 |
+| M23 ✅ | 提案默认演练开启 + 看板只读页签：`DEFAULT_PROPOSALS` 改为 `enabled: true` + `mode: dry_run`（审核照常、只记录不写图）；新增 `http/project-board.ts` 与只读 `GET /projects/{id}/board`，读取 `.cairn/board/board/` 的想法索引与记忆条目，拒绝符号链接/越界/非普通文件，限制条目与文本上限并返回 `ideas_total`/`memory_total`/`truncated`，缺失看板返回 `available:false`；UI 在「提案」与「成本」之间新增「看板」页签，按状态/类型着色展示并支持刷新与错误重试 | 740 passed / 75 files（2026-10-29）；`bun run typecheck` 通过；浏览器实测临时 DB+配置起 `serve --port 8020`，预置 3 条想法/3 条记忆的项目显示计数与徽标、`GET /projects/proj_001/board` 200，无看板项目显示“暂无看板数据”，控制台无脚本错误 |
 
 ## 与 Phase 0 的关系
 

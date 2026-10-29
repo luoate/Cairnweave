@@ -36,6 +36,7 @@ describe("static operations UI", () => {
     expect(html).toContain("selectSideTab('audit')");
     expect(html).toContain("selectSideTab('evidence')");
     expect(html).toContain("selectSideTab('proposals')");
+    expect(html).toContain("selectSideTab('board')");
     expect(html).toContain("selectSideTab('cost')");
     expect(html).toContain("selectSideTab('stats')");
     expect(html).toContain("selectSideTab('report')");
@@ -63,6 +64,7 @@ describe("static operations UI", () => {
       "loadAuditTask",
       "loadEvidenceFact",
       "loadProposals",
+      "loadBoard",
       "loadCost",
       "loadStats",
       "loadReport",
@@ -260,6 +262,88 @@ describe("static operations UI", () => {
       data: { flag: { value: "CTF2{real_one}", alternatives: ["flag{second}"] }, flag_suspects: [] },
     };
     expect(app.writeupSummary()).toContain("已记录 Flag（另有 1 个候选）");
+  });
+
+  test("wires the read-only Observer board tab", async () => {
+    const html = readFileSync(INDEX_PATH, "utf8");
+    const appScript = html.match(/<script>\s*(function cairnApp\(\)[\s\S]*?)<\/script>/)![1]!;
+
+    expect(html).toContain("selectSideTab('board')");
+    expect(html).toContain(`sideTab === 'board'`);
+    expect(html).toContain("看板");
+    expect(html).toContain("boardPanel.error");
+    expect(html).toContain("boardIdeaStatusLabel(idea.status)");
+    expect(html).toContain("boardMemoryKindLabel(entry.kind)");
+    expect(appScript).toContain("/board`");
+
+    const loadStart = appScript.indexOf("async loadBoard(");
+    expect(loadStart).toBeGreaterThan(-1);
+    const loadBody = appScript.slice(loadStart, appScript.indexOf("\n    },", loadStart));
+    expect(loadBody).toContain("this.api('GET'");
+    expect(loadBody).not.toMatch(/this\.api\('(POST|PUT|DELETE)'/);
+
+    const app = loadState();
+    app.selectedProjectId = "proj_1";
+    const calls: any[] = [];
+    app.api = async (method: string, path: string) => {
+      calls.push([method, path]);
+      return {
+        available: true,
+        ideas: [
+          {
+            id: "idea_1",
+            status: "verified",
+            content: "试试 IDOR",
+            result: "拿到 admin 页面",
+            created_at: "2026-01-01T00:00:00Z",
+            updated_at: "2026-01-02T00:00:00Z",
+          },
+        ],
+        memory: [
+          {
+            id: "mem_1",
+            kind: "fact",
+            content: "登录接口无速率限制",
+            refs: ["runs/t1/findings.md"],
+            source: "observer",
+            created_at: "2026-01-01T00:00:00Z",
+            updated_at: "2026-01-01T00:00:00Z",
+          },
+        ],
+        ideas_total: 1,
+        memory_total: 1,
+        truncated: false,
+      };
+    };
+
+    await app.loadBoard();
+    expect(calls).toEqual([["GET", "/projects/proj_1/board"]]);
+    expect(app.boardPanel.data.available).toBe(true);
+    expect(app.boardPanel.loadedFor).toBe("proj_1");
+    expect(app.boardSummaryText()).toBe("1 条想法 · 1 条记忆");
+    expect(app.boardIdeaStatusLabel("testing")).toBe("验证中");
+    expect(app.boardIdeaStatusLabel("pending")).toBe("待验证");
+    expect(app.boardMemoryKindLabel("failure")).toBe("失败");
+    expect(app.boardCountText(1, 201)).toBe("1 / 201");
+    expect(app.boardCountText(2, 2)).toBe("2");
+
+    app.api = async () => ({
+      available: false,
+      ideas: [],
+      memory: [],
+      ideas_total: 0,
+      memory_total: 0,
+      truncated: false,
+    });
+    await app.loadBoard();
+    expect(app.boardSummaryText()).toBe("此项目还没有看板");
+
+    app.api = async () => {
+      throw new Error("board unavailable");
+    };
+    await app.loadBoard();
+    expect(app.boardPanel.error).toContain("board unavailable");
+    expect(app.boardPanel.loading).toBe(false);
   });
 });
 

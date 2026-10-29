@@ -221,9 +221,9 @@ export type ProposalMode = "off" | "dry_run" | "apply";
 export type ProposalKindConfig = "fact" | "intent" | "hint";
 
 /**
- * Observer/Strategist candidate proposals. Disabled by default. `dry_run` records the
- * control plane's decision without touching the graph, which is the recommended first
- * step when validating a new Observer model.
+ * Observer/Strategist candidate proposals. Enabled by default in dry-run mode: every
+ * candidate is validated and recorded, but the graph is untouched until an operator
+ * switches `mode` to `apply` after reviewing the proposal tab.
  */
 export interface ProposalsConfig {
   enabled: boolean;
@@ -237,8 +237,8 @@ export interface ProposalsConfig {
 }
 
 export const DEFAULT_PROPOSALS: ProposalsConfig = {
-  enabled: false,
-  mode: "apply",
+  enabled: true,
+  mode: "dry_run",
   maxPerTask: 20,
   maxFileBytes: 16 * 1024,
   maxTotalBytes: 64 * 1024,

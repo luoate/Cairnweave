@@ -1,9 +1,9 @@
-# 运行配置（M22）
+# 运行配置（M22，M23 补充提案默认值）
 
 dispatch.yaml 仍是配置的事实来源；M22 增加一层**运行期覆盖**，让不含部署信息的调度参数
-可以在页头「运行配置」弹窗里改，并在下一个调度周期生效，不必重启进程。Observer 复盘也在
-M22 改为默认开启（`observer.enabled` 默认 `true`），但它仍只是只读 sidecar，提案继续由
-`proposals.enabled` 单独控制。
+可以在页头「运行配置」弹窗里改，并在下一个调度周期生效，不必重启进程。Observer 复盘在
+M22 改为默认开启（`observer.enabled` 默认 `true`），提案自 M23 起默认 `enabled: true` +
+`mode: dry_run`（完整校验并记录，不写图）。
 
 ## 1. 生效链路
 
@@ -123,10 +123,12 @@ curl -X PUT http://127.0.0.1:8000/settings/runtime \
 
 ### 提案 `proposals`
 
-`enabled`（默认 false）、`mode`（`off` / `dry_run` / `apply`）、`max_per_task`、
-`max_file_bytes`、`max_total_bytes`、`allow_kinds`、`require_evidence_for_fact`、
-`min_confidence`（0–1）。提案仍需 Observer 开启、任务 kind 命中 `observer.kernel_tasks`
-且 `enabled` 为真。
+`enabled`（默认 true）、`mode`（默认 `dry_run`；`off` / `dry_run` / `apply`）、
+`max_per_task`（20）、`max_file_bytes`（16384）、`max_total_bytes`（65536）、
+`allow_kinds`（`fact`/`intent`/`hint`）、`require_evidence_for_fact`（true）、
+`min_confidence`（0–1，默认 0）。提案仍需 Observer 开启、任务 kind 命中
+`observer.kernel_tasks` 且 `enabled` 为真；默认 `dry_run` 只把审核流水写进 `proposals`
+表，需显式改成 `apply` 才写图。
 
 ## 4. 生效时机
 

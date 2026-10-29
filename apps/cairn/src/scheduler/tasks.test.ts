@@ -353,6 +353,17 @@ describe("Observer task preparation", () => {
       CAIRN_OBSERVER_TIMEOUT_SECONDS: "15",
       CAIRN_OBSERVER_MAX_REVIEWS_PER_TASK: "4",
       CAIRN_OBSERVER_MODEL: "cheap-review",
+      // Proposals default to enabled + dry_run, so the proposal contract is present.
+      CAIRN_OBSERVER_PROPOSALS_ENABLED: "1",
+      CAIRN_OBSERVER_PROPOSALS_DIR: prepared.observer.proposals!.dir,
+      CAIRN_OBSERVER_PROJECT_ID: "p1",
+      CAIRN_OBSERVER_TASK_ID: prepared.task.taskId,
+      CAIRN_OBSERVER_PROPOSALS_ALLOW_KINDS: "fact,intent,hint",
+      CAIRN_OBSERVER_PROPOSALS_MAX_PER_TASK: "20",
+      CAIRN_OBSERVER_PROPOSALS_MAX_FILE_BYTES: "16384",
+      CAIRN_OBSERVER_PROPOSALS_MAX_TOTAL_BYTES: "65536",
+      CAIRN_OBSERVER_PROPOSALS_MIN_CONFIDENCE: "0",
+      CAIRN_OBSERVER_PROPOSALS_REQUIRE_EVIDENCE: "1",
     });
   });
 

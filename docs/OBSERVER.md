@@ -1,6 +1,9 @@
-# Observer（M4c + M11，已实现）
+# Observer（M4c + M11 + M23，已实现）
 
-状态：**已实现，默认关闭**。Cairn 合并版使用一个独立的 Cairn 原生适配层，复用
+状态：**已实现，自 M22 起默认开启**（`observer.enabled: true`）；图提案自 M23 起
+默认 `enabled: true` + `mode: dry_run`，只记录候选而不写图。看板可通过只读的
+`GET /projects/{id}/board` 与前端「看板」页签查看。Cairn 合并版使用一个独立的
+Cairn 原生适配层，复用
 BreachWeave 的看板存储与 sidecar 工具，但不复用 challenge 续跑、host-bridge RPC 或
 效率 steer。实现位于：
 
@@ -32,9 +35,10 @@ packages/agent/src/solver/extension/cairn-observer/
   Observer 错误只记录日志，**不会**改变结果、`result.json` 或退出码。
 - M11 起 sidecar 可以拿到 `propose_graph_change` 工具，把候选 fact/intent/hint 写到
   任务级候选目录；scheduler 在任务结束与每个 tick 摄取这些文件，由控制面统一校验、
-  去重并写图。sidecar 仍没有图或数据库的写权限，提议默认关闭（见 §7）。
+  去重并写图。sidecar 仍没有图或数据库的写权限；M23 起提案默认以 `dry_run` 开启（见 §7）。
 - M22 起默认开启（`observer.enabled` 缺省为 `true`）；需要关闭时显式写
   `observer.enabled: false`。只有启用且任务 kind 命中 `kernel_tasks` 才接入。
+- 前端自 M23 起通过只读 `GET /projects/{id}/board` 展示项目看板的当前内容（见 §3）。
 
 ## 2. 配置
 
@@ -47,9 +51,9 @@ observer:
   timeout_seconds: 60     # 单次 review 与最终 flush 的上限
   max_reviews_per_task: 8 # 每任务最多执行的 review 数；0 等于关闭 review
   kernel_tasks: ["explore"]  # bootstrap / reason / explore / conclude
-proposals:                  # M11：默认关闭；只有 Observer 启用时才可能生效
-  enabled: false
-  mode: apply               # off | dry_run | apply
+proposals:                  # M23 起默认 true + dry_run；显式 off 才关闭
+  enabled: true
+  mode: dry_run             # off | dry_run | apply
   max_per_task: 20
   max_file_bytes: 16384
   max_total_bytes: 65536
@@ -71,9 +75,11 @@ proposals:                  # M11：默认关闭；只有 Observer 启用时才�
   `max_total_bytes >= max_file_bytes`。
 
 配置缺省时使用 `DEFAULT_OBSERVER` / `DEFAULT_PROPOSALS`；M22 起 `observer.enabled`
-默认为 `true`（只读复盘），提案仍默认关闭，因此旧的 `dispatch.yaml` 不需要改动。
-需要关闭复盘时显式写 `observer.enabled: false`。`dispatch.example.yaml` 以注释形式
-给出开启的 `observer:` 与默认关闭的 `proposals:` 示例。
+默认为 `true`（只读复盘），M23 起 `proposals` 默认 `enabled: true` + `mode: dry_run`，
+因此旧的 `dispatch.yaml` 不需要改动就会开始记录审核流水，但不会写图。
+需要关闭复盘时显式写 `observer.enabled: false`；需要静默提案时写
+`proposals.enabled: false` 或 `mode: off`。`dispatch.example.yaml` 以注释形式给出
+`observer:` 与 `proposals:` 示例。
 
 ## 3. Scheduler → worker 契约
 
@@ -183,10 +189,11 @@ return answer;
   超时）或 `board_lock_error`（锁目录不可用）。释放前校验持有者 id，避免删除他人
   （已过期接管）的租约。跳过不阻塞 solver 收尾，也不改变结果。
 
-## 7. 图提案（M11）
+## 7. 图提案（M11，M23 起默认 dry_run）
 
 提案是 Observer 影响图语义的**唯一**通道，但 sidecar 仍然不写图：它只在任务目录里
-写候选文件，控制面（scheduler + 图命令）是唯一审核者和写者。
+写候选文件，控制面（scheduler + 图命令）是唯一审核者和写者。M23 起 `proposals` 默认
+`enabled: true` + `mode: dry_run`：审核流水会出现在「提案」页签，但没有任何写图。
 
 ### 7.1 sidecar 候选协议
 
@@ -257,7 +264,8 @@ return answer;
 
 所有结果写入 `proposals.status` + `decision_reason` + `applied_id` + `reviewed_at`，
 状态只从 `pending` 迁移一次。只读接口 `GET /projects/{id}/proposals` 支持按
-`status` / `kind` 过滤；UI 的第四个只读页签“提案”展示候选与审核结果。提案表与
+`status` / `kind` 过滤；UI 的“提案”页签展示候选与审核结果。M23 新增的“看板”页签读取
+`GET /projects/{id}/board`，直接展示想法与记忆（不经过 `proposals` 表）。提案表与
 候选目录都是旁路数据，不影响 YAML 导出或 Cairn 图语义。
 
 ### 7.4 已知边界
@@ -290,11 +298,11 @@ return answer;
 
 不计费的 `bun test` 覆盖：
 
-- 配置：默认关闭、完整解析、非法 `every_rounds` / `timeout_seconds` /
-  `kernel_tasks` 报错；
+- 配置：Observer 默认开启、提案默认 `enabled: true` + `dry_run`、完整解析、非法
+  `every_rounds` / `timeout_seconds` / `kernel_tasks` 报错；
 - 环境契约：只有精确 `CAIRN_OBSERVER_ENABLED=1` 才启用；必需路径缺失时关闭；数值非法
   时回落到默认值；
-- scheduler：启用时写 context/env、`kernel_tasks` 之外不启用、默认关闭、focus intent
+- scheduler：启用时写 context/env、`kernel_tasks` 之外不启用、默认开启、focus intent
   在上限之外仍被保留、facts/hints 截断规则；
 - 路径：`CAIRN_OBSERVER_BOARD_DIR` 优先、显式 sessionDir 保持上游布局、无配置时 fail
   closed；

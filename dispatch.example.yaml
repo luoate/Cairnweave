@@ -130,8 +130,9 @@ retention:
 #   max_reviews_per_task: 8
 #   kernel_tasks: ["explore"]
 
-# Optional Observer graph proposals (M11). Disabled by default; only effective when
-# observer.enabled is also true and the task kind matches observer.kernel_tasks.
+# Optional Observer graph proposals (M11). On by default since M23 (dry_run); only
+# effective when observer.enabled is also true and the task kind matches
+# observer.kernel_tasks.
 # The sidecar gets propose_graph_change, which writes candidate fact/intent/hint files
 # under <session>/observer/proposals/. The control plane alone validates, dedupes and
 # applies them; no new write route is exposed and the main solver cannot write that
@@ -142,8 +143,8 @@ retention:
 # proposal ids are derived from project + task + filename, so rescanning a retained
 # session is idempotent.
 # proposals:
-#   enabled: false
-#   mode: apply
+#   enabled: true
+#   mode: dry_run
 #   max_per_task: 20
 #   max_file_bytes: 16384
 #   max_total_bytes: 65536

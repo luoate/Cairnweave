@@ -1,4 +1,4 @@
-# 架构（M22 更新）
+# 架构（M23 更新）
 
 本文固定合并后的角色边界、数据所有权和失败语义。实现以本文为准；需要改动时先改本文并
 记录原因。
@@ -50,7 +50,8 @@ M10 已落地：在原有单文件 Alpine.js UI 上追加只读 `Runs / Audit / 
 它们只调用已有的 GET 路由，不引入构建步骤，也不改变图、调度或 scope 判定。
 M11 已落地：Observer 提案闭环。sidecar 通过 `propose_graph_change` 把候选
 fact/intent/hint 写成任务级 JSON 文件；scheduler 摄取并落 `proposals` 旁路表，控制面
-按项目状态、来源、证据与去重规则逐条审核，只有 `apply` 模式才调用既有图命令写图。
+按项目状态、来源、证据与去重规则逐条审核，只有 `apply` 模式才调用既有图命令写图
+（M23 起默认 `dry_run`，只记录审核流水）。
 没有新增未认证的写路由，主 Solver 也不能写该目录；提案只影响图写入，不改变任务结果、
 YAML 导出或既有 HTTP 响应。M12a 已落地：慢层（reason）触发状态持久化与事件触发。
 `scheduler/strategist.ts` 是纯求值器，`strategist_state` 旁路表保存每个项目最近成功的
@@ -178,7 +179,7 @@ M21 把这条回退收紧成「只有工具输出算证据」：逐行只取 `me
 一起上报，UI 据此显示琥珀色「FLAG 可疑」条；Writeup 草稿的 `flag_suspects` 与 prompt 里
 「不得把占位串当成答案」的硬规则同源于此。
 M22 把运行期配置的写权限从“改 YAML + 重启”扩到页头「运行配置」弹窗，同时把 Observer
-复盘改为默认开启（`observer.enabled` 默认 `true`；只读复盘，提案仍默认关闭）。覆盖以
+复盘改为默认开启（`observer.enabled` 默认 `true`；只读复盘）。覆盖以
 snake_case patch 存进 SQLite 表 `runtime_config_overrides`（单行，`id = 1`），由
 `apps/cairn/src/config-overrides.ts` 的 `RuntimeConfigStore` 管理：它保留
 `loadDispatchConfigWithSource` 返回的解析前文档副本，应用时把 patch 深合并到该副本上，
@@ -191,6 +192,14 @@ snake_case patch 存进 SQLite 表 `runtime_config_overrides`（单行，`id = 1
 getter 生效，改完下一个请求即用新值。部署项（`server`、`common_env`、container/local
 工作区、Observer、审计流、worker_profiles、prompt 组、健康检查）仍是只读，需改
 dispatch.yaml 并重启。详见 `docs/CONFIG.md`。
+M23 默认打开 Observer 的两类产物：`proposals` 默认 `enabled: true` + `mode: dry_run`
+（审核照常执行并落表，没有一条写图），并新增只读 `GET /projects/{id}/board`。
+`apps/cairn/src/http/project-board.ts` 直接读工作区 `.cairn/board/board/`：想法来自
+`ideas/index.json`，记忆来自 `memory/entries/*.json`；工作区/看板目录必须是真实目录且在
+工作区内，符号链接、越界路径、非普通文件与超限文件被拒绝或跳过，输出对条目数、正文、
+引用数与长度设上限，并返回 `ideas_total` / `memory_total` / `truncated`。看板缺失或
+纯 HTTP 模式返回 `available: false`，不视为错误。UI 在「提案」与「成本」之间新增只读
+「看板」页签，按状态/类型着色展示想法与记忆。
 M18f 打开 challenge/Flag 自动校验：`POST /projects` 未给 `verification` 时，控制面读
 `verification.challenge.code_env`（默认 `TCH_CHALLENGE_ID`）；非空即写入
 `{kind: challenge, challenge_code}`，否则按 `evidence_enforcement` 落 `evidence` /
@@ -389,7 +398,7 @@ scheduler 与 HTTP API 共用 `packages/graph/src/commands.ts` 的命令，不�
   写工具不在主 Solver 的 Host Bridge 白名单中，看板文件工具的 `write`/`edit` 也被
   `protectedWriteRoots` 拒绝。`bash` 不受文件路径分析约束，这是策略闸门的已知边界。
 
-### Observer 提案闭环（M11，可选，默认关闭）
+### Observer 提案闭环（M11，M23 起默认 dry_run）
 
 提案是 sidecar 影响图语义的唯一通道，仍然满足“控制面是唯一写者”。
 
@@ -409,8 +418,9 @@ scheduler 与 HTTP API 共用 `packages/graph/src/commands.ts` 的命令，不�
   项目非 active、来源缺失、证据缺失/非法、重复均记为 `rejected`/`duplicate`。
 - **模式**：`off` 完全不启用；`dry_run` 完整校验但只记 `dry_run`，不写图；`apply`
   才写图。决策写入 `proposals` 的 `status` / `decision_reason` / `applied_id`。
-- **观测**：`GET /projects/{id}/proposals` 只读，可按 `status` / `kind` 过滤；UI 的第
-  四个页签展示。没有新增写路由。提案/`intent_meta` 不进入图模型与 YAML 导出。
+- **观测**：`GET /projects/{id}/proposals` 只读，可按 `status` / `kind` 过滤；UI 的
+  “提案”页签展示。M23 的“看板”页签走 `GET /projects/{id}/board`。没有新增写路由。
+  提案/`intent_meta` 不进入图模型与 YAML 导出。
 - **边界**：异步批量生效；审核阶段不复读证据内容；`bash` 仍可伪造候选文件，但控制面
   校验项目/任务绑定、结构与去重，不能借此绕过审核；`dry_run` 行不会自动重放。
 
@@ -642,6 +652,12 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
   默认 `json`；`markdown` 用 `text/markdown` 返回同一对象的渲染结果。`audit` 与
   `artifacts` 只有汇总（任务数、事件数、时间边界、文件数与字节数），不含审计事件
   原文、工件路径或证据内容。未知项目 404；非法 `format` 400；其他方法 405。
+- `GET /projects/{id}/board`（M23，只读）→ `{available, ideas, memory, ideas_total,
+  memory_total, truncated}`。想法字段为 `id/status/content/result/created_at/updated_at`，
+  记忆为 `id/kind/content/refs/source/created_at/updated_at`；状态限定
+  `pending|testing|verified|failed|skipped`，类型限定 `fact|evidence|failure|note|hint`，
+  其他值归一为 `pending` / `note`。看板目录不存在或纯 HTTP 模式时 `available: false`；
+  未知项目 404；只有 GET。
 - `GET /projects/{id}/flag`（M18e/M18f/M18g/M21，只读）→
   `{found, flag, source, occurrences, sources, scanned_files, truncated, candidates,
   placeholder_suspect, verification: {policy, latest}}`。扫描
@@ -724,7 +740,7 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
 - 静态 UI 仍是单文件 `index.html`（Alpine.js + Cytoscape + vendored Tailwind），由
   `GET /` 与 `/static/*` 直接提供，没有构建/打包步骤。页签分两行：原有
   `Detail / Hints / Log`，以及运维页签 `Runs / Strategist / Audit / Evidence /
-  Proposals / Cost`。
+  Proposals / Board / Cost / Stats / Report / Writeup`。
 - 弹窗（M17c）：每个 overlay 是 body 的直接子节点，带 `data-modal="<name>"` 与
   `x-effect="syncModal('<name>', showX, $el)"`；`syncModal` 维护 `modalOrder` 栈和
   `modalReturnFocus`，全局 `keydown` 处理器只对栈顶执行 Esc（`dismissModal` 走
@@ -753,6 +769,9 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
 - `Evidence` 通过 Fact 下拉选择后并发读取 meta 与 evidence，显示 sidecar 的
   `provided/missing/legacy`、写入时 `size/sha256` 与实时 `status/current_*`。没有
   workspace root 时沿用 API 的 `unverified` 语义。
+- `Board`（看板，M23）读取 `GET /projects/{id}/board`，分「想法」「记忆」两段按状态/
+  类型着色展示，条目计数与 `truncated` 标记来自响应；`available: false` 时显示“暂无看板
+  数据”。面板只发 GET，写看板仍只发生在 Observer 的 sidecar 会话里。
 - `Stats`（统计，M14d/M15a）读取 `GET /projects/{id}/stats`，显示项目总览与按 Worker、
   按模型、按 Profile 三组卡片：运行数、成功/结束、成功率、Token、成本、平均耗时和最近
   启动。`model: null` 显示为“未记录模型”；`by_profile` 只在统计驱动选择启用后有数据；
@@ -1082,8 +1101,9 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
   `bootstrap|reason|explore|conclude` 的子集，默认 `["explore"]`）。`enabled` 默认开启是
   M22 的行为变化；非法值在启动时以 `ConfigError` 拒绝。scheduler 只把该配置翻译成
   `CAIRN_OBSERVER_*` 环境变量，不写进 `task.json`。
-- `proposals` 是新增的可选段（M11，默认关闭）：`enabled`（布尔）、`mode`
-  （`off|dry_run|apply`，默认 `apply`）、`max_per_task`（非负整数，默认 20）、
+- `proposals` 是新增的可选段（M11；M23 起默认 `enabled: true` + `mode: dry_run`）：
+  `enabled`（布尔）、`mode`（`off|dry_run|apply`，默认 `dry_run`）、`max_per_task`
+  （非负整数，默认 20）、
   `max_file_bytes` / `max_total_bytes`（正整数，默认 16384 / 65536，后者不得小于
   前者）、`allow_kinds`（`fact|intent|hint` 的子集，默认全部）、
   `require_evidence_for_fact`（布尔，默认 `true`）、`min_confidence`（`[0,1]`，默认

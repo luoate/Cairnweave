@@ -719,6 +719,10 @@
             :class="sideTab === 'proposals' ? 'text-brand-600 border-brand-500 bg-white' : 'text-slate-400 border-transparent hover:text-slate-600'">
             提案 <span class="ml-0.5 text-[10px] opacity-60" x-show="proposalsPanel.loadedFor && proposalsPanel.items.length" x-text="proposalsPanel.items.length"></span>
           </button>
+          <button @click="selectSideTab('board')" class="shrink-0 whitespace-nowrap px-2.5 py-2 text-[11px] font-medium transition border-b-2"
+            :class="sideTab === 'board' ? 'text-brand-600 border-brand-500 bg-white' : 'text-slate-400 border-transparent hover:text-slate-600'">
+            看板 <span class="ml-0.5 text-[10px] opacity-60" x-show="boardPanel.data && boardPanel.data.available" x-text="boardPanel.data ? (boardPanel.data.ideas.length + boardPanel.data.memory.length) : ''"></span>
+          </button>
           <button @click="selectSideTab('cost')" class="shrink-0 whitespace-nowrap px-2.5 py-2 text-[11px] font-medium transition border-b-2"
             :class="sideTab === 'cost' ? 'text-brand-600 border-brand-500 bg-white' : 'text-slate-400 border-transparent hover:text-slate-600'">
             成本 <span class="ml-0.5 text-[10px] opacity-60" x-show="costPanel.data && costPanel.data.runs.length" x-text="costPanel.data ? costPanel.data.runs.length : ''"></span>
@@ -1607,7 +1611,7 @@
         <template x-if="!proposalsPanel.loading && !proposalsPanel.error && proposalsPanel.loadedFor && proposalsPanel.items.length === 0">
           <div class="rounded-2xl border border-dashed border-slate-200 bg-white/80 px-4 py-10 text-center shadow-sm">
             <p class="text-sm text-slate-400">暂无提案</p>
-            <p class="mt-1 text-xs text-slate-300">在配置中启用 proposals 后，Observer 只能提交候选，由控制面审核并写入图。</p>
+            <p class="mt-1 text-xs text-slate-300">提案默认以演练模式运行；可在运行配置里把 mode 改为 apply 才会写入图。</p>
           </div>
         </template>
 
@@ -1677,6 +1681,111 @@
               </template>
             </div>
           </article>
+        </template>
+      </div>
+
+      <!-- Observer board (read-only, M23) -->
+      <div x-show="sideTab === 'board'" class="flex-1 overflow-y-auto p-3 space-y-3 bg-slate-50/30">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <div class="flex items-center gap-1.5">
+              <span class="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">看板</span>
+              <span class="px-1.5 py-0.5 rounded-full border border-slate-200 bg-white text-[9px] font-medium uppercase tracking-wide text-slate-400">只读</span>
+            </div>
+            <p class="mt-1 text-xs text-slate-500" x-text="boardSummaryText()"></p>
+          </div>
+          <button type="button" @click="loadBoard()" :disabled="boardPanel.loading" title="刷新看板" aria-label="刷新看板"
+            class="h-7 w-7 shrink-0 rounded-lg border border-slate-200 bg-white text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition disabled:opacity-40 inline-flex items-center justify-center">
+            <svg class="w-3.5 h-3.5" :class="{ 'animate-spin': boardPanel.loading }" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5"/><path d="M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5"/></svg>
+          </button>
+        </div>
+
+        <template x-if="boardPanel.error">
+          <div class="rounded-xl border border-rose-200 bg-rose-50/80 px-3 py-2.5">
+            <p class="text-[11px] text-rose-600 break-words" x-text="boardPanel.error"></p>
+            <button type="button" @click="loadBoard()" class="mt-1.5 text-[11px] font-medium text-rose-600 hover:text-rose-700">重试</button>
+          </div>
+        </template>
+
+        <template x-if="boardPanel.loading && !boardPanel.data">
+          <div class="space-y-2 animate-pulse">
+            <div class="h-24 rounded-2xl border border-slate-200 bg-white"></div>
+            <div class="h-24 rounded-2xl border border-slate-200 bg-white"></div>
+          </div>
+        </template>
+
+        <template x-if="!boardPanel.loading && !boardPanel.error && boardPanel.data && !boardPanel.data.available">
+          <div class="rounded-2xl border border-dashed border-slate-200 bg-white/80 px-4 py-10 text-center shadow-sm">
+            <p class="text-sm text-slate-400">暂无看板数据</p>
+            <p class="mt-1 text-xs text-slate-300">Observer 每次复核只在所属任务的旁路会话里写看板；任务运行后这里会显示想法与记忆快照。</p>
+          </div>
+        </template>
+
+        <template x-if="!boardPanel.error && boardPanel.data && boardPanel.data.available">
+          <div class="space-y-3">
+            <section class="space-y-2">
+              <div class="flex items-center justify-between px-0.5">
+                <span class="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">想法</span>
+                <span class="text-[10px] text-slate-400 tabular-nums" x-text="boardCountText(boardPanel.data.ideas.length, boardPanel.data.ideas_total)"></span>
+              </div>
+              <template x-if="boardPanel.data.ideas.length === 0">
+                <div class="rounded-xl border border-dashed border-slate-200 bg-white/80 px-3 py-6 text-center">
+                  <p class="text-xs text-slate-400">暂无想法</p>
+                </div>
+              </template>
+              <template x-for="idea in boardPanel.data.ideas" :key="idea.id">
+                <article class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+                  <div class="px-3 py-2 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between gap-2">
+                    <span class="min-w-0 truncate font-mono text-[10px] text-slate-500" :title="idea.id" x-text="idea.id"></span>
+                    <span class="shrink-0 rounded-full border px-2 py-0.5 text-[9px] font-semibold"
+                      :class="boardIdeaStatusClass(idea.status)" x-text="boardIdeaStatusLabel(idea.status)"></span>
+                  </div>
+                  <div class="p-3 space-y-2 text-[11px]">
+                    <p class="text-slate-700 whitespace-pre-wrap break-words" x-text="idea.content"></p>
+                    <template x-if="idea.result">
+                      <p class="rounded-lg bg-slate-50 px-2.5 py-2 text-slate-500 whitespace-pre-wrap break-words" x-text="idea.result"></p>
+                    </template>
+                    <p class="text-[10px] text-slate-400" x-text="'更新于 ' + formatDate(idea.updated_at)"></p>
+                  </div>
+                </article>
+              </template>
+            </section>
+
+            <section class="space-y-2">
+              <div class="flex items-center justify-between px-0.5">
+                <span class="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">记忆</span>
+                <span class="text-[10px] text-slate-400 tabular-nums" x-text="boardCountText(boardPanel.data.memory.length, boardPanel.data.memory_total)"></span>
+              </div>
+              <template x-if="boardPanel.data.memory.length === 0">
+                <div class="rounded-xl border border-dashed border-slate-200 bg-white/80 px-3 py-6 text-center">
+                  <p class="text-xs text-slate-400">暂无记忆记录</p>
+                </div>
+              </template>
+              <template x-for="entry in boardPanel.data.memory" :key="entry.id">
+                <article class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+                  <div class="px-3 py-2 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between gap-2">
+                    <span class="min-w-0 truncate font-mono text-[10px] text-slate-500" :title="entry.id" x-text="entry.id"></span>
+                    <span class="shrink-0 rounded-full border px-2 py-0.5 text-[9px] font-semibold"
+                      :class="boardMemoryKindClass(entry.kind)" x-text="boardMemoryKindLabel(entry.kind)"></span>
+                  </div>
+                  <div class="p-3 space-y-2 text-[11px]">
+                    <p class="text-slate-700 whitespace-pre-wrap break-words" x-text="entry.content"></p>
+                    <template x-if="entry.refs && entry.refs.length > 0">
+                      <div class="space-y-1">
+                        <template x-for="ref in entry.refs" :key="ref">
+                          <p class="font-mono text-[10px] text-slate-500 break-all rounded bg-slate-50 px-2 py-1" x-text="ref"></p>
+                        </template>
+                      </div>
+                    </template>
+                    <div class="flex items-center justify-between gap-3 text-[10px] text-slate-400">
+                      <span class="min-w-0 truncate" :title="entry.source" x-text="entry.source || '来源未知'"></span>
+                      <span class="shrink-0" x-text="formatDate(entry.updated_at)"></span>
+                    </div>
+                  </div>
+                </article>
+              </template>
+            </section>
+          </div>
         </template>
       </div>
 
@@ -3208,6 +3317,12 @@ function cairnApp() {
       error: '',
       loadedFor: '',
     },
+    boardPanel: {
+      data: null,
+      loading: false,
+      error: '',
+      loadedFor: '',
+    },
     costPanel: {
       data: null,
       loading: false,
@@ -4047,6 +4162,7 @@ function cairnApp() {
       };
       this.evidencePanel = { factId: '', meta: null, files: [], loading: false, error: '', loadedFor: '' };
       this.proposalsPanel = { items: [], loading: false, error: '', loadedFor: '' };
+      this.boardPanel = { data: null, loading: false, error: '', loadedFor: '' };
       this.costPanel = { data: null, loading: false, error: '', loadedFor: '' };
       this.statsPanel = { data: null, loading: false, error: '', loadedFor: '' };
       this.reportPanel = { data: null, loading: false, error: '', loadedFor: '' };
@@ -4054,7 +4170,7 @@ function cairnApp() {
     },
 
     opsTabs() {
-      return ['runs', 'strategist', 'audit', 'evidence', 'proposals', 'cost', 'stats', 'report', 'writeup'];
+      return ['runs', 'strategist', 'audit', 'evidence', 'proposals', 'board', 'cost', 'stats', 'report', 'writeup'];
     },
 
     isOpsTab(tab) {
@@ -4085,6 +4201,7 @@ function cairnApp() {
       else if (this.sideTab === 'audit') this.loadAudit();
       else if (this.sideTab === 'evidence') this.loadEvidence();
       else if (this.sideTab === 'proposals') this.loadProposals();
+      else if (this.sideTab === 'board') this.loadBoard();
       else if (this.sideTab === 'cost') this.loadCost();
       else if (this.sideTab === 'stats') this.loadStats();
       else if (this.sideTab === 'report') this.loadReport();
@@ -4195,6 +4312,23 @@ function cairnApp() {
         if (this.selectedProjectId === projectId) this.proposalsPanel.error = this.errorText(e);
       } finally {
         if (this.selectedProjectId === projectId) this.proposalsPanel.loading = false;
+      }
+    },
+
+    async loadBoard() {
+      const projectId = this.selectedProjectId;
+      if (!projectId) return;
+      this.boardPanel.loading = true;
+      this.boardPanel.error = '';
+      try {
+        const data = await this.api('GET', `/projects/${encodeURIComponent(projectId)}/board`);
+        if (this.selectedProjectId !== projectId) return;
+        this.boardPanel.data = data && typeof data === 'object' ? data : null;
+        this.boardPanel.loadedFor = projectId;
+      } catch (e) {
+        if (this.selectedProjectId === projectId) this.boardPanel.error = this.errorText(e);
+      } finally {
+        if (this.selectedProjectId === projectId) this.boardPanel.loading = false;
       }
     },
 
@@ -4732,6 +4866,50 @@ function cairnApp() {
     proposalSourceLabel(source) {
       const labels = { observer: '观察者', strategist: '策略器', human: '人工' };
       return labels[source] || source;
+    },
+
+    boardSummaryText() {
+      const data = this.boardPanel.data;
+      if (!this.boardPanel.loadedFor || !data) return 'Observer 想法与记忆（工作区快照）';
+      if (!data.available) return '此项目还没有看板';
+      const counts = `${data.ideas_total} 条想法 · ${data.memory_total} 条记忆`;
+      return data.truncated ? `${counts} · 已截断` : counts;
+    },
+
+    boardCountText(shown, total) {
+      return total > shown ? `${shown} / ${total}` : String(total);
+    },
+
+    boardIdeaStatusLabel(status) {
+      const labels = {
+        pending: '待验证',
+        testing: '验证中',
+        verified: '已验证',
+        failed: '失败',
+        skipped: '跳过',
+      };
+      return labels[status] || status;
+    },
+
+    boardIdeaStatusClass(status) {
+      if (status === 'verified') return 'border-teal-200 bg-teal-50 text-teal-700';
+      if (status === 'testing') return 'border-amber-200 bg-amber-50 text-amber-600';
+      if (status === 'failed') return 'border-rose-200 bg-rose-50 text-rose-600';
+      if (status === 'skipped') return 'border-slate-200 bg-slate-100 text-slate-500';
+      return 'border-sky-200 bg-sky-50 text-sky-600';
+    },
+
+    boardMemoryKindLabel(kind) {
+      const labels = { fact: '事实', evidence: '证据', failure: '失败', note: '笔记', hint: '提示' };
+      return labels[kind] || kind;
+    },
+
+    boardMemoryKindClass(kind) {
+      if (kind === 'fact') return 'border-brand-200 bg-brand-50 text-brand-700';
+      if (kind === 'evidence') return 'border-sky-200 bg-sky-50 text-sky-600';
+      if (kind === 'failure') return 'border-rose-200 bg-rose-50 text-rose-600';
+      if (kind === 'hint') return 'border-teal-200 bg-teal-50 text-teal-700';
+      return 'border-slate-200 bg-slate-100 text-slate-500';
     },
 
     auditDecisionLabel(event) {
