@@ -82,8 +82,9 @@ export const DEFAULT_EVIDENCE: EvidenceConfig = { minBytes: 1 };
 export type ObserverTaskKind = "bootstrap" | "reason" | "explore" | "conclude";
 
 /**
- * Opt-in Observer sidecar. It maintains a project-level ideas/memory board and runs a
- * separate model review; it never writes the graph or changes the task result.
+ * Observer sidecar. It maintains a project-level ideas/memory board and runs a separate
+ * model review; it never writes the graph or changes the task result. Enabled by default
+ * because review-only sidecars cannot corrupt a solve (proposals stay opt-in).
  */
 export interface ObserverConfig {
   enabled: boolean;
@@ -102,7 +103,7 @@ export interface ObserverConfig {
 }
 
 export const DEFAULT_OBSERVER: ObserverConfig = {
-  enabled: false,
+  enabled: true,
   model: null,
   everyRounds: 4,
   windowRounds: 8,
@@ -464,6 +465,65 @@ const TOP_LEVEL_KEYS = new Set([
   "worker_profiles",
   "worker_selection",
 ]);
+
+/**
+ * Sections an operator may override at runtime from the web UI. The stored patch keeps
+ * dispatch.yaml's snake_case shape; it is merged onto the parsed document and re-parsed,
+ * so these validators stay the only source of truth. Deployment settings (execution,
+ * container, credentials, Observer, audit stream, prompt group, worker profiles) remain
+ * file-only and need a restart.
+ */
+const EDITABLE_OVERRIDE_KEYS: Record<string, readonly string[]> = {
+  runtime: ["max_workers", "max_running_projects", "max_project_workers", "interval"],
+  tasks: ["bootstrap", "reason", "explore", "graph_slice", "evidence"],
+  worker: [
+    "soft_deadline_ratio",
+    "retain_task_files",
+    "result_grace_seconds",
+    "scoped_artifacts",
+  ],
+  retention: [
+    "session_max_age_days",
+    "session_keep_per_project",
+    "sweep_interval_seconds",
+    "refresh_artifacts",
+  ],
+  verification: ["evidence_enforcement"],
+  proposals: [
+    "enabled",
+    "mode",
+    "max_per_task",
+    "max_file_bytes",
+    "max_total_bytes",
+    "allow_kinds",
+    "require_evidence_for_fact",
+    "min_confidence",
+  ],
+  strategist: [
+    "min_new_facts",
+    "min_new_hints",
+    "cooldown_seconds",
+    "failure_backoff_seconds",
+    "max_runs_per_hour",
+    "zero_output_threshold",
+    "stale_intent_seconds",
+    "fallback_interval_seconds",
+    "resource_pressure_ratio",
+  ],
+  budget: ["max_project_tokens", "max_project_cost_usd", "max_project_tasks"],
+  worker_selection: ["mode", "min_runs", "epsilon", "epsilon_decay", "epsilon_min"],
+};
+
+const EDITABLE_TASK_KEYS: Record<string, readonly string[]> = {
+  bootstrap: ["timeout", "conclude_timeout"],
+  reason: ["timeout", "max_intents"],
+  explore: ["timeout", "conclude_timeout"],
+  graph_slice: ["enabled", "max_facts", "max_intents"],
+  evidence: ["min_bytes"],
+};
+
+/** Snake_case patch accepted by `RuntimeConfigStore.apply`; see `EDITABLE_OVERRIDE_KEYS`. */
+export type RuntimeOverridePatch = Record<string, unknown>;
 
 type Mapping = Record<string, unknown>;
 
@@ -1007,6 +1067,45 @@ function parseWorker(value: unknown, scopedArtifactsDefault: boolean): WorkerRun
   };
 }
 
+function checkOverrideKeys(
+  mapping: Mapping,
+  allowed: readonly string[],
+  path: string,
+): void {
+  for (const key of Object.keys(mapping)) {
+    if (!allowed.includes(key)) {
+      throw new ConfigError(`${path} has unsupported key: ${key}`);
+    }
+  }
+}
+
+/**
+ * Validates the shape of a runtime override patch without applying it. Only the editable
+ * paths are accepted so a typo cannot silently fall back to a default; value ranges are
+ * checked later by re-parsing the merged document.
+ */
+export function parseRuntimeOverridePatch(value: unknown): RuntimeOverridePatch {
+  const patch = recordAt(value ?? {}, "overrides");
+  for (const section of Object.keys(patch)) {
+    const allowed = EDITABLE_OVERRIDE_KEYS[section];
+    if (allowed === undefined) {
+      throw new ConfigError(`overrides has unsupported section: ${section}`);
+    }
+    const sectionValue = recordAt(patch[section], `overrides.${section}`);
+    checkOverrideKeys(sectionValue, allowed, `overrides.${section}`);
+    if (section !== "tasks") continue;
+    for (const kind of Object.keys(sectionValue)) {
+      const group = recordAt(sectionValue[kind], `overrides.tasks.${kind}`);
+      checkOverrideKeys(
+        group,
+        EDITABLE_TASK_KEYS[kind]!,
+        `overrides.tasks.${kind}`,
+      );
+    }
+  }
+  return structuredClone(patch) as RuntimeOverridePatch;
+}
+
 export function parseDispatchConfig(value: unknown, options: ConfigOptions = {}): DispatchConfig {
   const root = recordAt(value ?? {}, "config");
 
@@ -1122,7 +1221,19 @@ export function parseDispatchConfig(value: unknown, options: ConfigOptions = {})
   };
 }
 
-export function loadDispatchConfig(path: string, options: ConfigOptions = {}): DispatchConfig {
+export interface LoadedDispatchConfig {
+  config: DispatchConfig;
+  /**
+   * Parsed YAML document before defaults are filled in. Runtime overrides are merged onto
+   * this shape and re-parsed, so unchanged fields keep following the file.
+   */
+  source: Record<string, unknown>;
+}
+
+export function loadDispatchConfigWithSource(
+  path: string,
+  options: ConfigOptions = {},
+): LoadedDispatchConfig {
   let text: string;
   try {
     text = readFileSync(path, "utf8");
@@ -1135,5 +1246,10 @@ export function loadDispatchConfig(path: string, options: ConfigOptions = {}): D
   } catch (error) {
     throw new ConfigError(`invalid YAML in ${path}: ${(error as Error).message}`);
   }
-  return parseDispatchConfig(parsed, options);
+  const config = parseDispatchConfig(parsed, options);
+  return { config, source: recordAt(parsed ?? {}, "config") };
+}
+
+export function loadDispatchConfig(path: string, options: ConfigOptions = {}): DispatchConfig {
+  return loadDispatchConfigWithSource(path, options).config;
 }

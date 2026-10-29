@@ -10,9 +10,10 @@ import { AuditTokenRegistry } from "../audit-stream/tokens";
 import {
   ConfigError,
   DEFAULT_VERIFICATION,
-  loadDispatchConfig,
+  loadDispatchConfigWithSource,
   type DispatchConfig,
 } from "../config";
+import { RuntimeConfigStore } from "../config-overrides";
 import { createApi } from "../http/api";
 import { checkDocker, resolveAgentConfigDir } from "../runtime";
 import { Scheduler } from "../scheduler/loop";
@@ -76,9 +77,13 @@ export async function runControl(args: readonly string[]): Promise<number> {
 
   const configPath = flagValue(args, "--config");
   let config: DispatchConfig | null = null;
+  // The parsed document (before defaults) is the baseline runtime overrides merge onto.
+  let configSource: Record<string, unknown> | null = null;
   if (configPath !== undefined) {
     try {
-      config = loadDispatchConfig(configPath);
+      const loaded = loadDispatchConfigWithSource(configPath);
+      config = loaded.config;
+      configSource = loaded.source;
     } catch (error) {
       const message = error instanceof ConfigError ? error.message : String(error);
       console.error(`[control] ${message}`);
@@ -128,6 +133,19 @@ export async function runControl(args: readonly string[]): Promise<number> {
   // Empty means "not configured": the manual /complete route keeps its historical
   // unauthenticated behavior, so local single-user setups do not need to set anything.
   const operatorToken = process.env["CAIRN_OPERATOR_TOKEN"]?.trim();
+  let scheduler: Scheduler | null = null;
+  // Stored overrides are applied before the scheduler is built, so its first tick and its
+  // timers already use the effective configuration. Later saves mutate the same object.
+  const runtimeConfig =
+    config === null || configSource === null
+      ? null
+      : new RuntimeConfigStore({
+          db,
+          config,
+          source: configSource,
+          log: (message) => console.error(`[control] ${message}`),
+          onApply: () => scheduler?.reconfigure(),
+        });
   const api = createApi({
     db,
     staticDir,
@@ -147,8 +165,8 @@ export async function runControl(args: readonly string[]): Promise<number> {
       ? {}
       : { workspaceRoot: resolveWorkspaceRoot(config), budget: config.budget }),
     ...(config === null || !config.auditStream.enabled ? {} : { auditTokens }),
+    ...(runtimeConfig === null ? {} : { runtimeConfig }),
   });
-  let scheduler: Scheduler | null = null;
   let server: ReturnType<typeof Bun.serve> | null = null;
 
   try {

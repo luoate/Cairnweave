@@ -527,7 +527,7 @@ describe("modal focus management", () => {
     }
     // An unclosed overlay would nest every later modal inside it, hiding them.
     expect(depth).toBe(0);
-    expect(Object.keys(overlayDepths).length).toBe(14);
+    expect(Object.keys(overlayDepths).length).toBe(15);
     for (const [name, level] of Object.entries(overlayDepths)) {
       expect(level, name).toBe(0);
     }
@@ -1349,5 +1349,266 @@ describe("model and key settings", () => {
       ["PUT", "/settings/agent/default-model", { modelPrefId: "m2" }],
     ]);
     expect(app.isSettingAgentDefault).toBe(false);
+  });
+});
+
+describe("runtime settings modal", () => {
+  function editableFixture() {
+    return {
+      runtime: { max_workers: 4, max_running_projects: 2, max_project_workers: 2, interval: 1 },
+      tasks: {
+        bootstrap: { timeout: 900, conclude_timeout: 120 },
+        reason: { timeout: 900, max_intents: 5 },
+        explore: { timeout: 900, conclude_timeout: 120 },
+        graph_slice: { enabled: true, max_facts: 80, max_intents: 60 },
+        evidence: { min_bytes: 32 },
+      },
+      worker: {
+        soft_deadline_ratio: 0.8,
+        retain_task_files: true,
+        result_grace_seconds: 15,
+        scoped_artifacts: true,
+      },
+      retention: {
+        session_max_age_days: 14,
+        session_keep_per_project: 20,
+        sweep_interval_seconds: 3600,
+        refresh_artifacts: false,
+      },
+      verification: { evidence_enforcement: "completion" },
+      proposals: {
+        enabled: false,
+        mode: "off",
+        max_per_task: 20,
+        max_file_bytes: 16384,
+        max_total_bytes: 65536,
+        allow_kinds: ["fact", "intent", "hint"],
+        require_evidence_for_fact: true,
+        min_confidence: 0,
+      },
+      strategist: {
+        min_new_facts: 1,
+        min_new_hints: 1,
+        cooldown_seconds: 30,
+        failure_backoff_seconds: 120,
+        max_runs_per_hour: 12,
+        zero_output_threshold: 3,
+        stale_intent_seconds: 0,
+        fallback_interval_seconds: 0,
+        resource_pressure_ratio: 0,
+      },
+      budget: { max_project_tokens: 0, max_project_cost_usd: 0, max_project_tasks: 0 },
+      worker_selection: {
+        mode: "prompt",
+        min_runs: 3,
+        epsilon: 0.1,
+        epsilon_decay: 0.99,
+        epsilon_min: 0.01,
+      },
+    };
+  }
+
+  function viewFixture(patch: { overrides?: string[]; editable?: any } = {}) {
+    return {
+      defaults: editableFixture(),
+      editable: patch.editable ?? editableFixture(),
+      overrides: patch.overrides ?? [],
+      updated_at: null,
+      read_only: {
+        server: "127.0.0.1:8001",
+        runtime: {
+          execution: "local",
+          prompt_group: "default",
+          healthcheck_timeout: 30,
+          worker_healthcheck: "startup_and_task",
+        },
+        observer: {
+          enabled: true,
+          model: null,
+          every_rounds: 4,
+          window_rounds: 8,
+          timeout_seconds: 60,
+          max_reviews_per_task: 8,
+          kernel_tasks: ["explore"],
+        },
+        audit_stream: { enabled: false, url: null },
+        worker_profiles: [],
+        common_env_keys: [],
+        workspace: { mode: "local", root: null },
+      },
+    };
+  }
+
+  function flatten(value: any, prefix = ""): string[] {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+      return prefix === "" ? [] : [prefix];
+    }
+    return Object.entries(value).flatMap(([key, child]) =>
+      flatten(child, prefix === "" ? key : `${prefix}.${key}`),
+    );
+  }
+
+  function fieldsOf(app: any) {
+    return app.runtimeGroups().flatMap((group: any) => group.fields);
+  }
+
+  test("ships the modal and one entry point per toolbar", () => {
+    const html = readFileSync(INDEX_PATH, "utf8");
+    expect(html).toContain('data-modal="runtime"');
+    expect(html).toContain("runtimeGroups()");
+    expect(html.match(/@click="openRuntimeSettings\(\)"/g)?.length).toBe(2);
+  });
+
+  test("renders every editable path exactly once", () => {
+    const app = loadState();
+    app.runtimeConfig.view = viewFixture();
+    app.runtimeForm = app.cloneData(app.runtimeConfig.view.editable);
+    const paths = fieldsOf(app).map((field: any) => field.path);
+    expect([...paths].sort()).toEqual(flatten(editableFixture()).sort());
+    expect(new Set(paths).size).toBe(paths.length);
+  });
+
+  test("loads the view and clones the effective values into the form", async () => {
+    const app = loadState();
+    const view = viewFixture();
+    app.api = async (method: string, path: string) => {
+      expect([method, path]).toEqual(["GET", "/settings/runtime"]);
+      return view;
+    };
+
+    await app.openRuntimeSettings();
+    expect(app.showRuntimeSettings).toBe(true);
+    expect(app.runtimeConfig.loading).toBe(false);
+    expect(app.runtimeConfig.view).toBe(view);
+    expect(app.runtimeForm).toEqual(view.editable);
+    expect(app.runtimeForm).not.toBe(view.editable);
+  });
+
+  test("surfaces the 409 message when no dispatch config is loaded", async () => {
+    const app = loadState();
+    const conflict: any = new Error("no dispatch config is loaded");
+    conflict.status = 409;
+    app.api = async () => {
+      throw conflict;
+    };
+
+    await app.openRuntimeSettings();
+    expect(app.runtimeForm).toBeNull();
+    expect(app.runtimeConfig.view).toBeNull();
+    expect(app.runtimeConfig.error).toBe("no dispatch config is loaded");
+  });
+
+  test("builds a minimal patch with only changed leaves", () => {
+    const app = loadState();
+    app.runtimeConfig.view = viewFixture();
+    app.runtimeForm = app.cloneData(app.runtimeConfig.view.editable);
+    const fields = fieldsOf(app);
+    const interval = fields.find((field: any) => field.path === "runtime.interval");
+    const enabled = fields.find((field: any) => field.path === "proposals.enabled");
+    const kinds = fields.find((field: any) => field.path === "proposals.allow_kinds");
+
+    expect(app.runtimePatch()).toEqual({});
+
+    app.setRuntimeFieldValue(interval, "3");
+    app.setRuntimeFieldValue(enabled, true);
+    expect(app.runtimePatch()).toEqual({
+      runtime: { interval: 3 },
+      proposals: { enabled: true },
+    });
+
+    app.toggleRuntimeKind(kinds, "intent", false);
+    app.toggleRuntimeKind(kinds, "hint", false);
+    expect(app.runtimePatch().proposals.allow_kinds).toEqual(["fact"]);
+    app.toggleRuntimeKind(kinds, "intent", true);
+    expect(app.runtimePatch().proposals.allow_kinds).toEqual(["fact", "intent"]);
+  });
+
+  test("ignores blank numeric input and keeps booleans typed", () => {
+    const app = loadState();
+    app.runtimeConfig.view = viewFixture();
+    app.runtimeForm = app.cloneData(app.runtimeConfig.view.editable);
+    const interval = fieldsOf(app).find((field: any) => field.path === "runtime.interval");
+    app.setRuntimeFieldValue(interval, "");
+    expect(app.runtimeFieldValue(interval)).toBe(1);
+    const flag = fieldsOf(app).find((field: any) => field.path === "worker.retain_task_files");
+    app.setRuntimeFieldValue(flag, false);
+    expect(app.runtimeFieldValue(flag)).toBe(false);
+    expect(app.runtimePatch()).toEqual({ worker: { retain_task_files: false } });
+  });
+
+  test("puts the patch, applies the returned view and reports the override count", async () => {
+    const app = loadState();
+    app.runtimeConfig.view = viewFixture();
+    app.runtimeForm = app.cloneData(app.runtimeConfig.view.editable);
+    const interval = fieldsOf(app).find((field: any) => field.path === "runtime.interval");
+    app.setRuntimeFieldValue(interval, "2");
+
+    const calls: any[] = [];
+    const next = viewFixture({ overrides: ["runtime.interval"] });
+    next.editable.runtime.interval = 2;
+    app.api = async (method: string, path: string, body: unknown) => {
+      calls.push([method, path, body]);
+      return next;
+    };
+    const toasts: any[] = [];
+    app.showToast = (message: string, type: string) => toasts.push([message, type]);
+
+    await app.saveRuntimeSettings();
+    expect(calls).toEqual([["PUT", "/settings/runtime", { runtime: { interval: 2 } }]]);
+    expect(app.runtimeConfig.view).toBe(next);
+    expect(app.runtimeForm).toEqual(next.editable);
+    expect(app.runtimeConfig.saving).toBe(false);
+    expect(toasts).toEqual([["运行配置已生效（覆盖 1 项）", undefined]]);
+  });
+
+  test("keeps the error inline when the server rejects the patch", async () => {
+    const app = loadState();
+    app.runtimeConfig.view = viewFixture();
+    app.runtimeForm = app.cloneData(app.runtimeConfig.view.editable);
+    const bad: any = new Error("runtime.max_project_workers cannot exceed runtime.max_workers");
+    bad.status = 400;
+    app.api = async () => {
+      throw bad;
+    };
+
+    await app.saveRuntimeSettings();
+    expect(app.runtimeConfig.error).toContain("cannot exceed");
+    expect(app.runtimeConfig.saving).toBe(false);
+    expect(app.runtimeConfig.view).not.toBeNull();
+  });
+
+  test("requires a second click before deleting every override", async () => {
+    const app = loadState();
+    app.runtimeConfig.view = viewFixture({ overrides: ["runtime.interval"] });
+    app.runtimeForm = app.cloneData(app.runtimeConfig.view.editable);
+    const calls: string[] = [];
+    const reset = viewFixture();
+    app.api = async (method: string, path: string) => {
+      calls.push(`${method} ${path}`);
+      return reset;
+    };
+    app.showToast = () => {};
+
+    await app.resetRuntimeSettings();
+    expect(calls).toEqual([]);
+    expect(app.runtimeResetArmed).toBe(true);
+
+    await app.resetRuntimeSettings();
+    expect(calls).toEqual(["DELETE /settings/runtime"]);
+    expect(app.runtimeResetArmed).toBe(false);
+    expect(app.runtimeConfig.view).toBe(reset);
+    if (app.runtimeResetTimer) clearTimeout(app.runtimeResetTimer);
+  });
+
+  test("blocks closing while a runtime write is pending", () => {
+    const app = loadState();
+    app.showRuntimeSettings = true;
+    app.runtimeConfig.saving = true;
+    app.dismissModal("runtime");
+    expect(app.showRuntimeSettings).toBe(true);
+
+    app.runtimeConfig.saving = false;
+    app.dismissModal("runtime");
+    expect(app.showRuntimeSettings).toBe(false);
   });
 });

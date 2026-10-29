@@ -6,9 +6,10 @@
 skills / Observer）合并成**一个 Bun/TypeScript 代码库**，不再维护 Python ↔ TypeScript
 之间的进程桥、JSONL RPC 和 worker 适配器。
 
-状态：**M21（Flag 扫描的置信度：占位符过滤、只看工具输出、候选披露）**；M0–M4、M5a–M5c、
-M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M16b、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e、M18f、M18g、M19a、M19b、M20a、M20b、M21 的计划项全部完成。Phase 1 的
-“本地看板 + Observer 提案 + 证据门 + 单一写图者”闭环已具备；提案默认关闭。Phase 2
+状态：**M22（Observer 默认开启 + 运行配置前端可调）**；M0–M4、M5a–M5c、
+M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M16b、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e、M18f、M18g、M19a、M19b、M20a、M20b、M21、M22 的计划项全部完成。Phase 1 的
+“本地看板 + Observer 提案 + 证据门 + 单一写图者”闭环已具备；Observer 复盘自 M22 起默认
+开启（只读复盘，不改任务结果），提案默认仍关闭。Phase 2
 的触发持久化、意图优先级/预算、单项目 token/成本与并发配额、只读慢层观测、逐 Fact
 成本归因与因果链，以及 reason 的 Hint/去重输出、人工重规划与资源压力触发均已落地，并
 已用真实模型 gate 核对用量记账、预算耗尽、慢层 API 与 `/cost` 的一致性，见
@@ -152,6 +153,18 @@ M21 修掉 Flag 扫描自己造出的假阳性：`/flag` 的 solver-session 回�
 列出原文，绿色横幅则标注“另有 N 个候选”；Writeup 草稿的 Flag 段写“只扫描到疑似占位或截断的
 flag 文本”，撰写 prompt 同步禁止把占位串当答案或自己拼一个看起来完整的 Flag。
 详见 `docs/WRITEUP.md` §1.3。
+M22 把运行期配置从“改文件再重启”变成“默认更可用、前端可调”：Observer 复盘默认开启
+（`observer.enabled` 默认 `true`；它只写看板与审计，不改变任务结果，提案仍由
+`proposals.enabled` 单独控制）。页头新增「运行配置」弹窗，可调调度并发与间隔、任务超时、
+图切片、证据门、Worker 软截止与保留、保留/清理策略、预算、策略触发阈值、提案参数与
+Worker 选择策略。改动以 snake_case patch 存进 SQLite 的 `runtime_config_overrides`，
+不会被下一次进程启动覆盖；服务端把它深合并到 dispatch.yaml 的解析结果上并**复用同一套
+校验器**重新解析（跨字段约束如 `max_project_workers ≤ max_workers`、`max_total_bytes ≥
+max_file_bytes` 依然生效），然后原地同步进正在运行的 `DispatchConfig`，调度器在下一个
+tick 生效，间隔类字段会重新挂定时器。只读区展示 `server`、`common_env` 键名、
+`worker_profiles`、Observer 与审计流等部署项，它们仍需改 YAML 并重启。`DELETE` 清空
+全部覆盖回到文件值；`PUT` 整组替换（UI 只提交与文件基线不同的字段）。详见
+`docs/CONFIG.md`。
 `cairn serve` 是可运行的 Cairn 兼容服务：SQLite schema、领域服务、全部
 五个路由、YAML/timeline 导出、静态 Web UI 均已就位，并用 Python Cairn 生成的 golden
 做了逐字对照。进程内 scheduler、任务/结果文件 worker 协议、BreachWeave Solver 接入已在 M2
@@ -182,7 +195,7 @@ M4b 增加：
 
 M4c 增加：
 
-- **Observer sidecar（默认关闭）**：`observer.enabled: true` 且任务 kind 命中
+- **Observer sidecar（M22 起默认开启）**：`observer.enabled` 为真（默认）且任务 kind 命中
   `kernel_tasks` 时，worker 在真实 Solver 会话旁运行一个独立的 review 模型。它维护
   **项目级、跨任务**的 `<workspace>/.cairn/board/` ideas/memory 看板；主 Solver 只拿到
   `memory_list` / `idea_list` / `idea_search` 三个只读工具。每 `every_rounds` 轮、
@@ -765,7 +778,7 @@ apps/cairn/src/
   solver/breachweave.ts  真实 Solver：进程内会话、软截止 steer、注入桥、Observer flush
 packages/contracts/      control ↔ worker 契约（任务、结果、退出码、宽容解析）
 packages/agent/          vendor 的 BreachWeave core（Apache-2.0，含内置 prompts/skills）
-  src/solver/extension/cairn-observer/  Cairn Observer 适配层（默认关闭）
+  src/solver/extension/cairn-observer/  Cairn Observer 适配层（M22 起默认开启）
 packages/pi-mcp-adapter/ vendor 的 MCP 适配器 2.2.2（MIT）
 packages/graph/          schema、领域模型、服务、命令、导出、YAML 发射器
   src/db.ts              bun:sqlite、schema、旧库迁移、事务连接
@@ -807,6 +820,7 @@ docs/VERIFICATION.md     完成验证：策略、oracle、路由、失败语义�
 docs/REPORT.md           项目报告：JSON 结构、来源、排序、脱敏与边界（M15c）
 docs/WRITEUP.md          中文 Writeup：草稿组成、载荷、附件包、Flag 置信度、模型撰写、路由、边界与用法（M19a/M20a/M20b/M21）
 docs/CONTRACT.md         worker 契约：task/result/usage/audit、退出码与校验边界（M15f）
+docs/CONFIG.md           运行配置：可编辑字段、SQLite 覆盖、热生效与只读项（M22）
 docs/PORTING.md          Python 模块 → TS 模块映射与对照测试策略
 ```
 
@@ -984,10 +998,10 @@ tasks:
 - 切片文件多一个 `slice:` 段：`focus_intent`、`included_facts`、`included_intents`、
   `max_facts`、`max_intents`、`truncated`。全图导出不变。
 
-### Observer（M4c，可选，默认关闭）
+### Observer（M4c，M22 起默认开启）
 
 Observer 是真实 Solver 旁边的 review sidecar。它只维护看板，不执行验证，也不改变任务
-结果；fake solver 会忽略它。
+结果；fake solver 会忽略它。M22 起默认开启，需要显式 `enabled: false` 才关闭。
 
 ```yaml
 observer:
@@ -1176,6 +1190,20 @@ provider 与密钥，模型页签负责拉取/手工录入、设为默认、测�
 与请求 host 不一致的浏览器写请求。完整操作步骤、常见错误与 M16b 真实 A/B 记录见
 `docs/MODELS.md`。
 
+### 运行配置（M22）
+
+`--config` 启动时，页头滑块图标打开「运行配置」弹窗。覆盖存进 SQLite，重启后保留，
+并在下一个调度 tick 生效；`DELETE` 清空全部覆盖回到 dispatch.yaml 的原值。
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/settings/runtime` | `{defaults, editable, overrides, updated_at, read_only}`；`defaults` 是仅取 dispatch.yaml 的值，`overrides` 是当前被覆盖的叶子路径，`read_only` 展示部署项 |
+| PUT | `/settings/runtime` | 整组替换覆盖 patch（snake_case）；未知键、越界值或跨字段冲突返回 400，运行中的配置保持不变 |
+| DELETE | `/settings/runtime` | 删除所有覆盖，恢复 dispatch.yaml 值 |
+
+写路由沿用 operator token 与同源校验；没有 `--config` 的纯 HTTP 模式所有方法都返回
+409。字段清单、热生效范围与只读项见 `docs/CONFIG.md`。
+
 真实模型 gate 不在
 `bun test` 中（会调用模型、产生费用）：
 
@@ -1265,7 +1293,7 @@ M6 的跨进程恢复 gate 不调用模型：它先写下一台崩溃控制面�
 bun run tools/gate/m6-restart-gate.ts
 ```
 
-## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a + M17a + M17b + M17c + M17d + M18a + M18b + M18c + M18d + M18e + M18f + M18g + M19a + M19b + M16b + M20a + M20b + M21，2026-10-29，Bun 1.4.4）
+## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a + M17a + M17b + M17c + M17d + M18a + M18b + M18c + M18d + M18e + M18f + M18g + M19a + M19b + M16b + M20a + M20b + M21 + M22，2026-10-29，Bun 1.4.4）
 
 - `bun test`：**703 passed**（72 个文件），0 failed。
 - `bun run typecheck`：`tsc --noEmit` 通过。
@@ -1309,7 +1337,7 @@ bun run tools/gate/m6-restart-gate.ts
   未知工具、审计不可写，以及 pi extension 的 block 返回；`audit.jsonl` 每条决策逐字段
   校验。M4c 另覆盖只读看板工具 allow、看板写工具 block、看板目录的 `write`/`edit`
   block 以及 `read` allow。
-- **Observer（M4c，不计费）**：配置默认关闭与合法性校验；scheduler 的 context/env
+- **Observer（M4c，不计费）**：配置合法性校验（M22 起默认开启，可 `observer.enabled: false` 关闭）；scheduler 的 context/env
   注入、`kernel_tasks` 过滤、facts/hints 截断、focus intent 在 20 条上限之外仍保留；
   board/state 路径优先级与 fail closed；周期 + flush、`max_reviews_per_task`、review
   挂起时 flush 超时不抛、state 目录不可用时 flush 不抛；损坏队列条目被跳过；并行工具
@@ -1628,6 +1656,18 @@ bun run tools/gate/m6-restart-gate.ts
   不再出现在横幅上）；给 proj_007 注入只含 `CTF2{c8xxxx}`、`CTF2{uuid}` 的工件后，`/flag` 报
   `placeholder_suspect:true` + 两条候选，草稿写“只扫描到疑似占位或截断的 flag 文本”，浏览器
   显示琥珀色提示条并逐字列出这两个串。
+- **运行配置与 Observer 默认（M22）**：`config-overrides.test.ts` 覆盖 override 键白名单
+  （拒绝了 `observer`、拼错的键与未知任务 kind，错误消息带完整路径）、深合并与点路径展开、
+  `defaults`/`editable` 形状一致、原地同步保持 `config.budget`/`config.verification` 引用、
+  SQLite 持久化与重启重放、越界值与跨字段冲突都不改动运行中的配置、`reset()` 清空、
+  坏 patch 记日志后被清除；`api.settings-runtime.test.ts` 覆盖 GET 视图、无 `--config` 时
+  三方法 409、PUT 落库并返回新视图、未知键/越界/非法 JSON 400 且不写库、`{}` 等价重置、
+  64 KiB 上限 413、operator token 401、跨源 403、同源 200、DELETE 恢复文件值；
+  `loop.test.ts` 证明启动后 `reconfigure()` 会重挂 sweep/tick 定时器且启动前调用无副作用；
+  `config.test.ts` 与 `tasks.test.ts` 断言 Observer 默认开启并注入
+  `CAIRN_OBSERVER_ENABLED=1`；`api.ui.test.ts` 断言弹窗与两个页头入口存在、可编辑路径
+  每个恰有一个控件、最小 patch、空数字输入不改值、409/400 行内错误、二次确认重置与写入
+  期间禁止关闭。真实运行见下方里程碑表的浏览器记录。
 
 golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定时钟、`TZ=UTC`）。
 重新生成方法与约束见 `docs/PORTING.md`。
@@ -1703,6 +1743,7 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M20a ✅ | Writeup 写明载荷：`isWriteupPayloadPath` 用扩展名/关键字从工件索引确定性选出脚本、投递容器与 payload，`## 载荷（Payload）` 章节逐字内联文本（自动加长围栏、截断标注）、二进制只登记路径、读不到写“内容未读取”；超过 20 条时 `selectWriteupPayloadArtifacts` 让被 `evidence_refs` 引用的载荷排在截断之前，快照带 `payloads_total`；每条载荷带 `referenced_by`（哪条 Fact 引用），HTTP 层 `collectWriteupPayloads` 复用 Flag 的路径收敛与限额（只读选中的 ≤20 条、单文件 128 KiB、总计 24000 字符）；prompt 增加“载荷照抄、未内联不得虚构”，侧栏摘要显示“载荷 N 个（内联 K）” | 670 passed / 70 files（2026-10-28） |
 | M20b ✅ | Writeup 附件包下载：`GET /projects/{id}/writeup/archive`（只读）用自研最小 ZIP 写入器（`zip.ts`：store/deflate 取小者、CRC-32、单一中央目录、固定 DOS 时间戳 → 字节确定）把 `writeup.md`（模型成稿优先）、中文 `MANIFEST.md`（项目/来源/Flag/载荷统计/目录结构/`文件与校验`表/`未打包文件`表）与**全部**已索引工件 `artifacts/<任务>/<文件>` 打成 `writeup-<id>.zip`；上限 500 条目 / 单文件 4 MiB / 总量 64 MiB（无 zip64），跳过项在清单里给中文原因；读取沿用 Flag 的路径收敛（真实目录、非符号链接、不逃逸）；JSON 增 `archive:{available,files}`，UI「附件包 N」按钮据此显示并走同源 GET，未挂载工作区 409 | 692 passed / 72 files（2026-10-28）；浏览器实测下载与 `Expand-Archive` 解压 141 个附件 |
 | M21 ✅ | Flag 扫描置信度：solver-session 回退改为只解析 `role:"toolResult"` 的消息正文（`sessionToolText`），模型自己的 assistant 叙述不再是证据——它在叙述里写下的 `CTF2{c8xxxx}` 曾按出现次数压过工具返回的真实值；`isPlaceholder` 增加掩码判定（`...`/`…`/`**`/`x{3,}` 连写与 `uuid`/`guid`/`frag`/`partial`/`truncat*`/`sample`/`dummy`/`tbd`/`unknown`/`missing` 词段匹配，`fragment_of_the_flag` 与 base64 里的 `xx` 不误杀）；被拒文本不静默丢弃：`/flag` 新增 `candidates`（≤3 条，带 `occurrences`/`sources`/`placeholder`，artifacts 与会话两路合并去重、次数相加）与 `placeholder_suspect`；Writeup 草稿的 `flag_suspects` 逐字列出它们并写“只扫描到疑似占位或截断的 flag 文本”，判定语与撰写 prompt 同步禁止把占位串当答案或拼一个看似完整的 Flag；UI 在未采纳任何值时显示琥珀色「FLAG 可疑」条（列出原文、不给复制按钮），命中时绿色横幅加“另有 N 个候选”徽标 | 703 passed / 72 files（2026-10-29）；`bun run typecheck` 通过；浏览器实测 proj_010 绿色横幅为真实 Flag、注入掩码的 proj_007 显示琥珀色可疑条 |
+| M22 ✅ | Observer 默认开启（只读复盘、提案仍默认关闭）+ 运行配置前端可调：`RuntimeConfigStore` 把 snake_case patch 存入 SQLite `runtime_config_overrides`，深合并到 dispatch.yaml 解析前文档并复用 `parseDispatchConfig` 校验，成功后原地同步共享 `DispatchConfig`；新增 `GET/PUT/DELETE /settings/runtime`（operator token、同源、64 KiB、无 `--config` 409）；`Scheduler.reconfigure()` 重挂 tick/sweep 定时器，`evidence_enforcement` 改为 getter 热读；页头「运行配置」弹窗按七组渲染数字/开关/下拉/多选，标出覆盖项、只提交与文件基线的差异、二次确认恢复；新增 `docs/CONFIG.md` | 732 passed / 74 files（2026-10-29）；浏览器实测：临时 DB+配置起 `serve --port 8019`，把调度间隔 2→5 保存后 `GET` 返回 `overrides:["runtime.interval"]`、SQLite 落 `{"runtime":{"interval":5}}`，刷新页面后值与「已覆盖 1 项」仍在；把单项目 worker 数改成 9 被 400 行内拒绝（`runtime.max_project_workers cannot exceed runtime.max_workers`）且服务端仍是 1；两次点击恢复后回到 2 且覆盖清空 |
 
 ## 与 Phase 0 的关系
 

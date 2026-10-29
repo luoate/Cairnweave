@@ -73,6 +73,7 @@ import { resolve, sep } from "node:path";
 
 import type { AuditTokenRegistry } from "../audit-stream/tokens";
 import { DEFAULT_VERIFICATION, type BudgetConfig } from "../config";
+import type { RuntimeConfigStore } from "../config-overrides";
 import { verifyEvidenceFiles } from "../scheduler/evidence";
 import { projectWorkspace } from "../scheduler/tasks";
 import { VerificationService } from "../verification/oracle";
@@ -91,6 +92,7 @@ import {
   type WriteupGenerator,
   type WriteupRouteOptions,
 } from "./project-writeup";
+import { registerSettingsRuntimeRoutes } from "./settings-runtime";
 
 export interface ApiOptions {
   db: CairnDatabase;
@@ -136,6 +138,11 @@ export interface ApiOptions {
   writeupTimeoutMs?: number;
   /** model-prefs entry used when the writeup request does not name one. */
   writeupModelPref?: string;
+  /**
+   * Runtime override store. Present only when `cairn serve` loaded a dispatch config;
+   * without it `/settings/runtime` writes answer 409.
+   */
+  runtimeConfig?: RuntimeConfigStore;
 }
 
 export interface Api {
@@ -329,6 +336,7 @@ export function createApi(options: ApiOptions): Api {
         ? {}
         : { modelPref: options.writeupModelPref }),
     },
+    options.runtimeConfig ?? null,
   );
 
   async function handle(request: Request): Promise<Response> {
@@ -433,6 +441,7 @@ function buildRoutes(
   operatorToken?: string,
   agentConfig: AgentConfigOptions = {},
   writeup: Pick<WriteupRouteOptions, "generator" | "timeoutMs" | "modelPref"> = {},
+  runtimeConfig: RuntimeConfigStore | null = null,
 ): Route[] {
   const routes: Route[] = [];
   const oracle = verification ?? new VerificationService(db, DEFAULT_VERIFICATION);
@@ -447,6 +456,10 @@ function buildRoutes(
   }
 
   registerAgentConfigRoutes(route, agentConfig);
+  registerSettingsRuntimeRoutes(route, {
+    store: runtimeConfig,
+    ...(operatorToken === undefined ? {} : { operatorToken }),
+  });
   registerWriteupRoutes(route, {
     db,
     ...(workspaceRoot === undefined ? {} : { workspaceRoot }),

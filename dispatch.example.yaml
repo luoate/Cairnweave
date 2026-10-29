@@ -117,12 +117,12 @@ retention:
 #   enabled: true
 #   url: "http://127.0.0.1:8000"
 
-# Optional Observer sidecar (M4c). It maintains a project-level ideas/memory board
-# and runs a separate review model; the main solver only gets read-only board tools.
-# The solver answer is never changed by Observer failures, and flush is bounded by
-# timeout_seconds. Leave disabled unless a real solver is configured.
+# Observer sidecar (M4c). It maintains a project-level ideas/memory board and runs a
+# separate review model; the main solver only gets read-only board tools. The solver
+# answer is never changed by Observer failures, and flush is bounded by
+# timeout_seconds. It is on by default (M22); set enabled: false to opt out.
 # observer:
-#   enabled: false
+#   enabled: true
 #   model: null                 # model-prefs.json entry; null reuses the main model
 #   every_rounds: 4
 #   window_rounds: 8

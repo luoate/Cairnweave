@@ -86,8 +86,6 @@ interface ChallengeEnvelope {
 export class VerificationService {
   private readonly fetchImpl: FetchLike;
   private readonly env: Record<string, string | undefined>;
-  /** Policy used for projects created before `project_verification` existed. */
-  readonly defaultKind: "evidence" | "off";
 
   constructor(
     private readonly db: CairnDatabase,
@@ -99,7 +97,14 @@ export class VerificationService {
   ) {
     this.fetchImpl = options.fetch ?? fetch;
     this.env = options.env ?? process.env;
-    this.defaultKind = defaultVerificationKind(config);
+  }
+
+  /**
+   * Policy used for projects created before `project_verification` existed. Read through
+   * the shared config so a runtime override applies without restarting the server.
+   */
+  get defaultKind(): "evidence" | "off" {
+    return defaultVerificationKind(this.config);
   }
 
   /**

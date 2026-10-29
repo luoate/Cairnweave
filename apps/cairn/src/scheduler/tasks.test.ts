@@ -493,7 +493,7 @@ describe("Observer task preparation", () => {
     });
   });
 
-  test("stays off by default even when the task kind would match", () => {
+  test("turns on by default for a matching task kind", () => {
     const project = projectFixture();
     const prepared = prepareTask({
       config: parseDispatchConfig(CONFIG),
@@ -505,10 +505,8 @@ describe("Observer task preparation", () => {
       workspaceRoot: directory,
     });
 
-    expect(prepared.observer.enabled).toBe(false);
-    expect(existsSync(join(directory, "p1", ".cairn", "board"))).toBe(false);
-    expect(observerEnvironment(prepared.observer)).toEqual({
-      CAIRN_OBSERVER_ENABLED: "0",
-    });
+    expect(prepared.observer.enabled).toBe(true);
+    expect(existsSync(join(directory, "p1", ".cairn", "board"))).toBe(true);
+    expect(observerEnvironment(prepared.observer)["CAIRN_OBSERVER_ENABLED"]).toBe("1");
   });
 });

@@ -189,7 +189,9 @@ export class Scheduler {
   private readonly workspaceRoot: string;
   private readonly runtime: RuntimeBackend;
   private readonly log: (message: string) => void;
-  private readonly leaseIntervalMs: number;
+  /** Test override; otherwise the lease cadence follows runtime.interval. */
+  private readonly leaseIntervalOverrideMs: number | null;
+  private leaseIntervalMs: number;
   private readonly auditStream: AuditStreamTarget | null;
   private readonly verification: VerificationService;
   private readonly now: () => Date;
@@ -214,8 +216,9 @@ export class Scheduler {
         log: this.log,
         ...(options.workerArgv === undefined ? {} : { workerArgv: options.workerArgv }),
       });
+    this.leaseIntervalOverrideMs = options.leaseIntervalMs ?? null;
     this.leaseIntervalMs =
-      options.leaseIntervalMs ?? this.config.runtime.interval * 1000;
+      this.leaseIntervalOverrideMs ?? this.config.runtime.interval * 1000;
     this.verification =
       options.verification ?? new VerificationService(this.db, this.config.verification);
 
@@ -251,6 +254,24 @@ export class Scheduler {
     } catch (error) {
       this.log(`startup sweep failed: ${describe(error)}`);
     }
+    this.armTimers();
+    this.tick();
+  }
+
+  /**
+   * Re-arms interval-driven timers after a runtime settings change. Values such as workers,
+   * budgets and timeouts are read from `this.config` on every tick, so this only has to
+   * cover the two intervals captured when the timers were created.
+   */
+  reconfigure(): void {
+    if (this.timer === null) return;
+    this.clearTimers();
+    this.leaseIntervalMs =
+      this.leaseIntervalOverrideMs ?? this.config.runtime.interval * 1000;
+    this.armTimers();
+  }
+
+  private armTimers(): void {
     const sweepSeconds = this.config.retention.sweepIntervalSeconds;
     if (sweepSeconds > 0) {
       this.sweepTimer = setInterval(() => {
@@ -268,10 +289,9 @@ export class Scheduler {
         this.log(`tick failed: ${describe(error)}`);
       }
     }, this.config.runtime.interval * 1000);
-    this.tick();
   }
 
-  async stop(): Promise<void> {
+  private clearTimers(): void {
     if (this.timer !== null) {
       clearInterval(this.timer);
       this.timer = null;
@@ -280,6 +300,10 @@ export class Scheduler {
       clearInterval(this.sweepTimer);
       this.sweepTimer = null;
     }
+  }
+
+  async stop(): Promise<void> {
+    this.clearTimers();
     for (const task of this.running.values()) {
       this.cancel(task, "shutdown");
     }

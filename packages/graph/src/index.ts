@@ -9,6 +9,13 @@ export {
   type SqlValue,
 } from "./db";
 
+export {
+  clearRuntimeConfigOverrides,
+  getRuntimeConfigOverrides,
+  setRuntimeConfigOverrides,
+  type StoredRuntimeOverrides,
+} from "./runtime-config";
+
 export { HttpError, RequestValidationError } from "./errors";
 export type { ValidationIssue, ValidationLocation } from "./errors";
 

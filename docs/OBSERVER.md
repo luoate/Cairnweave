@@ -33,13 +33,14 @@ packages/agent/src/solver/extension/cairn-observer/
 - M11 起 sidecar 可以拿到 `propose_graph_change` 工具，把候选 fact/intent/hint 写到
   任务级候选目录；scheduler 在任务结束与每个 tick 摄取这些文件，由控制面统一校验、
   去重并写图。sidecar 仍没有图或数据库的写权限，提议默认关闭（见 §7）。
-- 默认关闭；只有 `observer.enabled: true` 且任务 kind 命中 `kernel_tasks` 才启用。
+- M22 起默认开启（`observer.enabled` 缺省为 `true`）；需要关闭时显式写
+  `observer.enabled: false`。只有启用且任务 kind 命中 `kernel_tasks` 才接入。
 
 ## 2. 配置
 
 ```yaml
 observer:
-  enabled: false          # 默认关闭
+  enabled: true           # M22 起默认开启；写 false 关闭
   model: null             # model-prefs.json 条目；null 复用主 prompt 的模型
   every_rounds: 4         # 每 N 个 assistant 轮次触发一次周期 review
   window_rounds: 8        # 每次 review 带最近 N 轮
@@ -69,9 +70,10 @@ proposals:                  # M11：默认关闭；只有 Observer 启用时才�
 - `max_per_task` 与两个字节上限都是非负 / 正整数，且
   `max_total_bytes >= max_file_bytes`。
 
-配置缺省时使用 `DEFAULT_OBSERVER` / `DEFAULT_PROPOSALS`，因此旧的 `dispatch.yaml`
-不需要改动。`dispatch.example.yaml` 以注释形式给出默认关闭的 `observer:` 与
-`proposals:` 示例。
+配置缺省时使用 `DEFAULT_OBSERVER` / `DEFAULT_PROPOSALS`；M22 起 `observer.enabled`
+默认为 `true`（只读复盘），提案仍默认关闭，因此旧的 `dispatch.yaml` 不需要改动。
+需要关闭复盘时显式写 `observer.enabled: false`。`dispatch.example.yaml` 以注释形式
+给出开启的 `observer:` 与默认关闭的 `proposals:` 示例。
 
 ## 3. Scheduler → worker 契约
 

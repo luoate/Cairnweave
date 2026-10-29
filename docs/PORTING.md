@@ -14,7 +14,7 @@
 | `server/services.py` | — | `packages/graph/src/services.ts` | 事实/意图/提示的业务规则；事务边界保持 |
 | `server/app.py` | — | `apps/cairn/src/http/app.ts` | 路由装配；建议 Hono（Bun 原生），零依赖时用 `Bun.serve` |
 | `server/routers/{projects,intents,hints,settings,export}.py` | — | `apps/cairn/src/http/routes/*.ts` | 路径、方法、状态码、错误体逐项对齐 |
-| `dispatcher/config.py` | — | `apps/cairn/src/config.ts` | 保留 `server/runtime/tasks/container/local/common_env`；删除 `workers` 与 `WORKER_ENV_KEYS`；新增 `worker` 段（软截止比例、任务文件保留、结果宽限）、可选的 `tasks.graph_slice`（M4b）与 `observer`（M4c，默认关闭） |
+| `dispatcher/config.py` | — | `apps/cairn/src/config.ts` | 保留 `server/runtime/tasks/container/local/common_env`；删除 `workers` 与 `WORKER_ENV_KEYS`；新增 `worker` 段（软截止比例、任务文件保留、结果宽限）、可选的 `tasks.graph_slice`（M4b）与 `observer`（M4c；M22 起默认开启） |
 | `dispatcher/contracts.py` | — | `packages/contracts/src/` | 任务/结果契约（M0 已建立，按此扩充） |
 | `dispatcher/output_parser.py` | — | `packages/contracts/src/parse.ts` | 宽容 JSON 提取；算法与测试逐条移植 |
 | `dispatcher/prompting.py` + `prompts/{default,mock}/*.md` | — | `apps/cairn/src/prompts/` | 模板逐字复制；渲染顺序与 `json.dumps(indent=2, ensure_ascii=False)` 一致；golden 对照 |
@@ -134,7 +134,7 @@ M1 已记录的偏离（均不影响合法客户端）：
    两个 session 目录都在结束后删除。M4b 覆盖：切片导出保留 focus intent/来源与其他未结束
    intent、确定性、极小 caps 下的硬保留与 `truncated`、未知 focus 报错；scheduler 层确认
    开启后 explore 快照含 `slice:` 而 reason 快照仍是全图；配置默认值与非法 caps 校验。
-   M4c 覆盖：Observer 配置默认关闭与非法值、环境契约（精确 `1`、必需路径、数值回落）、
+   M4c 覆盖：Observer 配置校验与非法值（M22 起默认开启）、环境契约（精确 `1`、必需路径、数值回落）、
    scheduler 的 context/env 注入与 `kernel_tasks` 过滤、focus intent 在 open-intent
    上限之外仍保留、board/state 路径
    优先级与 fail closed、周期 + flush、`max_reviews_per_task`、review 挂起时 flush 超时

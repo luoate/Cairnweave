@@ -295,6 +295,9 @@
       <button @click="openAgentSettings()" class="h-7 w-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition inline-flex items-center justify-center shrink-0" title="模型与密钥" aria-label="模型与密钥">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2"/><path d="M9 3v4M15 3v4M9 17v4M15 17v4M3 9h4M3 15h4M17 9h4M17 15h4"/></svg>
       </button>
+      <button @click="openRuntimeSettings()" class="h-7 w-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition inline-flex items-center justify-center shrink-0" title="运行配置" aria-label="运行配置">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/><circle cx="9" cy="7" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="7" cy="17" r="2"/></svg>
+      </button>
       <button @click="loadSettings(); showSettings = true" class="h-7 w-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition inline-flex items-center justify-center shrink-0">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7 7 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a7 7 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a7 7 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a7 7 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.28Z"/><path d="M15 12a3 3 0 1 1-6 0-3 3 0 0 1 6 0Z"/></svg>
       </button>
@@ -555,6 +558,9 @@
       </button>
       <button @click="openAgentSettings()" class="h-7 w-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition inline-flex items-center justify-center shrink-0" title="模型与密钥" aria-label="模型与密钥">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2"/><path d="M9 3v4M15 3v4M9 17v4M15 17v4M3 9h4M3 15h4M17 9h4M17 15h4"/></svg>
+      </button>
+      <button @click="openRuntimeSettings()" class="h-7 w-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition inline-flex items-center justify-center shrink-0" title="运行配置" aria-label="运行配置">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/><circle cx="9" cy="7" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="7" cy="17" r="2"/></svg>
       </button>
       <button @click="loadSettings(); showSettings = true" class="h-7 w-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition inline-flex items-center justify-center shrink-0">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7 7 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a7 7 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a7 7 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a7 7 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.28Z"/><path d="M15 12a3 3 0 1 1-6 0-3 3 0 0 1 6 0Z"/></svg>
@@ -2556,6 +2562,108 @@
   </div>
 </div>
 
+<!-- Runtime Settings (M22) -->
+<div x-show="showRuntimeSettings" x-cloak data-modal="runtime" x-effect="syncModal('runtime', showRuntimeSettings, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('runtime')">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-4xl mx-4 border border-slate-200/60 overflow-hidden" @click.stop>
+    <div class="px-5 py-4 border-b border-slate-200/80 flex items-start justify-between gap-4">
+      <div class="min-w-0">
+        <h3 class="text-base font-semibold text-slate-700">运行配置</h3>
+        <p class="text-[11px] text-slate-400 mt-0.5">覆盖保存在 SQLite，调度器在下一个周期生效；标注为只读的项需修改 dispatch.yaml 并重启。</p>
+      </div>
+      <button @click="dismissModal('runtime')" :disabled="runtimeWritePending()" data-autofocus class="shrink-0 whitespace-nowrap px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition disabled:opacity-40 disabled:cursor-not-allowed">关闭</button>
+    </div>
+    <div class="max-h-[70vh] overflow-y-auto p-5 space-y-4">
+      <p x-show="runtimeConfig.loading" class="text-[11px] text-slate-400">加载中…</p>
+      <div x-show="runtimeConfig.error" class="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] text-rose-700 break-words" x-text="runtimeConfig.error"></div>
+
+      <template x-if="runtimeForm && runtimeConfig.view">
+        <div class="space-y-4">
+          <div class="flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
+            <span x-text="runtimeConfig.view.overrides.length ? '已覆盖 ' + runtimeConfig.view.overrides.length + ' 项' : '当前全部来自 dispatch.yaml'"></span>
+            <span x-show="runtimeConfig.view.updated_at" x-text="'· 更新于 ' + runtimeConfig.view.updated_at"></span>
+          </div>
+
+          <template x-for="group in runtimeGroups()" :key="group.title">
+            <section class="rounded-xl border border-slate-200 p-3">
+              <div class="flex flex-wrap items-baseline justify-between gap-2">
+                <h4 class="text-xs font-semibold text-slate-600" x-text="group.title"></h4>
+                <span x-show="group.hint" class="text-[10px] text-slate-400" x-text="group.hint"></span>
+              </div>
+              <div class="grid grid-cols-2 md:grid-cols-3 gap-x-3 gap-y-2.5 mt-2">
+                <template x-for="field in group.fields" :key="field.path + (field.value || '')">
+                  <div class="block min-w-0">
+                    <div class="flex items-center gap-1 text-[11px] text-slate-400 mb-1 font-medium">
+                      <span class="truncate" x-text="field.label"></span>
+                      <em x-show="runtimeFieldOverridden(field.path)" class="not-italic shrink-0 text-[10px] text-amber-600">已覆盖</em>
+                    </div>
+                    <template x-if="field.type === 'bool'">
+                      <input type="checkbox" :checked="runtimeFieldValue(field)" @change="setRuntimeFieldValue(field, $event.target.checked)" class="h-4 w-4 rounded border-slate-300 text-brand-500 focus:ring-brand-200">
+                    </template>
+                    <template x-if="field.type === 'select'">
+                      <select :value="runtimeFieldValue(field)" @change="setRuntimeFieldValue(field, $event.target.value)" class="w-full px-2 py-1.5 border border-slate-200 rounded-lg text-xs bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
+                        <template x-for="option in field.options" :key="option.value">
+                          <option :value="option.value" x-text="option.label"></option>
+                        </template>
+                      </select>
+                    </template>
+                    <template x-if="field.type === 'number'">
+                      <input type="number" :min="field.min" :max="field.max" :step="field.step || 1" :value="runtimeFieldValue(field)" @input="setRuntimeFieldValue(field, $event.target.value)" class="w-full px-2 py-1.5 border border-slate-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
+                    </template>
+                    <template x-if="field.type === 'multi'">
+                      <div class="flex flex-wrap gap-2">
+                        <template x-for="option in field.options" :key="option.value">
+                          <label class="inline-flex items-center gap-1 text-[11px] text-slate-600">
+                            <input type="checkbox" class="h-3.5 w-3.5 rounded border-slate-300 text-brand-500 focus:ring-brand-200" :checked="(runtimeFieldValue(field) || []).includes(option.value)" @change="toggleRuntimeKind(field, option.value, $event.target.checked)">
+                            <span x-text="option.label"></span>
+                          </label>
+                        </template>
+                      </div>
+                    </template>
+                  </div>
+                </template>
+              </div>
+            </section>
+          </template>
+
+          <section class="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
+            <div class="flex flex-wrap items-baseline justify-between gap-2">
+              <h4 class="text-xs font-semibold text-slate-600">只读（dispatch.yaml / 重启生效）</h4>
+              <span class="text-[10px] text-slate-400">Observer 复盘默认开启；提案仍由上方开关控制</span>
+            </div>
+            <div class="grid grid-cols-2 md:grid-cols-3 gap-x-3 gap-y-1.5 mt-2 text-[11px] text-slate-500">
+              <div>执行模式：<span class="text-slate-700" x-text="runtimeConfig.view.read_only.runtime.execution"></span></div>
+              <div>Prompt 组：<span class="text-slate-700" x-text="runtimeConfig.view.read_only.runtime.prompt_group"></span></div>
+              <div>健康检查：<span class="text-slate-700" x-text="runtimeConfig.view.read_only.runtime.worker_healthcheck + ' / ' + runtimeConfig.view.read_only.runtime.healthcheck_timeout + 's'"></span></div>
+              <div>Observer：<span class="text-slate-700" x-text="runtimeConfig.view.read_only.observer.enabled ? '开启' : '关闭'"></span></div>
+              <div>复盘模型：<span class="text-slate-700" x-text="runtimeConfig.view.read_only.observer.model || '跟随任务模型'"></span></div>
+              <div>复盘节奏：<span class="text-slate-700" x-text="'每 ' + runtimeConfig.view.read_only.observer.every_rounds + ' 轮 / 窗口 ' + runtimeConfig.view.read_only.observer.window_rounds + ' / 上限 ' + runtimeConfig.view.read_only.observer.max_reviews_per_task"></span></div>
+              <div>审计流：<span class="text-slate-700" x-text="runtimeConfig.view.read_only.audit_stream.enabled ? (runtimeConfig.view.read_only.audit_stream.url || '自动地址') : '关闭'"></span></div>
+              <div>工作区：<span class="text-slate-700 break-all" x-text="runtimeConfig.view.read_only.workspace.root || '启动目录'"></span></div>
+              <div>环境变量名：<span class="text-slate-700 break-all" x-text="runtimeConfig.view.read_only.common_env_keys.length ? runtimeConfig.view.read_only.common_env_keys.join(', ') : '无'"></span></div>
+            </div>
+            <div x-show="runtimeConfig.view.read_only.worker_profiles.length" class="mt-2 text-[11px] text-slate-500">
+              Worker Profiles：
+              <template x-for="profile in runtimeConfig.view.read_only.worker_profiles" :key="profile.id">
+                <span class="inline-block mr-2 font-mono text-slate-700" x-text="profile.id + ' → ' + profile.model"></span>
+              </template>
+            </div>
+          </section>
+        </div>
+      </template>
+    </div>
+    <div class="px-5 py-3 border-t border-slate-200/80 flex items-center gap-2">
+      <button @click="resetRuntimeSettings()" :disabled="runtimeWritePending() || !runtimeConfig.view"
+        class="px-3 py-1.5 text-xs border rounded-lg transition disabled:opacity-40 disabled:cursor-not-allowed"
+        :class="runtimeResetArmed ? 'border-rose-300 text-rose-600 bg-rose-50' : 'border-slate-200 text-slate-500 hover:bg-slate-50'"
+        x-text="runtimeResetArmed ? '再次点击确认恢复' : '恢复 dispatch.yaml 默认值'"></button>
+      <div class="flex-1"></div>
+      <button @click="saveRuntimeSettings()" :disabled="runtimeWritePending() || !runtimeForm"
+        class="px-4 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition shadow-sm shadow-brand-200 disabled:opacity-40 disabled:cursor-not-allowed"
+        x-text="runtimeConfig.saving ? '保存中…' : '保存并生效'"></button>
+    </div>
+  </div>
+</div>
+
 <!-- Agent Model Settings -->
 <div x-show="showAgentSettings" x-cloak data-modal="agent" x-effect="syncModal('agent', showAgentSettings, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('agent')">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-3xl mx-4 border border-slate-200/60 overflow-hidden" @click.stop>
@@ -2965,6 +3073,11 @@ function cairnApp() {
     renameForm: { projectId: '', originalTitle: '', title: '' },
     localPrefs: { actor_name: '本机用户', layout_mode: 'dagre_tb' },
     settingsForm: { intent_timeout: 5, reason_timeout: 5 },
+    showRuntimeSettings: false,
+    runtimeConfig: { loading: false, saving: false, error: '', view: null },
+    runtimeForm: null,
+    runtimeResetArmed: false,
+    runtimeResetTimer: null,
     agentTab: 'providers',
     agentConfig: { loading: false, error: '', defaultModelPrefId: null, providers: [], models: [], protocols: [], builtinProviders: [] },
     agentProviderForm: { id: '', name: '', api: '', baseUrl: '', apiKey: '', headersText: '', clearHeaders: false, clearBaseUrl: false },
@@ -3797,6 +3910,9 @@ function cairnApp() {
         },
         settings: () => {
           if (!this.isSavingSettings) this.showSettings = false;
+        },
+        runtime: () => {
+          if (!this.runtimeWritePending()) this.showRuntimeSettings = false;
         },
         agent: () => {
           if (!this.agentWritePending()) this.showAgentSettings = false;
@@ -6996,6 +7112,265 @@ function cairnApp() {
         this.showToast('服务端设置已保存');
       } catch(e) { this.showToast(e.message, 'error'); }
       finally { this.isSavingSettings = false; }
+    },
+
+    runtimeWritePending() {
+      return this.runtimeConfig.loading || this.runtimeConfig.saving;
+    },
+
+    runtimePathParts(path) {
+      return String(path || '').split('.').filter(part => part !== '');
+    },
+
+    runtimeFieldValue(field) {
+      let cursor = this.runtimeForm;
+      for (const part of this.runtimePathParts(field.path)) {
+        if (cursor === null || typeof cursor !== 'object') return null;
+        cursor = cursor[part];
+      }
+      return cursor === undefined ? null : cursor;
+    },
+
+    setRuntimeFieldValue(field, raw) {
+      if (!field || !this.runtimeForm) return;
+      let value = raw;
+      if (field.type === 'bool') value = Boolean(raw);
+      else if (field.type === 'number') {
+        const parsed = Number(raw);
+        if (raw === '' || raw === null || !Number.isFinite(parsed)) return;
+        value = parsed;
+      }
+      const parts = this.runtimePathParts(field.path);
+      if (parts.length === 0) return;
+      let cursor = this.runtimeForm;
+      for (const part of parts.slice(0, -1)) {
+        if (cursor[part] === null || typeof cursor[part] !== 'object') cursor[part] = {};
+        cursor = cursor[part];
+      }
+      cursor[parts[parts.length - 1]] = value;
+    },
+
+    toggleRuntimeKind(field, kind, checked) {
+      const current = this.runtimeFieldValue(field);
+      const list = Array.isArray(current) ? current : [];
+      this.setRuntimeFieldValue(
+        field,
+        checked ? [...list.filter(item => item !== kind), kind] : list.filter(item => item !== kind),
+      );
+    },
+
+    runtimeFieldOverridden(path) {
+      const view = this.runtimeConfig.view;
+      return Boolean(view && Array.isArray(view.overrides) && view.overrides.includes(path));
+    },
+
+    runtimeGroups() {
+      if (!this.runtimeForm || !this.runtimeConfig.view) return [];
+      const number = (path, label, extra = {}) => ({ path, label, type: 'number', ...extra });
+      const bool = (path, label) => ({ path, label, type: 'bool' });
+      const select = (path, label, options) => ({ path, label, type: 'select', options });
+      const multi = (path, label, options) => ({ path, label, type: 'multi', options });
+      return [
+        {
+          title: '调度',
+          hint: '间隔改动会在下一个周期重新定时',
+          fields: [
+            number('runtime.max_workers', '最大 worker 数', { min: 1 }),
+            number('runtime.max_running_projects', '并行项目数', { min: 1 }),
+            number('runtime.max_project_workers', '单项目 worker 数', { min: 1 }),
+            number('runtime.interval', '调度间隔（秒）', { min: 1 }),
+          ],
+        },
+        {
+          title: '任务超时',
+          fields: [
+            number('tasks.bootstrap.timeout', 'bootstrap 超时（秒）', { min: 1 }),
+            number('tasks.bootstrap.conclude_timeout', 'bootstrap 收尾（秒）', { min: 1 }),
+            number('tasks.reason.timeout', 'reason 超时（秒）', { min: 1 }),
+            number('tasks.reason.max_intents', 'reason 意图上限', { min: 1 }),
+            number('tasks.explore.timeout', 'explore 超时（秒）', { min: 1 }),
+            number('tasks.explore.conclude_timeout', 'explore 收尾（秒）', { min: 1 }),
+          ],
+        },
+        {
+          title: '图切片与证据',
+          fields: [
+            bool('tasks.graph_slice.enabled', '启用图切片'),
+            number('tasks.graph_slice.max_facts', '切片事实数', { min: 2 }),
+            number('tasks.graph_slice.max_intents', '切片意图数', { min: 1 }),
+            number('tasks.evidence.min_bytes', '证据最小字节', { min: 0 }),
+            select('verification.evidence_enforcement', '完成校验', [
+              { value: 'completion', label: '阻断完成' },
+              { value: 'off', label: '关闭' },
+            ]),
+          ],
+        },
+        {
+          title: 'Worker 与选择',
+          hint: '统计模式需要只读区里的 worker_profiles',
+          fields: [
+            number('worker.soft_deadline_ratio', '软截止比例', { min: 0.1, max: 0.99, step: 0.05 }),
+            bool('worker.retain_task_files', '保留任务文件'),
+            number('worker.result_grace_seconds', '结果宽限（秒）', { min: 0 }),
+            bool('worker.scoped_artifacts', '工件按任务隔离'),
+            select('worker_selection.mode', '选择策略', [
+              { value: 'prompt', label: 'Prompt 指定' },
+              { value: 'stats', label: '统计驱动' },
+            ]),
+            number('worker_selection.min_runs', '最少样本', { min: 0 }),
+            number('worker_selection.epsilon', '探索率', { min: 0, max: 1, step: 0.05 }),
+            number('worker_selection.epsilon_decay', '探索衰减', { min: 0, max: 1, step: 0.01 }),
+            number('worker_selection.epsilon_min', '探索下限', { min: 0, max: 1, step: 0.01 }),
+          ],
+        },
+        {
+          title: '保留与预算',
+          hint: '预算为 0 表示不限制',
+          fields: [
+            number('retention.session_max_age_days', '会话保留（天）', { min: 0 }),
+            number('retention.session_keep_per_project', '每项目保留数', { min: 0 }),
+            number('retention.sweep_interval_seconds', '清理间隔（秒）', { min: 0 }),
+            bool('retention.refresh_artifacts', '刷新工件'),
+            number('budget.max_project_tokens', '项目 Token 上限', { min: 0 }),
+            number('budget.max_project_cost_usd', '项目费用上限（USD）', { min: 0, step: 0.01 }),
+            number('budget.max_project_tasks', '项目任务数上限', { min: 0 }),
+          ],
+        },
+        {
+          title: '策略触发',
+          fields: [
+            number('strategist.min_new_facts', '最少新事实', { min: 0 }),
+            number('strategist.min_new_hints', '最少新提示', { min: 0 }),
+            number('strategist.cooldown_seconds', '冷却（秒）', { min: 0 }),
+            number('strategist.failure_backoff_seconds', '失败退避（秒）', { min: 0 }),
+            number('strategist.max_runs_per_hour', '每小时上限', { min: 0 }),
+            number('strategist.zero_output_threshold', '零输出阈值', { min: 0 }),
+            number('strategist.stale_intent_seconds', '陈旧意图（秒）', { min: 0 }),
+            number('strategist.fallback_interval_seconds', '兜底间隔（秒）', { min: 0 }),
+            number('strategist.resource_pressure_ratio', '资源压力阈值', { min: 0, max: 1, step: 0.05 }),
+          ],
+        },
+        {
+          title: '提案',
+          hint: '仍需要 Observer 复盘与 enabled 同时开启',
+          fields: [
+            bool('proposals.enabled', '启用提案'),
+            select('proposals.mode', '提案模式', [
+              { value: 'off', label: '关闭' },
+              { value: 'dry_run', label: '只记录' },
+              { value: 'apply', label: '直接应用' },
+            ]),
+            number('proposals.max_per_task', '每任务上限', { min: 0 }),
+            number('proposals.max_file_bytes', '单文件字节', { min: 1 }),
+            number('proposals.max_total_bytes', '总字节上限', { min: 1 }),
+            bool('proposals.require_evidence_for_fact', '事实需证据'),
+            number('proposals.min_confidence', '最低置信度', { min: 0, max: 1, step: 0.05 }),
+            multi('proposals.allow_kinds', '允许类型', [
+              { value: 'fact', label: 'fact' },
+              { value: 'intent', label: 'intent' },
+              { value: 'hint', label: 'hint' },
+            ]),
+          ],
+        },
+      ];
+    },
+
+    runtimeIsPlainObject(value) {
+      return typeof value === 'object' && value !== null && !Array.isArray(value);
+    },
+
+    runtimeDiff(form, base) {
+      if (this.runtimeIsPlainObject(form) && this.runtimeIsPlainObject(base)) {
+        const patch = {};
+        for (const key of Object.keys(form)) {
+          const child = this.runtimeDiff(form[key], base[key]);
+          if (child !== undefined) patch[key] = child;
+        }
+        return Object.keys(patch).length ? patch : undefined;
+      }
+      if (Array.isArray(form)) {
+        const current = Array.isArray(base) ? base : [];
+        const same = form.length === current.length && form.every((item, index) => item === current[index]);
+        return same ? undefined : this.cloneData(form);
+      }
+      return form === base ? undefined : form;
+    },
+
+    runtimePatch() {
+      const view = this.runtimeConfig.view;
+      if (!this.runtimeForm || !view) return {};
+      return this.runtimeDiff(this.runtimeForm, view.defaults) || {};
+    },
+
+    async openRuntimeSettings() {
+      this.showRuntimeSettings = true;
+      this.runtimeConfig.error = '';
+      this.runtimeResetArmed = false;
+      await this.loadRuntimeSettings();
+    },
+
+    async loadRuntimeSettings() {
+      if (this.runtimeConfig.loading || this.runtimeConfig.saving) return;
+      this.runtimeConfig.loading = true;
+      this.runtimeConfig.error = '';
+      try {
+        const view = await this.api('GET', '/settings/runtime');
+        this.runtimeConfig.view = view;
+        this.runtimeForm = this.cloneData(view.editable);
+      } catch (e) {
+        this.runtimeConfig.view = null;
+        this.runtimeForm = null;
+        this.runtimeConfig.error = this.errorText(e);
+      } finally {
+        this.runtimeConfig.loading = false;
+      }
+    },
+
+    async saveRuntimeSettings() {
+      if (!this.runtimeForm || this.runtimeWritePending()) return;
+      this.runtimeConfig.error = '';
+      this.runtimeConfig.saving = true;
+      try {
+        const view = await this.api('PUT', '/settings/runtime', this.runtimePatch());
+        this.runtimeConfig.view = view;
+        this.runtimeForm = this.cloneData(view.editable);
+        this.runtimeResetArmed = false;
+        this.showToast(view.overrides.length ? `运行配置已生效（覆盖 ${view.overrides.length} 项）` : '运行配置已恢复默认');
+      } catch (e) {
+        this.runtimeConfig.error = this.errorText(e);
+      } finally {
+        this.runtimeConfig.saving = false;
+      }
+    },
+
+    async resetRuntimeSettings() {
+      if (!this.runtimeConfig.view || this.runtimeWritePending()) return;
+      if (!this.runtimeResetArmed) {
+        this.runtimeResetArmed = true;
+        if (this.runtimeResetTimer) clearTimeout(this.runtimeResetTimer);
+        this.runtimeResetTimer = setTimeout(() => {
+          this.runtimeResetArmed = false;
+          this.runtimeResetTimer = null;
+        }, 4000);
+        return;
+      }
+      if (this.runtimeResetTimer) {
+        clearTimeout(this.runtimeResetTimer);
+        this.runtimeResetTimer = null;
+      }
+      this.runtimeResetArmed = false;
+      this.runtimeConfig.error = '';
+      this.runtimeConfig.saving = true;
+      try {
+        const view = await this.api('DELETE', '/settings/runtime');
+        this.runtimeConfig.view = view;
+        this.runtimeForm = this.cloneData(view.editable);
+        this.showToast('运行配置已恢复 dispatch.yaml 默认值');
+      } catch (e) {
+        this.runtimeConfig.error = this.errorText(e);
+      } finally {
+        this.runtimeConfig.saving = false;
+      }
     },
 
     agentWritePending() {

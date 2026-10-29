@@ -1277,3 +1277,23 @@ describe("per-project concurrency quota", () => {
     30_000,
   );
 });
+
+describe("runtime settings hot reload", () => {
+  test("re-arms interval timers after the config changes", async () => {
+    const loop = scheduler();
+    loop.start();
+    try {
+      config.runtime.interval = 1;
+      config.retention.sweepIntervalSeconds = 60;
+      expect(() => loop.reconfigure()).not.toThrow();
+      expect(loop.runningCount).toBe(0);
+    } finally {
+      await loop.stop();
+    }
+  });
+
+  test("ignores reconfigure before start", () => {
+    const loop = scheduler();
+    expect(() => loop.reconfigure()).not.toThrow();
+  });
+});

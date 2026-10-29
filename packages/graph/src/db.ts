@@ -259,6 +259,14 @@ CREATE TABLE IF NOT EXISTS audit_stream_lost (
     PRIMARY KEY (project_id, task_id)
 );
 
+CREATE TABLE IF NOT EXISTS runtime_config_overrides (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    overrides TEXT NOT NULL DEFAULT '{}',
+    updated_at TEXT NOT NULL DEFAULT ''
+);
+
+INSERT OR IGNORE INTO runtime_config_overrides (id, overrides, updated_at) VALUES (1, '{}', '');
+
 CREATE TABLE IF NOT EXISTS counters (
     name TEXT PRIMARY KEY,
     value INTEGER NOT NULL DEFAULT 0

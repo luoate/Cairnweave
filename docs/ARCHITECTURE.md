@@ -1,4 +1,4 @@
-# 架构（M21 更新）
+# 架构（M22 更新）
 
 本文固定合并后的角色边界、数据所有权和失败语义。实现以本文为准；需要改动时先改本文并
 记录原因。
@@ -18,8 +18,8 @@ worker 可用 `CAIRN_SOLVER=breachweave` 在进程内启动真实 Solver 会话�
 追加一轮 wrap-up；`packages/contracts` 的任务契约增加 `resumeSessionDir` / `concludeOf`。
 M4b 已落地：可选的图切片导出（`packages/graph/src/export.ts` 的
 `exportProjectSliceYaml`）与 `tasks.graph_slice` 配置；scheduler 只对 explore 及其
-conclude 使用切片，reason/bootstrap 始终拿全图，默认关闭。M4c 已落地：可选的 Observer
-sidecar（`packages/agent/src/solver/extension/cairn-observer/`）；主 solver 只读项目级
+conclude 使用切片，reason/bootstrap 始终拿全图，默认关闭。M4c 已落地：Observer
+sidecar（M22 起默认开启，可显式关闭；`packages/agent/src/solver/extension/cairn-observer/`）；主 solver 只读项目级
 看板，独立 sidecar 会话每 N 轮/结束时 review，`BreachWeaveSolver` 在返回前做有界
 `flush()`。没有 challenge 续跑、host-bridge RPC 或效率 steer，失败不影响任务结果。
 实现、配置与已知限制见 `docs/OBSERVER.md`。M5a 已落地：证据门控与 `runs` 旁路表。
@@ -177,6 +177,20 @@ M21 把这条回退收紧成「只有工具输出算证据」：逐行只取 `me
 `sources`、`placeholder`；artifacts 与会话两路按值合并、次数相加）与 `placeholder_suspect`
 一起上报，UI 据此显示琥珀色「FLAG 可疑」条；Writeup 草稿的 `flag_suspects` 与 prompt 里
 「不得把占位串当成答案」的硬规则同源于此。
+M22 把运行期配置的写权限从“改 YAML + 重启”扩到页头「运行配置」弹窗，同时把 Observer
+复盘改为默认开启（`observer.enabled` 默认 `true`；只读复盘，提案仍默认关闭）。覆盖以
+snake_case patch 存进 SQLite 表 `runtime_config_overrides`（单行，`id = 1`），由
+`apps/cairn/src/config-overrides.ts` 的 `RuntimeConfigStore` 管理：它保留
+`loadDispatchConfigWithSource` 返回的解析前文档副本，应用时把 patch 深合并到该副本上，
+再走同一个 `parseDispatchConfig`（因此键白名单与跨字段约束都复用 config 层），成功后
+用 `syncConfigInPlace` 原地写回共享的 `DispatchConfig`。原地同步保留 `config.budget`、
+`config.verification` 等对象引用，HTTP API、VerificationService 与 Scheduler 无需重新
+注入；`onApply` 只让 Scheduler `reconfigure()` 重挂 `runtime.interval` 与
+`retention.sweep_interval_seconds` 定时器。覆盖在进程重启时重放，坏数据（未知键或
+值越界）记日志后清空而不是让服务起不来。`verification.evidence_enforcement` 通过
+getter 生效，改完下一个请求即用新值。部署项（`server`、`common_env`、container/local
+工作区、Observer、审计流、worker_profiles、prompt 组、健康检查）仍是只读，需改
+dispatch.yaml 并重启。详见 `docs/CONFIG.md`。
 M18f 打开 challenge/Flag 自动校验：`POST /projects` 未给 `verification` 时，控制面读
 `verification.challenge.code_env`（默认 `TCH_CHALLENGE_ID`）；非空即写入
 `{kind: challenge, challenge_code}`，否则按 `evidence_enforcement` 落 `evidence` /
@@ -229,7 +243,7 @@ scheduler 与 HTTP API 共用 `packages/graph/src/commands.ts` 的命令，不�
   `packages/agent` 中的 BreachWeave 会话（无 RPC 适配进程、无 Python 桥）。
 - 所有模型工具调用经过 Host Bridge；未知工具、无效 scope、审计不可写都**fail closed**。
   Bridge 通过环境变量注入 Solver 与 subagent 会话，子代理不能绕过。
-- 可选 Observer（默认关闭）在 Solver 会话旁运行一个独立 review 会话。主 Solver 只拿到
+- Observer（M22 起默认开启，可显式关闭）在 Solver 会话旁运行一个独立 review 会话。主 Solver 只拿到
   只读看板工具；sidecar 只维护项目级看板，不执行验证、不写图，也不影响 `result.json`。
   同项目并发时，review 先获取 `<board>/locks/review.lock` 项目级租约（心跳 + 过期接管
   + 有界等待），拿不到就跳过本轮并记 `review_skipped`。M11 起 sidecar 还可拿到
@@ -261,7 +275,7 @@ scheduler 与 HTTP API 共用 `packages/graph/src/commands.ts` 的命令，不�
 
 ## 4. 一次任务的生命周期
 
-以下为 M12a 的实际实现；Observer 仅在 `observer.enabled: true` 且任务 kind 命中
+以下为 M12a 的实际实现；Observer 仅在 `observer.enabled`（M22 起默认 `true`）且任务 kind 命中
 `kernel_tasks` 时接入，图切片仅在 `tasks.graph_slice.enabled: true` 时影响 explore 类
 任务，reason 的派发由 `strategist` 策略与持久化水位共同决定。
 
@@ -603,6 +617,10 @@ stderr 归档到 `sessionDir/{stdout,stderr}.log`。需要 UI 实时进度时再
   `project_id`，外键指向项目并级联删除。只在 `POST /projects/{id}/writeup` 成功后
   upsert 一行，`DELETE` 清除；中文草稿不落库，始终由图数据现算。表不进入图模型、
   YAML 导出或 worker 契约。
+- `runtime_config_overrides(id, overrides, updated_at)`（M22），单行 `id = 1`，
+  `overrides` 是 snake_case JSON patch，`updated_at` 是最后一次成功写入的 ISO 时间。
+  由 `RuntimeConfigStore` 读写，不进入图导出、worker 契约或项目数据；`DELETE
+  /settings/runtime` 把它重置为 `{}`。启动时会重放；非法内容记日志后清空。
 
 HTTP（除实时追加外均为只读，均在控制面进程内直接查库）：
 
@@ -775,6 +793,11 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
   留空表示不修改；保存后重读配置。删除先走行内确认，409 时显示依赖方并切换
   “强制删除”；所有请求期间关闭按钮与提交按钮同时禁用。操作步骤与错误对照见
   `docs/MODELS.md`。
+- `运行配置`（M22）是页头第二个写弹窗（`data-modal="runtime"`）：打开时读取
+  `GET /settings/runtime`，按分组渲染数字/开关/下拉/多选控件，与文件基线不同的字段
+  显示“已覆盖”；保存只发最小 patch（`PUT`），服务端 400 的行内错误原样显示。恢复默认
+  需要 4 秒内二次点击并发 `DELETE`。只读区展示需要改 dispatch.yaml 的部署项。字段、
+  热生效范围与边界见 `docs/CONFIG.md`。
 
 实时审计流（M9）：
 
@@ -1053,11 +1076,11 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
   `session_keep_per_project`（非负整数，默认 `0` 关闭）、`sweep_interval_seconds`
   （非负整数，默认 `3600`，`0` 只保留启动 sweep）、`refresh_artifacts`（布尔，默认
   `false`）。四个字段都可省略；负值、非整数或非布尔值以 `ConfigError` 拒绝。
-- `observer` 是新增的可选段（M4c，默认关闭）：`enabled`（布尔）、`model`
+- `observer` 是可选段（M4c；M22 起 `enabled` 默认为 `true`，可写 `false` 关闭）：`enabled`（布尔）、`model`
   （model-prefs 条目或 `null`）、`every_rounds` / `window_rounds` / `timeout_seconds`
   （正整数）、`max_reviews_per_task`（非负整数）、`kernel_tasks`（
-  `bootstrap|reason|explore|conclude` 的子集，默认 `["explore"]`）。缺省值不会改变旧
-  配置行为；非法值在启动时以 `ConfigError` 拒绝。scheduler 只把该配置翻译成
+  `bootstrap|reason|explore|conclude` 的子集，默认 `["explore"]`）。`enabled` 默认开启是
+  M22 的行为变化；非法值在启动时以 `ConfigError` 拒绝。scheduler 只把该配置翻译成
   `CAIRN_OBSERVER_*` 环境变量，不写进 `task.json`。
 - `proposals` 是新增的可选段（M11，默认关闭）：`enabled`（布尔）、`mode`
   （`off|dry_run|apply`，默认 `apply`）、`max_per_task`（非负整数，默认 20）、

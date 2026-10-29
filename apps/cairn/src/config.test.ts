@@ -394,9 +394,9 @@ describe("dispatcher config", () => {
     );
   });
 
-  test("defaults the Observer off and parses overrides", () => {
+  test("defaults the Observer on and parses overrides", () => {
     expect(parse(BASE).observer).toEqual({
-      enabled: false,
+      enabled: true,
       model: null,
       everyRounds: 4,
       windowRounds: 8,
