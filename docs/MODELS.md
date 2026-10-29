@@ -55,7 +55,8 @@ curl -s -X POST "$BASE/settings/agent/providers/<provider-id>/test" -H "$H"
 ```
 
 把含密钥的请求体先写进权限 600 的临时文件、用 `--data @file` 提交，避免留在 shell
-历史里；用完删除。路由与字段见 README“通过 API 与 UI 管理模型与密钥”。
+历史里；用完删除。路由与字段见
+[OPERATIONS.md「通过 API 与 UI 管理模型与密钥」](OPERATIONS.md#通过-api-与-ui-管理模型与密钥)。
 
 ## 4. 文件落点
 
