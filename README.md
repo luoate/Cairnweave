@@ -1,14 +1,14 @@
 <div align="center">
 
-# Cairn / Cairnweave
+# Cairnweave
 
-**图内核 + 执行层，一个 Bun/TypeScript 代码库。**
+**Cairn 图内核 + BreachWeave 执行层，一个 Bun/TypeScript 代码库。**
 
 事实 · 意图 · 调度 · Solver · tools · Observer —— 单进程闭环，
 没有 Python ↔ TypeScript 桥，没有 JSONL RPC。
 
 [![CI](https://github.com/luoate/Cairnweave/actions/workflows/ci.yml/badge.svg)](https://github.com/luoate/Cairnweave/actions/workflows/ci.yml)
-[![tests](https://img.shields.io/badge/tests-748%20passed-brightgreen.svg)](docs/MILESTONES.md)
+[![tests](https://img.shields.io/badge/tests-796%20passed-brightgreen.svg)](docs/MILESTONES.md)
 [![license](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![runtime](https://img.shields.io/badge/runtime-Bun%201.4.4-black.svg)](package.json)
 
@@ -19,13 +19,17 @@
 
 ## 它是什么
 
-Cairn 是一个 CTF / 渗透测试领域的 **agent 控制面**。控制面负责出题式的推理与调度：
+Cairnweave 是一个 CTF / 渗透测试领域的 **agent 控制面**（项目名取自 Cairn 图内核 + BreachWeave 执行层）。
+控制面负责出题式的推理与调度：
 用 Fact / Intent / Hint 构成图，决定下一步探索什么、什么时候收尾、结论是否可信；
 worker 在项目沙箱里跑真实模型，每个任务启动一次进程，只返回一个 JSON 结果。
 
 本项目把 Cairn 的图内核与 BreachWeave 的执行层（Solver / tools / skills / Observer）
 合并到同一个代码库，因此控制面与 worker 之间只有**任务文件 + 结果文件 + 退出码**。
 
+- 名称约定：项目、Web UI 与浏览器标题统一叫 **Cairnweave**；而 `CAIRN_*` 环境变量、工作区里的
+  `.cairn/` 目录、`cairn-worker` prompt、`@cairn/*` 包名与 `cairn` 命令沿用 Cairn 图内核的协议名，
+  刻意不跟着改名——它们是与 Python 版做 golden 对照、以及已跑出的项目数据共同依赖的标识。
 - 默认确定性 fake solver，`bun test` 与离线演示不需要任何模型凭据。
 - 真实模型通过 `CAIRN_SOLVER=breachweave` 启用，凭据只留在本机 agent 配置目录。
 - 控制面与 UI 只绑定 `127.0.0.1`；界面本身没有身份认证，远程部署必须加网络层访问控制。
@@ -252,7 +256,7 @@ gate 放在 `tools/gate/`，手动执行、不计入 CI，命令与环境变量�
 | [WRITEUP.md](docs/WRITEUP.md) | 中文 Writeup：草稿组成、载荷、附件包、Flag 置信度与模型撰写 |
 | [MODELS.md](docs/MODELS.md) | 模型与密钥的一页操作手册 |
 | [PORTING.md](docs/PORTING.md) | Python Cairn → TypeScript 的模块映射与对照测试策略 |
-| [MILESTONES.md](docs/MILESTONES.md) | M1–M24 实现记录、完整验证清单与里程碑表 |
+| [MILESTONES.md](docs/MILESTONES.md) | M1–M26 实现记录、完整验证清单与里程碑表 |
 
 ## 仓库结构
 
@@ -266,7 +270,7 @@ apps/cairn/src/
   roles/worker.ts        worker：跑 solver、宽容解析、原子写 result.json
   http/api.ts            Cairn 兼容路由（Bun.serve 零依赖）
   http/project-board.ts  只读看板读取（M23）
-  http/static/           Cairn Web UI（Alpine.js，无构建步骤）
+  http/static/           Cairnweave Web UI（Alpine.js，无构建步骤）
   config.ts              dispatch.yaml 校验（Bun.YAML）
   config-overrides.ts    运行期覆盖：SQLite patch ↔ dispatch.yaml（M22/M24）
   prompts/               prompt 加载、渲染与上游默认模板

@@ -5,8 +5,8 @@
 
 ## 实现记录
 
-状态：**M26（技能统一管理与配置目录改名）**；M0–M4、M5a–M5c、
-M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M16b、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e、M18f、M18g、M19a、M19b、M20a、M20b、M21、M22、M23、M24、M24b、M25、M26 的计划项全部完成。Phase 1 的
+状态：**M26b（项目名统一为 Cairnweave）**；M0–M4、M5a–M5c、
+M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M16b、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e、M18f、M18g、M19a、M19b、M20a、M20b、M21、M22、M23、M24、M24b、M25、M26、M26b 的计划项全部完成。Phase 1 的
 “本地看板 + Observer 提案 + 证据门 + 单一写图者”闭环已具备；Observer 复盘自 M22 起默认
 开启（只读复盘，不改任务结果），提案自 M23 起默认 `dry_run`（完整校验并记录，不写图）。
 Phase 2 的触发持久化、意图优先级/预算、单项目 token/成本与并发配额、只读慢层观测、逐 Fact
@@ -219,7 +219,14 @@ config 层在 `packages/agent/src/config/skills/index.ts` 增加只读的 `listS
 旧目录，可重跑可回滚），`CAIRN_AGENT_CONFIG_DIR` 显式指定目录时不迁移；Host Bridge 的拒绝根
 同时覆盖新旧两代与显式目录。BreachWeave 内核仍在 `~/.tch-agent` 下读写 runtime、solvers 与
 challenge 目录，容器内只读挂载点 `/cairn/agent-config` 也未变。本轮还把 17 个内置技能的
-`SKILL.md` 正文译为简体中文（frontmatter 的 `name`/`description` 保持英文标识契约）。
+`SKILL.md` 正文译为简体中文（frontmatter 的 `name` 仍是目录 slug；`description` 一并译成中文，
+其中 5 个用了 YAML 块标量因此含换行，前端列表与详情用两行截断收纳）。
+M26b 把项目名统一成 **Cairnweave**：仓库目录 `cairn-merged` 改名 `cairnweave`、根
+`package.json` 的 `name` 随之改为 `cairnweave`（`bun.lock` 重新生成），README 标题与首段、
+Web UI 的 `<title>`、页头品牌字与 `document.title`（「项目名 · Cairnweave」/列表页
+「Cairnweave」）统一；协议标识刻意保持不变——`CAIRN_*` 环境变量、工作区 `.cairn/` 目录、
+`cairn-worker` prompt、`@cairn/*` 包名与 `cairn` 命令仍是 Cairn 图内核的名字，Python golden
+对照与已跑出的项目数据依赖它们。
 `cairn serve` 是可运行的 Cairn 兼容服务：SQLite schema、领域服务、全部
 五个路由、YAML/timeline 导出、静态 Web UI 均已就位，并用 Python Cairn 生成的 golden
 做了逐字对照。进程内 scheduler、任务/结果文件 worker 协议、BreachWeave Solver 接入已在 M2
@@ -765,7 +772,7 @@ M16b 增加（第二个模型接入与真实 A/B）：
 `CAIRN_SOLVER=breachweave` 的真实 Solver 路径上，fake solver 会忽略它。
 
 
-## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a + M17a + M17b + M17c + M17d + M18a + M18b + M18c + M18d + M18e + M18f + M18g + M19a + M19b + M16b + M20a + M20b + M21 + M22 + M23 + M24 + M24b + M25 + M26，2026-10-30，Bun 1.4.4）
+## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a + M17a + M17b + M17c + M17d + M18a + M18b + M18c + M18d + M18e + M18f + M18g + M19a + M19b + M16b + M20a + M20b + M21 + M22 + M23 + M24 + M24b + M25 + M26 + M26b，2026-10-30，Bun 1.4.4）
 
 - `bun test`：**777 passed**（77 个文件），0 failed。
 - `bun run typecheck`：`tsc --noEmit` 通过。
@@ -1239,6 +1246,7 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M24b ✅ | 执行环境有效性测试：新增 `runtime/probe.ts` 与 `POST /settings/runtime/test`，按请求选择的 `execution` 探测——`local` 检查 Bun 版本与工作区临时文件写入；`container` 检查 Docker 守护进程、镜像是否存在（缺省 `cairn-worker:latest`）并用 `docker run --rm --network none <image> bun --version` 试启动，缺镜像时给出 `docker build` 命令；逐项返回 `{id,label,ok,detail}` 且不修改配置；路由沿用 operator token/同源守卫，无 `--config` 409、非法模式 400；执行模式下拉旁新增「测试有效性」按钮与内联 ✓/✗ 结果，切换模式清空旧结果 | 761 passed / 76 files（2026-10-30）；`bun run typecheck` 通过；浏览器实测临时 DB 起 `serve --port 8022`：local 返回 Bun 1.4.4 + 工作区可写，container 返回 Docker 29.9.2、镜像 `cairn-worker:latest`（sha256:f4f3df…）、试启动 Bun 1.4.4、工作区可写，弹窗逐项渲染且 toast「执行环境测试通过」，控制台无脚本错误 |
 | M25 ✅ | 技能管理：config 层新增 `createSkill` / `removeSkill` / `restoreBuiltinSkill` 与 `<configDir>/skills/.deleted-builtins.json`，控制面新增 `agent-skills.ts` 挂载 `GET/POST /settings/agent/skills`、`PUT .../{name}/enabled`、`POST .../{name}/restore` 与 `DELETE .../{name}`，写路由沿用 operator token/同源守卫；技能生效以 `cairn-worker` prompt 的 `meta.skills` 白名单为准，新增默认启用、删除同时移出；内置 17 个，GET 幂等播种并跳过已删除；内置删除跨重启持久，恢复只回填文件不自动启用；新增名 slug 校验（≤64）且须等于目录名，删除/启停做路径安全校验；UI 新增五页签中的「技能」页签，行内启停/删除确认/恢复与新增表单 | 777 passed / 77 files（2026-10-30）；`bun run typecheck` 通过；浏览器实测临时 DB + 独立 agent 配置目录起 `serve --port 8023`：页签显示「17 个技能 · 12 个已启用 · 已写入 cairn-worker prompt」，新增 `m25-browser-skill` 后 SKILL.md 落盘、白名单从 12 增至 13；启用 `ad-pentest` 后 13→14，删除后该行转为「已删除」、启用数回到 13，`skills/.deleted-builtins.json` 记录目录名；重启服务后仍为已删除且未回填，恢复后文件回填但不自动启用；删除自定义技能后回到 17 个技能/12 个已启用；控制台无脚本错误 |
 | M26 ✅ | 技能统一浏览 + 配置目录改名：`agent-config.ts` 新增只读 `GET /settings/agent/skills/{name}/files` 与 `GET .../file?path=`（`SKILL.md` 恒在首位、POSIX 相对路径、≤200 文件/深度 8/单文件 256 KiB 前缀，NUL 判二进制，逐段拒绝空/`.`/`..`/超长/保留字符，词法与 realpath 双重收敛、拒绝符号链接），GET 沿用免 token 的只读语义、同路径 POST 405；运行配置目录默认改为 `~/.cairnweave/config`（`agent-config-dir.ts` 统一解析：`CAIRN_AGENT_CONFIG_DIR` 覆盖 → 新默认），控制面在播种前一次性把旧 `~/.tch-agent/config` 复制过去——只在目标为空时执行、跳过符号链接、总量 64 MiB、绝不覆盖也绝不删除旧目录，日志给出复制数与“legacy directory is unchanged”；内置 skills 的 `SKILL.md` 全部中文化（正文与 `description`，命令/路径/YAML 键保持原样）；UI 技能行新增「预览」，第 13 个弹窗左侧是文件树（目录 + 大小），右侧正文 `<pre>` 逐字预览并标注二进制/截断，打开即预览首个文件，头部可直接启停并即时刷新徽标，写入期间禁止关闭、关闭复位，`line-clamp-2` 收纳多行描述 | 796 passed / 78 files（2026-10-30）；`bun run check`（tsc + 全量）通过；浏览器实测独立 `HOME`/`USERPROFILE` + 临时 DB 起 `serve --port 8026`：启动日志 `copied 4 agent config file(s) from …\\.tch-agent\\config to …\\.cairnweave\\config`，新目录拿到迁移后的 4 个配置文件与完整 `skills/`；`ad-pentest` 预览树为 9 文件 + 1 目录、`SKILL.md` 15.2 KiB 正文 11518 字符自动载入，点选 `references/04-adcs.md` 显示 10.7 KiB / 8997 字符；头部启停后 `enabledCount` 13→14、prompt 白名单同步 14 且列表行状态一致，再点回 13；`modalOrder` 由 `["settings","skillDetail"]` 在关闭后回到 `["settings"]` 且 `skillDetail.directory` 复位为空；`GET .../file?path=../../models.json` 400、缺失文件 404、同路径 POST 405。应用内浏览器页面处于隐藏态（`visibilityState=hidden`、`requestAnimationFrame` 挂起），截图与真实焦点落点无法在页内验证，改由 `api.ui.test.ts` 的假元素 `syncModal('skillDetail', …)` 断言自动聚焦关闭按钮与关闭后回焦技能行 |
+| M26b ✅ | 项目名统一为 Cairnweave：仓库目录 `cairn-merged` → `cairnweave`，根 `package.json` 的 `name` 与 `bun.lock` 随之更新（顺带同步了 lock 里 `@cairn/app` 长期滞留的 `0.3.0-m3`），版本 `0.46.0-m26b`；README 标题/首段/目录树说明与 `docs/ARCHITECTURE.md`、`docs/CONFIG.md` 里引用 UI 品牌的句子都改成 Cairnweave，并新增一条「名称约定」说明为何 `CAIRN_*` 环境变量、工作区 `.cairn/` 目录、`cairn-worker` prompt、`@cairn/*` 包名与 `cairn` 命令保持不变（Python golden 对照与既有项目数据依赖这些协议名）；前端 `<title>`、页头品牌字与 `documentTitle()` 改为「Cairnweave」/「项目名 · Cairnweave」，测试同步断言这两处标记与三种标题取值 | 796 passed / 78 files（2026-10-30）；`bun run check`（tsc + 全量）在改名后的目录里通过；`bun run cairn version` 输出 `cairn 0.46.0-m26b`；浏览器实测独立 `HOME` + 临时 DB 起 `serve --port 8027`：列表页 `document.title` 与页头品牌均为「Cairnweave」，打开 proj_001（标题 brand-check）后为「brand-check · Cairnweave」，返回列表回到「Cairnweave」；`GET /` 返回的 HTML 含 `<title>Cairnweave</title>`；实验环境 `runs/demo/dispatch.yaml` 的两处 `workspace_root` 已指向新目录，`start-lab.bat` 用 `%~dp0` 相对定位无需改动；历史 `task.json` 与 `audit_events` 里记录的旧绝对路径按运行留痕保留不改 |
 
 ## 与 Phase 0 的关系
 

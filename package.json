@@ -1,6 +1,6 @@
 {
-  "name": "cairn-merged",
-  "version": "0.45.0-m26",
+  "name": "cairnweave",
+  "version": "0.46.0-m26b",
   "private": true,
   "type": "module",
   "workspaces": [

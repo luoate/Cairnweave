@@ -875,8 +875,8 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
     关闭时复位状态。已删除的内置没有文件，因此行内不渲染「预览」。
   - `本地偏好`：操作者名称与默认布局，只写 `localStorage`。
   - `服务端设置`：`GET/PUT /settings` 的意图/推理超时。
-- 浏览器 `document.title` 跟随当前项目（M24）：打开项目显示「项目名 · Cairn」，
-  列表页显示「Cairn」。字段、热生效范围与边界见 `docs/CONFIG.md`。
+- 浏览器 `document.title` 跟随当前项目（M24）：打开项目显示「项目名 · Cairnweave」，
+  列表页显示「Cairnweave」。字段、热生效范围与边界见 `docs/CONFIG.md`。
 
 实时审计流（M9）：
 

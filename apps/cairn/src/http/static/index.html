@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cairn</title>
+<title>Cairnweave</title>
 <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 <script src="/static/vendor/tailwindcss.js"></script>
 <script src="/static/vendor/dagre.min.js"></script>
@@ -241,7 +241,7 @@
       <div class="h-8 w-8 rounded-lg border border-slate-200 bg-white shadow-sm shadow-slate-200/40 flex items-center justify-center shrink-0 overflow-hidden">
         <img src="/static/favicon.svg" alt="" class="w-5 h-5 block">
       </div>
-      <span class="font-semibold text-slate-700 tracking-tight">Cairn</span>
+      <span class="font-semibold text-slate-700 tracking-tight">Cairnweave</span>
     </div>
     <div class="flex-1"></div>
     <div class="flex items-center gap-1 text-[11px] text-slate-400">
@@ -4041,7 +4041,7 @@ function cairnApp() {
     documentTitle() {
       const open = this.view === 'graph' && this.project && this.project.project;
       const title = open ? String(this.project.project.title || '').trim() : '';
-      return title ? `${title} · Cairn` : 'Cairn';
+      return title ? `${title} · Cairnweave` : 'Cairnweave';
     },
 
     syncDocumentTitle() {

@@ -2151,13 +2151,15 @@ describe("runtime settings modal", () => {
     const html = readFileSync(INDEX_PATH, "utf8");
     const app = loadState();
     expect(html).toContain('x-effect="syncDocumentTitle()"');
-    expect(app.documentTitle()).toBe("Cairn");
+    expect(html).toContain("<title>Cairnweave</title>");
+    expect(html).toContain('tracking-tight">Cairnweave</span>');
+    expect(app.documentTitle()).toBe("Cairnweave");
 
     app.view = "graph";
     app.project = { project: { title: "web-01" } };
-    expect(app.documentTitle()).toBe("web-01 · Cairn");
+    expect(app.documentTitle()).toBe("web-01 · Cairnweave");
 
     app.project = { project: { title: "   " } };
-    expect(app.documentTitle()).toBe("Cairn");
+    expect(app.documentTitle()).toBe("Cairnweave");
   });
 });

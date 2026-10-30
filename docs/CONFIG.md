@@ -236,7 +236,7 @@ curl -X PUT http://127.0.0.1:8000/settings/runtime \
 - 与 `defaults` 不同的字段显示琥珀色「已覆盖」，顶部显示覆盖项数量与更新时间。
 - 「保存并生效」发送最小 patch；服务端拒绝时把具体约束错误显示在弹窗里。
 - 「恢复 dispatch.yaml 默认值」需要连续点击两次（4 秒内），然后发 `DELETE`。
-- 浏览器标题在打开项目时显示「项目名 · Cairn」，回到列表后恢复「Cairn」。
+- 浏览器标题在打开项目时显示「项目名 · Cairnweave」，回到列表后恢复「Cairnweave」。
 
 ## 7. 测试
 
