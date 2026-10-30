@@ -81,6 +81,7 @@ import {
   registerAgentConfigRoutes,
   type AgentConfigOptions,
 } from "./agent-config";
+import { registerAgentSkillsRoutes } from "./agent-skills";
 import { requireOperator } from "./auth";
 import {
   emptyProjectBoard,
@@ -467,6 +468,7 @@ function buildRoutes(
   }
 
   registerAgentConfigRoutes(route, agentConfig);
+  registerAgentSkillsRoutes(route, agentConfig);
   registerSettingsRuntimeRoutes(route, {
     store: runtimeConfig,
     ...(operatorToken === undefined ? {} : { operatorToken }),

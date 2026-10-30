@@ -1,12 +1,12 @@
 # 里程碑与验证记录
 
-本文件保留 M1–M24 的实现记录、测试与浏览器验证清单、与 Python Cairn 的已知差异、
+本文件保留 M1–M25 的实现记录、测试与浏览器验证清单、与 Python Cairn 的已知差异、
 里程碑表以及与 Phase 0 的关系。产品概览、快速开始与 API 概览见 [README](../README.md)。
 
 ## 实现记录
 
-状态：**M24b（执行环境有效性测试）**；M0–M4、M5a–M5c、
-M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M16b、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e、M18f、M18g、M19a、M19b、M20a、M20b、M21、M22、M23、M24、M24b 的计划项全部完成。Phase 1 的
+状态：**M25（技能管理）**；M0–M4、M5a–M5c、
+M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M16b、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e、M18f、M18g、M19a、M19b、M20a、M20b、M21、M22、M23、M24、M24b、M25 的计划项全部完成。Phase 1 的
 “本地看板 + Observer 提案 + 证据门 + 单一写图者”闭环已具备；Observer 复盘自 M22 起默认
 开启（只读复盘，不改任务结果），提案自 M23 起默认 `dry_run`（完整校验并记录，不写图）。
 Phase 2 的触发持久化、意图优先级/预算、单项目 token/成本与并发配额、只读慢层观测、逐 Fact
@@ -192,6 +192,18 @@ Docker 守护进程、`container.image`（缺省 `cairn-worker:latest`）是否�
 `docker run --rm --network none <image> bun --version` 试启动一次，镜像缺失时在说明里给出
 构建命令。逐项结果带 `{id,label,ok,detail}`，`ok` 为全部通过；探测不写配置，失败项在
 弹窗内联显示，切换执行模式后清空旧结果。
+M25 把技能纳入同一个「设置」弹窗。config 层在 `packages/agent/src/config/skills/index.ts`
+增加 `createSkill` / `removeSkill` / `restoreBuiltinSkill` 与删除记录，`ConfigManager` 暴露
+对应方法；控制面新增 `apps/cairn/src/http/agent-skills.ts` 挂载
+`GET/POST /settings/agent/skills`、`PUT /settings/agent/skills/{name}/enabled`、
+`POST /settings/agent/skills/{name}/restore` 与 `DELETE /settings/agent/skills/{name}`，
+写路由沿用 operator token 与跨源拒绝。技能文件存在不等于生效：只有 `cairn-worker` prompt
+`meta.skills` 白名单里的名字会被 `buildResourceLoader` 加载，所以新增默认同时写入白名单、
+删除同时移出，内置但未引用的 5 个可用「启用」补齐。内置技能共 17 个，GET 每次幂等播种
+（用户改过的文件不被覆盖）；删除内置把顶层目录名记进 `<configDir>/skills/.deleted-builtins.json`，重启与再次播种都跳过，列表保留「已删除」行并提供「恢复」，
+恢复只回填文件、不自动启用。新增名按 `^[a-z0-9]+(?:-[a-z0-9]+)*$`（≤64）校验且必须与
+目录名一致，删除/启停按目录名做路径安全校验。UI 在「模型与密钥」与「本地偏好」之间新增
+「技能」页签，行内完成启停、删除确认与恢复，底部表单新增技能并可选择「添加后立即启用」。
 `cairn serve` 是可运行的 Cairn 兼容服务：SQLite schema、领域服务、全部
 五个路由、YAML/timeline 导出、静态 Web UI 均已就位，并用 Python Cairn 生成的 golden
 做了逐字对照。进程内 scheduler、任务/结果文件 worker 协议、BreachWeave Solver 接入已在 M2
@@ -737,9 +749,9 @@ M16b 增加（第二个模型接入与真实 A/B）：
 `CAIRN_SOLVER=breachweave` 的真实 Solver 路径上，fake solver 会忽略它。
 
 
-## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a + M17a + M17b + M17c + M17d + M18a + M18b + M18c + M18d + M18e + M18f + M18g + M19a + M19b + M16b + M20a + M20b + M21 + M22 + M23 + M24 + M24b，2026-10-30，Bun 1.4.4）
+## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a + M17a + M17b + M17c + M17d + M18a + M18b + M18c + M18d + M18e + M18f + M18g + M19a + M19b + M16b + M20a + M20b + M21 + M22 + M23 + M24 + M24b + M25，2026-10-30，Bun 1.4.4）
 
-- `bun test`：**761 passed**（76 个文件），0 failed。
+- `bun test`：**777 passed**（77 个文件），0 failed。
 - `bun run typecheck`：`tsc --noEmit` 通过。
 - **HTTP 对照**：`api.golden.json` 的 60 步请求（成功路径、400/403/404/405/409、租约过期、
   删除级联、导出、路由错误）由 Python FastAPI + 固定时钟生成；TS 重放后状态码、content-type
@@ -1198,6 +1210,7 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M23 ✅ | 提案默认演练开启 + 看板只读页签：`DEFAULT_PROPOSALS` 改为 `enabled: true` + `mode: dry_run`（审核照常、只记录不写图）；新增 `http/project-board.ts` 与只读 `GET /projects/{id}/board`，读取 `.cairn/board/board/` 的想法索引与记忆条目，拒绝符号链接/越界/非普通文件，限制条目与文本上限并返回 `ideas_total`/`memory_total`/`truncated`，缺失看板返回 `available:false`；UI 在「提案」与「成本」之间新增「看板」页签，按状态/类型着色展示并支持刷新与错误重试 | 740 passed / 75 files（2026-10-29）；`bun run typecheck` 通过；浏览器实测临时 DB+配置起 `serve --port 8020`，预置 3 条想法/3 条记忆的项目显示计数与徽标、`GET /projects/proj_001/board` 200，无看板项目显示“暂无看板数据”，控制台无脚本错误 |
 | M24 ✅ | 在线切换执行模式 + 统一设置入口：`runtime.execution` 进入运行期覆盖白名单，`RuntimeConfigStore` 新增 `validateNext` 钩子（拒绝调度器有任务在跑/正在切换/本机无 Docker），`Scheduler.reconfigure()` 模式变化时等 `running` 清空再重建 runtime 后端并重新解析工作区根；dispatch.yaml 缺 `container:` 段时只在校验前补镜像/网络/收尾默认值、不落覆盖 patch；进入容器前播种内置 prompts/skills；API `workspaceRoot` 改为 getter 供工件/证据/Flag/Writeup 路由热读；前端把运行配置、模型与密钥、本地偏好、服务端设置四个弹窗合并为一个四页签「设置」弹窗（页头单齿轮按钮、按需加载、写请求中禁止关闭），`document.title` 随项目变为「项目名 · Cairn」 | 748 passed / 75 files（2026-10-30）；`bun run typecheck` 通过；浏览器实测临时 DB+起 `serve --port 8021`：四个页签各自加载（agent 页签列出 provider、server 页签显示超时输入、local 页签显示操作者/布局），执行模式 local→container 保存后 `overrides:["runtime.execution"]` 且日志出现 `runtime switched to container`，切回 local 后覆盖清空；Esc 经 `dismissModal('settings')` 关闭；打开 proj_002 标题为「Browser Check · Cairn」，返回列表为「Cairn」 |
 | M24b ✅ | 执行环境有效性测试：新增 `runtime/probe.ts` 与 `POST /settings/runtime/test`，按请求选择的 `execution` 探测——`local` 检查 Bun 版本与工作区临时文件写入；`container` 检查 Docker 守护进程、镜像是否存在（缺省 `cairn-worker:latest`）并用 `docker run --rm --network none <image> bun --version` 试启动，缺镜像时给出 `docker build` 命令；逐项返回 `{id,label,ok,detail}` 且不修改配置；路由沿用 operator token/同源守卫，无 `--config` 409、非法模式 400；执行模式下拉旁新增「测试有效性」按钮与内联 ✓/✗ 结果，切换模式清空旧结果 | 761 passed / 76 files（2026-10-30）；`bun run typecheck` 通过；浏览器实测临时 DB 起 `serve --port 8022`：local 返回 Bun 1.4.4 + 工作区可写，container 返回 Docker 29.9.2、镜像 `cairn-worker:latest`（sha256:f4f3df…）、试启动 Bun 1.4.4、工作区可写，弹窗逐项渲染且 toast「执行环境测试通过」，控制台无脚本错误 |
+| M25 ✅ | 技能管理：config 层新增 `createSkill` / `removeSkill` / `restoreBuiltinSkill` 与 `<configDir>/skills/.deleted-builtins.json`，控制面新增 `agent-skills.ts` 挂载 `GET/POST /settings/agent/skills`、`PUT .../{name}/enabled`、`POST .../{name}/restore` 与 `DELETE .../{name}`，写路由沿用 operator token/同源守卫；技能生效以 `cairn-worker` prompt 的 `meta.skills` 白名单为准，新增默认启用、删除同时移出；内置 17 个，GET 幂等播种并跳过已删除；内置删除跨重启持久，恢复只回填文件不自动启用；新增名 slug 校验（≤64）且须等于目录名，删除/启停做路径安全校验；UI 新增五页签中的「技能」页签，行内启停/删除确认/恢复与新增表单 | 777 passed / 77 files（2026-10-30）；`bun run typecheck` 通过；浏览器实测临时 DB + 独立 agent 配置目录起 `serve --port 8023`：页签显示「17 个技能 · 12 个已启用 · 已写入 cairn-worker prompt」，新增 `m25-browser-skill` 后 SKILL.md 落盘、白名单从 12 增至 13；启用 `ad-pentest` 后 13→14，删除后该行转为「已删除」、启用数回到 13，`skills/.deleted-builtins.json` 记录目录名；重启服务后仍为已删除且未回填，恢复后文件回填但不自动启用；删除自定义技能后回到 17 个技能/12 个已启用；控制台无脚本错误 |
 
 ## 与 Phase 0 的关系
 

@@ -57,6 +57,25 @@ curl -X PUT http://127.0.0.1:8000/settings/runtime \
   -d '{"runtime":{"interval":5},"tasks":{"graph_slice":{"enabled":true}}}'
 ```
 
+### 技能（M25）
+
+「设置 → 技能」使用另一组路由，守卫与 `/settings/agent` 写路由相同：
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/settings/agent/skills` | `{prompt, promptFound, enabledCount, skills}`；每次 GET 幂等补齐内置技能文件，再读 `cairn-worker` 白名单 |
+| POST | `/settings/agent/skills` | 请求体 `{name, description, content, enabled?}`；`enabled` 默认 true，创建后立即追加白名单 |
+| DELETE | `/settings/agent/skills/{name}` | 删除目录并从白名单移除；内置技能会把顶层目录名记进 `.deleted-builtins.json` |
+| POST | `/settings/agent/skills/{name}/restore` | 仅内置技能：清除删除记录并回填文件，不自动启用；非内置 404，未删除仍存在 409 |
+| PUT | `/settings/agent/skills/{name}/enabled` | 请求体 `{enabled}`，只改 `cairn-worker` prompt 的 `meta.skills` |
+
+- 技能文件存在不等于生效：`buildResourceLoader` 只加载 prompt 白名单里的名字。内置 17 个，
+  `cairn-worker` 默认引用其中 12 个；其余 5 个可在页签里「启用」。
+- 名字须匹配 `^[a-z0-9]+(?:-[a-z0-9]+)*$` 且 ≤64 字符，并与目录名一致；删除/启停按目录名
+  另做 `[A-Za-z0-9][A-Za-z0-9._-]*` 校验，`..` 等越界标识返回 400。
+- 删除内置只写删除记录并移除文件，重启或再次打开页签都不会回填；「恢复」只回填文件。
+- 请求体上限 512 KiB；描述必须单行且 ≤1024 字符，正文非空且 ≤96 KiB。
+
 ## 3. 可编辑字段
 
 值的类型与约束由 `parseDispatchConfig` 最终判定；下表列出常用范围与默认值。
@@ -195,9 +214,12 @@ curl -X PUT http://127.0.0.1:8000/settings/runtime \
 ## 6. 前端行为
 
 - 页头两个工具条各有一个齿轮按钮，打开 `data-modal="settings"` 弹窗；Esc / 背景 / 关闭
-  按钮走统一的模态栈，任一写入（运行配置、模型配置、服务端设置）进行中都不允许关闭。
-- 弹窗有四个页签：运行与执行、模型与密钥、本地偏好、服务端设置；切换页签时按需加载
-  （运行配置只在首次打开时拉取，保留未保存的编辑；模型配置只加载一次，保存后刷新）。
+  按钮走统一的模态栈，任一写入（运行配置、模型配置、技能、服务端设置）进行中都不允许关闭。
+- 弹窗有五个页签：运行与执行、模型与密钥、技能、本地偏好、服务端设置；切换页签时按需加载
+  （运行配置只在首次打开时拉取，保留未保存的编辑；模型配置与技能配置只加载一次，保存后刷新）。
+- 技能页签列出内置/自定义、已启用/未启用与已删除技能，行内启停、删除（内置先说明跨重启并
+  提供恢复）与恢复；新增表单提交 `{name, description, content, enabled}`，与 API 同构地
+  校验名称、单行描述与正文。
 - 运行配置字段按「执行环境 / 调度 / 任务超时 / 图切片与证据 / Worker 与选择 / 保留与预算 /
   策略触发 / 提案」分组；数字、开关、下拉与多选（`allow_kinds`）四种控件。执行环境组放
   local / container 下拉与「测试有效性」按钮；测试结果在组内逐项列出（✓/✗ + 说明），
@@ -222,4 +244,8 @@ curl -X PUT http://127.0.0.1:8000/settings/runtime \
   无副作用、空闲时替换 runtime 后端。
 - `apps/cairn/src/http/api.ui.test.ts`：统一设置弹窗与页签、每个可编辑路径恰好一个控件、
   最小 patch（含 `runtime.execution`）、执行环境测试按钮的请求体/结果/切换清空、空数字
-  输入、400/409 行内错误、二次确认重置、写入期间禁止关闭、浏览器标题跟随项目名。
+  输入、400/409 行内错误、二次确认重置、写入期间禁止关闭、浏览器标题跟随项目名；以及
+  技能页签的按需加载与计数、表单校验与请求体、启停/删除确认/恢复、行内错误。
+- `apps/cairn/src/http/api.skills.test.ts`：内置播种与白名单计数、创建（立即启用/不启用）、
+  非法载荷与 413、重名与已删除内置 409、启停与 404/400、路径穿越拒绝、自定义删除、
+  内置删除跨重启持久化与恢复语义、跨源与 operator token 守卫。

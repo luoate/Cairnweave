@@ -332,6 +332,26 @@ provider 与密钥，模型页签负责拉取/手工录入、设为默认、测�
 与请求 host 不一致的浏览器写请求。完整操作步骤、常见错误与 M16b 真实 A/B 记录见
 `docs/MODELS.md`。
 
+## 管理技能（M25）
+
+「设置 → 技能」页签使用 `/settings/agent/skills` 路由；配置目录与模型设置相同，
+接管的是 `<configDir>/skills/<name>/SKILL.md`。内置技能共 17 个，`cairn-worker`
+prompt 默认启用其中 12 个；只有白名单里的技能会进入模型上下文。
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/settings/agent/skills` | 补齐内置文件后返回 `{prompt, promptFound, enabledCount, skills}`，每行带 `builtin`/`deleted`/`enabled` |
+| POST | `/settings/agent/skills` | `{name, description, content, enabled?}`；默认立即启用（写入 prompt 白名单） |
+| DELETE | `/settings/agent/skills/{name}` | 删除目录并移出白名单；内置技能把目录名记入 `.deleted-builtins.json` |
+| POST | `/settings/agent/skills/{name}/restore` | 仅内置：清除删除记录并回填文件，不自动启用 |
+| PUT | `/settings/agent/skills/{name}/enabled` | `{enabled}`，只改 `cairn-worker` prompt 的 `meta.skills` |
+
+- 新增名须为小写 slug（`^[a-z0-9]+(?:-[a-z0-9]+)*$`，≤64），即目录名；描述单行 ≤1024，
+  正文非空 ≤96 KiB，请求体 ≤512 KiB。
+- 删除内置跨重启持久：重新打开页签或重启服务都不会回填，直到点「恢复」。
+- 手动改 prompt 的 `skills` 数组与页签等价；直接改磁盘文件时，请保持 `SKILL.md` 的
+  frontmatter 含非空 `description`，否则 SDK 会跳过该技能。
+
 ## 运行配置（M22 起，M24 统一入口，M24b 环境测试）
 
 `--config` 启动时，页头齿轮按钮打开「设置 → 运行与执行」。覆盖存进 SQLite，重启后保留，

@@ -94,6 +94,28 @@ export interface AddResult {
   rejected?: string;
 }
 
+export interface SkillEntry {
+  name: string;
+  description: string;
+  filePath: string;
+  baseDir: string;
+  disableModelInvocation: boolean;
+}
+
+export interface CreateSkillInput {
+  name: string;
+  description: string;
+  content: string;
+}
+
+export interface PromptFileView {
+  name: string;
+  meta: Record<string, unknown> & { skills?: string[] };
+  content: string;
+  builtin?: boolean;
+  deleted?: boolean;
+}
+
 export interface BuiltInProvider {
   provider: string;
   apis: string[];
@@ -164,6 +186,15 @@ export class ConfigManager {
     systemPrompt: string;
     prompt: string;
   }): Promise<{ ok: boolean; text?: string; error?: string; model?: string }>;
+  listSkills(): SkillEntry[];
+  getSkill(name: string): SkillEntry | undefined;
+  createSkill(input: CreateSkillInput): Promise<{ name: string; directory: string }>;
+  removeSkill(name: string): Promise<void>;
+  listDeletedBuiltinSkills(): string[];
+  isBuiltinSkill(name: string): boolean;
+  restoreBuiltinSkill(name: string): Promise<void>;
+  getPrompt(name: string): Promise<PromptFileView | undefined>;
+  setPrompt(prompt: PromptFileView): Promise<void>;
 }
 
 export function createSolverSession(init: SolverInitPayload): Promise<SolverSession>;

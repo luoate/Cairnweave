@@ -46,6 +46,7 @@ worker 在项目沙箱里跑真实模型，每个任务启动一次进程，只�
 | 只读运维视图 | 运行、慢层、审计、证据、提案、看板、成本、统计、报告、Writeup 十个侧栏页签，全部只发 GET（人工重规划除外） |
 | 运行期配置 | Observer、并发、超时、证据门、预算、策略阈值、提案参数等可在页头「设置 → 运行与执行」里热调，覆盖存 SQLite，重启不丢 |
 | 两种执行模式 | `runtime.execution: local` 本地子进程；`container` 每项目一个长期容器、每任务一次 `docker exec`，配置只读挂载、不挂 Docker socket；调度器空闲时可在「设置」里在线切换，并用「测试有效性」先检查 Bun / Docker / 镜像 / 试启动 / 工作区 |
+| 技能管理 | 页头「设置 → 技能」里新增、删除、启停与恢复技能；内置 17 个，仅写入 `cairn-worker` prompt 白名单的才生效；删除内置技能会在 `.deleted-builtins.json` 里留痕，重启不回填，可一键恢复 |
 | 审计与实时流 | 任务结束导入 `audit.jsonl` 到哈希链账本；可选实时流按 `(task_id, seq)` 幂等追加，只降低暴露窗口，不改变最终一致性 |
 
 ## 架构
@@ -175,6 +176,7 @@ proposals:                    # 默认开启，但只演练
 | GET | `/projects/{id}/writeup/archive` | 正文与全部附件的 zip 包 |
 | GET/PUT/DELETE | `/settings/runtime` | 运行配置覆盖（仅 `--config` 模式） |
 | GET/POST/PUT/DELETE | `/settings/agent*` | 模型与密钥管理，详见 [docs/MODELS.md](docs/MODELS.md) |
+| GET/POST/PUT/DELETE | `/settings/agent/skills*` | 技能列表、新增、删除、启停与内置恢复 |
 
 写路由在设置 `CAIRN_OPERATOR_TOKEN` 后要求 `X-Cairn-Operator-Token`，并拒绝 Origin 与请求
 host 不一致的浏览器写请求。
@@ -188,9 +190,9 @@ host 不一致的浏览器写请求。
   看板 / 成本 / 统计 / 报告 / Writeup 页签。
 - 页头：设置、停止全部；浏览器标题跟随当前项目名；12 个弹窗共用一套模态栈（Esc 只关最上层、
   Tab 焦点陷阱、关闭回焦），写操作期间禁用并在失败时就地报错。
-- 「设置」是一个带四个页签的弹窗：运行与执行（含 local/container 切换、运行期覆盖与
-  执行环境「测试有效性」）、模型与密钥、本地偏好（操作者与默认布局，仅存浏览器）、
-  服务端设置。
+- 「设置」是一个带五个页签的弹窗：运行与执行（含 local/container 切换、运行期覆盖与
+  执行环境「测试有效性」）、模型与密钥、技能（新增 / 删除 / 启停 / 恢复内置）、
+  本地偏好（操作者与默认布局，仅存浏览器）、服务端设置。
 
 所有只读页签只发 GET；唯一的显式写操作是慢层的“请求重规划”。
 

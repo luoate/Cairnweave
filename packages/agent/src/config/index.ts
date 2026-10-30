@@ -1185,6 +1185,9 @@ export class ConfigManager {
     getSkill(name: string): Skill | undefined {
         return skills.getSkill(this.dir, name)
     }
+    async createSkill(input: skills.CreateSkillInput) {
+        return skills.createSkill(this.dir, input)
+    }
     async addSkillFromZip(zipData: ArrayBuffer) {
         return skills.addSkillFromZip(this.dir, zipData)
     }
@@ -1193,6 +1196,15 @@ export class ConfigManager {
     }
     async removeSkill(name: string) {
         return skills.removeSkill(this.dir, name)
+    }
+    listDeletedBuiltinSkills(): string[] {
+        return skills.listDeletedBuiltinSkills(this.dir)
+    }
+    isBuiltinSkill(name: string): boolean {
+        return skills.isBuiltinSkillDirectory(name)
+    }
+    async restoreBuiltinSkill(name: string) {
+        return skills.restoreBuiltinSkill(this.dir, name)
     }
 
     // ── Prompts ──

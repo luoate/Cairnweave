@@ -1436,6 +1436,177 @@ describe("model and key settings", () => {
   });
 });
 
+describe("skill settings tab", () => {
+  function skillFixture() {
+    return {
+      prompt: "cairn-worker",
+      promptFound: true,
+      enabledCount: 1,
+      skills: [
+        {
+          name: "recon",
+          directory: "recon",
+          description: "Fast reconnaissance",
+          builtin: true,
+          deleted: false,
+          enabled: true,
+        },
+        {
+          name: "agent-browser",
+          directory: "agent-browser",
+          description: "Drive a headless browser",
+          builtin: true,
+          deleted: false,
+          enabled: false,
+        },
+        {
+          name: "retired-skill",
+          directory: "retired-skill",
+          description: "",
+          builtin: true,
+          deleted: true,
+          enabled: false,
+        },
+      ],
+    };
+  }
+
+  test("adds a fifth settings tab wired to the skill routes", () => {
+    const html = readFileSync(INDEX_PATH, "utf8");
+    expect(html).toContain('data-settings-tab="skills"');
+    expect(html).toContain("/settings/agent/skills");
+    expect(html).toContain("saveSkill()");
+    expect(html).toContain("toggleSkill(skill)");
+    expect(html).toContain("restoreSkill(skill)");
+    expect(html).toContain("skillDeletePrompt()");
+    expect(html).toContain("添加后立即启用");
+  });
+
+  test("loads the skill list once and summarizes the allowlist", async () => {
+    const app = loadState();
+    const calls: string[] = [];
+    app.api = async (method: string, path: string) => {
+      calls.push(`${method} ${path}`);
+      return skillFixture();
+    };
+
+    await app.openSettings("skills");
+    expect(app.showSettings).toBe(true);
+    expect(app.settingsTab).toBe("skills");
+    expect(calls).toEqual(["GET /settings/agent/skills"]);
+    expect(app.skillsConfig.loaded).toBe(true);
+    expect(app.skillsConfig.promptFound).toBe(true);
+    expect(app.skillsHint()).toBe("2 个技能 · 1 个已启用 · 已写入 cairn-worker prompt");
+
+    await app.setSettingsTab("skills");
+    expect(calls).toHaveLength(1);
+    expect(app.settingsWritePending()).toBe(false);
+  });
+
+  test("validates and posts a new skill, then reloads the list", async () => {
+    const app = loadState();
+    const calls: Array<[string, string, unknown]> = [];
+    app.api = async (method: string, path: string, body?: unknown) => {
+      calls.push([method, path, body]);
+      if (method === "GET") return skillFixture();
+      return { skill: { name: "lab-notes" } };
+    };
+
+    app.skillForm = { name: "Bad Name", description: "", content: "", enabled: true };
+    await app.saveSkill();
+    expect(app.skillFormError).toContain("名称只能");
+    expect(calls).toEqual([]);
+
+    app.skillForm = {
+      name: "lab-notes",
+      description: "Capture lab notes",
+      content: "# Body",
+      enabled: true,
+    };
+    await app.saveSkill();
+    expect(calls).toEqual([
+      [
+        "POST",
+        "/settings/agent/skills",
+        {
+          name: "lab-notes",
+          description: "Capture lab notes",
+          content: "# Body",
+          enabled: true,
+        },
+      ],
+      ["GET", "/settings/agent/skills", undefined],
+    ]);
+    expect(app.skillForm.name).toBe("");
+    expect(app.skillForm.enabled).toBe(true);
+    expect(app.isSavingSkill).toBe(false);
+  });
+
+  test("toggles a skill and confirms deletion inline", async () => {
+    const app = loadState();
+    const calls: Array<[string, string, unknown]> = [];
+    app.api = async (method: string, path: string, body?: unknown) => {
+      calls.push([method, path, body]);
+      if (method === "GET") return skillFixture();
+      if (method === "DELETE") return { deleted: true, builtin: true };
+      return { name: "agent-browser", directory: "agent-browser", enabled: true };
+    };
+    app.showToast = () => {};
+
+    const skill = skillFixture().skills[1]!;
+    await app.toggleSkill(skill);
+    expect(calls[0]).toEqual([
+      "PUT",
+      "/settings/agent/skills/agent-browser/enabled",
+      { enabled: true },
+    ]);
+    expect(calls[1]![0]).toBe("GET");
+
+    app.requestSkillDelete(skill);
+    expect(app.skillDeletePrompt()).toContain("内置");
+    expect(app.skillDeletePrompt()).toContain("cairn-worker");
+    calls.length = 0;
+    await app.confirmSkillDelete();
+    expect(calls[0]).toEqual(["DELETE", "/settings/agent/skills/agent-browser", undefined]);
+    expect(calls[1]![0]).toBe("GET");
+    expect(app.skillDelete.directory).toBe("");
+  });
+
+  test("restores a deleted builtin and blocks the dialog while writing", async () => {
+    const app = loadState();
+    const calls: Array<[string, string, unknown]> = [];
+    app.api = async (method: string, path: string, body?: unknown) => {
+      calls.push([method, path, body]);
+      return skillFixture();
+    };
+    app.showToast = () => {};
+
+    await app.restoreSkill(skillFixture().skills[2]);
+    expect(calls[0]).toEqual([
+      "POST",
+      "/settings/agent/skills/retired-skill/restore",
+      {},
+    ]);
+    expect(app.skillRestore.loading).toBe(false);
+
+    app.skillToggle = { directory: "recon", loading: true };
+    expect(app.settingsWritePending()).toBe(true);
+    app.skillToggle = { directory: "", loading: false };
+    expect(app.settingsWritePending()).toBe(false);
+  });
+
+  test("shows load errors inline", async () => {
+    const app = loadState();
+    app.api = async () => {
+      throw new Error("config dir is unreadable");
+    };
+    await app.openSettings("skills");
+    expect(app.skillsConfig.loading).toBe(false);
+    expect(app.skillsConfig.loaded).toBe(false);
+    expect(app.skillsConfig.error).toBe("config dir is unreadable");
+  });
+});
+
 describe("runtime settings modal", () => {
   function editableFixture() {
     return {

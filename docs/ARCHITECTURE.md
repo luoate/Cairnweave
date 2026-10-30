@@ -214,6 +214,22 @@ Writeup 路由在切换后立即读新根。前端合并了原先的「运行配
 探测请求里选的模式而不是运行中的模式；本地模式检查 Bun 版本与工作区写入，容器模式检查
 Docker 守护进程、镜像（缺省 `cairn-worker:latest`）并用 `docker run --rm --network none
 <image> bun --version` 试启动一次，逐项返回 `{id,label,ok,detail}`，不会修改配置。
+M25 把技能纳入同一个「设置」弹窗。config 层在
+`packages/agent/src/config/skills/index.ts` 增加 `createSkill` / `removeSkill` /
+`restoreBuiltinSkill` 与删除记录，`ConfigManager` 暴露对应方法；控制面新增
+`apps/cairn/src/http/agent-skills.ts`，挂载 `GET/POST /settings/agent/skills`、
+`PUT /settings/agent/skills/{name}/enabled`、`POST /settings/agent/skills/{name}/restore`
+与 `DELETE /settings/agent/skills/{name}`，写路由沿用 operator token 与跨源拒绝。技能文件
+只是候选：`ConfigManager.buildResourceLoader` 只加载名字出现在 `cairn-worker` prompt
+`meta.skills` 白名单里的技能，所以新增默认同时写入白名单（可关），删除同时移出白名单，
+内置但未引用的 5 个可用「启用」补齐。内置技能共 17 个，GET 每次都会幂等补播种（用户改动
+的文件不会被覆盖），删除内置时把顶层目录名记进 `<configDir>/skills/.deleted-builtins.json`，
+重启与再次播种都跳过它，列表仍显示为「已删除」并提供「恢复」；恢复只回填文件，是否启用
+仍由白名单决定。新增名按 `^[a-z0-9]+(?:-[a-z0-9]+)*$`（≤64 字符）校验且必须与目录名一致，
+删除与启停按目录名做路径安全校验，`..` 一类越界标识直接 400。UI 在「模型与密钥」与
+「本地偏好」之间新增「技能」页签：内置/自定义、已启用/未启用、已删除分列展示，行内完成
+启停、删除确认（内置会说明删除跨重启并给出恢复入口）与恢复，底部表单新增技能并可选择
+「添加后立即启用」。以上不改动 worker 协议、图或调度语义。
 M18f 打开 challenge/Flag 自动校验：`POST /projects` 未给 `verification` 时，控制面读
 `verification.challenge.code_env`（默认 `TCH_CHALLENGE_ID`）；非空即写入
 `{kind: challenge, challenge_code}`，否则按 `evidence_enforcement` 落 `evidence` /
@@ -819,7 +835,7 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
   因果边和每个 run 的直接产出。它不把意图合计与 Fact 合计相加。
 - 这些面板只在打开页签或点刷新时拉取，全部使用 GET；错误在面板内显示并可重试，
   不弹写操作、不参与调度。UI 本身不带认证，远程/容器部署仍需网络层限制整个 API。
-- `设置`（M24）是页头唯一的写弹窗（`data-modal="settings"`），四个页签按需加载：
+- `设置`（M24）是页头唯一的写弹窗（`data-modal="settings"`），五个页签按需加载：
   - `运行与执行`（M22/M24/M24b）：读取 `GET /settings/runtime`，按分组渲染数字/开关/下拉/
     多选，与文件基线不同的字段显示“已覆盖”；首个分组是 local/container 执行模式下拉和
     「测试有效性」按钮，后者 `POST /settings/runtime/test` 后把逐项检查（✓/✗ + 说明）
@@ -832,6 +848,11 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
     留空表示不修改；保存后重读配置。删除先走行内确认，409 时显示依赖方并切换
     “强制删除”；所有请求期间关闭按钮与提交按钮同时禁用。操作步骤与错误对照见
     `docs/MODELS.md`。
+  - `技能`（M25）：读取 `GET /settings/agent/skills`，列出内置与自定义技能并标记已启用/
+    未启用/已删除；行内「启用/停用」发 `PUT .../enabled`，内置的「删除」在确认框里说明
+    会记入 `.deleted-builtins.json`、重启不回填，删除后可用「恢复」送回文件（不自动启用）；
+    底部表单新增技能，可选「添加后立即启用」，名称/描述/正文发送前做与 API 同构的校验。
+    任一技能写请求进行中，整个设置弹窗都不允许关闭。
   - `本地偏好`：操作者名称与默认布局，只写 `localStorage`。
   - `服务端设置`：`GET/PUT /settings` 的意图/推理超时。
 - 浏览器 `document.title` 跟随当前项目（M24）：打开项目显示「项目名 · Cairn」，

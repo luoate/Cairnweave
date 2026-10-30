@@ -2607,7 +2607,7 @@
     <div class="px-5 py-4 border-b border-slate-200/80 flex items-start justify-between gap-4">
       <div class="min-w-0">
         <h3 class="text-base font-semibold text-slate-700">设置</h3>
-        <p class="text-[11px] text-slate-400 mt-0.5">运行模式、模型密钥、本地偏好与服务端配置集中在这里；密钥与请求头只写不回显。</p>
+        <p class="text-[11px] text-slate-400 mt-0.5">运行模式、模型密钥、技能、本地偏好与服务端配置集中在这里；密钥与请求头只写不回显。</p>
       </div>
       <button @click="dismissModal('settings')" :disabled="settingsWritePending()" data-autofocus class="shrink-0 whitespace-nowrap px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition disabled:opacity-40 disabled:cursor-not-allowed">关闭</button>
     </div>
@@ -2618,6 +2618,9 @@
       <button @click="setSettingsTab('agent')" role="tab" :aria-selected="settingsTab === 'agent'" data-settings-tab="agent"
         class="px-3 py-1.5 text-xs font-medium rounded-t-lg border-b-2 whitespace-nowrap transition"
         :class="settingsTab === 'agent' ? 'border-brand-400 text-brand-600' : 'border-transparent text-slate-400 hover:text-slate-600'">模型与密钥</button>
+      <button @click="setSettingsTab('skills')" role="tab" :aria-selected="settingsTab === 'skills'" data-settings-tab="skills"
+        class="px-3 py-1.5 text-xs font-medium rounded-t-lg border-b-2 whitespace-nowrap transition"
+        :class="settingsTab === 'skills' ? 'border-brand-400 text-brand-600' : 'border-transparent text-slate-400 hover:text-slate-600'">技能</button>
       <button @click="setSettingsTab('local')" role="tab" :aria-selected="settingsTab === 'local'" data-settings-tab="local"
         class="px-3 py-1.5 text-xs font-medium rounded-t-lg border-b-2 whitespace-nowrap transition"
         :class="settingsTab === 'local' ? 'border-brand-400 text-brand-600' : 'border-transparent text-slate-400 hover:text-slate-600'">本地偏好</button>
@@ -3048,6 +3051,90 @@
         </div>
       </div>
       </div>
+
+<!-- Skill Settings (M25) -->
+      <div x-show="settingsTab === 'skills'" class="p-5 space-y-4">
+        <p class="text-[11px] text-slate-400" x-text="skillsHint()"></p>
+        <div x-show="skillsConfig.error" class="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] text-rose-700 break-words">
+          无法读取技能：<span x-text="skillsConfig.error"></span>
+        </div>
+        <p x-show="skillsConfig.loading" class="text-[11px] text-slate-400">加载中…</p>
+
+        <template x-for="skill in skillsConfig.skills" :key="skill.directory">
+          <div class="rounded-xl border border-slate-200 bg-white p-3">
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="text-sm font-medium text-slate-700 font-mono" x-text="skill.name"></span>
+                  <span class="text-[10px] px-1.5 py-0.5 rounded border"
+                    :class="skill.builtin ? 'bg-slate-50 text-slate-500 border-slate-200' : 'bg-brand-50 text-brand-600 border-brand-200'"
+                    x-text="skill.builtin ? '内置' : '自定义'"></span>
+                  <span x-show="skill.deleted" class="text-[10px] px-1.5 py-0.5 rounded bg-rose-50 text-rose-600 border border-rose-200">已删除</span>
+                  <span x-show="!skill.deleted" class="text-[10px]" :class="skill.enabled ? 'text-teal-600' : 'text-slate-400'" x-text="skill.enabled ? '已启用' : '未启用'"></span>
+                </div>
+                <p class="text-[11px] text-slate-400 mt-1 break-words" x-text="skill.deleted ? '内置技能已删除，重启后不会自动释放；恢复后可重新启用。' : skill.description"></p>
+                <p x-show="skill.directory !== skill.name" class="text-[10px] text-slate-400 mt-0.5 break-all" x-text="'目录：' + skill.directory"></p>
+              </div>
+              <div class="flex shrink-0 items-center gap-1.5">
+                <button x-show="!skill.deleted" @click="toggleSkill(skill)" :disabled="skillToggle.loading"
+                  class="px-2 py-1 text-[11px] border rounded-lg transition disabled:opacity-40"
+                  :class="skill.enabled ? 'text-slate-500 border-slate-200 hover:bg-slate-50' : 'text-brand-600 border-brand-200 hover:bg-brand-50'"
+                  x-text="skillToggle.loading && skillToggle.directory === skill.directory ? '处理中…' : (skill.enabled ? '停用' : '启用')"></button>
+                <button x-show="skill.deleted" @click="restoreSkill(skill)" :disabled="skillRestore.loading"
+                  class="px-2 py-1 text-[11px] text-brand-600 border border-brand-200 rounded-lg hover:bg-brand-50 transition disabled:opacity-40"
+                  x-text="skillRestore.loading && skillRestore.directory === skill.directory ? '恢复中…' : '恢复'"></button>
+                <button x-show="!skill.deleted" @click="requestSkillDelete(skill)"
+                  class="px-2 py-1 text-[11px] text-rose-500 border border-rose-200 rounded-lg hover:bg-rose-50 transition">删除</button>
+              </div>
+            </div>
+            <div x-show="skillDelete.directory === skill.directory" class="mt-2 rounded-lg border border-rose-200 bg-rose-50 p-2">
+              <p class="text-[11px] text-rose-700" x-text="skillDeletePrompt()"></p>
+              <p x-show="skillDelete.error" class="mt-1 text-[10px] text-rose-600 break-words" x-text="skillDelete.error"></p>
+              <div class="mt-2 flex justify-end gap-1.5">
+                <button @click="cancelSkillDelete()" :disabled="skillDelete.loading" class="px-2 py-1 text-[11px] text-slate-500 rounded-lg hover:bg-white transition disabled:opacity-40">取消</button>
+                <button @click="confirmSkillDelete()" :disabled="skillDelete.loading" class="px-2 py-1 text-[11px] text-white bg-rose-500 rounded-lg hover:bg-rose-600 transition disabled:opacity-40"
+                  x-text="skillDelete.loading ? '删除中…' : '确认删除'"></button>
+              </div>
+            </div>
+          </div>
+        </template>
+        <p x-show="!skillsConfig.loading && skillsConfig.skills.length === 0" class="text-[11px] text-slate-400">还没有技能。</p>
+
+        <div class="rounded-xl border border-slate-200 bg-slate-50/60 p-4 space-y-3">
+          <div>
+            <h4 class="text-xs font-semibold text-slate-600">新增技能</h4>
+            <p class="text-[10px] text-slate-400 mt-0.5">写入 agent 配置目录的 skills/&lt;名称&gt;/SKILL.md；启用状态写入 cairn-worker prompt 的 skills 白名单。</p>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="text-[11px] text-slate-400 mb-1 block font-medium">名称</label>
+              <input x-model="skillForm.name" placeholder="my-skill"
+                class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+              <p class="text-[10px] text-slate-400 mt-1">小写字母、数字和单个连字符，最长 64。</p>
+            </div>
+            <div>
+              <label class="text-[11px] text-slate-400 mb-1 block font-medium">一句话描述</label>
+              <input x-model="skillForm.description" placeholder="什么时候应该使用这个技能"
+                class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+              <p class="text-[10px] text-slate-400 mt-1">模型靠它判断是否加载技能，最长 1024。</p>
+            </div>
+          </div>
+          <div>
+            <label class="text-[11px] text-slate-400 mb-1 block font-medium">技能内容（Markdown 正文）</label>
+            <textarea rows="6" x-model="skillForm.content" placeholder="工作流、命令、注意事项…"
+              class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
+          </div>
+          <label class="inline-flex items-center gap-1.5 text-[11px] text-slate-500">
+            <input type="checkbox" x-model="skillForm.enabled" class="h-3.5 w-3.5 rounded border-slate-300 text-brand-500 focus:ring-brand-200"> 添加后立即启用
+          </label>
+          <p x-show="skillFormError" class="text-[11px] text-rose-500 break-words" x-text="skillFormError"></p>
+          <div class="flex justify-end">
+            <button @click="saveSkill()" :disabled="isSavingSkill"
+              class="px-3 py-1.5 text-xs bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition shadow-sm shadow-brand-200 disabled:opacity-40 disabled:cursor-not-allowed"
+              x-text="isSavingSkill ? '添加中…' : '添加技能'"></button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -3207,6 +3294,13 @@ function cairnApp() {
     agentTest: { modelId: '', loading: false, ok: null, error: '', response: '' },
     agentProviderTest: { providerId: '', modelId: '', loading: false, ok: null, error: '', response: '' },
     agentDelete: { kind: '', id: '', name: '', force: false, loading: false, error: '' },
+    skillsConfig: { loading: false, loaded: false, error: '', prompt: 'cairn-worker', promptFound: false, enabledCount: 0, skills: [] },
+    skillForm: { name: '', description: '', content: '', enabled: true },
+    skillFormError: '',
+    isSavingSkill: false,
+    skillDelete: { directory: '', name: '', builtin: false, loading: false, error: '' },
+    skillToggle: { directory: '', loading: false },
+    skillRestore: { directory: '', loading: false },
     deleteConfirm: { id: '', title: '' },
     isDeletingProject: false,
     showConfirmModal: false,
@@ -7294,7 +7388,7 @@ function cairnApp() {
     },
 
     settingsWritePending() {
-      return this.runtimeWritePending() || this.isSavingSettings || this.agentWritePending();
+      return this.runtimeWritePending() || this.isSavingSettings || this.agentWritePending() || this.skillsWritePending();
     },
 
     async openSettings(tab = 'runtime') {
@@ -7303,7 +7397,7 @@ function cairnApp() {
     },
 
     async setSettingsTab(tab) {
-      const tabs = ['runtime', 'agent', 'local', 'server'];
+      const tabs = ['runtime', 'agent', 'skills', 'local', 'server'];
       this.settingsTab = tabs.includes(tab) ? tab : 'runtime';
       if (this.settingsTab === 'runtime') {
         this.runtimeResetArmed = false;
@@ -7313,6 +7407,10 @@ function cairnApp() {
       } else if (this.settingsTab === 'agent') {
         if (!this.agentConfig.loaded && !this.agentWritePending()) {
           await this.loadAgentConfig();
+        }
+      } else if (this.settingsTab === 'skills') {
+        if (!this.skillsConfig.loaded && !this.skillsWritePending()) {
+          await this.loadSkills();
         }
       } else if (this.settingsTab === 'server') {
         await this.loadSettings();
@@ -7781,6 +7879,140 @@ function cairnApp() {
         this.agentConfig.loading = false;
         this.agentConfig.loaded = false;
         this.agentConfig.error = e.message;
+      }
+    },
+
+    skillsWritePending() {
+      return this.skillsConfig.loading || this.isSavingSkill || this.skillDelete.loading || this.skillToggle.loading || this.skillRestore.loading;
+    },
+
+    skillsHint() {
+      const active = this.skillsConfig.skills.filter(s => !s.deleted).length;
+      const enabled = this.skillsConfig.skills.filter(s => s.enabled).length;
+      const prompt = this.skillsConfig.promptFound ? `已写入 ${this.skillsConfig.prompt} prompt` : 'worker prompt 尚未释放';
+      return `${active} 个技能 · ${enabled} 个已启用 · ${prompt}`;
+    },
+
+    async loadSkills() {
+      this.skillsConfig.loading = true;
+      this.skillsConfig.error = '';
+      try {
+        const data = await this.api('GET', '/settings/agent/skills');
+        this.skillsConfig = {
+          loading: false,
+          loaded: true,
+          error: '',
+          prompt: data.prompt || 'cairn-worker',
+          promptFound: data.promptFound === true,
+          enabledCount: Number(data.enabledCount) || 0,
+          skills: Array.isArray(data.skills) ? data.skills : [],
+        };
+      } catch (e) {
+        this.skillsConfig.loading = false;
+        this.skillsConfig.loaded = false;
+        this.skillsConfig.error = e.message;
+      }
+    },
+
+    skillFormErrors() {
+      const errors = {};
+      const form = this.skillForm;
+      const name = (form.name || '').trim();
+      if (!name) errors.name = '请填写技能名称';
+      else if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(name) || name.length > 64) errors.name = '名称只能是小写字母、数字和单个连字符（最长 64）';
+      const description = (form.description || '').trim();
+      if (!description) errors.description = '请填写一句话描述';
+      else if (description.length > 1024 || /[\r\n]/.test(description)) errors.description = '描述需为单行且不超过 1024 个字符';
+      if (!(form.content || '').trim()) errors.content = '请填写技能内容';
+      return errors;
+    },
+
+    async saveSkill() {
+      if (this.isSavingSkill) return;
+      const firstError = Object.values(this.skillFormErrors())[0];
+      if (firstError) {
+        this.skillFormError = firstError;
+        return;
+      }
+      const form = this.skillForm;
+      this.skillFormError = '';
+      this.isSavingSkill = true;
+      try {
+        await this.api('POST', '/settings/agent/skills', {
+          name: form.name.trim(),
+          description: form.description.trim(),
+          content: form.content,
+          enabled: form.enabled === true,
+        });
+        await this.loadSkills();
+        this.skillForm = { name: '', description: '', content: '', enabled: true };
+        this.showToast('技能已添加');
+      } catch (e) {
+        this.skillFormError = e.message;
+      } finally {
+        this.isSavingSkill = false;
+      }
+    },
+
+    async toggleSkill(skill) {
+      if (!skill || this.skillToggle.loading) return;
+      this.skillToggle = { directory: skill.directory, loading: true };
+      try {
+        await this.api('PUT', `/settings/agent/skills/${encodeURIComponent(skill.directory)}/enabled`, { enabled: !skill.enabled });
+        await this.loadSkills();
+        this.showToast(skill.enabled ? '技能已停用' : '技能已启用');
+      } catch (e) {
+        this.showToast(e.message, 'error');
+      } finally {
+        this.skillToggle = { directory: '', loading: false };
+      }
+    },
+
+    async restoreSkill(skill) {
+      if (!skill || this.skillRestore.loading) return;
+      this.skillRestore = { directory: skill.directory, loading: true };
+      try {
+        await this.api('POST', `/settings/agent/skills/${encodeURIComponent(skill.directory)}/restore`, {});
+        await this.loadSkills();
+        this.showToast('技能已恢复');
+      } catch (e) {
+        this.showToast(e.message, 'error');
+      } finally {
+        this.skillRestore = { directory: '', loading: false };
+      }
+    },
+
+    requestSkillDelete(skill) {
+      this.skillDelete = { directory: skill.directory, name: skill.name, builtin: skill.builtin === true, loading: false, error: '' };
+    },
+
+    cancelSkillDelete() {
+      if (this.skillDelete.loading) return;
+      this.skillDelete = { directory: '', name: '', builtin: false, loading: false, error: '' };
+    },
+
+    skillDeletePrompt() {
+      const target = this.skillDelete;
+      if (!target.directory) return '';
+      if (target.builtin) {
+        return `删除内置技能 “${target.name}”？它会从 cairn-worker 停用并记录删除，重启后不再自动释放；之后可在同一列表恢复。`;
+      }
+      return `删除自定义技能 “${target.name}”？目录 skills/${target.directory} 会被移除，无法撤销。`;
+    },
+
+    async confirmSkillDelete() {
+      const target = this.skillDelete;
+      if (!target.directory || target.loading) return;
+      target.loading = true;
+      target.error = '';
+      try {
+        await this.api('DELETE', `/settings/agent/skills/${encodeURIComponent(target.directory)}`);
+        this.skillDelete = { directory: '', name: '', builtin: false, loading: false, error: '' };
+        await this.loadSkills();
+        this.showToast('技能已删除');
+      } catch (e) {
+        target.loading = false;
+        target.error = e.message;
       }
     },
 
