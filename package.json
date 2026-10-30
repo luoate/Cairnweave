@@ -1,6 +1,6 @@
 {
   "name": "cairnweave",
-  "version": "0.47.0-m27",
+  "version": "0.48.0-m28",
   "private": true,
   "type": "module",
   "workspaces": [

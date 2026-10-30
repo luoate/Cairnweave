@@ -8,7 +8,7 @@
 没有 Python ↔ TypeScript 桥，没有 JSONL RPC。
 
 [![CI](https://github.com/luoate/Cairnweave/actions/workflows/ci.yml/badge.svg)](https://github.com/luoate/Cairnweave/actions/workflows/ci.yml)
-[![tests](https://img.shields.io/badge/tests-803%20passed-brightgreen.svg)](docs/MILESTONES.md)
+[![tests](https://img.shields.io/badge/tests-806%20passed-brightgreen.svg)](docs/MILESTONES.md)
 [![license](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![runtime](https://img.shields.io/badge/runtime-Bun%201.4.4-black.svg)](package.json)
 
@@ -195,6 +195,10 @@ CI 重新生成后 `git diff --exit-code` 校验它没有漂移。
 - 加载：首屏只有 HTML、`app.css`、Alpine 与 `graph-loader.js`（br 后共约 96 KB）；打开项目才
   拉 cytoscape 与当前布局引擎，Klay / ELK 只在选中那种布局时才拉；静态响应带 size+mtime 的
   ETag、`Cache-Control: no-cache` 与 `Vary: Accept-Encoding`，刷新时未变动的资源回 304。
+- 字号：界面文字只用命名刻度——`text-2xs`（11px，中文可读下限）、`text-xs`（12px）、
+  `text-sm`（14px）、`text-base`（16px），`index.html` 里已经没有 `text-[9px]` 这类任意值；
+  主题同时声明 `sans` 与 `mono` 两个字族（顶层 `fontFamily` 会替换整条字族刻度，之前只写了
+  `sans`，导致 94 处 `.font-mono` 生成不出任何规则）。密度保持紧凑仪表盘：只抬小字号，不加间距。
 - 列表：搜索、状态筛选、三种排序、按项目记忆视图；页面隐藏时暂停轮询，失败 5s→60s 退避。
 - 项目页：图视图、Fact 详情、Flag 横幅、授权范围、运行 / 慢层 / 审计 / 证据 / 提案 /
   看板 / 成本 / 统计 / 报告 / Writeup 页签。
@@ -237,7 +241,7 @@ API key 只写不读（响应只回掩码），写入 `auth.json` 并按上游 S
 ## 测试与 CI
 
 ```bash
-bun test             # 803 passed / 78 files（fake solver，不需凭据）
+bun test             # 806 passed / 78 files（fake solver，不需凭据）
 bun run typecheck    # tsc --noEmit
 bun run ui:css       # 改了 index.html 的 class 后重新生成 static/app.css
 bun run check        # typecheck + test；CI 还会校验 app.css 与 index.html 不漂移

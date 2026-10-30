@@ -2326,12 +2326,51 @@ describe("static asset delivery", () => {
     const custom = new Set(
       [...html.match(/<style>([\s\S]*?)<\/style>/)![1]!.matchAll(/\.([a-zA-Z][\w-]*)/g)].map((m) => m[1]!),
     );
-    // Both are inert under the Play CDN too: the theme replaces the font scale, so
-    // there is no `mono`, and `/92` is not in the default opacity scale.
-    const inert = new Set(["font-mono", "bg-white/92"]);
+    // `mono` is live now (the theme declares it), so the only inert utility left is
+    // the opacity step `/92`, which is not in the default scale.
+    const inert = new Set(["bg-white/92"]);
     const missing = [...classTokens(html)]
       .filter((token) => token.includes("-"))
       .filter((token) => !cssHasSelector(css, token) && !custom.has(token) && !inert.has(token));
     expect(missing).toEqual([]);
+  });
+});
+
+/**
+ * Cytoscape draws its own node and edge labels in canvas, where the size is bounded by
+ * the node box, so those literals are not covered here — this guard is about DOM text.
+ */
+describe("typography scale", () => {
+  const UI_CONFIG_PATH = join(import.meta.dir, "..", "..", "..", "..", "tools", "ui", "tailwind.config.mjs");
+  const ROOT_PX = 16;
+
+  function declaredSizes(css: string): number[] {
+    return [...css.matchAll(/font-size:\s*([0-9.]+)(rem|px)/g)].map((match) =>
+      match[2] === "rem" ? Number.parseFloat(match[1]!) * ROOT_PX : Number.parseFloat(match[1]!),
+    );
+  }
+
+  test("keeps every DOM size on the named scale with 11px as the floor", () => {
+    const html = readFileSync(INDEX_PATH, "utf8");
+    const css = readFileSync(APP_CSS_PATH, "utf8");
+    expect(html).not.toMatch(/text-\[\d/);
+    expect(css).toContain(".text-2xs{font-size:.6875rem");
+    const sizes = declaredSizes(css);
+    expect(sizes.length).toBeGreaterThan(0);
+    expect(Math.min(...sizes)).toBeGreaterThanOrEqual(11);
+    expect(html.match(/<style>([\s\S]*?)<\/style>/)![1]).not.toMatch(/font-size/);
+  });
+
+  test("declares the floor in the tailwind config instead of in markup", async () => {
+    const config = readFileSync(UI_CONFIG_PATH, "utf8");
+    expect(config).toMatch(/"2xs":\s*\["0\.6875rem"/);
+  });
+
+  test("keeps a monospace family in the font scale", () => {
+    const config = readFileSync(UI_CONFIG_PATH, "utf8");
+    // A top-level `fontFamily` replaces the whole scale, so listing only `sans` used to
+    // leave the 94 `font-mono` call sites with no rule at all.
+    expect(config).toMatch(/fontFamily:\s*\{[\s\S]*?sans:[\s\S]*?mono:\s*\[[\s\S]*?\n\s*\},/);
+    expect(readFileSync(APP_CSS_PATH, "utf8")).toMatch(/\.font-mono\{font-family:ui-monospace/);
   });
 });

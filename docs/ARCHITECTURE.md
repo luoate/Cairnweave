@@ -795,6 +795,16 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
   size+mtime 生成 ETag，配 `Cache-Control: no-cache` 与 `Vary: Accept-Encoding`，`If-None-Match`
   命中回 304；可压缩扩展名在内存里（≤64 个文件）缓存 gzip 与 brotli 变体，按
   `Accept-Encoding` 协商。`/static/` 外的路径与越出目录的目标一律返回 `null`，交给 API 路由。
+- 字号刻度（M28）：界面文字统一成命名刻度，`index.html` 里不再出现 `text-[Npx]` 任意值——
+  原来到 472 处的 `text-[9px]/[10px]/[11px]` 全部收进 `text-2xs`（11px，中文可读下限，
+  在 `tools/ui/tailwind.config.mjs` 的 `theme.extend.fontSize` 里定义），`text-[12px]` 归到
+  `text-xs`，两处 15px 标题归到 `text-base`；`text-xs`/`text-sm` 不动，密度仍是紧凑仪表盘。
+  同一份配置还补了 `fontFamily.mono`：顶层 `theme.fontFamily` 是**替换**整条字族刻度而不是合并，
+  旧配置只写 `sans`，于是 `.font-mono` 编译不出任何规则，94 处调用点静默回退成正文字体。
+  `api.ui.test.ts` 的 `typography scale` 用例守住三件事：markup 无 `text-[<数字`、`app.css` 里
+  最小 `font-size` ≥ 11px 且含 `.text-2xs`、配置同时声明 `sans` 与 `mono`。cytoscape 画在
+  canvas 上的节点/边标签（7px 边、10px 节点）不受这条下限约束——它们被固定节点盒限制，
+  属于图布局问题而不是 DOM 文字，测试注释里记了这个例外。
 - 弹窗（M17c）：每个 overlay 是 body 的直接子节点，带 `data-modal="<name>"` 与
   `x-effect="syncModal('<name>', showX, $el)"`；`syncModal` 维护 `modalOrder` 栈和
   `modalReturnFocus`，全局 `keydown` 处理器只对栈顶执行 Esc（`dismissModal` 走

@@ -1,12 +1,12 @@
 # 里程碑与验证记录
 
-本文件保留 M1–M27 的实现记录、测试与浏览器验证清单、与 Python Cairn 的已知差异、
+本文件保留 M1–M28 的实现记录、测试与浏览器验证清单、与 Python Cairn 的已知差异、
 里程碑表以及与 Phase 0 的关系。产品概览、快速开始与 API 概览见 [README](../README.md)。
 
 ## 实现记录
 
-状态：**M27（前端首屏体积与静态资源缓存）**；M0–M4、M5a–M5c、
-M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M16b、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e、M18f、M18g、M19a、M19b、M20a、M20b、M21、M22、M23、M24、M24b、M25、M26、M26b、M27 的计划项全部完成。Phase 1 的
+状态：**M28（前端字号刻度与可读性下限）**；M0–M4、M5a–M5c、
+M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M16b、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e、M18f、M18g、M19a、M19b、M20a、M20b、M21、M22、M23、M24、M24b、M25、M26、M26b、M27、M28 的计划项全部完成。Phase 1 的
 “本地看板 + Observer 提案 + 证据门 + 单一写图者”闭环已具备；Observer 复盘自 M22 起默认
 开启（只读复盘，不改任务结果），提案自 M23 起默认 `dry_run`（完整校验并记录，不写图）。
 Phase 2 的触发持久化、意图优先级/预算、单项目 token/成本与并发配额、只读慢层观测、逐 Fact
@@ -243,6 +243,21 @@ Tailwind 的 Play CDN（vendored `tailwindcss.js`，451 KB，在浏览器里对�
 `Cache-Control: no-cache` 与 `Vary: Accept-Encoding`，`If-None-Match` 命中回 304，可压缩类型在
 内存里（≤64 个文件）缓存 gzip 与 brotli 变体并按 `Accept-Encoding` 协商，`/static/` 之外或越出
 目录的目标一律交回 API 路由。
+M28 把界面文字收进一条命名字号刻度，并把中文可读性定成硬下限。`index.html` 里散着 472 处
+`text-[9px]/[10px]/[11px]` 任意值（外加 3 处 `text-[12px]`、2 处 `text-[15px]`），同一档字号还分三行
+写；全部映射到命名 token：三档小字号统一为 `text-2xs`，它是 `theme.extend.fontSize` 新增的
+11px 一档（`line-height: 1.3`），`text-[12px]` 归 `text-xs`，两处标题归 `text-base`；`text-xs`
+与 `text-sm` 原样保留，所以密度仍是紧凑仪表盘，只是不再有 9px 的中文。同一个配置补上
+`fontFamily.mono`，修掉了 M27 记录里那个连带 bug——顶层 `theme.fontFamily` 替换整条字族刻度，
+旧配置只列 `sans`，于是 94 处 `.font-mono` 编译不出任何规则，project id、Flag、路径、工具名这些
+本该等宽的文字一直在用正文字体；现在它们真的等宽了，`api.ui.test.ts` 的豁免集合也随之从
+`font-mono` + `bg-white/92` 收到只剩 `bg-white/92`。新增的 `typography scale` 用例锁住三件事：
+markup 不出现 `text-[<数字`、`app.css` 里最小 `font-size` ≥ 11px 且存在 `.text-2xs`、配置同时声明
+`sans` 与 `mono`。几何 A/B 用隐藏浏览器在 532×555 视口逐状态实测（列表 / 详情 / runs / audit /
+writeup / settings）：最小字号 9px→11px，小于 11px 的节点从 14/11/56/133/13/13 归零，含中文的
+小字从 14/8/33/74/8/8 归零，而横向溢出容器数（2）与越出视口的元素数（0/5/5/6/6/6）改前改后完全
+一致——放大没有引入新的裁切。cytoscape 画在 canvas 上的标签（边 7px、节点 10px）留作图布局问题，
+它被固定节点盒约束，不属于 DOM 文字，测试注释里记了这个例外。
 `cairn serve` 是可运行的 Cairn 兼容服务：SQLite schema、领域服务、全部
 五个路由、YAML/timeline 导出、静态 Web UI 均已就位，并用 Python Cairn 生成的 golden
 做了逐字对照。进程内 scheduler、任务/结果文件 worker 协议、BreachWeave Solver 接入已在 M2
@@ -788,9 +803,9 @@ M16b 增加（第二个模型接入与真实 A/B）：
 `CAIRN_SOLVER=breachweave` 的真实 Solver 路径上，fake solver 会忽略它。
 
 
-## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a + M17a + M17b + M17c + M17d + M18a + M18b + M18c + M18d + M18e + M18f + M18g + M19a + M19b + M16b + M20a + M20b + M21 + M22 + M23 + M24 + M24b + M25 + M26 + M26b + M27，2026-10-30，Bun 1.4.4）
+## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a + M17a + M17b + M17c + M17d + M18a + M18b + M18c + M18d + M18e + M18f + M18g + M19a + M19b + M16b + M20a + M20b + M21 + M22 + M23 + M24 + M24b + M25 + M26 + M26b + M27 + M28，2026-10-30，Bun 1.4.4）
 
-- `bun test`：**803 passed**（78 个文件），0 failed。
+- `bun test`：**806 passed**（78 个文件），0 failed。
 - `bun run typecheck`：`tsc --noEmit` 通过。
 - **HTTP 对照**：`api.golden.json` 的 60 步请求（成功路径、400/403/404/405/409、租约过期、
   删除级联、导出、路由错误）由 Python FastAPI + 固定时钟生成；TS 重放后状态码、content-type
@@ -1191,8 +1206,18 @@ M16b 增加（第二个模型接入与真实 A/B）：
   即使 `cytoscape` 被调用也直接抛错）并给出「布局引擎加载失败」toast，`applySelectedLayout` 与
   `saveLocalSettings` 两处源码也都先 `await this.ensureGraphEngine(this.layoutEngine())`；最后一道 CSS 覆盖守卫从 `index.html`
   收集 class 令牌（`class="…"` 与 `:class="…"` 里带破折号的字面量），逐个要求在 `app.css`
-  里能找到对应选择器（含 `\2c` 之类的十六进制转义还原），只豁免历史上就无效的两个
-  `font-mono`/`bg-white/92`，新增遗漏即失败。
+  里能找到对应选择器（含 `\2c` 之类的十六进制转义还原），只豁免历史上就无效的 `bg-white/92`
+  （`font-mono` 在 M28 修好了主题，已从豁免集合移除），新增遗漏即失败。
+- **字号刻度（M28）**：`api.ui.test.ts` 的 `typography scale` 组断言四件事——`index.html` 不再
+  出现 `text-[<数字`、`app.css` 含 `.text-2xs{font-size:.6875rem`、编译产物里最小 `font-size`
+  ≥ 11px、`<style>` 内联块不含 `font-size`；另外两个用例钉住刻度定义本身（配置里
+  `"2xs": ["0.6875rem", …]`）与字族刻度同时声明 `sans`/`mono` 且产物里 `.font-mono` 真的落到
+  `ui-monospace`。隐藏浏览器几何 A/B（532×555，proj_008，改前用 `git show HEAD:` 的
+  `index.html` + `app.css` 做真对照）：最小字号 9px→11px，小于 11px 的文字节点在列表/详情/runs/
+  audit/writeup/settings 六个状态分别从 14/11/56/133/13/13 归零，其中含中文的 14/8/33/74/8/8 同样
+  归零；横向溢出容器数与越出视口的元素数改前改后一致（2 与 0/5/5/6/6/6），说明放大没有新增裁切；
+  控制台无报错，重新生成的 `app.css` 与入库产物逐字节相同。图内 cytoscape 标签（边 7px、节点
+  10px）按例外保留，理由与测试注释一致：canvas 文字受固定节点盒限制，属于图布局而非 DOM 文字。
 
 golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定时钟、`TZ=UTC`）。
 重新生成方法与约束见 `docs/PORTING.md`。
@@ -1276,6 +1301,7 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M26 ✅ | 技能统一浏览 + 配置目录改名：`agent-config.ts` 新增只读 `GET /settings/agent/skills/{name}/files` 与 `GET .../file?path=`（`SKILL.md` 恒在首位、POSIX 相对路径、≤200 文件/深度 8/单文件 256 KiB 前缀，NUL 判二进制，逐段拒绝空/`.`/`..`/超长/保留字符，词法与 realpath 双重收敛、拒绝符号链接），GET 沿用免 token 的只读语义、同路径 POST 405；运行配置目录默认改为 `~/.cairnweave/config`（`agent-config-dir.ts` 统一解析：`CAIRN_AGENT_CONFIG_DIR` 覆盖 → 新默认），控制面在播种前一次性把旧 `~/.tch-agent/config` 复制过去——只在目标为空时执行、跳过符号链接、总量 64 MiB、绝不覆盖也绝不删除旧目录，日志给出复制数与“legacy directory is unchanged”；内置 skills 的 `SKILL.md` 全部中文化（正文与 `description`，命令/路径/YAML 键保持原样）；UI 技能行新增「预览」，第 13 个弹窗左侧是文件树（目录 + 大小），右侧正文 `<pre>` 逐字预览并标注二进制/截断，打开即预览首个文件，头部可直接启停并即时刷新徽标，写入期间禁止关闭、关闭复位，`line-clamp-2` 收纳多行描述 | 796 passed / 78 files（2026-10-30）；`bun run check`（tsc + 全量）通过；浏览器实测独立 `HOME`/`USERPROFILE` + 临时 DB 起 `serve --port 8026`：启动日志 `copied 4 agent config file(s) from …\\.tch-agent\\config to …\\.cairnweave\\config`，新目录拿到迁移后的 4 个配置文件与完整 `skills/`；`ad-pentest` 预览树为 9 文件 + 1 目录、`SKILL.md` 15.2 KiB 正文 11518 字符自动载入，点选 `references/04-adcs.md` 显示 10.7 KiB / 8997 字符；头部启停后 `enabledCount` 13→14、prompt 白名单同步 14 且列表行状态一致，再点回 13；`modalOrder` 由 `["settings","skillDetail"]` 在关闭后回到 `["settings"]` 且 `skillDetail.directory` 复位为空；`GET .../file?path=../../models.json` 400、缺失文件 404、同路径 POST 405。应用内浏览器页面处于隐藏态（`visibilityState=hidden`、`requestAnimationFrame` 挂起），截图与真实焦点落点无法在页内验证，改由 `api.ui.test.ts` 的假元素 `syncModal('skillDetail', …)` 断言自动聚焦关闭按钮与关闭后回焦技能行 |
 | M26b ✅ | 项目名统一为 Cairnweave：仓库目录 `cairn-merged` → `cairnweave`，根 `package.json` 的 `name` 与 `bun.lock` 随之更新（顺带同步了 lock 里 `@cairn/app` 长期滞留的 `0.3.0-m3`），版本 `0.46.0-m26b`；README 标题/首段/目录树说明与 `docs/ARCHITECTURE.md`、`docs/CONFIG.md` 里引用 UI 品牌的句子都改成 Cairnweave，并新增一条「名称约定」说明为何 `CAIRN_*` 环境变量、工作区 `.cairn/` 目录、`cairn-worker` prompt、`@cairn/*` 包名与 `cairn` 命令保持不变（Python golden 对照与既有项目数据依赖这些协议名）；前端 `<title>`、页头品牌字与 `documentTitle()` 改为「Cairnweave」/「项目名 · Cairnweave」，测试同步断言这两处标记与三种标题取值 | 796 passed / 78 files（2026-10-30）；`bun run check`（tsc + 全量）在改名后的目录里通过；`bun run cairn version` 输出 `cairn 0.46.0-m26b`；浏览器实测独立 `HOME` + 临时 DB 起 `serve --port 8027`：列表页 `document.title` 与页头品牌均为「Cairnweave」，打开 proj_001（标题 brand-check）后为「brand-check · Cairnweave」，返回列表回到「Cairnweave」；`GET /` 返回的 HTML 含 `<title>Cairnweave</title>`；实验环境 `runs/demo/dispatch.yaml` 的两处 `workspace_root` 已指向新目录，`start-lab.bat` 用 `%~dp0` 相对定位无需改动；历史 `task.json` 与 `audit_events` 里记录的旧绝对路径按运行留痕保留不改 |
 | M27 ✅ | 前端首屏体积与静态资源缓存：Tailwind Play CDN（vendored `tailwindcss.js`，451 KB 在浏览器里对着 class 名单现算样式）换成 Tailwind CLI 预编译入库的 `static/app.css`（`tools/ui/input.css` + `tools/ui/tailwind.config.mjs` 逐字复刻原内联 theme，`bun run ui:css` 生成 33 KB / br 6 KB，CI 再生成一次并 `git diff --exit-code`；`font-mono` 与 `bg-white/92` 两处历史上就无效的 class 由覆盖守卫显式豁免）；cytoscape 核心与 dagre/klay/elk 三对布局引擎改由 `static/graph-loader.js` 在 `initGraph`、切换布局、保存偏好三条路径上按需串行注入（扩展文件加载时自行 `register(cytoscape)`，所以核心必须在前），默认 dagre 不再下载 klay 的 496 KB 与 elk 的 1.6 MB，注入失败给中文 toast 且不建图；新增 `http/static-assets.ts` 接管 `GET /` 与 `/static/*`：size+mtime 生成 ETag，配 `Cache-Control: no-cache` 与 `Vary: Accept-Encoding`，`If-None-Match` 命中回 304，可压缩类型在内存里缓存 gzip/br 变体（≤64 文件、br quality 5、gzip 6），目录外与越界一律 404；`api.ts` 删除旧的 `serveStatic` | 803 passed / 78 files（2026-10-30）；`bun run check`（tsc + 全量）通过；浏览器实测独立 DB 起 `serve --port 8028`：列表页首屏传输 96,040 B（`index.html` 72,944 + `app.css` 5,972 + alpine 16,268 + `graph-loader.js` 663 + favicon 193，全部 br），同一路径优化前未压缩为 3,816,974 B；首屏 `window.tailwind` 为 `false`、未打开项目时 `typeof cytoscape === "undefined"`；点开项目才补 `cytoscape.min.js` 127,976 + `dagre.min.js` 61,331 + `cytoscape-dagre.js` 3,859（br），3 个 canvas 正常渲染、无 toast；切 `elk_lr` 才拉 `elk.bundled.js` + `cytoscape-elk.js`（`window.ELK` 就位）、切 `klay_lr` 才拉 `klay.js` + `cytoscape-klay.js`，切回 dagre 不再发请求；刷新后 alpine/graph-loader/favicon 回 304，`curl` 逐个带 `If-None-Match` 对 `app.css`/`graph-loader.js`/alpine/cytoscape/dagre 全部 304；控制台无消息 |
+| M28 ✅ | 前端字号刻度与可读性下限：`tools/ui/tailwind.config.mjs` 新增 `theme.extend.fontSize["2xs"] = ["0.6875rem", {lineHeight:"1.3"}]`（11px，中文可读下限）并补上 `fontFamily.mono`——顶层 `theme.fontFamily` 替换整条字族刻度，旧配置只列 `sans`，因此 `.font-mono` 编译不出规则、94 处调用点静默回退正文字体；`index.html` 的 472 处 `text-[9px]/[10px]/[11px]` 全部换成 `text-2xs`，3 处 `text-[12px]` 归 `text-xs`，两处 15px 标题归 `text-base`，`text-xs`/`text-sm` 不动以保持紧凑仪表盘密度，内联 `<style>` 不含 `font-size`；`api.ui.test.ts` 的 CSS 覆盖守卫豁免从 `font-mono` + `bg-white/92` 收到只剩 `bg-white/92`，并新增 `typography scale` 三个用例（markup 无 `text-[<数字`、产物最小 `font-size` ≥ 11px 且含 `.text-2xs`、配置同列 `sans`/`mono` 且产物 `.font-mono` 落到 `ui-monospace`）；cytoscape canvas 标签（边 7px / 节点 10px）按例外保留 | 806 passed / 78 files（2026-10-30）；`bun run check`（tsc + 全量）通过；重新生成产物 33,112 B（br 6,420 B）与入库文件逐字节相同；隐藏浏览器 532×555 几何 A/B 用 `git show HEAD:` 的 `index.html` + `app.css` 做真对照，六个状态（列表/详情/runs/audit/writeup/settings）最小字号 9px→11px、小于 11px 的节点 14/11/56/133/13/13 全部归零、含中文的小字 14/8/33/74/8/8 全部归零，而横向溢出容器（2）与越出视口元素（0/5/5/6/6/6）改前改后一致，`.font-mono` 实测族名以 `ui-monospace` 开头，控制台无消息。曾试给图标题 `h2` 加 `min-w-0`/`flex-1` 让 `truncate` 生效，实测在 532px 下会把项目名压到 0 宽（标题消失比原有溢出更糟）故回退，窄窗口排布留给后续响应式一轮 |
 
 ## 与 Phase 0 的关系
 
