@@ -332,17 +332,19 @@ provider 与密钥，模型页签负责拉取/手工录入、设为默认、测�
 与请求 host 不一致的浏览器写请求。完整操作步骤、常见错误与 M16b 真实 A/B 记录见
 `docs/MODELS.md`。
 
-## 运行配置（M22 起，M24 统一入口）
+## 运行配置（M22 起，M24 统一入口，M24b 环境测试）
 
 `--config` 启动时，页头齿轮按钮打开「设置 → 运行与执行」。覆盖存进 SQLite，重启后保留，
 并在下一个调度 tick 生效；`DELETE` 清空全部覆盖回到 dispatch.yaml 的原值。
 `runtime.execution` 也可在这里切换（local / container），但要求调度器空闲且本机有
-Docker；切换在任务全部结束后重建 runtime 后端，不会中断在跑的任务。
+Docker；切换在任务全部结束后重建 runtime 后端，不会中断在跑的任务。下拉旁的「测试有效性」
+会在保存前实际探测所选模式（Bun/工作区，或 Docker/镜像/试启动），结果逐项显示在弹窗里。
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | GET | `/settings/runtime` | `{defaults, editable, overrides, updated_at, read_only}`；`defaults` 是仅取 dispatch.yaml 的值，`overrides` 是当前被覆盖的叶子路径，`read_only` 展示部署项 |
 | PUT | `/settings/runtime` | 整组替换覆盖 patch（snake_case）；未知键、越界值或跨字段冲突返回 400，运行中的配置保持不变 |
+| POST | `/settings/runtime/test` | 探测 `{"execution":"local"\|"container"}`，返回 `{ok,checks[]}`；不改配置 |
 | DELETE | `/settings/runtime` | 删除所有覆盖，恢复 dispatch.yaml 值 |
 
 写路由沿用 operator token 与同源校验；没有 `--config` 的纯 HTTP 模式所有方法都返回

@@ -5,8 +5,8 @@
 
 ## 实现记录
 
-状态：**M24（在线切换执行模式 + 统一设置入口）**；M0–M4、M5a–M5c、
-M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M16b、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e、M18f、M18g、M19a、M19b、M20a、M20b、M21、M22、M23、M24 的计划项全部完成。Phase 1 的
+状态：**M24b（执行环境有效性测试）**；M0–M4、M5a–M5c、
+M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M16b、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e、M18f、M18g、M19a、M19b、M20a、M20b、M21、M22、M23、M24、M24b 的计划项全部完成。Phase 1 的
 “本地看板 + Observer 提案 + 证据门 + 单一写图者”闭环已具备；Observer 复盘自 M22 起默认
 开启（只读复盘，不改任务结果），提案自 M23 起默认 `dry_run`（完整校验并记录，不写图）。
 Phase 2 的触发持久化、意图优先级/预算、单项目 token/成本与并发配额、只读慢层观测、逐 Fact
@@ -186,6 +186,12 @@ M24 把执行模式变成可在线切换的设置项，并统一前端入口。`
 把原先的「运行配置 / 模型与密钥 / 本地偏好 / 服务端设置」四个弹窗合并为一个带四页签的
 「设置」弹窗，页头只留一个齿轮按钮；弹窗打开与切换页签时按需加载。浏览器标题随当前
 项目变为「项目名 · Cairn」。
+M24b 在执行模式下拉旁加「测试有效性」。`POST /settings/runtime/test` 探测请求里选择的
+模式（不是运行中的模式）：`local` 检查 Bun 版本与工作区临时文件写入；`container` 检查
+Docker 守护进程、`container.image`（缺省 `cairn-worker:latest`）是否存在，再用
+`docker run --rm --network none <image> bun --version` 试启动一次，镜像缺失时在说明里给出
+构建命令。逐项结果带 `{id,label,ok,detail}`，`ok` 为全部通过；探测不写配置，失败项在
+弹窗内联显示，切换执行模式后清空旧结果。
 `cairn serve` 是可运行的 Cairn 兼容服务：SQLite schema、领域服务、全部
 五个路由、YAML/timeline 导出、静态 Web UI 均已就位，并用 Python Cairn 生成的 golden
 做了逐字对照。进程内 scheduler、任务/结果文件 worker 协议、BreachWeave Solver 接入已在 M2
@@ -731,9 +737,9 @@ M16b 增加（第二个模型接入与真实 A/B）：
 `CAIRN_SOLVER=breachweave` 的真实 Solver 路径上，fake solver 会忽略它。
 
 
-## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a + M17a + M17b + M17c + M17d + M18a + M18b + M18c + M18d + M18e + M18f + M18g + M19a + M19b + M16b + M20a + M20b + M21 + M22 + M23 + M24，2026-10-30，Bun 1.4.4）
+## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a + M17a + M17b + M17c + M17d + M18a + M18b + M18c + M18d + M18e + M18f + M18g + M19a + M19b + M16b + M20a + M20b + M21 + M22 + M23 + M24 + M24b，2026-10-30，Bun 1.4.4）
 
-- `bun test`：**748 passed**（75 个文件），0 failed。
+- `bun test`：**761 passed**（76 个文件），0 failed。
 - `bun run typecheck`：`tsc --noEmit` 通过。
 - **HTTP 对照**：`api.golden.json` 的 60 步请求（成功路径、400/403/404/405/409、租约过期、
   删除级联、导出、路由错误）由 Python FastAPI + 固定时钟生成；TS 重放后状态码、content-type
@@ -1191,6 +1197,7 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M22 ✅ | Observer 默认开启（只读复盘、提案仍默认关闭）+ 运行配置前端可调：`RuntimeConfigStore` 把 snake_case patch 存入 SQLite `runtime_config_overrides`，深合并到 dispatch.yaml 解析前文档并复用 `parseDispatchConfig` 校验，成功后原地同步共享 `DispatchConfig`；新增 `GET/PUT/DELETE /settings/runtime`（operator token、同源、64 KiB、无 `--config` 409）；`Scheduler.reconfigure()` 重挂 tick/sweep 定时器，`evidence_enforcement` 改为 getter 热读；页头「运行配置」弹窗按七组渲染数字/开关/下拉/多选，标出覆盖项、只提交与文件基线的差异、二次确认恢复；新增 `docs/CONFIG.md` | 732 passed / 74 files（2026-10-29）；浏览器实测：临时 DB+配置起 `serve --port 8019`，把调度间隔 2→5 保存后 `GET` 返回 `overrides:["runtime.interval"]`、SQLite 落 `{"runtime":{"interval":5}}`，刷新页面后值与「已覆盖 1 项」仍在；把单项目 worker 数改成 9 被 400 行内拒绝（`runtime.max_project_workers cannot exceed runtime.max_workers`）且服务端仍是 1；两次点击恢复后回到 2 且覆盖清空 |
 | M23 ✅ | 提案默认演练开启 + 看板只读页签：`DEFAULT_PROPOSALS` 改为 `enabled: true` + `mode: dry_run`（审核照常、只记录不写图）；新增 `http/project-board.ts` 与只读 `GET /projects/{id}/board`，读取 `.cairn/board/board/` 的想法索引与记忆条目，拒绝符号链接/越界/非普通文件，限制条目与文本上限并返回 `ideas_total`/`memory_total`/`truncated`，缺失看板返回 `available:false`；UI 在「提案」与「成本」之间新增「看板」页签，按状态/类型着色展示并支持刷新与错误重试 | 740 passed / 75 files（2026-10-29）；`bun run typecheck` 通过；浏览器实测临时 DB+配置起 `serve --port 8020`，预置 3 条想法/3 条记忆的项目显示计数与徽标、`GET /projects/proj_001/board` 200，无看板项目显示“暂无看板数据”，控制台无脚本错误 |
 | M24 ✅ | 在线切换执行模式 + 统一设置入口：`runtime.execution` 进入运行期覆盖白名单，`RuntimeConfigStore` 新增 `validateNext` 钩子（拒绝调度器有任务在跑/正在切换/本机无 Docker），`Scheduler.reconfigure()` 模式变化时等 `running` 清空再重建 runtime 后端并重新解析工作区根；dispatch.yaml 缺 `container:` 段时只在校验前补镜像/网络/收尾默认值、不落覆盖 patch；进入容器前播种内置 prompts/skills；API `workspaceRoot` 改为 getter 供工件/证据/Flag/Writeup 路由热读；前端把运行配置、模型与密钥、本地偏好、服务端设置四个弹窗合并为一个四页签「设置」弹窗（页头单齿轮按钮、按需加载、写请求中禁止关闭），`document.title` 随项目变为「项目名 · Cairn」 | 748 passed / 75 files（2026-10-30）；`bun run typecheck` 通过；浏览器实测临时 DB+起 `serve --port 8021`：四个页签各自加载（agent 页签列出 provider、server 页签显示超时输入、local 页签显示操作者/布局），执行模式 local→container 保存后 `overrides:["runtime.execution"]` 且日志出现 `runtime switched to container`，切回 local 后覆盖清空；Esc 经 `dismissModal('settings')` 关闭；打开 proj_002 标题为「Browser Check · Cairn」，返回列表为「Cairn」 |
+| M24b ✅ | 执行环境有效性测试：新增 `runtime/probe.ts` 与 `POST /settings/runtime/test`，按请求选择的 `execution` 探测——`local` 检查 Bun 版本与工作区临时文件写入；`container` 检查 Docker 守护进程、镜像是否存在（缺省 `cairn-worker:latest`）并用 `docker run --rm --network none <image> bun --version` 试启动，缺镜像时给出 `docker build` 命令；逐项返回 `{id,label,ok,detail}` 且不修改配置；路由沿用 operator token/同源守卫，无 `--config` 409、非法模式 400；执行模式下拉旁新增「测试有效性」按钮与内联 ✓/✗ 结果，切换模式清空旧结果 | 761 passed / 76 files（2026-10-30）；`bun run typecheck` 通过；浏览器实测临时 DB 起 `serve --port 8022`：local 返回 Bun 1.4.4 + 工作区可写，container 返回 Docker 29.9.2、镜像 `cairn-worker:latest`（sha256:f4f3df…）、试启动 Bun 1.4.4、工作区可写，弹窗逐项渲染且 toast「执行环境测试通过」，控制台无脚本错误 |
 
 ## 与 Phase 0 的关系
 

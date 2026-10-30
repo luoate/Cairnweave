@@ -96,7 +96,7 @@ import {
   type WriteupGenerator,
   type WriteupRouteOptions,
 } from "./project-writeup";
-import { registerSettingsRuntimeRoutes } from "./settings-runtime";
+import { registerSettingsRuntimeRoutes, type ExecutionProbe } from "./settings-runtime";
 
 export interface ApiOptions {
   db: CairnDatabase;
@@ -148,6 +148,8 @@ export interface ApiOptions {
    * without it `/settings/runtime` writes answer 409.
    */
   runtimeConfig?: RuntimeConfigStore;
+  /** Test seam for `POST /settings/runtime/test`; defaults to the real probe. */
+  runtimeProbe?: ExecutionProbe;
 }
 
 export interface Api {
@@ -342,6 +344,7 @@ export function createApi(options: ApiOptions): Api {
         : { modelPref: options.writeupModelPref }),
     },
     options.runtimeConfig ?? null,
+    options.runtimeProbe,
   );
 
   async function handle(request: Request): Promise<Response> {
@@ -447,6 +450,7 @@ function buildRoutes(
   agentConfig: AgentConfigOptions = {},
   writeup: Pick<WriteupRouteOptions, "generator" | "timeoutMs" | "modelPref"> = {},
   runtimeConfig: RuntimeConfigStore | null = null,
+  runtimeProbe?: ExecutionProbe,
 ): Route[] {
   const routes: Route[] = [];
   const workspaceRoot = (): string | undefined =>
@@ -466,6 +470,7 @@ function buildRoutes(
   registerSettingsRuntimeRoutes(route, {
     store: runtimeConfig,
     ...(operatorToken === undefined ? {} : { operatorToken }),
+    ...(runtimeProbe === undefined ? {} : { probe: runtimeProbe }),
   });
   registerWriteupRoutes(route, {
     db,

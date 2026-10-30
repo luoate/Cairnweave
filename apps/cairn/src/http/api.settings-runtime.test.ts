@@ -12,6 +12,7 @@ import {
 import { parseDispatchConfig, type DispatchConfig } from "../config";
 import { RuntimeConfigStore } from "../config-overrides";
 import { createApi, type Api } from "./api";
+import type { ExecutionProbe } from "./settings-runtime";
 
 const SOURCE = `server: "http://127.0.0.1:8000"
 runtime:
@@ -39,11 +40,18 @@ function document(): Record<string, unknown> {
   return Bun.YAML.parse(SOURCE) as Record<string, unknown>;
 }
 
-function makeApi(options: { store?: RuntimeConfigStore | null; operatorToken?: string } = {}): Api {
+function makeApi(
+  options: {
+    store?: RuntimeConfigStore | null;
+    operatorToken?: string;
+    probe?: ExecutionProbe;
+  } = {},
+): Api {
   return createApi({
     db,
     ...(options.operatorToken === undefined ? {} : { operatorToken: options.operatorToken }),
     ...(options.store === null ? {} : { runtimeConfig: options.store ?? store }),
+    ...(options.probe === undefined ? {} : { runtimeProbe: options.probe }),
   });
 }
 
@@ -250,6 +258,88 @@ describe("PUT /settings/runtime", () => {
 
     const deleteDenied = await call(api, "DELETE", "/settings/runtime");
     expect(deleteDenied.status).toBe(401);
+  });
+});
+
+describe("POST /settings/runtime/test", () => {
+  test("probes the mode the caller selected and returns every check", async () => {
+    const calls: string[] = [];
+    const api = makeApi({
+      probe: (execution) => {
+        calls.push(execution);
+        return {
+          execution,
+          ok: execution === "local",
+          checks: [{ id: "runtime", label: "Bun 运行时", ok: true, detail: "Bun 1.4.4" }],
+        };
+      },
+    });
+
+    const response = await call(api, "POST", "/settings/runtime/test", {
+      execution: "container",
+    });
+
+    expect(response.status).toBe(200);
+    expect(calls).toEqual(["container"]);
+    const result = (await response.json()) as {
+      execution: string;
+      ok: boolean;
+      checks: { id: string; label: string; ok: boolean; detail: string }[];
+    };
+    expect(result.execution).toBe("container");
+    expect(result.ok).toBe(false);
+    expect(result.checks).toEqual([
+      { id: "runtime", label: "Bun 运行时", ok: true, detail: "Bun 1.4.4" },
+    ]);
+  });
+
+  test("rejects missing, unknown and malformed bodies with 400", async () => {
+    const api = makeApi();
+
+    expect((await call(api, "POST", "/settings/runtime/test", {})).status).toBe(400);
+    expect(
+      (await call(api, "POST", "/settings/runtime/test", { execution: "vm" })).status,
+    ).toBe(400);
+    expect((await call(api, "POST", "/settings/runtime/test", "{")).status).toBe(400);
+  });
+
+  test("answers 409 when no dispatch config was loaded", async () => {
+    const response = await call(
+      makeApi({ store: null }),
+      "POST",
+      "/settings/runtime/test",
+      { execution: "local" },
+    );
+
+    expect(response.status).toBe(409);
+  });
+
+  test("requires the operator token and a same-origin request", async () => {
+    const calls: string[] = [];
+    const api = makeApi({
+      operatorToken: "secret-token",
+      probe: (execution) => {
+        calls.push(execution);
+        return { execution, ok: true, checks: [] };
+      },
+    });
+    const body = { execution: "local" };
+
+    const anonymous = await call(api, "POST", "/settings/runtime/test", body);
+    expect(anonymous.status).toBe(401);
+
+    const crossOrigin = await call(api, "POST", "/settings/runtime/test", body, {
+      "x-cairn-operator-token": "secret-token",
+      origin: "http://evil.test",
+    });
+    expect(crossOrigin.status).toBe(403);
+
+    const allowed = await call(api, "POST", "/settings/runtime/test", body, {
+      "x-cairn-operator-token": "secret-token",
+      origin: "http://cairn.test",
+    });
+    expect(allowed.status).toBe(200);
+    expect(calls).toEqual(["local"]);
   });
 });
 

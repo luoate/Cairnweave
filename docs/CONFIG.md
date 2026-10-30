@@ -39,6 +39,7 @@ SQLite runtime_config_overrides ┘                                          │
 | --- | --- | --- |
 | GET | `/settings/runtime` | `{defaults, editable, overrides, updated_at, read_only}` |
 | PUT | `/settings/runtime` | 请求体是覆盖 patch；成功返回同样的视图 |
+| POST | `/settings/runtime/test` | 探测 `{"execution": "local"\|"container"}` 是否可用，返回逐项检查 |
 | DELETE | `/settings/runtime` | 清空覆盖并返回视图 |
 
 - `defaults` 是只取 dispatch.yaml 的值；`editable` 是调度器当前使用的值；二者形状相同。
@@ -47,7 +48,7 @@ SQLite runtime_config_overrides ┘                                          │
 - 请求体上限 64 KiB；空请求体视为 `{}`；非法 JSON 400。
 - 配置了 `CAIRN_OPERATOR_TOKEN` 时写路由要求 `X-Cairn-Operator-Token`，并拒绝跨源
   `Origin`（与 `/settings/agent` 写路由一致）。GET 免 token。
-- 没有 `--config` 的纯 HTTP 模式没有可变配置，三个方法都返回 409。
+- 没有 `--config` 的纯 HTTP 模式没有可变配置，这些方法都返回 409。
 - 校验失败返回 400 + 具体字段路径；运行中的配置不受影响。
 
 ```bash
@@ -84,6 +85,23 @@ curl -X PUT http://127.0.0.1:8000/settings/runtime \
 - dispatch.yaml 没有 `container:` 段也能切过去：校验时补上 `cairn-worker:latest` /
   `bridge` / `remove` 三个默认值，但这些默认值**不写入覆盖 patch**，之后改 YAML 仍然生效。
 - 容器本身的 image / network_mode / worker_argv、挂载与凭据仍是只读项。
+
+### 测试执行环境
+
+「设置 → 运行与执行 → 执行环境」旁的「测试有效性」按钮调用
+`POST /settings/runtime/test`，请求体 `{"execution":"local"|"container"}`，响应形如：
+
+```json
+{"execution":"container","ok":true,"checks":[{"id":"docker","label":"Docker 守护进程","ok":true,"detail":"29.9.2"}]}
+```
+
+- `local`：检查 Bun 可执行文件能否报出版本，并在工作区根目录写一个临时文件后删除。
+- `container`：检查 Docker 守护进程、`container.image`（缺省 `cairn-worker:latest`）
+  是否存在，再用 `docker run --rm --network none <image> bun --version` 试启动一次；
+  前一步失败就停止，镜像缺失时 `detail` 给出 `docker build` 命令。
+- 探测的是请求里选的模式，而不是当前运行的模式，所以可以在保存前验证；探测不会修改配置。
+- 守卫与 `PUT` 相同（operator token / 同源）；无 `--config` 时 409，执行模式参数非法 400。
+  `ok` 表示所有检查项都通过，失败项逐条返回，UI 内联展示。
 
 ### 任务 `tasks`
 
@@ -181,8 +199,9 @@ curl -X PUT http://127.0.0.1:8000/settings/runtime \
 - 弹窗有四个页签：运行与执行、模型与密钥、本地偏好、服务端设置；切换页签时按需加载
   （运行配置只在首次打开时拉取，保留未保存的编辑；模型配置只加载一次，保存后刷新）。
 - 运行配置字段按「执行环境 / 调度 / 任务超时 / 图切片与证据 / Worker 与选择 / 保留与预算 /
-  策略触发 / 提案」分组；数字、开关、下拉与多选（`allow_kinds`）四种控件。执行环境页只
-  放 local / container 下拉，并在下方提示需要空闲调度器与 Docker。
+  策略触发 / 提案」分组；数字、开关、下拉与多选（`allow_kinds`）四种控件。执行环境组放
+  local / container 下拉与「测试有效性」按钮；测试结果在组内逐项列出（✓/✗ + 说明），
+  切换执行模式后清空旧结果，写入进行中时按钮禁用。
 - 与 `defaults` 不同的字段显示琥珀色「已覆盖」，顶部显示覆盖项数量与更新时间。
 - 「保存并生效」发送最小 patch；服务端拒绝时把具体约束错误显示在弹窗里。
 - 「恢复 dispatch.yaml 默认值」需要连续点击两次（4 秒内），然后发 `DELETE`。
@@ -194,10 +213,13 @@ curl -X PUT http://127.0.0.1:8000/settings/runtime \
   引用、持久化与重启重放、非法值不改配置、跨字段冲突、重置、坏数据清理、执行模式切换
   （容器默认值注入）与 `validateNext` 拒绝。
 - `apps/cairn/src/http/api.settings-runtime.test.ts`：GET/PUT/DELETE、409、400（未知键 /
-  越界 / 非法 JSON）、413、operator token、跨源拒绝、错误不落库、执行模式切换与
-  `validateNext` 400。
+  越界 / 非法 JSON / 非法执行模式）、413、operator token、跨源拒绝、错误不落库、执行模式
+  切换与 `validateNext` 400、`POST /settings/runtime/test` 的参数与结果透传。
+- `apps/cairn/src/runtime/probe.test.ts`：本地模式检查 Bun 与工作区写入、工作区不可创建、
+  Docker 守护进程/镜像/试启动、镜像缺失时停止并给出构建命令、无 `container:` 段时的镜像
+  回退。
 - `apps/cairn/src/scheduler/loop.test.ts`：`reconfigure()` 在启动后重挂定时器、启动前调用
   无副作用、空闲时替换 runtime 后端。
 - `apps/cairn/src/http/api.ui.test.ts`：统一设置弹窗与页签、每个可编辑路径恰好一个控件、
-  最小 patch（含 `runtime.execution`）、空数字输入、400/409 行内错误、二次确认重置、
-  写入期间禁止关闭、浏览器标题跟随项目名。
+  最小 patch（含 `runtime.execution`）、执行环境测试按钮的请求体/结果/切换清空、空数字
+  输入、400/409 行内错误、二次确认重置、写入期间禁止关闭、浏览器标题跟随项目名。

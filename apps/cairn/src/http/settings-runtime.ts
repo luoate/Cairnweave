@@ -11,7 +11,8 @@
 import { HttpError } from "@cairn/graph";
 
 import type { RuntimeConfigStore } from "../config-overrides";
-import { ConfigError } from "../config";
+import { ConfigError, type ExecutionMode } from "../config";
+import { probeExecutionMode, type ExecutionProbeResult } from "../runtime/probe";
 import type { RouteContext } from "./api";
 import { isCrossOrigin, requireOperator } from "./auth";
 
@@ -47,9 +48,15 @@ async function readPatch(request: Request): Promise<unknown> {
   }
 }
 
+export type ExecutionProbe = (
+  execution: ExecutionMode,
+) => ExecutionProbeResult | Promise<ExecutionProbeResult>;
+
 export interface SettingsRuntimeOptions {
   store: RuntimeConfigStore | null;
   operatorToken?: string;
+  /** Test seam; production probes the real Bun binary, Docker daemon and image. */
+  probe?: ExecutionProbe;
 }
 
 export function registerSettingsRuntimeRoutes(
@@ -73,7 +80,26 @@ export function registerSettingsRuntimeRoutes(
     requireOperator(request, options.operatorToken);
   }
 
+  // Probes the mode the UI has selected, not the one currently running, so an operator
+  // can find out that Docker or the image is missing before saving the switch.
+  const probe: ExecutionProbe =
+    options.probe ?? ((execution) => probeExecutionMode(execution, requireStore().config));
+
   register("GET", "/settings/runtime", () => json(requireStore().view()));
+
+  register("POST", "/settings/runtime/test", async ({ request }) => {
+    guard(request);
+    requireStore();
+    const body = await readPatch(request);
+    const execution =
+      typeof body === "object" && body !== null && !Array.isArray(body)
+        ? (body as Record<string, unknown>)["execution"]
+        : undefined;
+    if (execution !== "local" && execution !== "container") {
+      throw new HttpError(400, 'execution must be "local" or "container"');
+    }
+    return json(await probe(execution));
+  });
 
   register("PUT", "/settings/runtime", async ({ request }) => {
     guard(request);

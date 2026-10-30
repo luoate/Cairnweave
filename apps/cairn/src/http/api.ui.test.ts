@@ -1546,6 +1546,8 @@ describe("runtime settings modal", () => {
     expect(html).toContain('data-modal="settings"');
     expect(html).toContain('data-settings-tab="runtime"');
     expect(html).toContain("runtimeGroups()");
+    expect(html).toContain("data-runtime-test");
+    expect(html).toContain('@click="testRuntimeExecution()"');
     expect(html.match(/@click="openSettings\(\)"/g)?.length).toBe(2);
   });
 
@@ -1610,6 +1612,65 @@ describe("runtime settings modal", () => {
     expect(app.runtimePatch()).toEqual({ runtime: { execution: "container" } });
     app.setRuntimeFieldValue(execution, "local");
     expect(app.runtimePatch()).toEqual({});
+  });
+
+  test("tests the selected execution mode and clears a stale result on change", async () => {
+    const app = loadState();
+    app.runtimeConfig.view = viewFixture();
+    app.runtimeForm = app.cloneData(app.runtimeConfig.view.editable);
+    const execution = fieldsOf(app).find((field: any) => field.path === "runtime.execution");
+    const calls: unknown[] = [];
+    app.showToast = () => {};
+    app.api = async (method: string, path: string, body: any) => {
+      calls.push({ method, path, body });
+      return {
+        execution: body.execution,
+        ok: body.execution === "container",
+        checks: [{ id: "docker", label: "Docker 守护进程", ok: body.execution === "container", detail: "28.0.1" }],
+      };
+    };
+
+    await app.testRuntimeExecution();
+    expect(calls).toEqual([
+      { method: "POST", path: "/settings/runtime/test", body: { execution: "local" } },
+    ]);
+    expect(app.runtimeTest).toEqual({
+      running: false,
+      execution: "local",
+      ok: false,
+      checks: [{ id: "docker", label: "Docker 守护进程", ok: false, detail: "28.0.1" }],
+      error: "",
+    });
+
+    app.setRuntimeFieldValue(execution, "container");
+    await app.testRuntimeExecution();
+    expect(app.runtimeTest.ok).toBe(true);
+    expect(app.runtimeTest.checks).toHaveLength(1);
+
+    app.setRuntimeFieldValue(execution, "local");
+    expect(app.runtimeTest).toEqual({
+      running: false,
+      execution: "",
+      ok: null,
+      checks: [],
+      error: "",
+    });
+  });
+
+  test("shows probe errors inline when the test request fails", async () => {
+    const app = loadState();
+    app.runtimeConfig.view = viewFixture();
+    app.runtimeForm = app.cloneData(app.runtimeConfig.view.editable);
+    app.showToast = () => {};
+    app.api = async () => {
+      throw new Error("probe unavailable");
+    };
+
+    await app.testRuntimeExecution();
+
+    expect(app.runtimeTest.running).toBe(false);
+    expect(app.runtimeTest.ok).toBe(false);
+    expect(app.runtimeTest.error).toBe("probe unavailable");
   });
 
   test("surfaces the 409 message when no dispatch config is loaded", async () => {

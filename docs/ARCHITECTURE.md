@@ -210,7 +210,10 @@ dispatch.yaml 缺少 `container:` 段时，存储层只在解析前补上镜像/
 不写进覆盖 patch。API 的 `workspaceRoot` 由字符串改为 getter，工件、证据、Flag 与
 Writeup 路由在切换后立即读新根。前端合并了原先的「运行配置 / 模型与密钥 / 本地偏好 /
 服务端设置」四个弹窗：页头只剩一个齿轮按钮，弹窗内用页签切换并按需加载；浏览器标题
-跟随当前项目名。
+跟随当前项目名。M24b 在执行模式下拉旁加「测试有效性」：`POST /settings/runtime/test`
+探测请求里选的模式而不是运行中的模式；本地模式检查 Bun 版本与工作区写入，容器模式检查
+Docker 守护进程、镜像（缺省 `cairn-worker:latest`）并用 `docker run --rm --network none
+<image> bun --version` 试启动一次，逐项返回 `{id,label,ok,detail}`，不会修改配置。
 M18f 打开 challenge/Flag 自动校验：`POST /projects` 未给 `verification` 时，控制面读
 `verification.challenge.code_env`（默认 `TCH_CHALLENGE_ID`）；非空即写入
 `{kind: challenge, challenge_code}`，否则按 `evidence_enforcement` 落 `evidence` /
@@ -817,10 +820,12 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
 - 这些面板只在打开页签或点刷新时拉取，全部使用 GET；错误在面板内显示并可重试，
   不弹写操作、不参与调度。UI 本身不带认证，远程/容器部署仍需网络层限制整个 API。
 - `设置`（M24）是页头唯一的写弹窗（`data-modal="settings"`），四个页签按需加载：
-  - `运行与执行`（M22/M24）：读取 `GET /settings/runtime`，按分组渲染数字/开关/下拉/多选，
-    与文件基线不同的字段显示“已覆盖”；首个分组是 local/container 执行模式下拉。保存只发
-    最小 patch（`PUT`），服务端 400 的行内错误原样显示；恢复默认需要 4 秒内二次点击并发
-    `DELETE`。只读区展示需要改 dispatch.yaml 的部署项。
+  - `运行与执行`（M22/M24/M24b）：读取 `GET /settings/runtime`，按分组渲染数字/开关/下拉/
+    多选，与文件基线不同的字段显示“已覆盖”；首个分组是 local/container 执行模式下拉和
+    「测试有效性」按钮，后者 `POST /settings/runtime/test` 后把逐项检查（✓/✗ + 说明）
+    内联显示，切换模式即清空旧结果。保存只发最小 patch（`PUT`），服务端 400 的行内错误
+    原样显示；恢复默认需要 4 秒内二次点击并发 `DELETE`。只读区展示需要改 dispatch.yaml
+    的部署项。
   - `模型与密钥`（M18b）：读取 `GET /settings/agent`，Provider 页签管理 provider（协议下拉
     来自 `protocols`，名称建议来自 `builtinProviders`），模型页签管理条目并可在
     `POST /providers/{id}/discover` 后从下拉选择模型、自动回填显示名。密钥输入永远为空，

@@ -264,6 +264,11 @@ export class RuntimeConfigStore {
     }
   }
 
+  /** Live config the scheduler is using; the execution probe reads image and workspace. */
+  get config(): DispatchConfig {
+    return this.options.config;
+  }
+
   view(): RuntimeConfigView {
     return {
       defaults: editableView(this.defaultConfig),
