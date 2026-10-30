@@ -1,12 +1,12 @@
 # 里程碑与验证记录
 
-本文件保留 M1–M26 的实现记录、测试与浏览器验证清单、与 Python Cairn 的已知差异、
+本文件保留 M1–M27 的实现记录、测试与浏览器验证清单、与 Python Cairn 的已知差异、
 里程碑表以及与 Phase 0 的关系。产品概览、快速开始与 API 概览见 [README](../README.md)。
 
 ## 实现记录
 
-状态：**M26b（项目名统一为 Cairnweave）**；M0–M4、M5a–M5c、
-M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M16b、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e、M18f、M18g、M19a、M19b、M20a、M20b、M21、M22、M23、M24、M24b、M25、M26、M26b 的计划项全部完成。Phase 1 的
+状态：**M27（前端首屏体积与静态资源缓存）**；M0–M4、M5a–M5c、
+M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M16b、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e、M18f、M18g、M19a、M19b、M20a、M20b、M21、M22、M23、M24、M24b、M25、M26、M26b、M27 的计划项全部完成。Phase 1 的
 “本地看板 + Observer 提案 + 证据门 + 单一写图者”闭环已具备；Observer 复盘自 M22 起默认
 开启（只读复盘，不改任务结果），提案自 M23 起默认 `dry_run`（完整校验并记录，不写图）。
 Phase 2 的触发持久化、意图优先级/预算、单项目 token/成本与并发配额、只读慢层观测、逐 Fact
@@ -227,6 +227,22 @@ Web UI 的 `<title>`、页头品牌字与 `document.title`（「项目名 · Cai
 「Cairnweave」）统一；协议标识刻意保持不变——`CAIRN_*` 环境变量、工作区 `.cairn/` 目录、
 `cairn-worker` prompt、`@cairn/*` 包名与 `cairn` 命令仍是 Cairn 图内核的名字，Python golden
 对照与已跑出的项目数据依赖它们。
+M27 把前端首屏从 3.82 MB 压到 96 KB（br 后的传输量）。原来 `<head>` 里排着 9 个脚本：
+Tailwind 的 Play CDN（vendored `tailwindcss.js`，451 KB，在浏览器里对着 class 名单现算样式）
+加 cytoscape 核心、dagre/klay/elk 三对布局引擎（其中 `elk.bundled.js` 单个就 1.6 MB），全部
+在列表页就下载。样式改成一次性预编译：`tools/ui/input.css` + `tools/ui/tailwind.config.mjs`
+逐字复刻原先写在 `index.html` 里的 theme（连副作用一起照搬——顶层 `fontFamily` 覆盖整条字号族、
+`bg-white/92` 落在默认透明度刻度外，所以 `font-mono` 与 `bg-white/92` 这两个 class 在旧版同样
+不产生规则，测试里显式豁免），`bun run ui:css` 用 Tailwind CLI 生成入库的
+`apps/cairn/src/http/static/app.css`（33 KB，br 后 6 KB），CI 重新生成一次并
+`git diff --exit-code` 防止产物与页面漂移；除这一步之外仍然没有打包器。图视口的重量挪出首屏：
+`static/graph-loader.js` 只在 `initGraph`、切换布局、保存偏好这三条路径上按需注入 cytoscape
+核心与所选引擎，扩展文件在脚本加载时自己 `register(cytoscape)`，所以核心必须排在引擎前面串行
+注入；默认 dagre 布局不再下载 klay 的 496 KB 与 elk 的 1.6 MB，注入失败给中文 toast 而不是白屏。
+`http/static-assets.ts` 接管 `GET /` 与 `/static/*`：按 size+mtime 出 ETag，配
+`Cache-Control: no-cache` 与 `Vary: Accept-Encoding`，`If-None-Match` 命中回 304，可压缩类型在
+内存里（≤64 个文件）缓存 gzip 与 brotli 变体并按 `Accept-Encoding` 协商，`/static/` 之外或越出
+目录的目标一律交回 API 路由。
 `cairn serve` 是可运行的 Cairn 兼容服务：SQLite schema、领域服务、全部
 五个路由、YAML/timeline 导出、静态 Web UI 均已就位，并用 Python Cairn 生成的 golden
 做了逐字对照。进程内 scheduler、任务/结果文件 worker 协议、BreachWeave Solver 接入已在 M2
@@ -772,9 +788,9 @@ M16b 增加（第二个模型接入与真实 A/B）：
 `CAIRN_SOLVER=breachweave` 的真实 Solver 路径上，fake solver 会忽略它。
 
 
-## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a + M17a + M17b + M17c + M17d + M18a + M18b + M18c + M18d + M18e + M18f + M18g + M19a + M19b + M16b + M20a + M20b + M21 + M22 + M23 + M24 + M24b + M25 + M26 + M26b，2026-10-30，Bun 1.4.4）
+## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a + M17a + M17b + M17c + M17d + M18a + M18b + M18c + M18d + M18e + M18f + M18g + M19a + M19b + M16b + M20a + M20b + M21 + M22 + M23 + M24 + M24b + M25 + M26 + M26b + M27，2026-10-30，Bun 1.4.4）
 
-- `bun test`：**777 passed**（77 个文件），0 failed。
+- `bun test`：**803 passed**（78 个文件），0 failed。
 - `bun run typecheck`：`tsc --noEmit` 通过。
 - **HTTP 对照**：`api.golden.json` 的 60 步请求（成功路径、400/403/404/405/409、租约过期、
   删除级联、导出、路由错误）由 Python FastAPI + 固定时钟生成；TS 重放后状态码、content-type
@@ -1165,6 +1181,18 @@ M16b 增加（第二个模型接入与真实 A/B）：
   closer，以及技能详情弹窗的文件树还原（目录 + 两级深度）、首个文件自动预览、路径 URL 编码、
   二进制/截断文案、已删除技能不打开、写入期间禁止关闭与关闭后复位。真实浏览器记录见下方
   里程碑表 M26 行。
+- **首屏与静态资源（M27）**：`api.ui.test.ts` 的 `static asset delivery` 组覆盖 ETag 与
+  `If-None-Match` → 304、`Vary: Accept-Encoding`、gzip/br/identity 协商、`/static/` 之外与
+  `%2e%2e` 越界一律 404；断言 eager 脚本只剩 `["/static/vendor/alpine.min.js",
+  "/static/graph-loader.js"]`、`<script src>` 不再直连 `/static/vendor/` 里的图库、页面里
+  不存在 `tailwindcss.js`/`elk.bundled.js`/内联 `tailwind.config`；把 loader 声明的 7 个 vendor
+  路径逐个验证在磁盘上存在，并要求 dagre/klay/elk 三对引擎都在表里；用假
+  `document`/`window`/`cytoscape` 断言 `elk_lr` 先解析成 `elk`，注入失败时不建图（`cy` 为空，
+  即使 `cytoscape` 被调用也直接抛错）并给出「布局引擎加载失败」toast，`applySelectedLayout` 与
+  `saveLocalSettings` 两处源码也都先 `await this.ensureGraphEngine(this.layoutEngine())`；最后一道 CSS 覆盖守卫从 `index.html`
+  收集 class 令牌（`class="…"` 与 `:class="…"` 里带破折号的字面量），逐个要求在 `app.css`
+  里能找到对应选择器（含 `\2c` 之类的十六进制转义还原），只豁免历史上就无效的两个
+  `font-mono`/`bg-white/92`，新增遗漏即失败。
 
 golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定时钟、`TZ=UTC`）。
 重新生成方法与约束见 `docs/PORTING.md`。
@@ -1247,6 +1275,7 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M25 ✅ | 技能管理：config 层新增 `createSkill` / `removeSkill` / `restoreBuiltinSkill` 与 `<configDir>/skills/.deleted-builtins.json`，控制面新增 `agent-skills.ts` 挂载 `GET/POST /settings/agent/skills`、`PUT .../{name}/enabled`、`POST .../{name}/restore` 与 `DELETE .../{name}`，写路由沿用 operator token/同源守卫；技能生效以 `cairn-worker` prompt 的 `meta.skills` 白名单为准，新增默认启用、删除同时移出；内置 17 个，GET 幂等播种并跳过已删除；内置删除跨重启持久，恢复只回填文件不自动启用；新增名 slug 校验（≤64）且须等于目录名，删除/启停做路径安全校验；UI 新增五页签中的「技能」页签，行内启停/删除确认/恢复与新增表单 | 777 passed / 77 files（2026-10-30）；`bun run typecheck` 通过；浏览器实测临时 DB + 独立 agent 配置目录起 `serve --port 8023`：页签显示「17 个技能 · 12 个已启用 · 已写入 cairn-worker prompt」，新增 `m25-browser-skill` 后 SKILL.md 落盘、白名单从 12 增至 13；启用 `ad-pentest` 后 13→14，删除后该行转为「已删除」、启用数回到 13，`skills/.deleted-builtins.json` 记录目录名；重启服务后仍为已删除且未回填，恢复后文件回填但不自动启用；删除自定义技能后回到 17 个技能/12 个已启用；控制台无脚本错误 |
 | M26 ✅ | 技能统一浏览 + 配置目录改名：`agent-config.ts` 新增只读 `GET /settings/agent/skills/{name}/files` 与 `GET .../file?path=`（`SKILL.md` 恒在首位、POSIX 相对路径、≤200 文件/深度 8/单文件 256 KiB 前缀，NUL 判二进制，逐段拒绝空/`.`/`..`/超长/保留字符，词法与 realpath 双重收敛、拒绝符号链接），GET 沿用免 token 的只读语义、同路径 POST 405；运行配置目录默认改为 `~/.cairnweave/config`（`agent-config-dir.ts` 统一解析：`CAIRN_AGENT_CONFIG_DIR` 覆盖 → 新默认），控制面在播种前一次性把旧 `~/.tch-agent/config` 复制过去——只在目标为空时执行、跳过符号链接、总量 64 MiB、绝不覆盖也绝不删除旧目录，日志给出复制数与“legacy directory is unchanged”；内置 skills 的 `SKILL.md` 全部中文化（正文与 `description`，命令/路径/YAML 键保持原样）；UI 技能行新增「预览」，第 13 个弹窗左侧是文件树（目录 + 大小），右侧正文 `<pre>` 逐字预览并标注二进制/截断，打开即预览首个文件，头部可直接启停并即时刷新徽标，写入期间禁止关闭、关闭复位，`line-clamp-2` 收纳多行描述 | 796 passed / 78 files（2026-10-30）；`bun run check`（tsc + 全量）通过；浏览器实测独立 `HOME`/`USERPROFILE` + 临时 DB 起 `serve --port 8026`：启动日志 `copied 4 agent config file(s) from …\\.tch-agent\\config to …\\.cairnweave\\config`，新目录拿到迁移后的 4 个配置文件与完整 `skills/`；`ad-pentest` 预览树为 9 文件 + 1 目录、`SKILL.md` 15.2 KiB 正文 11518 字符自动载入，点选 `references/04-adcs.md` 显示 10.7 KiB / 8997 字符；头部启停后 `enabledCount` 13→14、prompt 白名单同步 14 且列表行状态一致，再点回 13；`modalOrder` 由 `["settings","skillDetail"]` 在关闭后回到 `["settings"]` 且 `skillDetail.directory` 复位为空；`GET .../file?path=../../models.json` 400、缺失文件 404、同路径 POST 405。应用内浏览器页面处于隐藏态（`visibilityState=hidden`、`requestAnimationFrame` 挂起），截图与真实焦点落点无法在页内验证，改由 `api.ui.test.ts` 的假元素 `syncModal('skillDetail', …)` 断言自动聚焦关闭按钮与关闭后回焦技能行 |
 | M26b ✅ | 项目名统一为 Cairnweave：仓库目录 `cairn-merged` → `cairnweave`，根 `package.json` 的 `name` 与 `bun.lock` 随之更新（顺带同步了 lock 里 `@cairn/app` 长期滞留的 `0.3.0-m3`），版本 `0.46.0-m26b`；README 标题/首段/目录树说明与 `docs/ARCHITECTURE.md`、`docs/CONFIG.md` 里引用 UI 品牌的句子都改成 Cairnweave，并新增一条「名称约定」说明为何 `CAIRN_*` 环境变量、工作区 `.cairn/` 目录、`cairn-worker` prompt、`@cairn/*` 包名与 `cairn` 命令保持不变（Python golden 对照与既有项目数据依赖这些协议名）；前端 `<title>`、页头品牌字与 `documentTitle()` 改为「Cairnweave」/「项目名 · Cairnweave」，测试同步断言这两处标记与三种标题取值 | 796 passed / 78 files（2026-10-30）；`bun run check`（tsc + 全量）在改名后的目录里通过；`bun run cairn version` 输出 `cairn 0.46.0-m26b`；浏览器实测独立 `HOME` + 临时 DB 起 `serve --port 8027`：列表页 `document.title` 与页头品牌均为「Cairnweave」，打开 proj_001（标题 brand-check）后为「brand-check · Cairnweave」，返回列表回到「Cairnweave」；`GET /` 返回的 HTML 含 `<title>Cairnweave</title>`；实验环境 `runs/demo/dispatch.yaml` 的两处 `workspace_root` 已指向新目录，`start-lab.bat` 用 `%~dp0` 相对定位无需改动；历史 `task.json` 与 `audit_events` 里记录的旧绝对路径按运行留痕保留不改 |
+| M27 ✅ | 前端首屏体积与静态资源缓存：Tailwind Play CDN（vendored `tailwindcss.js`，451 KB 在浏览器里对着 class 名单现算样式）换成 Tailwind CLI 预编译入库的 `static/app.css`（`tools/ui/input.css` + `tools/ui/tailwind.config.mjs` 逐字复刻原内联 theme，`bun run ui:css` 生成 33 KB / br 6 KB，CI 再生成一次并 `git diff --exit-code`；`font-mono` 与 `bg-white/92` 两处历史上就无效的 class 由覆盖守卫显式豁免）；cytoscape 核心与 dagre/klay/elk 三对布局引擎改由 `static/graph-loader.js` 在 `initGraph`、切换布局、保存偏好三条路径上按需串行注入（扩展文件加载时自行 `register(cytoscape)`，所以核心必须在前），默认 dagre 不再下载 klay 的 496 KB 与 elk 的 1.6 MB，注入失败给中文 toast 且不建图；新增 `http/static-assets.ts` 接管 `GET /` 与 `/static/*`：size+mtime 生成 ETag，配 `Cache-Control: no-cache` 与 `Vary: Accept-Encoding`，`If-None-Match` 命中回 304，可压缩类型在内存里缓存 gzip/br 变体（≤64 文件、br quality 5、gzip 6），目录外与越界一律 404；`api.ts` 删除旧的 `serveStatic` | 803 passed / 78 files（2026-10-30）；`bun run check`（tsc + 全量）通过；浏览器实测独立 DB 起 `serve --port 8028`：列表页首屏传输 96,040 B（`index.html` 72,944 + `app.css` 5,972 + alpine 16,268 + `graph-loader.js` 663 + favicon 193，全部 br），同一路径优化前未压缩为 3,816,974 B；首屏 `window.tailwind` 为 `false`、未打开项目时 `typeof cytoscape === "undefined"`；点开项目才补 `cytoscape.min.js` 127,976 + `dagre.min.js` 61,331 + `cytoscape-dagre.js` 3,859（br），3 个 canvas 正常渲染、无 toast；切 `elk_lr` 才拉 `elk.bundled.js` + `cytoscape-elk.js`（`window.ELK` 就位）、切 `klay_lr` 才拉 `klay.js` + `cytoscape-klay.js`，切回 dagre 不再发请求；刷新后 alpine/graph-loader/favicon 回 304，`curl` 逐个带 `If-None-Match` 对 `app.css`/`graph-loader.js`/alpine/cytoscape/dagre 全部 304；控制台无消息 |
 
 ## 与 Phase 0 的关系
 

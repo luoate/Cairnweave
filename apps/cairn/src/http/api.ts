@@ -69,7 +69,6 @@ import {
   type IntentRow,
   type ProjectRow,
 } from "@cairn/graph";
-import { resolve, sep } from "node:path";
 
 import type { AuditTokenRegistry } from "../audit-stream/tokens";
 import { DEFAULT_VERIFICATION, type BudgetConfig } from "../config";
@@ -98,6 +97,7 @@ import {
   type WriteupRouteOptions,
 } from "./project-writeup";
 import { registerSettingsRuntimeRoutes, type ExecutionProbe } from "./settings-runtime";
+import { serveStaticFile } from "./static-assets";
 
 export interface ApiOptions {
   db: CairnDatabase;
@@ -371,7 +371,7 @@ export function createApi(options: ApiOptions): Api {
         return json({ detail: "Method Not Allowed" }, 405);
       }
       if (request.method === "GET" && staticDir !== undefined) {
-        const staticResponse = await serveStatic(staticDir, url.pathname);
+        const staticResponse = await serveStaticFile(staticDir, url.pathname, request);
         if (staticResponse !== null) {
           return staticResponse;
         }
@@ -390,27 +390,6 @@ export function createApi(options: ApiOptions): Api {
   }
 
   return { handle };
-}
-
-async function serveStatic(staticDir: string, pathname: string): Promise<Response | null> {
-  const root = resolve(staticDir);
-  let relative: string;
-  if (pathname === "/") {
-    relative = "index.html";
-  } else if (pathname.startsWith("/static/")) {
-    relative = pathname.slice("/static/".length);
-  } else {
-    return null;
-  }
-  const target = resolve(root, relative);
-  if (target !== root && !target.startsWith(root + sep)) {
-    return null;
-  }
-  const file = Bun.file(target);
-  if (!(await file.exists())) {
-    return null;
-  }
-  return new Response(file);
 }
 
 const MAX_AUDIT_STREAM_BODY_BYTES = 1024 * 1024;

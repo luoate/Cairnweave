@@ -8,7 +8,7 @@
 没有 Python ↔ TypeScript 桥，没有 JSONL RPC。
 
 [![CI](https://github.com/luoate/Cairnweave/actions/workflows/ci.yml/badge.svg)](https://github.com/luoate/Cairnweave/actions/workflows/ci.yml)
-[![tests](https://img.shields.io/badge/tests-796%20passed-brightgreen.svg)](docs/MILESTONES.md)
+[![tests](https://img.shields.io/badge/tests-803%20passed-brightgreen.svg)](docs/MILESTONES.md)
 [![license](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![runtime](https://img.shields.io/badge/runtime-Bun%201.4.4-black.svg)](package.json)
 
@@ -51,13 +51,14 @@ worker 在项目沙箱里跑真实模型，每个任务启动一次进程，只�
 | 运行期配置 | Observer、并发、超时、证据门、预算、策略阈值、提案参数等可在页头「设置 → 运行与执行」里热调，覆盖存 SQLite，重启不丢 |
 | 两种执行模式 | `runtime.execution: local` 本地子进程；`container` 每项目一个长期容器、每任务一次 `docker exec`，配置只读挂载、不挂 Docker socket；调度器空闲时可在「设置」里在线切换，并用「测试有效性」先检查 Bun / Docker / 镜像 / 试启动 / 工作区 |
 | 技能管理 | 页头「设置 → 技能」里新增、删除、启停与恢复技能；「预览」打开独立详情弹窗，左树右正文地浏览技能目录里的 `SKILL.md`、`references/`、`scripts/`；内置 17 个，仅写入 `cairn-worker` prompt 白名单的才生效；删除内置技能会在 `.deleted-builtins.json` 里留痕，重启不回填，可一键恢复 |
+| 轻量首屏 | Tailwind 用 CLI 预编译成 `static/app.css` 入库（不再加载 451 KB 的 Play CDN），cytoscape 与布局引擎按项目/布局懒加载，静态响应带 ETag/304 与 gzip/br；列表页首屏传输从 3.82 MB 降到 96 KB |
 | 审计与实时流 | 任务结束导入 `audit.jsonl` 到哈希链账本；可选实时流按 `(task_id, seq)` 幂等追加，只降低暴露窗口，不改变最终一致性 |
 
 ## 架构
 
 ```
 cairn serve（控制面，一个进程）
-  ├─ HTTP API（兼容 Cairn）+ 静态 UI（Alpine.js，无构建步骤）
+  ├─ HTTP API（兼容 Cairn）+ 静态 UI（Alpine.js 单文件，样式预编译入库）
   ├─ SQLite（唯一写者）
   ├─ scheduler：bootstrap / reason / explore / conclude
   ├─ 渲染 prompt + 写 graph.yaml（默认全图；explore 可切片）
@@ -187,8 +188,13 @@ host 不一致的浏览器写请求。
 
 ## Web UI
 
-静态单页（Alpine.js，直接由 `GET /` 与 `/static/*` 提供，无构建步骤），中文界面。
+静态单页（Alpine.js，直接由 `GET /` 与 `/static/*` 提供），中文界面。没有打包器，只有一步
+样式预编译：`bun run ui:css` 用 Tailwind CLI 从 `index.html` 生成 `static/app.css`，产物入库，
+CI 重新生成后 `git diff --exit-code` 校验它没有漂移。
 
+- 加载：首屏只有 HTML、`app.css`、Alpine 与 `graph-loader.js`（br 后共约 96 KB）；打开项目才
+  拉 cytoscape 与当前布局引擎，Klay / ELK 只在选中那种布局时才拉；静态响应带 size+mtime 的
+  ETag、`Cache-Control: no-cache` 与 `Vary: Accept-Encoding`，刷新时未变动的资源回 304。
 - 列表：搜索、状态筛选、三种排序、按项目记忆视图；页面隐藏时暂停轮询，失败 5s→60s 退避。
 - 项目页：图视图、Fact 详情、Flag 横幅、授权范围、运行 / 慢层 / 审计 / 证据 / 提案 /
   看板 / 成本 / 统计 / 报告 / Writeup 页签。
@@ -231,13 +237,15 @@ API key 只写不读（响应只回掩码），写入 `auth.json` 并按上游 S
 ## 测试与 CI
 
 ```bash
-bun test             # 748 passed / 75 files（fake solver，不需凭据）
+bun test             # 803 passed / 78 files（fake solver，不需凭据）
 bun run typecheck    # tsc --noEmit
-bun run check        # typecheck + test，与 CI 相同
+bun run ui:css       # 改了 index.html 的 class 后重新生成 static/app.css
+bun run check        # typecheck + test；CI 还会校验 app.css 与 index.html 不漂移
 ```
 
 `.github/workflows/ci.yml` 在 push 到 `main` 与 PR 时用 Bun 1.4.4 执行
-`bun install --frozen-lockfile`、`bun run typecheck`、`bun test`。真实模型与真实 Docker 的
+`bun install --frozen-lockfile`、重新生成 `static/app.css` 并 `git diff --exit-code`（产物
+必须与 `index.html` 同步入库）、`bun run typecheck`、`bun test`。真实模型与真实 Docker 的
 gate 放在 `tools/gate/`，手动执行、不计入 CI，命令与环境变量见
 [docs/OPERATIONS.md](docs/OPERATIONS.md#真实模型-gate)。
 
@@ -270,7 +278,8 @@ apps/cairn/src/
   roles/worker.ts        worker：跑 solver、宽容解析、原子写 result.json
   http/api.ts            Cairn 兼容路由（Bun.serve 零依赖）
   http/project-board.ts  只读看板读取（M23）
-  http/static/           Cairnweave Web UI（Alpine.js，无构建步骤）
+  http/static-assets.ts  静态资源：ETag/304 再验证与 gzip/br 变体（M27）
+  http/static/           Cairnweave Web UI（Alpine.js 单文件；`app.css` 预编译入库，图引擎懒加载）
   config.ts              dispatch.yaml 校验（Bun.YAML）
   config-overrides.ts    运行期覆盖：SQLite patch ↔ dispatch.yaml（M22/M24）
   prompts/               prompt 加载、渲染与上游默认模板
@@ -285,6 +294,7 @@ packages/graph/          schema、领域模型、服务、命令、导出、成�
 packages/pi-mcp-adapter/ vendor 的 MCP 适配器（MIT）
 tools/golden/generate.py Python Cairn golden 生成器
 tools/gate/              真实模型 / 真实 Docker 的联调 gate（不计入 bun test）
+tools/ui/                Tailwind 入口与配置：`bun run ui:css` 生成 static/app.css
 docs/                    架构、配置、契约与各主题说明
 dispatch.example.yaml    调度器配置示例
 Dockerfile.worker        worker 镜像（bun + procps）

@@ -62,6 +62,16 @@
   （MPL-2.0，容器内 HTTPS 需要）。
 - 镜像只包含本仓库代码与上述运行时包；不包含模型凭据、`auth.json` 或宿主机配置。
 
+## Tailwind CSS（devDependency）
+
+- 许可证：MIT（`node_modules/tailwindcss/LICENSE`，Copyright (c) Tailwind Labs, Inc.）。
+- 使用方式：M27 起 UI 的样式由 Tailwind CLI 3.4.16 在生成期产出
+  `apps/cairn/src/http/static/app.css`（`bun run ui:css`，配置在 `tools/ui/`），运行时分发的
+  只有这份生成产物，不含上游源码。M10–M26 期间随 Cairn 静态 UI 一起复制进来的 Play CDN 副本
+  `vendor/tailwindcss.js` 已删除。
+- 义务：本项目不重新分发 Tailwind 源码，仅在 `node_modules` 中作为构建依赖存在；若对外分发
+  包含 `node_modules` 的归档，需一并保留上述 MIT 许可文本。
+
 ## 本项目原创
 
 `packages/contracts`、`apps/cairn` 的骨架、`runtime/`、`host-bridge/`、artifacts 索引、
@@ -71,7 +81,9 @@
 
 截至 M3：
 
-- 已原样复制 Cairn 的静态 Web UI（`apps/cairn/src/http/static/`，AGPL-3.0）；
+- 已原样复制 Cairn 的静态 Web UI（`apps/cairn/src/http/static/`，AGPL-3.0）；其中
+  `tailwindcss.js`（Play CDN 副本）自 M27 起删除，样式改由本项目用 Tailwind CLI 生成的
+  `app.css` 代替；
 - 已原样复制 Cairn 的 default/mock prompt 模板（`apps/cairn/src/prompts/`，AGPL-3.0）；
 - 已按行为移植 Cairn 的服务端、config、prompting、scheduler、runtime 与 worker 语义，
   并提交由 Python 版生成的 golden；

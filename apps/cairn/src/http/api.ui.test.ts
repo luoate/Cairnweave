@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -2161,5 +2161,177 @@ describe("runtime settings modal", () => {
 
     app.project = { project: { title: "   " } };
     expect(app.documentTitle()).toBe("Cairnweave");
+  });
+});
+
+// ─────────────────────────── M27: first-payload budget ───────────────────────────
+const APP_CSS_PATH = join(STATIC_DIR, "app.css");
+const GRAPH_LOADER_PATH = join(STATIC_DIR, "graph-loader.js");
+const BACKSLASH = String.fromCharCode(92);
+
+/** Tailwind escapes selector punctuation, including hex escapes such as `\2c `. */
+function unescapeCss(css: string): string {
+  return css
+    .replace(/\\([0-9a-fA-F]{1,6})\s?/g, (_match, hex: string) => String.fromCodePoint(Number.parseInt(hex, 16)))
+    .split(BACKSLASH)
+    .join("");
+}
+
+function classTokens(html: string): Set<string> {
+  const tokens = new Set<string>();
+  for (const match of html.matchAll(/(?:^|[^:\w])class="([^"]*)"/g)) {
+    for (const token of match[1]!.split(/\s+/)) if (token) tokens.add(token);
+  }
+  for (const match of html.matchAll(/:class="([^"]*)"/g)) {
+    for (const quoted of match[1]!.matchAll(/['"]([^'"]+)['"]/g)) {
+      for (const token of quoted[1]!.split(/\s+/)) if (token) tokens.add(token);
+    }
+  }
+  return tokens;
+}
+
+function cssHasSelector(css: string, token: string): boolean {
+  const needle = `.${token}`;
+  let at = css.indexOf(needle);
+  while (at !== -1) {
+    const next = css[at + needle.length];
+    if (next === undefined || !/[A-Za-z0-9_-]/.test(next)) return true;
+    at = css.indexOf(needle, at + 1);
+  }
+  return false;
+}
+
+describe("static asset delivery", () => {
+  test("revalidates a vendored asset with its ETag instead of re-transferring it", async () => {
+    const first = await api.handle(new Request("http://cairn.test/static/app.css"));
+    expect(first.status).toBe(200);
+    expect(first.headers.get("content-type")).toContain("text/css");
+    expect(first.headers.get("cache-control")).toBe("no-cache");
+    expect(first.headers.get("vary")).toBe("Accept-Encoding");
+    expect(Date.parse(first.headers.get("last-modified")!)).not.toBeNaN();
+    const etag = first.headers.get("etag")!;
+    expect(etag).toMatch(/^"[0-9a-f]+-[0-9a-f]+"$/);
+
+    const revalidated = await api.handle(
+      new Request("http://cairn.test/static/app.css", { headers: { "if-none-match": etag } }),
+    );
+    expect(revalidated.status).toBe(304);
+    expect(revalidated.headers.get("etag")).toBe(etag);
+    expect((await revalidated.arrayBuffer()).byteLength).toBe(0);
+
+    const changed = await api.handle(
+      new Request("http://cairn.test/static/app.css", { headers: { "if-none-match": '"0-0"' } }),
+    );
+    expect(changed.status).toBe(200);
+  });
+
+  test("compresses text assets, prefers brotli and stays identity when declined", async () => {
+    const identity = await api.handle(new Request("http://cairn.test/"));
+    const identityBytes = (await identity.arrayBuffer()).byteLength;
+    expect(identity.headers.get("content-encoding")).toBeNull();
+
+    const gzipped = await api.handle(
+      new Request("http://cairn.test/", { headers: { "accept-encoding": "gzip, deflate" } }),
+    );
+    expect(gzipped.headers.get("content-encoding")).toBe("gzip");
+    const gzippedBytes = (await gzipped.arrayBuffer()).byteLength;
+    expect(gzippedBytes).toBeLessThan(identityBytes);
+
+    const brotli = await api.handle(
+      new Request("http://cairn.test/", { headers: { "accept-encoding": "gzip, deflate, br, zstd" } }),
+    );
+    expect(brotli.headers.get("content-encoding")).toBe("br");
+    expect((await brotli.arrayBuffer()).byteLength).toBeLessThan(gzippedBytes);
+
+    const vendor = await api.handle(
+      new Request("http://cairn.test/static/graph-loader.js", { headers: { "accept-encoding": "br" } }),
+    );
+    expect(vendor.headers.get("content-type")).toContain("javascript");
+    expect(vendor.headers.get("content-encoding")).toBe("br");
+  });
+
+  test("serves nothing outside the static directory", async () => {
+    const missing = await api.handle(new Request("http://cairn.test/static/nope.js"));
+    expect(missing.status).toBe(404);
+    const escape = await api.handle(new Request("http://cairn.test/static/%2e%2e/package.json"));
+    expect(escape.status).toBe(404);
+  });
+
+  test("loads only the stylesheet and the two boot scripts on first paint", () => {
+    const html = readFileSync(INDEX_PATH, "utf8");
+    const eager = [...html.matchAll(/<script[^>]*\bsrc="([^"]+)"/g)].map((match) => match[1]!);
+    expect(eager).toEqual(["/static/vendor/alpine.min.js", "/static/graph-loader.js"]);
+    expect(html).toContain('<link rel="stylesheet" href="/static/app.css">');
+    expect(html).not.toMatch(/<script[^>]*src="\/static\/vendor\/(?!alpine)/);
+    expect(html).not.toContain("tailwindcss.js");
+    expect(html).not.toContain("elk.bundled.js");
+    expect(html).not.toContain("tailwind.config");
+  });
+
+  test("resolves every graph library the lazy loader names", () => {
+    const loader = readFileSync(GRAPH_LOADER_PATH, "utf8");
+    expect(() => new Function(loader)).not.toThrow();
+    const paths = [...loader.matchAll(/'(\/static\/[^']+)'/g)].map((match) => match[1]!);
+    for (const engine of ["dagre", "klay", "elk"]) {
+      expect(loader).toContain(`${engine}: [`);
+    }
+    expect(paths.length).toBe(7);
+    for (const path of paths) {
+      expect(existsSync(join(STATIC_DIR, path.slice("/static/".length)))).toBe(true);
+    }
+    expect(existsSync(APP_CSS_PATH)).toBe(true);
+  });
+
+  test("keeps the graph behind its layout engine", async () => {
+    const app = loadState();
+    const globals = globalThis as Record<string, any>;
+    const previous = { document: globals.document, window: globals.window, cytoscape: globals.cytoscape };
+    const requested: string[] = [];
+    try {
+      globals.document = { getElementById: () => ({ id: "cy" }) };
+      globals.window = {
+        graphLoader: {
+          ensure: async (engine: string) => {
+            requested.push(engine);
+            throw new Error("/static/vendor/elk.bundled.js");
+          },
+        },
+      };
+      globals.cytoscape = () => {
+        throw new Error("graph built before its engine loaded");
+      };
+      app.layoutMode = "elk_lr";
+      app.cy = null;
+      await app.initGraph();
+      expect(requested).toEqual(["elk"]);
+      expect(app.cy).toBeNull();
+      expect(app.toast.show).toBe(true);
+      expect(app.toast.message).toContain("布局引擎加载失败");
+    } finally {
+      Object.assign(globals, previous);
+    }
+
+    const appScript = readFileSync(INDEX_PATH, "utf8").match(
+      /<script>\s*(function cairnApp\(\)[\s\S]*?)<\/script>/,
+    )![1]!;
+    for (const method of ["applySelectedLayout", "saveLocalSettings"]) {
+      const body = appScript.slice(appScript.indexOf(`${method}(`));
+      expect(body.slice(0, 600)).toMatch(/await this\.ensureGraphEngine\(this\.layoutEngine\(\)\)/);
+    }
+  });
+
+  test("ships a selector for every utility the markup asks for", () => {
+    const html = readFileSync(INDEX_PATH, "utf8");
+    const css = unescapeCss(readFileSync(APP_CSS_PATH, "utf8"));
+    const custom = new Set(
+      [...html.match(/<style>([\s\S]*?)<\/style>/)![1]!.matchAll(/\.([a-zA-Z][\w-]*)/g)].map((m) => m[1]!),
+    );
+    // Both are inert under the Play CDN too: the theme replaces the font scale, so
+    // there is no `mono`, and `/92` is not in the default opacity scale.
+    const inert = new Set(["font-mono", "bg-white/92"]);
+    const missing = [...classTokens(html)]
+      .filter((token) => token.includes("-"))
+      .filter((token) => !cssHasSelector(css, token) && !custom.has(token) && !inert.has(token));
+    expect(missing).toEqual([]);
   });
 });

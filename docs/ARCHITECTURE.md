@@ -782,10 +782,19 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
 
 只读运维面板（M10）：
 
-- 静态 UI 仍是单文件 `index.html`（Alpine.js + Cytoscape + vendored Tailwind），由
-  `GET /` 与 `/static/*` 直接提供，没有构建/打包步骤。页签分两行：原有
+- 静态 UI 仍是单文件 `index.html`（Alpine.js + 懒加载的 Cytoscape），由 `GET /` 与
+  `/static/*` 直接提供。Tailwind 不再以 Play CDN 的形式在浏览器里即时生成样式，而是由
+  `bun run ui:css`（Tailwind CLI + `tools/ui/tailwind.config.mjs`）预编译成入库的
+  `static/app.css`，CI 重新生成后 `git diff --exit-code` 校验产物与 `index.html` 同步；除此之外
+  仍然没有打包器。页签分两行：原有
   `Detail / Hints / Log`，以及运维页签 `Runs / Strategist / Audit / Evidence /
   Proposals / Board / Cost / Stats / Report / Writeup`。
+- 加载与缓存（M27）：head 里只有 `app.css`、`alpine.min.js`（defer）与 `graph-loader.js` 是
+  首屏必需的；cytoscape 核心与当前布局引擎在 `initGraph` 里按需注入，Klay/ELK 只在选中那种
+  布局时由 `ensureGraphEngine()` 触发，加载失败给 toast 而不是白屏。`static-assets.ts` 用
+  size+mtime 生成 ETag，配 `Cache-Control: no-cache` 与 `Vary: Accept-Encoding`，`If-None-Match`
+  命中回 304；可压缩扩展名在内存里（≤64 个文件）缓存 gzip 与 brotli 变体，按
+  `Accept-Encoding` 协商。`/static/` 外的路径与越出目录的目标一律返回 `null`，交给 API 路由。
 - 弹窗（M17c）：每个 overlay 是 body 的直接子节点，带 `data-modal="<name>"` 与
   `x-effect="syncModal('<name>', showX, $el)"`；`syncModal` 维护 `modalOrder` 栈和
   `modalReturnFocus`，全局 `keydown` 处理器只对栈顶执行 Esc（`dismissModal` 走
