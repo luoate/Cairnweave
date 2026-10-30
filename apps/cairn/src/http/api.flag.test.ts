@@ -12,9 +12,12 @@ import {
 
 import { createApi, type Api } from "./api";
 import {
+  clearFlagCache,
+  collectProjectFlag,
   findFlags,
   scanProjectFlag,
   scanSolverSessionFlags,
+  type FlagArtifact,
   type ProjectFlagResult,
 } from "./project-flag";
 
@@ -375,6 +378,119 @@ describe("scanSolverSessionFlags", () => {
     const result = scanSolverSessionFlags({ workspace: join(workspaceRoot, projectId) });
     expect(result.found).toBe(false);
     expect(result.scanned_files).toBe(0);
+  });
+});
+
+describe("scanSolverSessionFlags bounds", () => {
+  test("stops at the directory budget and reports truncation", () => {
+    for (let index = 0; index < 8; index += 1) {
+      writeSession(`explore-${index}`, "a.jsonl", toolLine(FIXTURE_FLAG));
+    }
+
+    const result = scanSolverSessionFlags({
+      workspace: join(workspaceRoot, projectId),
+      maxDirectories: 3,
+    });
+    expect(result.found).toBe(true);
+    expect(result.truncated).toBe(true);
+    expect(result.scanned_files).toBe(3);
+  });
+
+  test("counts directories without logs against the entry budget", () => {
+    for (let index = 0; index < 12; index += 1) {
+      mkdirSync(join(workspaceRoot, projectId, ".cairn", "sessions", `reason-${index}`), {
+        recursive: true,
+      });
+    }
+
+    const result = scanSolverSessionFlags({
+      workspace: join(workspaceRoot, projectId),
+      maxDirectories: 100,
+      maxEntries: 5,
+    });
+    expect(result.found).toBe(false);
+    expect(result.truncated).toBe(true);
+    expect(result.scanned_files).toBe(0);
+  });
+
+  test("stays within the budget for a small workspace", () => {
+    writeSession("explore-999999999999", "a.jsonl", toolLine(FIXTURE_FLAG));
+
+    const result = scanSolverSessionFlags({
+      workspace: join(workspaceRoot, projectId),
+      maxDirectories: 10,
+      maxEntries: 10,
+    });
+    expect(result.found).toBe(true);
+    expect(result.truncated).toBe(false);
+  });
+});
+
+describe("collectProjectFlag cache", () => {
+  let now = 0;
+
+  beforeEach(() => {
+    clearFlagCache();
+    now = 0;
+  });
+
+  function withArtifact(path: string, text: string): FlagArtifact[] {
+    writeFileSync(join(artifacts, path), text, "utf8");
+    return [{ path, size: Buffer.byteLength(text) }];
+  }
+
+  function collect(list: ReadonlyArray<FlagArtifact>): ProjectFlagResult {
+    return collectProjectFlag({
+      workspace: join(workspaceRoot, projectId),
+      artifacts: list,
+      now: () => now,
+    });
+  }
+
+  test("reuses the scan until the TTL expires", () => {
+    const list = withArtifact("out.txt", FIXTURE_FLAG);
+    expect(collect(list).flag).toBe(FIXTURE_FLAG);
+
+    rmSync(join(artifacts, "out.txt"));
+    now = 5_000;
+    expect(collect(list).flag).toBe(FIXTURE_FLAG);
+
+    now = 10_000;
+    const expired = collect(list);
+    expect(expired.found).toBe(false);
+  });
+
+  test("a new artifact bypasses the cache immediately", () => {
+    expect(collect([]).found).toBe(false);
+
+    const added = withArtifact("late.txt", FIXTURE_FLAG);
+    expect(collect(added).flag).toBe(FIXTURE_FLAG);
+  });
+
+  test("keeps workspaces apart", () => {
+    const other = join(directory, "other");
+    mkdirSync(join(other, "artifacts"), { recursive: true });
+    const list = withArtifact("out.txt", FIXTURE_FLAG);
+
+    expect(collect(list).flag).toBe(FIXTURE_FLAG);
+    const elsewhere = collectProjectFlag({
+      workspace: other,
+      artifacts: list,
+      now: () => now,
+    });
+    expect(elsewhere.found).toBe(false);
+  });
+
+  test("returns copies so callers cannot corrupt the cache", () => {
+    const list = withArtifact("out.txt", FIXTURE_FLAG);
+    const first = collect(list);
+    expect(first.found).toBe(true);
+
+    first.sources.push("bogus");
+    first.candidates[0]!.value = "flag{corrupted}";
+    const second = collect(list);
+    expect(second.sources).toEqual(["out.txt"]);
+    expect(second.candidates[0]!.value).toBe(FIXTURE_FLAG);
   });
 });
 

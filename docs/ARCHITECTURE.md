@@ -178,6 +178,22 @@ M21 把这条回退收紧成「只有工具输出算证据」：逐行只取 `me
 `sources`、`placeholder`；artifacts 与会话两路按值合并、次数相加）与 `placeholder_suspect`
 一起上报，UI 据此显示琥珀色「FLAG 可疑」条；Writeup 草稿的 `flag_suspects` 与 prompt 里
 「不得把占位串当成答案」的硬规则同源于此。
+M29 收掉两处后端热点，两处都先量后改。其一，`facts` 的主键是 `(id, project_id)`，所以项目列表里
+`(SELECT COUNT(*) FROM facts WHERE project_id = p.id)` 与 `GET /projects/{id}` 的按项目读 Fact
+都用不上主键，只能整表扫描；`packages/graph/src/db.ts` 增加
+`CREATE INDEX IF NOT EXISTS facts_project ON facts(project_id)`，`EXPLAIN QUERY PLAN` 从
+`SCAN facts` 变成 `SEARCH facts USING (COVERING) INDEX facts_project`，`db.test.ts` 的 `schema`
+组把两条查询的计划（含 `COUNT(*)` 的 covering 变体）钉住。这是复杂度修正而不是当前数据上的
+提速：demo 库只有 12 个项目 / 43 条 Fact，改前后都在 0.06 ms 量级。其二，`/flag` 的会话兜底：
+文件/字节上界只统计真正读到的文件，被跳过的会话目录不计入，于是任务目录堆到三万多个的工作区
+会把同步 handler 整个卡住——demo 里 proj_003 单次 `/flag` 约 2.4 s 且一个文件都没读。现在
+`scanSolverSessionFlags` 用 `readdirSync(root)` 只取名字（Windows 上 `withFileTypes` 会先给每个条目
+做一次 lstat，正是开销来源），逐项改走 `lstatSync(path, { throwIfNoEntry: false })`，并给遍历本身
+加上界：`SESSION_MAX_DIRECTORIES = 1000` 个会话目录、`SESSION_MAX_ENTRIES = 4000` 个文件系统条目
+（被跳过的目录、缺失的 `solver-session`、非 jsonl 文件都占额度），撞到任一上界即置 `truncated`。
+`collectProjectFlag` 外面再包一层按工作区键控的短缓存（10 s、最多 32 项、最旧淘汰）：指纹是调用方
+传入的工件列表 `path + size`，新增工件或大小变化立即失效，只有“同名同大小的原地改写”要等 TTL；
+返回值是副本（`sources`/`candidates` 逐层复制），`clearFlagCache()` 给测试与替换工作区时用。
 M22 把运行期配置的写权限从“改 YAML + 重启”扩到页头「运行配置」弹窗，同时把 Observer
 复盘改为默认开启（`observer.enabled` 默认 `true`；只读复盘）。覆盖以
 snake_case patch 存进 SQLite 表 `runtime_config_overrides`（单行，`id = 1`），由

@@ -30,6 +30,15 @@ const MAX_LINE_LENGTH = 8 * 1024;
 const SESSION_MAX_FILES = 64;
 const SESSION_MAX_FILE_BYTES = 2 * 1024 * 1024;
 const SESSION_MAX_TOTAL_BYTES = 8 * 1024 * 1024;
+/**
+ * The file/byte caps above only count sessions that were actually read, so a workspace
+ * with tens of thousands of task directories stalls the handler on skipped entries. These
+ * bound the walk itself; hitting one marks the result `truncated`.
+ */
+const SESSION_MAX_DIRECTORIES = 1000;
+const SESSION_MAX_ENTRIES = 4000;
+const CACHE_TTL_MS = 10_000;
+const CACHE_MAX_ENTRIES = 32;
 const FLAG_PATTERN = /([A-Za-z0-9_-]{1,64})\{([^{}\s]{4,200})\}/g;
 const PLACEHOLDER_BODIES = new Set([
   "flag",
@@ -68,7 +77,24 @@ export interface SessionFlagScanOptions {
   maxFiles?: number;
   maxFileBytes?: number;
   maxTotalBytes?: number;
+  /** Session directories to examine before giving up. */
+  maxDirectories?: number;
+  /** Filesystem entries (session dirs, solver dirs, logs) to examine before giving up. */
+  maxEntries?: number;
 }
+
+/** Both scans plus the clock used for cache expiry, which tests override. */
+export interface CollectFlagOptions extends FlagScanOptions, SessionFlagScanOptions {
+  now?: () => number;
+}
+
+interface FlagCacheEntry {
+  at: number;
+  fingerprint: string;
+  result: ProjectFlagResult;
+}
+
+const flagCache = new Map<string, FlagCacheEntry>();
 
 export interface ProjectFlagMatch {
   flag: string;
@@ -160,12 +186,16 @@ export function scanSolverSessionFlags(options: SessionFlagScanOptions): Project
   const maxFiles = options.maxFiles ?? SESSION_MAX_FILES;
   const maxFileBytes = options.maxFileBytes ?? SESSION_MAX_FILE_BYTES;
   const maxTotalBytes = options.maxTotalBytes ?? SESSION_MAX_TOTAL_BYTES;
+  const maxDirectories = options.maxDirectories ?? SESSION_MAX_DIRECTORIES;
+  const maxEntries = options.maxEntries ?? SESSION_MAX_ENTRIES;
   const root = resolve(options.workspace, ".cairn", "sessions");
 
+  const rootStats = lstatSync(root, { throwIfNoEntry: false });
+  if (rootStats === undefined || !rootStats.isDirectory() || rootStats.isSymbolicLink()) {
+    return emptyFlagResult();
+  }
   let realRoot: string;
   try {
-    const stats = lstatSync(root);
-    if (!stats.isDirectory() || stats.isSymbolicLink()) return emptyFlagResult();
     realRoot = realpathSync(root);
   } catch {
     return emptyFlagResult();
@@ -173,11 +203,9 @@ export function scanSolverSessionFlags(options: SessionFlagScanOptions): Project
 
   let sessionNames: string[];
   try {
-    sessionNames = readdirSync(realRoot, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory() && !entry.isSymbolicLink())
-      .map((entry) => entry.name)
-      .sort()
-      .reverse();
+    // Names only: on Windows `withFileTypes` stats every entry up front, which costs more
+    // than the walk this budget is meant to bound.
+    sessionNames = readdirSync(realRoot).sort().reverse();
   } catch {
     return emptyFlagResult();
   }
@@ -186,24 +214,44 @@ export function scanSolverSessionFlags(options: SessionFlagScanOptions): Project
   let scannedFiles = 0;
   let totalBytes = 0;
   let truncated = false;
+  let examinedDirectories = 0;
+  let examinedEntries = 0;
 
   for (const name of sessionNames) {
     if (scannedFiles >= maxFiles || totalBytes >= maxTotalBytes) {
       truncated = true;
       break;
     }
+    if (examinedDirectories >= maxDirectories || examinedEntries >= maxEntries) {
+      truncated = true;
+      break;
+    }
     const sessionDir = resolve(realRoot, name);
     if (!isInside(realRoot, sessionDir)) continue;
+    examinedEntries += 1;
+    const sessionStats = lstatSync(sessionDir, { throwIfNoEntry: false });
+    if (sessionStats === undefined || !sessionStats.isDirectory() || sessionStats.isSymbolicLink()) {
+      continue;
+    }
+    examinedDirectories += 1;
+
     const solverDir = resolve(sessionDir, "solver-session");
+    if (examinedEntries >= maxEntries) {
+      truncated = true;
+      break;
+    }
+    examinedEntries += 1;
+    const solverStats = lstatSync(solverDir, { throwIfNoEntry: false });
+    if (solverStats === undefined || !solverStats.isDirectory() || solverStats.isSymbolicLink()) {
+      continue;
+    }
     let realSolverDir: string;
     try {
-      const stats = lstatSync(solverDir);
-      if (!stats.isDirectory() || stats.isSymbolicLink()) continue;
       realSolverDir = realpathSync(solverDir);
-      if (!isInside(realRoot, realSolverDir)) continue;
     } catch {
       continue;
     }
+    if (!isInside(realRoot, realSolverDir)) continue;
 
     let files: string[];
     try {
@@ -224,26 +272,36 @@ export function scanSolverSessionFlags(options: SessionFlagScanOptions): Project
         truncated = true;
         break;
       }
+      if (examinedEntries >= maxEntries) {
+        truncated = true;
+        break;
+      }
+      examinedEntries += 1;
       const target = resolve(realSolverDir, file);
-      let content: string;
+      const stats = lstatSync(target, { throwIfNoEntry: false });
+      if (stats === undefined || !stats.isFile() || stats.isSymbolicLink()) continue;
+      if (stats.size === 0 || stats.size > maxFileBytes) continue;
+      if (totalBytes + stats.size > maxTotalBytes) {
+        truncated = true;
+        break;
+      }
+      let realTarget: string;
       try {
-        const stats = lstatSync(target);
-        if (!stats.isFile() || stats.isSymbolicLink()) continue;
-        if (stats.size === 0 || stats.size > maxFileBytes) continue;
-        if (totalBytes + stats.size > maxTotalBytes) {
-          truncated = true;
-          break;
-        }
-        const realTarget = realpathSync(target);
-        if (!isInside(realRoot, realTarget)) continue;
-        const buffer = readFileSync(target);
-        if (buffer.includes(0)) continue;
-        content = buffer.toString("utf8");
-        totalBytes += stats.size;
-        scannedFiles += 1;
+        realTarget = realpathSync(target);
       } catch {
         continue;
       }
+      if (!isInside(realRoot, realTarget)) continue;
+      let buffer: Buffer;
+      try {
+        buffer = readFileSync(target);
+      } catch {
+        continue;
+      }
+      if (buffer.includes(0)) continue;
+      const content = buffer.toString("utf8");
+      totalBytes += stats.size;
+      scannedFiles += 1;
 
       const path = `.cairn/sessions/${name}/solver-session/${file}`;
       for (const line of content.split(/\r?\n/)) {
@@ -261,10 +319,42 @@ export function scanSolverSessionFlags(options: SessionFlagScanOptions): Project
 /**
  * Artifact scan first, then the solver-session fallback. Shared by `/flag` and the writeup
  * draft so the two views can never disagree about which flag was captured.
+ *
+ * Results are cached per workspace for a few seconds because the UI polls the project view:
+ * the fallback walk costs seconds once a workspace holds tens of thousands of task
+ * directories. A changed artifact list (new flag file, different size) bypasses the cache
+ * immediately; only an in-place rewrite of an existing artifact waits for the TTL.
  */
-export function collectProjectFlag(
-  options: FlagScanOptions & SessionFlagScanOptions,
-): ProjectFlagResult {
+export function collectProjectFlag(options: CollectFlagOptions): ProjectFlagResult {
+  const at = (options.now ?? Date.now)();
+  const key = flagCacheKey(options);
+  const fingerprint = artifactFingerprint(options.artifacts);
+  const cached = flagCache.get(key);
+  if (
+    cached !== undefined &&
+    cached.fingerprint === fingerprint &&
+    at - cached.at < CACHE_TTL_MS
+  ) {
+    return cloneFlagResult(cached.result);
+  }
+
+  const result = combineFlagScans(options);
+  flagCache.delete(key);
+  flagCache.set(key, { at, fingerprint, result: cloneFlagResult(result) });
+  while (flagCache.size > CACHE_MAX_ENTRIES) {
+    const oldest = flagCache.keys().next();
+    if (oldest.done) break;
+    flagCache.delete(oldest.value);
+  }
+  return result;
+}
+
+/** Drops every cached scan, e.g. when tests replace a workspace. */
+export function clearFlagCache(): void {
+  flagCache.clear();
+}
+
+function combineFlagScans(options: FlagScanOptions & SessionFlagScanOptions): ProjectFlagResult {
   const artifactResult = scanProjectFlag(options);
   if (artifactResult.found) return artifactResult;
   const sessionResult = scanSolverSessionFlags(options);
@@ -277,6 +367,29 @@ export function collectProjectFlag(
   // Nothing trustworthy anywhere: report the masks both scans saw, artifacts first.
   const candidates = mergeCandidates(artifactResult.candidates, sessionResult.candidates);
   return { ...combined, candidates, placeholder_suspect: candidates.length > 0 };
+}
+
+function flagCacheKey(options: FlagScanOptions & SessionFlagScanOptions): string {
+  return [
+    resolve(options.workspace),
+    options.maxFiles ?? "",
+    options.maxFileBytes ?? "",
+    options.maxTotalBytes ?? "",
+    options.maxDirectories ?? "",
+    options.maxEntries ?? "",
+  ].join("\u0000");
+}
+
+function artifactFingerprint(artifacts: ReadonlyArray<FlagArtifact>): string {
+  return artifacts.map((artifact) => `${artifact.path}\u0001${artifact.size}\u0002`).join("");
+}
+
+function cloneFlagResult(result: ProjectFlagResult): ProjectFlagResult {
+  return {
+    ...result,
+    sources: [...result.sources],
+    candidates: result.candidates.map((candidate) => ({ ...candidate })),
+  };
 }
 
 interface FlagGroups {

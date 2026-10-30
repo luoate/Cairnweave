@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { configureDatabase, get, run, type CairnDatabase } from "./db";
+import { all, configureDatabase, get, run, type CairnDatabase } from "./db";
 
 const directories: string[] = [];
 
@@ -37,6 +37,24 @@ describe("schema", () => {
     expect(state.settings).toEqual({ intent_timeout: 15, reason_timeout: 15 });
     expect(state.counter).toEqual({ value: 0 });
     expect(state.journal).toEqual({ journal_mode: "wal" });
+  });
+
+  test("indexes facts by project so per-project reads never scan the table", () => {
+    const { database } = temporaryDatabase();
+    const plans = database.withConn((conn) =>
+      ["SELECT COUNT(*) FROM facts WHERE project_id = ?", "SELECT id, description FROM facts WHERE project_id = ?"]
+        .map((sql) =>
+          all<{ detail: string }>(conn, `EXPLAIN QUERY PLAN ${sql}`)
+            .map((row) => row.detail)
+            .join(" | "),
+        ),
+    );
+    expect(plans).toHaveLength(2);
+    for (const plan of plans) {
+      expect(plan).toContain("facts_project");
+      expect(plan).toContain("SEARCH facts");
+      expect(plan).not.toContain("SCAN facts");
+    }
   });
 
   test("is idempotent and keeps existing data", () => {

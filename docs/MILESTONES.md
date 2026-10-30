@@ -1,12 +1,12 @@
 # 里程碑与验证记录
 
-本文件保留 M1–M28 的实现记录、测试与浏览器验证清单、与 Python Cairn 的已知差异、
+本文件保留 M1–M29 的实现记录、测试与浏览器验证清单、与 Python Cairn 的已知差异、
 里程碑表以及与 Phase 0 的关系。产品概览、快速开始与 API 概览见 [README](../README.md)。
 
 ## 实现记录
 
-状态：**M28（前端字号刻度与可读性下限）**；M0–M4、M5a–M5c、
-M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M16b、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e、M18f、M18g、M19a、M19b、M20a、M20b、M21、M22、M23、M24、M24b、M25、M26、M26b、M27、M28 的计划项全部完成。Phase 1 的
+状态：**M29（后端热点：Fact 索引与 /flag 有界扫描 + 短缓存）**；M0–M4、M5a–M5c、
+M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M16b、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e、M18f、M18g、M19a、M19b、M20a、M20b、M21、M22、M23、M24、M24b、M25、M26、M26b、M27、M28、M29 的计划项全部完成。Phase 1 的
 “本地看板 + Observer 提案 + 证据门 + 单一写图者”闭环已具备；Observer 复盘自 M22 起默认
 开启（只读复盘，不改任务结果），提案自 M23 起默认 `dry_run`（完整校验并记录，不写图）。
 Phase 2 的触发持久化、意图优先级/预算、单项目 token/成本与并发配额、只读慢层观测、逐 Fact
@@ -258,6 +258,23 @@ writeup / settings）：最小字号 9px→11px，小于 11px 的节点从 14/11
 小字从 14/8/33/74/8/8 归零，而横向溢出容器数（2）与越出视口的元素数（0/5/5/6/6/6）改前改后完全
 一致——放大没有引入新的裁切。cytoscape 画在 canvas 上的标签（边 7px、节点 10px）留作图布局问题，
 它被固定节点盒约束，不属于 DOM 文字，测试注释里记了这个例外。
+M29 按实测数据收了两处后端热点。`facts` 的主键是 `(id, project_id)`，而项目列表的
+`(SELECT COUNT(*) FROM facts WHERE project_id = p.id)` 与 `GET /projects/{id}` 的按项目读取都只带
+`project_id`，因此每次都要整表扫描；`packages/graph/src/db.ts` 增加
+`CREATE INDEX IF NOT EXISTS facts_project ON facts(project_id)`，`EXPLAIN QUERY PLAN` 由 `SCAN facts`
+变为 `SEARCH facts USING (COVERING) INDEX facts_project`。这属于复杂度修正：demo 库只有 12 个项目 /
+43 条 Fact，改前改后都在 0.06 ms 量级，量不出差别，所以只在 `db.test.ts` 的 `schema` 组里把两条查询
+（含 `COUNT(*)` 的 covering 变体）的计划钉死，防止以后被改回去。第二处是 `/flag` 的会话兜底：原有
+文件/字节上界只统计真正读到的文件，被跳过的会话目录不计入，于是一个积了三万多个任务目录的工作区会把
+同步 handler 卡住——demo 数据里 proj_003 单次 `/flag` 2.4 s 且一个文件都没读。现在
+`scanSolverSessionFlags` 用不带 `withFileTypes` 的 `readdirSync` 只取名字（Windows 上 `withFileTypes`
+会先给每个条目做一次 lstat，正是开销来源），逐项改用 `lstatSync(path, { throwIfNoEntry: false })`，
+并给遍历本身加上界：`SESSION_MAX_DIRECTORIES = 1000` 个会话目录、`SESSION_MAX_ENTRIES = 4000` 个
+文件系统条目（被跳过的目录、缺失的 `solver-session`、非 jsonl 文件都占额度），撞到任一上界就把
+`truncated` 置真——截断是对 UI 如实的“没扫完”，不是静默少看。`collectProjectFlag` 外面再包一层
+按工作区键控的短缓存（TTL 10 s、最多 32 项、最旧淘汰）：指纹是调用方给的工件列表 `path + size`，
+新增工件或大小变化立即失效，只有同名同大小的原地改写要等 TTL；返回值是副本，调用方改 `sources` /
+`candidates` 不会污染缓存，`clearFlagCache()` 供测试与替换工作区时清空。
 `cairn serve` 是可运行的 Cairn 兼容服务：SQLite schema、领域服务、全部
 五个路由、YAML/timeline 导出、静态 Web UI 均已就位，并用 Python Cairn 生成的 golden
 做了逐字对照。进程内 scheduler、任务/结果文件 worker 协议、BreachWeave Solver 接入已在 M2
@@ -803,9 +820,9 @@ M16b 增加（第二个模型接入与真实 A/B）：
 `CAIRN_SOLVER=breachweave` 的真实 Solver 路径上，fake solver 会忽略它。
 
 
-## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a + M17a + M17b + M17c + M17d + M18a + M18b + M18c + M18d + M18e + M18f + M18g + M19a + M19b + M16b + M20a + M20b + M21 + M22 + M23 + M24 + M24b + M25 + M26 + M26b + M27 + M28，2026-10-30，Bun 1.4.4）
+## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a + M17a + M17b + M17c + M17d + M18a + M18b + M18c + M18d + M18e + M18f + M18g + M19a + M19b + M16b + M20a + M20b + M21 + M22 + M23 + M24 + M24b + M25 + M26 + M26b + M27 + M28 + M29，2026-10-30，Bun 1.4.4）
 
-- `bun test`：**806 passed**（78 个文件），0 failed。
+- `bun test`：**814 passed**（78 个文件），0 failed。
 - `bun run typecheck`：`tsc --noEmit` 通过。
 - **HTTP 对照**：`api.golden.json` 的 60 步请求（成功路径、400/403/404/405/409、租约过期、
   删除级联、导出、路由错误）由 Python FastAPI + 固定时钟生成；TS 重放后状态码、content-type
@@ -1218,6 +1235,17 @@ M16b 增加（第二个模型接入与真实 A/B）：
   归零；横向溢出容器数与越出视口的元素数改前改后一致（2 与 0/5/5/6/6/6），说明放大没有新增裁切；
   控制台无报错，重新生成的 `app.css` 与入库产物逐字节相同。图内 cytoscape 标签（边 7px、节点
   10px）按例外保留，理由与测试注释一致：canvas 文字受固定节点盒限制，属于图布局而非 DOM 文字。
+- **后端热点（M29）**：`db.test.ts` 的 `schema` 组对 `SELECT COUNT(*) FROM facts WHERE project_id = ?` 与
+  `SELECT id, description FROM facts WHERE project_id = ?` 跑 `EXPLAIN QUERY PLAN`，断言计划含
+  `facts_project` 与 `SEARCH facts`、不含 `SCAN facts`（`COUNT(*)` 实际走 covering index，故只匹配索引名）。
+  `api.flag.test.ts` 新增两组：`scanSolverSessionFlags bounds` 验证目录上界（8 个带日志的会话、上限 3 →
+  `scanned_files === 3` 且 `truncated`）、条目上界（12 个没有 `solver-session` 的目录、上限 5 → 一个文件都
+  没读也已截断，证明**被跳过的目录也占额度**）、以及小工作区不误报截断；`collectProjectFlag cache` 验证 TTL
+  （同一工件列表、删掉磁盘文件后仍在 5 s 内命中，10_000 ms 边界即过期重扫）、新工件立即失效、工作区之间
+  互不串味、返回值是副本（改 `sources`/`candidates` 后再取仍是原值）。
+  真实 demo 工作区（14 个项目）实测：proj_003 会话遍历 2372.9 ms → 150.0 ms；14 个项目合计
+  2401.9 ms → 358.4 ms；`collectProjectFlag` 冷启合计 675.0 ms、全部命中缓存 0.3 ms。改前改后 14 个项目的
+  `found` / `scanned_files` 完全一致（proj_003 的 `truncated` 由 `false` 变为如实的 `true`）。
 
 golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定时钟、`TZ=UTC`）。
 重新生成方法与约束见 `docs/PORTING.md`。
@@ -1302,6 +1330,7 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M26b ✅ | 项目名统一为 Cairnweave：仓库目录 `cairn-merged` → `cairnweave`，根 `package.json` 的 `name` 与 `bun.lock` 随之更新（顺带同步了 lock 里 `@cairn/app` 长期滞留的 `0.3.0-m3`），版本 `0.46.0-m26b`；README 标题/首段/目录树说明与 `docs/ARCHITECTURE.md`、`docs/CONFIG.md` 里引用 UI 品牌的句子都改成 Cairnweave，并新增一条「名称约定」说明为何 `CAIRN_*` 环境变量、工作区 `.cairn/` 目录、`cairn-worker` prompt、`@cairn/*` 包名与 `cairn` 命令保持不变（Python golden 对照与既有项目数据依赖这些协议名）；前端 `<title>`、页头品牌字与 `documentTitle()` 改为「Cairnweave」/「项目名 · Cairnweave」，测试同步断言这两处标记与三种标题取值 | 796 passed / 78 files（2026-10-30）；`bun run check`（tsc + 全量）在改名后的目录里通过；`bun run cairn version` 输出 `cairn 0.46.0-m26b`；浏览器实测独立 `HOME` + 临时 DB 起 `serve --port 8027`：列表页 `document.title` 与页头品牌均为「Cairnweave」，打开 proj_001（标题 brand-check）后为「brand-check · Cairnweave」，返回列表回到「Cairnweave」；`GET /` 返回的 HTML 含 `<title>Cairnweave</title>`；实验环境 `runs/demo/dispatch.yaml` 的两处 `workspace_root` 已指向新目录，`start-lab.bat` 用 `%~dp0` 相对定位无需改动；历史 `task.json` 与 `audit_events` 里记录的旧绝对路径按运行留痕保留不改 |
 | M27 ✅ | 前端首屏体积与静态资源缓存：Tailwind Play CDN（vendored `tailwindcss.js`，451 KB 在浏览器里对着 class 名单现算样式）换成 Tailwind CLI 预编译入库的 `static/app.css`（`tools/ui/input.css` + `tools/ui/tailwind.config.mjs` 逐字复刻原内联 theme，`bun run ui:css` 生成 33 KB / br 6 KB，CI 再生成一次并 `git diff --exit-code`；`font-mono` 与 `bg-white/92` 两处历史上就无效的 class 由覆盖守卫显式豁免）；cytoscape 核心与 dagre/klay/elk 三对布局引擎改由 `static/graph-loader.js` 在 `initGraph`、切换布局、保存偏好三条路径上按需串行注入（扩展文件加载时自行 `register(cytoscape)`，所以核心必须在前），默认 dagre 不再下载 klay 的 496 KB 与 elk 的 1.6 MB，注入失败给中文 toast 且不建图；新增 `http/static-assets.ts` 接管 `GET /` 与 `/static/*`：size+mtime 生成 ETag，配 `Cache-Control: no-cache` 与 `Vary: Accept-Encoding`，`If-None-Match` 命中回 304，可压缩类型在内存里缓存 gzip/br 变体（≤64 文件、br quality 5、gzip 6），目录外与越界一律 404；`api.ts` 删除旧的 `serveStatic` | 803 passed / 78 files（2026-10-30）；`bun run check`（tsc + 全量）通过；浏览器实测独立 DB 起 `serve --port 8028`：列表页首屏传输 96,040 B（`index.html` 72,944 + `app.css` 5,972 + alpine 16,268 + `graph-loader.js` 663 + favicon 193，全部 br），同一路径优化前未压缩为 3,816,974 B；首屏 `window.tailwind` 为 `false`、未打开项目时 `typeof cytoscape === "undefined"`；点开项目才补 `cytoscape.min.js` 127,976 + `dagre.min.js` 61,331 + `cytoscape-dagre.js` 3,859（br），3 个 canvas 正常渲染、无 toast；切 `elk_lr` 才拉 `elk.bundled.js` + `cytoscape-elk.js`（`window.ELK` 就位）、切 `klay_lr` 才拉 `klay.js` + `cytoscape-klay.js`，切回 dagre 不再发请求；刷新后 alpine/graph-loader/favicon 回 304，`curl` 逐个带 `If-None-Match` 对 `app.css`/`graph-loader.js`/alpine/cytoscape/dagre 全部 304；控制台无消息 |
 | M28 ✅ | 前端字号刻度与可读性下限：`tools/ui/tailwind.config.mjs` 新增 `theme.extend.fontSize["2xs"] = ["0.6875rem", {lineHeight:"1.3"}]`（11px，中文可读下限）并补上 `fontFamily.mono`——顶层 `theme.fontFamily` 替换整条字族刻度，旧配置只列 `sans`，因此 `.font-mono` 编译不出规则、94 处调用点静默回退正文字体；`index.html` 的 472 处 `text-[9px]/[10px]/[11px]` 全部换成 `text-2xs`，3 处 `text-[12px]` 归 `text-xs`，两处 15px 标题归 `text-base`，`text-xs`/`text-sm` 不动以保持紧凑仪表盘密度，内联 `<style>` 不含 `font-size`；`api.ui.test.ts` 的 CSS 覆盖守卫豁免从 `font-mono` + `bg-white/92` 收到只剩 `bg-white/92`，并新增 `typography scale` 三个用例（markup 无 `text-[<数字`、产物最小 `font-size` ≥ 11px 且含 `.text-2xs`、配置同列 `sans`/`mono` 且产物 `.font-mono` 落到 `ui-monospace`）；cytoscape canvas 标签（边 7px / 节点 10px）按例外保留 | 806 passed / 78 files（2026-10-30）；`bun run check`（tsc + 全量）通过；重新生成产物 33,112 B（br 6,420 B）与入库文件逐字节相同；隐藏浏览器 532×555 几何 A/B 用 `git show HEAD:` 的 `index.html` + `app.css` 做真对照，六个状态（列表/详情/runs/audit/writeup/settings）最小字号 9px→11px、小于 11px 的节点 14/11/56/133/13/13 全部归零、含中文的小字 14/8/33/74/8/8 全部归零，而横向溢出容器（2）与越出视口元素（0/5/5/6/6/6）改前改后一致，`.font-mono` 实测族名以 `ui-monospace` 开头，控制台无消息。曾试给图标题 `h2` 加 `min-w-0`/`flex-1` 让 `truncate` 生效，实测在 532px 下会把项目名压到 0 宽（标题消失比原有溢出更糟）故回退，窄窗口排布留给后续响应式一轮 |
+| M29 ✅ | 后端热点两处：`packages/graph/src/db.ts` 为 `facts(project_id)` 增加 `facts_project` 索引——主键是 `(id, project_id)`，项目列表的 `fact_count` 子查询与 `GET /projects/{id}` 的按项目读 Fact 只能整表扫描，`EXPLAIN QUERY PLAN` 由 `SCAN facts` 变为 `SEARCH facts USING (COVERING) INDEX facts_project`；`/flag` 的会话兜底改为有界遍历：`readdirSync` 不再取 `withFileTypes`（Windows 上等于先给每个条目做一次 lstat），逐项用 `lstatSync(..., { throwIfNoEntry: false })`，新增 `SESSION_MAX_DIRECTORIES = 1000` 与 `SESSION_MAX_ENTRIES = 4000`（被跳过的目录/缺失的 `solver-session`/非 jsonl 文件都占额度），撞界即 `truncated: true`；`collectProjectFlag` 外包 10 s / 32 项的工作区级缓存，指纹为工件 `path + size`（新增或改大小立即失效，同名同大小改写等 TTL），返回副本并提供 `clearFlagCache()` | 814 passed / 78 files（2026-10-30）；`bun run check`（tsc + 全量）通过；`db.test.ts` 钉住两条查询计划的索引使用（含 `COUNT(*)` 的 covering 变体）；`api.flag.test.ts` 新增 `scanSolverSessionFlags bounds`（目录上界、条目上界、小工作区不误报）与 `collectProjectFlag cache`（TTL 边界 10_000 ms、新工件立即失效、工作区隔离、返回值副本）共 7 个用例；demo 工作区实测 proj_003 会话遍历 2372.9 ms → 150.0 ms、14 个项目合计 2401.9 ms → 358.4 ms、`collectProjectFlag` 冷启 675.0 ms 而全命中 0.3 ms，14 个项目的 `found`/`scanned_files` 改前改后一致（仅 proj_003 由 `truncated:false` 变为如实的 `true`）；索引在 12 项目 / 43 Fact 的 demo 上量不出耗时差异，按复杂度修正记录 |
 
 ## 与 Phase 0 的关系
 

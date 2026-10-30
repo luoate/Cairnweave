@@ -8,7 +8,7 @@
 没有 Python ↔ TypeScript 桥，没有 JSONL RPC。
 
 [![CI](https://github.com/luoate/Cairnweave/actions/workflows/ci.yml/badge.svg)](https://github.com/luoate/Cairnweave/actions/workflows/ci.yml)
-[![tests](https://img.shields.io/badge/tests-806%20passed-brightgreen.svg)](docs/MILESTONES.md)
+[![tests](https://img.shields.io/badge/tests-814%20passed-brightgreen.svg)](docs/MILESTONES.md)
 [![license](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![runtime](https://img.shields.io/badge/runtime-Bun%201.4.4-black.svg)](package.json)
 
@@ -45,7 +45,7 @@ worker 在项目沙箱里跑真实模型，每个任务启动一次进程，只�
 | Observer sidecar | 真实 Solver 旁的独立复盘会话，只维护项目级看板（ideas / memory），主 Solver 仅拿到只读工具；失败、超时都不影响任务结果 |
 | 图提案 | Observer 只能写候选文件，控制面是唯一审核者与写图者；默认 `dry_run`（完整校验、记录结果、不写图），改 `apply` 才落图 |
 | 中文 Writeup | 从图中数据确定性渲染中文 Markdown 草稿，可由模型重写；附带载荷（payload）章节、附件 zip 打包与「AI 撰写 / 恢复草稿」 |
-| Flag 与校验 | `/flag` 从已索引工件与会话工具输出中提取真实 flag，拒绝占位符与掩码；challenge 项目按外部计分校验 |
+| Flag 与校验 | `/flag` 从已索引工件与会话工具输出中提取真实 flag，拒绝占位符与掩码；会话兜底遍历有目录/条目上界，结果按工作区短缓存；challenge 项目按外部计分校验 |
 | 成本与预算 | `runs` 记录模型 / Token / 成本；意图级 priority 与预算、单项目 token/成本配额、逐 Fact 与逐意图的成本归因与因果边 |
 | 只读运维视图 | 运行、慢层、审计、证据、提案、看板、成本、统计、报告、Writeup 十个侧栏页签，全部只发 GET（人工重规划除外） |
 | 运行期配置 | Observer、并发、超时、证据门、预算、策略阈值、提案参数等可在页头「设置 → 运行与执行」里热调，覆盖存 SQLite，重启不丢 |
@@ -168,7 +168,7 @@ proposals:                    # 默认开启，但只演练
 | GET | `/projects/{id}/audit[/{task_id}]` | 审计任务汇总与逐任务哈希链 |
 | GET | `/projects/{id}/verification` | 完成策略与最近一次检查 |
 | POST | `/projects/{id}/verify` | 手动重跑完成 oracle（可限定 Fact 子集） |
-| GET | `/projects/{id}/flag` | 命中的 flag、来源、候选与校验状态 |
+| GET | `/projects/{id}/flag` | 命中的 flag、来源、候选与校验状态（按工作区缓存 10 s，结果带 `truncated`） |
 | GET | `/projects/{id}/stats` | 按 worker / 模型 / profile 的运行统计 |
 | GET | `/projects/{id}/cost` | 总量、按类型汇总、逐 Fact/意图归因与因果边 |
 | GET | `/projects/{id}/strategist` | 慢层状态、预算、未结束意图与推理历史 |
@@ -241,7 +241,7 @@ API key 只写不读（响应只回掩码），写入 `auth.json` 并按上游 S
 ## 测试与 CI
 
 ```bash
-bun test             # 806 passed / 78 files（fake solver，不需凭据）
+bun test             # 814 passed / 78 files（fake solver，不需凭据）
 bun run typecheck    # tsc --noEmit
 bun run ui:css       # 改了 index.html 的 class 后重新生成 static/app.css
 bun run check        # typecheck + test；CI 还会校验 app.css 与 index.html 不漂移
@@ -268,7 +268,7 @@ gate 放在 `tools/gate/`，手动执行、不计入 CI，命令与环境变量�
 | [WRITEUP.md](docs/WRITEUP.md) | 中文 Writeup：草稿组成、载荷、附件包、Flag 置信度与模型撰写 |
 | [MODELS.md](docs/MODELS.md) | 模型与密钥的一页操作手册 |
 | [PORTING.md](docs/PORTING.md) | Python Cairn → TypeScript 的模块映射与对照测试策略 |
-| [MILESTONES.md](docs/MILESTONES.md) | M1–M26 实现记录、完整验证清单与里程碑表 |
+| [MILESTONES.md](docs/MILESTONES.md) | M1–M29 实现记录、完整验证清单与里程碑表 |
 
 ## 仓库结构
 

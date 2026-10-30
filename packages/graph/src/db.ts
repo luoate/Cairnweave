@@ -37,6 +37,10 @@ CREATE TABLE IF NOT EXISTS facts (
     PRIMARY KEY (id, project_id)
 );
 
+-- The primary key leads with id, so project-scoped reads and the per-project fact count
+-- cannot use it; without this index every project list entry triggers a full table scan.
+CREATE INDEX IF NOT EXISTS facts_project ON facts(project_id);
+
 CREATE TABLE IF NOT EXISTS intents (
     id TEXT NOT NULL,
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
