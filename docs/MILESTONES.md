@@ -1,12 +1,12 @@
 # 里程碑与验证记录
 
-本文件保留 M1–M29 的实现记录、测试与浏览器验证清单、与 Python Cairn 的已知差异、
+本文件保留 M1–M30 的实现记录、测试与浏览器验证清单、与 Python Cairn 的已知差异、
 里程碑表以及与 Phase 0 的关系。产品概览、快速开始与 API 概览见 [README](../README.md)。
 
 ## 实现记录
 
-状态：**M29（后端热点：Fact 索引与 /flag 有界扫描 + 短缓存）**；M0–M4、M5a–M5c、
-M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M16b、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e、M18f、M18g、M19a、M19b、M20a、M20b、M21、M22、M23、M24、M24b、M25、M26、M26b、M27、M28、M29 的计划项全部完成。Phase 1 的
+状态：**M30（按需子图 API：`GET /projects/{id}/subgraph`）**；M0–M4、M5a–M5c、
+M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M16b、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e、M18f、M18g、M19a、M19b、M20a、M20b、M21、M22、M23、M24、M24b、M25、M26、M26b、M27、M28、M29、M30 的计划项全部完成。Phase 1 的
 “本地看板 + Observer 提案 + 证据门 + 单一写图者”闭环已具备；Observer 复盘自 M22 起默认
 开启（只读复盘，不改任务结果），提案自 M23 起默认 `dry_run`（完整校验并记录，不写图）。
 Phase 2 的触发持久化、意图优先级/预算、单项目 token/成本与并发配额、只读慢层观测、逐 Fact
@@ -275,6 +275,17 @@ M29 按实测数据收了两处后端热点。`facts` 的主键是 `(id, project
 按工作区键控的短缓存（TTL 10 s、最多 32 项、最旧淘汰）：指纹是调用方给的工件列表 `path + size`，
 新增工件或大小变化立即失效，只有同名同大小的原地改写要等 TTL；返回值是副本，调用方改 `sources` /
 `candidates` 不会污染缓存，`clearFlagCache()` 供测试与替换工作区时清空。
+M30 补上融合方案里唯一的接口缺口：按需子图。M4b 的 `exportProjectSliceYaml` 是给 scheduler
+用的「focus intent + 全部未结束 Intent + provenance 闭包」，没有跳数概念，也没有对外入口。
+`packages/graph/src/export.ts` 新增 `selectSubgraph`：`around` 同时接受 Fact 与 Intent（类型由
+项目图判定），在 Fact↔Intent 因果边上做 BFS，`depth` 默认 2、上限 4；所有未结束 Intent 作为
+0 跳种子，保证并行方向始终可见。裁剪顺序固定为 `origin`/`goal` → focus → 已选 Intent 的来源 →
+按跳数，被裁即 `truncated: true`；跳到上限之外的 Intent 产出 Fact 不会因为排序被重新拉回来，
+这条在测试里单独钉住。`exportProjectSubgraphYaml` 复用同一套渲染辅助与 `slice:` 段风格。
+HTTP 侧 `GET /projects/{id}/subgraph` 默认返回 JSON，`format=yaml` 返回快照文本；
+`depth`/`max_facts`/`max_intents` 有显式上下界且越界返回 400 而不是静默夹取，`max_facts`
+最小 2 是因为 `origin`/`goal` 是项目头，裁掉会让 YAML 的 `project` 段失真。该接口只读，
+不改 `tasks.graph_slice` 的调度行为，全图导出与 golden 不受影响。
 `cairn serve` 是可运行的 Cairn 兼容服务：SQLite schema、领域服务、全部
 五个路由、YAML/timeline 导出、静态 Web UI 均已就位，并用 Python Cairn 生成的 golden
 做了逐字对照。进程内 scheduler、任务/结果文件 worker 协议、BreachWeave Solver 接入已在 M2
@@ -820,9 +831,9 @@ M16b 增加（第二个模型接入与真实 A/B）：
 `CAIRN_SOLVER=breachweave` 的真实 Solver 路径上，fake solver 会忽略它。
 
 
-## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a + M17a + M17b + M17c + M17d + M18a + M18b + M18c + M18d + M18e + M18f + M18g + M19a + M19b + M16b + M20a + M20b + M21 + M22 + M23 + M24 + M24b + M25 + M26 + M26b + M27 + M28 + M29，2026-10-30，Bun 1.4.4）
+## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a + M17a + M17b + M17c + M17d + M18a + M18b + M18c + M18d + M18e + M18f + M18g + M19a + M19b + M16b + M20a + M20b + M21 + M22 + M23 + M24 + M24b + M25 + M26 + M26b + M27 + M28 + M29 + M30，2026-10-31，Bun 1.4.4）
 
-- `bun test`：**814 passed**（78 个文件），0 failed。
+- `bun test`：**827 passed**（80 个文件），0 failed。
 - `bun run typecheck`：`tsc --noEmit` 通过。
 - **HTTP 对照**：`api.golden.json` 的 60 步请求（成功路径、400/403/404/405/409、租约过期、
   删除级联、导出、路由错误）由 Python FastAPI + 固定时钟生成；TS 重放后状态码、content-type
@@ -1246,6 +1257,16 @@ M16b 增加（第二个模型接入与真实 A/B）：
   真实 demo 工作区（14 个项目）实测：proj_003 会话遍历 2372.9 ms → 150.0 ms；14 个项目合计
   2401.9 ms → 358.4 ms；`collectProjectFlag` 冷启合计 675.0 ms、全部命中缓存 0.3 ms。改前改后 14 个项目的
   `found` / `scanned_files` 完全一致（proj_003 的 `truncated` 由 `false` 变为如实的 `true`）。
+- **按需子图（M30）**：`export.subgraph.test.ts` 用一条三段链（`origin → i001 → f001 → i002 → f002 →
+  i003 → f003`）钉住六件事——focus 为 Fact 且 `depth: 1` 时只含 `origin`/`goal`/`f001` 与一入一出两个
+  Intent；`depth: 3` 含第三个 Intent 但不含它的产出 Fact，`depth: 4` 才含；focus 为 Intent 时保留来源与
+  产出 Fact；远端未结束 Intent 仍被作为 0 跳种子带出；`max_facts: 2` / `max_intents: 1` 时保留
+  `origin`/`goal` 并置 `truncated`；未知节点抛 `HttpError(404)`。另断言 YAML 两次输出逐字相同、
+  `slice:` 段字段齐全。`api.subgraph.test.ts` 覆盖默认 JSON 形状（`focus`/`counts`/`intents[].from`）、
+  `format=yaml`、Intent 焦点、`around` 缺失与 `depth=0/9`、`max_facts=1`、`max_intents=0`、
+  `depth=abc`、`format=xml` 的 400，未知项目与未知节点的 404，以及 POST 的 405。
+  同轮跑 `export.slice.test.ts`、`export.golden.test.ts`、`api.golden.test.ts`，M4b 切片与全图 golden
+  均未变化。
 
 golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定时钟、`TZ=UTC`）。
 重新生成方法与约束见 `docs/PORTING.md`。
@@ -1331,6 +1352,7 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M27 ✅ | 前端首屏体积与静态资源缓存：Tailwind Play CDN（vendored `tailwindcss.js`，451 KB 在浏览器里对着 class 名单现算样式）换成 Tailwind CLI 预编译入库的 `static/app.css`（`tools/ui/input.css` + `tools/ui/tailwind.config.mjs` 逐字复刻原内联 theme，`bun run ui:css` 生成 33 KB / br 6 KB，CI 再生成一次并 `git diff --exit-code`；`font-mono` 与 `bg-white/92` 两处历史上就无效的 class 由覆盖守卫显式豁免）；cytoscape 核心与 dagre/klay/elk 三对布局引擎改由 `static/graph-loader.js` 在 `initGraph`、切换布局、保存偏好三条路径上按需串行注入（扩展文件加载时自行 `register(cytoscape)`，所以核心必须在前），默认 dagre 不再下载 klay 的 496 KB 与 elk 的 1.6 MB，注入失败给中文 toast 且不建图；新增 `http/static-assets.ts` 接管 `GET /` 与 `/static/*`：size+mtime 生成 ETag，配 `Cache-Control: no-cache` 与 `Vary: Accept-Encoding`，`If-None-Match` 命中回 304，可压缩类型在内存里缓存 gzip/br 变体（≤64 文件、br quality 5、gzip 6），目录外与越界一律 404；`api.ts` 删除旧的 `serveStatic` | 803 passed / 78 files（2026-10-30）；`bun run check`（tsc + 全量）通过；浏览器实测独立 DB 起 `serve --port 8028`：列表页首屏传输 96,040 B（`index.html` 72,944 + `app.css` 5,972 + alpine 16,268 + `graph-loader.js` 663 + favicon 193，全部 br），同一路径优化前未压缩为 3,816,974 B；首屏 `window.tailwind` 为 `false`、未打开项目时 `typeof cytoscape === "undefined"`；点开项目才补 `cytoscape.min.js` 127,976 + `dagre.min.js` 61,331 + `cytoscape-dagre.js` 3,859（br），3 个 canvas 正常渲染、无 toast；切 `elk_lr` 才拉 `elk.bundled.js` + `cytoscape-elk.js`（`window.ELK` 就位）、切 `klay_lr` 才拉 `klay.js` + `cytoscape-klay.js`，切回 dagre 不再发请求；刷新后 alpine/graph-loader/favicon 回 304，`curl` 逐个带 `If-None-Match` 对 `app.css`/`graph-loader.js`/alpine/cytoscape/dagre 全部 304；控制台无消息 |
 | M28 ✅ | 前端字号刻度与可读性下限：`tools/ui/tailwind.config.mjs` 新增 `theme.extend.fontSize["2xs"] = ["0.6875rem", {lineHeight:"1.3"}]`（11px，中文可读下限）并补上 `fontFamily.mono`——顶层 `theme.fontFamily` 替换整条字族刻度，旧配置只列 `sans`，因此 `.font-mono` 编译不出规则、94 处调用点静默回退正文字体；`index.html` 的 472 处 `text-[9px]/[10px]/[11px]` 全部换成 `text-2xs`，3 处 `text-[12px]` 归 `text-xs`，两处 15px 标题归 `text-base`，`text-xs`/`text-sm` 不动以保持紧凑仪表盘密度，内联 `<style>` 不含 `font-size`；`api.ui.test.ts` 的 CSS 覆盖守卫豁免从 `font-mono` + `bg-white/92` 收到只剩 `bg-white/92`，并新增 `typography scale` 三个用例（markup 无 `text-[<数字`、产物最小 `font-size` ≥ 11px 且含 `.text-2xs`、配置同列 `sans`/`mono` 且产物 `.font-mono` 落到 `ui-monospace`）；cytoscape canvas 标签（边 7px / 节点 10px）按例外保留 | 806 passed / 78 files（2026-10-30）；`bun run check`（tsc + 全量）通过；重新生成产物 33,112 B（br 6,420 B）与入库文件逐字节相同；隐藏浏览器 532×555 几何 A/B 用 `git show HEAD:` 的 `index.html` + `app.css` 做真对照，六个状态（列表/详情/runs/audit/writeup/settings）最小字号 9px→11px、小于 11px 的节点 14/11/56/133/13/13 全部归零、含中文的小字 14/8/33/74/8/8 全部归零，而横向溢出容器（2）与越出视口元素（0/5/5/6/6/6）改前改后一致，`.font-mono` 实测族名以 `ui-monospace` 开头，控制台无消息。曾试给图标题 `h2` 加 `min-w-0`/`flex-1` 让 `truncate` 生效，实测在 532px 下会把项目名压到 0 宽（标题消失比原有溢出更糟）故回退，窄窗口排布留给后续响应式一轮 |
 | M29 ✅ | 后端热点两处：`packages/graph/src/db.ts` 为 `facts(project_id)` 增加 `facts_project` 索引——主键是 `(id, project_id)`，项目列表的 `fact_count` 子查询与 `GET /projects/{id}` 的按项目读 Fact 只能整表扫描，`EXPLAIN QUERY PLAN` 由 `SCAN facts` 变为 `SEARCH facts USING (COVERING) INDEX facts_project`；`/flag` 的会话兜底改为有界遍历：`readdirSync` 不再取 `withFileTypes`（Windows 上等于先给每个条目做一次 lstat），逐项用 `lstatSync(..., { throwIfNoEntry: false })`，新增 `SESSION_MAX_DIRECTORIES = 1000` 与 `SESSION_MAX_ENTRIES = 4000`（被跳过的目录/缺失的 `solver-session`/非 jsonl 文件都占额度），撞界即 `truncated: true`；`collectProjectFlag` 外包 10 s / 32 项的工作区级缓存，指纹为工件 `path + size`（新增或改大小立即失效，同名同大小改写等 TTL），返回副本并提供 `clearFlagCache()` | 814 passed / 78 files（2026-10-30）；`bun run check`（tsc + 全量）通过；`db.test.ts` 钉住两条查询计划的索引使用（含 `COUNT(*)` 的 covering 变体）；`api.flag.test.ts` 新增 `scanSolverSessionFlags bounds`（目录上界、条目上界、小工作区不误报）与 `collectProjectFlag cache`（TTL 边界 10_000 ms、新工件立即失效、工作区隔离、返回值副本）共 7 个用例；demo 工作区实测 proj_003 会话遍历 2372.9 ms → 150.0 ms、14 个项目合计 2401.9 ms → 358.4 ms、`collectProjectFlag` 冷启 675.0 ms 而全命中 0.3 ms，14 个项目的 `found`/`scanned_files` 改前改后一致（仅 proj_003 由 `truncated:false` 变为如实的 `true`）；索引在 12 项目 / 43 Fact 的 demo 上量不出耗时差异，按复杂度修正记录 |
+| M30 ✅ | 按需子图 API：`packages/graph/src/export.ts` 新增 `selectSubgraph`（`around` 兼容 Fact / Intent，Fact↔Intent 因果边 BFS，`depth` 默认 2、上限 4）、`exportProjectSubgraphYaml` 与 HTTP 只读 `GET /projects/{id}/subgraph`（`around`/`depth`/`max_facts`/`max_intents`/`format=json\|yaml`）；未结束 Intent 作为 0 跳种子保证并行方向可见，裁剪优先级为 `origin`/`goal` → focus → 已选 Intent 来源 → 跳数，被裁即 `truncated`；`max_facts` 最小 2（项目头需要 origin/goal），越界参数 400 而非静默夹取，未知节点 404 | 827 passed / 80 files（2026-10-31）；`bun run check`（tsc + 全量）通过；`export.subgraph.test.ts` 覆盖 focus fact/intent、depth 1→4 的边界（深度外的 Intent 产出 Fact 不被排序拉回）、未结束 Intent 种子、caps 与 truncated、未知节点 404、YAML 确定性与 `slice:` 段；`api.subgraph.test.ts` 覆盖默认 JSON 形状、`format=yaml`、Intent 焦点、缺失/非法参数 400、未知项目/节点 404 与 POST 405；M4b 切片、全图导出与 golden 逐字节不变 |
 
 ## 与 Phase 0 的关系
 

@@ -305,12 +305,20 @@ export {
 
 export {
   exportProjectSliceYaml,
+  exportProjectSubgraphYaml,
   exportProjectTimeline,
   exportProjectYaml,
   formatExportTimestamp,
   loadProjectData,
+  selectSubgraph,
+  SUBGRAPH_DEFAULT_DEPTH,
+  SUBGRAPH_DEFAULT_FACTS,
+  SUBGRAPH_DEFAULT_INTENTS,
+  SUBGRAPH_MAX_DEPTH,
   type GraphSliceOptions,
   type ProjectData,
+  type SubgraphOptions,
+  type SubgraphSelection,
 } from "./export";
 
 export { emitScalar, map, renderYaml, type YamlMap, type YamlValue } from "./yaml";

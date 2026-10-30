@@ -17,6 +17,7 @@ import {
   createIntent,
   createProject,
   expireReasonLeases,
+  exportProjectSubgraphYaml,
   exportProjectTimeline,
   exportProjectYaml,
   getAuditStreamLoss,
@@ -62,7 +63,12 @@ import {
   releaseReason,
   renderProjectReportMarkdown,
   requestStrategistReplan,
+  selectSubgraph,
   setProjectScope,
+  SUBGRAPH_DEFAULT_DEPTH,
+  SUBGRAPH_DEFAULT_FACTS,
+  SUBGRAPH_DEFAULT_INTENTS,
+  SUBGRAPH_MAX_DEPTH,
   utcnow,
   type AuditEntry,
   type CairnDatabase,
@@ -396,6 +402,7 @@ const MAX_AUDIT_STREAM_BODY_BYTES = 1024 * 1024;
 const MAX_AUDIT_STREAM_EVENTS = 256;
 const STRATEGIST_RUN_LIMIT_DEFAULT = 20;
 const STRATEGIST_RUN_LIMIT_MAX = 100;
+const SUBGRAPH_CAP_MAX = 500;
 
 /**
  * `limit` bounds only the recent reason-run list. It is a single optional query parameter;
@@ -416,6 +423,25 @@ function parseStrategistLimit(raw: string | null): number {
       400,
       `limit must be an integer between 1 and ${STRATEGIST_RUN_LIMIT_MAX}`,
     );
+  }
+  return parsed;
+}
+
+/** Rejects malformed or out-of-range subgraph bounds instead of silently clamping them. */
+function boundedQueryInt(
+  raw: string | null,
+  fallback: number,
+  min: number,
+  max: number,
+  name: string,
+): number {
+  if (raw === null) return fallback;
+  if (!/^[0-9]+$/.test(raw)) {
+    throw new HttpError(400, `${name} must be an integer between ${min} and ${max}`);
+  }
+  const parsed = Number(raw);
+  if (!Number.isSafeInteger(parsed) || parsed < min || parsed > max) {
+    throw new HttpError(400, `${name} must be an integer between ${min} and ${max}`);
   }
   return parsed;
 }
@@ -1076,6 +1102,69 @@ function buildRoutes(
           ? exportProjectTimeline(conn, projectId)
           : exportProjectYaml(conn, projectId);
       return text(body);
+    }),
+  );
+
+  // Causal neighbourhood around one node: the building block for context budgets that
+  // send a worker a slice instead of the whole graph.
+  route("GET", "/projects/{project_id}/subgraph", ({ params, url }) =>
+    db.withConn((conn) => {
+      const projectId = params["project_id"]!;
+      const around = (url.searchParams.get("around") ?? "").trim();
+      if (around === "") throw new HttpError(400, "around is required");
+      const depth = boundedQueryInt(
+        url.searchParams.get("depth"),
+        SUBGRAPH_DEFAULT_DEPTH,
+        1,
+        SUBGRAPH_MAX_DEPTH,
+        "depth",
+      );
+      const maxFacts = boundedQueryInt(
+        url.searchParams.get("max_facts"),
+        SUBGRAPH_DEFAULT_FACTS,
+        2,
+        SUBGRAPH_CAP_MAX,
+        "max_facts",
+      );
+      const maxIntents = boundedQueryInt(
+        url.searchParams.get("max_intents"),
+        SUBGRAPH_DEFAULT_INTENTS,
+        1,
+        SUBGRAPH_CAP_MAX,
+        "max_intents",
+      );
+      const format = url.searchParams.get("format") ?? "json";
+      if (format !== "json" && format !== "yaml") {
+        throw new HttpError(400, "Supported formats: json, yaml");
+      }
+      const options = { around, depth, maxFacts, maxIntents };
+      if (format === "yaml") {
+        return text(exportProjectSubgraphYaml(conn, projectId, options));
+      }
+      const selection = selectSubgraph(conn, projectId, options);
+      return json({
+        project: { id: selection.project.id, title: selection.project.title },
+        focus: selection.focus,
+        depth: selection.depth,
+        truncated: selection.truncated,
+        counts: {
+          facts: selection.facts.length,
+          intents: selection.intents.length,
+        },
+        facts: selection.facts.map((fact) => ({
+          id: fact.id,
+          description: fact.description,
+        })),
+        intents: selection.intents.map((intent) => ({
+          id: intent.id,
+          from: selection.sourcesByIntent.get(intent.id) ?? [],
+          to: intent.to_fact_id,
+          description: intent.description,
+          worker: intent.worker,
+          created_at: intent.created_at,
+          concluded_at: intent.concluded_at,
+        })),
+      });
     }),
   );
 

@@ -729,6 +729,16 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
   的值，否则为被拒的掩码），`placeholder_suspect` 表示「看到过 flag 形状文本，但一个都没采纳」。
   未命中返回 `found:false` 的 200；未知项目 404；只有 GET。`verification` 与
   `/verification` 同源，供页头横幅显示校验状态。
+- `GET /projects/{id}/subgraph?around=<fact|intent id>`（M30，只读）→
+  `{project: {id, title}, focus: {kind, id}, depth, truncated, counts: {facts, intents},
+  facts: [{id, description}], intents: [{id, from, to, description, worker, created_at,
+  concluded_at}]}`。以 `around` 节点为中心在 Fact↔Intent 因果边上做 BFS，`depth` 默认 2、
+  上限 4；所有未结束 Intent 作为 0 跳种子，保证并行方向始终可见。`max_facts`（默认 60，
+  最小 2，上限 500）达到上限时先保留 `origin`/`goal`，再保留 focus 与已选 Intent 的来源，
+  最后按跳数；`max_intents`（默认 40，最小 1）先保留 focus，再保留未结束 Intent。任一上限
+  裁剪都置 `truncated`。`format=yaml` 返回与图快照同族的文本（多一个 `slice:` 段，含
+  `around`/`focus_kind`/`depth`）。`around` 缺失 400、未知项目或节点 404、非法数值 400、
+  其他方法 405。该路由只读，不改 scheduler 的 `tasks.graph_slice` 快照策略。
 - `GET|POST|DELETE /projects/{id}/writeup`（M19a）→
   `{project_id, source: draft|model, model, created_at, markdown, flag, generated_at,
   verification}`。GET 只读、免 operator token，`format=markdown` 用 `text/markdown`
@@ -1162,6 +1172,11 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
   `included_facts`、`included_intents`、`max_facts`、`max_intents`、`truncated`）；
   `truncated: true` 表示 caps 或缺失的 producer 使 provenance 不完整。reason/bootstrap
   从不切片：它们需要全局视野。全图导出函数与 golden 不受影响。
+- **按需子图 API（M30）**：`GET /projects/{id}/subgraph?around=` 把「围绕某个节点的邻域」
+  开放成独立只读接口，供外部上下文预算直接从图上取切片，而不必等 scheduler 的
+  `tasks.graph_slice` 开关。实现与 M4b 切片分开：M4b 是「focus intent + 全部未结束 Intent +
+  provenance 闭包」，M30 是有跳数上限的 BFS；两者共享 `loadProjectData`、YAML 渲染辅助与
+  `slice:` 段风格。`around` 同时接受 Fact 与 Intent，类型由项目图判定。
 - 替换按配置字典的插入顺序逐 token 执行；这与 Python `render_prompt` 在替换值含后续 token
   时的行为一致。
 - BreachWeave 的 `cairn-worker` 系统提示词位于

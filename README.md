@@ -8,7 +8,7 @@
 没有 Python ↔ TypeScript 桥，没有 JSONL RPC。
 
 [![CI](https://github.com/luoate/Cairnweave/actions/workflows/ci.yml/badge.svg)](https://github.com/luoate/Cairnweave/actions/workflows/ci.yml)
-[![tests](https://img.shields.io/badge/tests-814%20passed-brightgreen.svg)](docs/MILESTONES.md)
+[![tests](https://img.shields.io/badge/tests-827%20passed-brightgreen.svg)](docs/MILESTONES.md)
 [![license](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![runtime](https://img.shields.io/badge/runtime-Bun%201.4.4-black.svg)](package.json)
 
@@ -161,6 +161,7 @@ proposals:                    # 默认开启，但只演练
 | GET/PUT/DELETE | `/projects/{id}` | 详情、状态/标题更新、删除 |
 | GET/PUT | `/projects/{id}/scope` | 授权范围读取与补配 |
 | GET | `/projects/{id}/export` | YAML 图导出 |
+| GET | `/projects/{id}/subgraph` | 以某个 Fact / Intent 为中心的按需子图（`around`、`depth`、`max_facts`、`max_intents`、`format=json\|yaml`） |
 | GET | `/projects/{id}/runs` | 逐任务 run（kind、worker、模型、outcome、Token、成本） |
 | GET | `/projects/{id}/facts/{fact_id}/meta` | Fact 溯源：产出 run、证据状态、取代关系 |
 | GET | `/projects/{id}/facts/{fact_id}/evidence` | 证据实时校验（`ok` / `modified` / `missing` …） |
@@ -241,7 +242,7 @@ API key 只写不读（响应只回掩码），写入 `auth.json` 并按上游 S
 ## 测试与 CI
 
 ```bash
-bun test             # 814 passed / 78 files（fake solver，不需凭据）
+bun test             # 827 passed / 80 files（fake solver，不需凭据）
 bun run typecheck    # tsc --noEmit
 bun run ui:css       # 改了 index.html 的 class 后重新生成 static/app.css
 bun run check        # typecheck + test；CI 还会校验 app.css 与 index.html 不漂移
