@@ -221,10 +221,15 @@ describe("host bridge file policy", () => {
 
   test("blocks reads of the agent configuration directory", () => {
     const gate = bridge(["file:///" + join(directory, "evidence").replaceAll("\\", "/")]);
-    const target = join(homedir(), ".tch-agent", "config", "auth.json");
-    const decision = gate.checkToolCall("read", { path: target });
-    expect(decision.allowed).toBe(false);
-    expect(decision.reason).toContain("protected agent configuration");
+    for (const target of [
+      join(homedir(), ".cairnweave", "config", "auth.json"),
+      join(homedir(), ".cairnweave", "runtime.json"),
+      join(homedir(), ".tch-agent", "config", "auth.json"),
+    ]) {
+      const decision = gate.checkToolCall("read", { path: target });
+      expect(decision.allowed).toBe(false);
+      expect(decision.reason).toContain("protected agent configuration");
+    }
   });
 
   test("blocks a symlink escape from the workspace", () => {

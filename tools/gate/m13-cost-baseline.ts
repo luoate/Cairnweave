@@ -5,7 +5,7 @@
  * writes `runs/m13-baseline.json`.
  *
  * This gate is intentionally outside `bun test`: it calls a real model and costs money.
- * It needs credentials under `~/.tch-agent/config` (override with CAIRN_AGENT_CONFIG_DIR).
+ * It needs credentials under `~/.cairnweave/config` (override with CAIRN_AGENT_CONFIG_DIR).
  *
  *   bun run tools/gate/m13-cost-baseline.ts
  *
@@ -70,7 +70,7 @@ import { projectWorkspace } from "../../apps/cairn/src/scheduler/tasks";
 import { readTaskUsage } from "../../apps/cairn/src/scheduler/usage";
 
 const AGENT_CONFIG_DIR =
-  process.env["CAIRN_AGENT_CONFIG_DIR"]?.trim() || join(homedir(), ".tch-agent", "config");
+  process.env["CAIRN_AGENT_CONFIG_DIR"]?.trim() || join(homedir(), ".cairnweave", "config");
 const MAX_TASKS = envInt("CAIRN_GATE_MAX_TASKS", 6, 1, 20);
 const MAX_MINUTES = envInt("CAIRN_GATE_MAX_MINUTES", 20, 1, 120);
 const BUDGET_TOKENS = envNumber("CAIRN_GATE_BUDGET_TOKENS", 0);

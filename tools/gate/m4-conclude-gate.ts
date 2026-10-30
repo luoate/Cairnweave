@@ -3,7 +3,7 @@
  * instead of starting cold, and the model still returns a valid conclude payload.
  *
  * This gate is intentionally outside `bun test`: it calls a real model and costs money.
- * It needs credentials under `~/.tch-agent/config` (override with CAIRN_AGENT_CONFIG_DIR).
+ * It needs credentials under `~/.cairnweave/config` (override with CAIRN_AGENT_CONFIG_DIR).
  *
  *   bun run tools/gate/m4-conclude-gate.ts
  *

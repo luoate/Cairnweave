@@ -20,7 +20,7 @@ const STEER_MESSAGE =
  * Real BreachWeave solver, called in-process.
  *
  * The vendored agent reads its model/credential configuration from
- * `~/.tch-agent/config` (override with `CAIRN_AGENT_CONFIG_DIR`). The model is selected
+ * `~/.cairnweave/config` (override with `CAIRN_AGENT_CONFIG_DIR`). The model is selected
  * by the `model: "cairn-worker"` entry in the prompt frontmatter, which points at a
  * model-prefs.json record.
  */

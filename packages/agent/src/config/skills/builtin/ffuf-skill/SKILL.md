@@ -1,291 +1,291 @@
 ---
 name: ffuf-skill
-description: Help with ffuf-based Web parameter fuzzing. Use this skill whenever the user wants to fuzz Web request paths, query parameters, headers, POST bodies, JSON fields, or raw HTTP requests with ffuf, or when they ask for an ffuf command, wordlist choice, false-positive filtering, matcher/filter tuning, or replaying hits into Burp/ZAP. 
+description: 协助使用 ffuf 对 Web 参数进行模糊测试。当用户想用 ffuf 对 Web 请求路径、查询参数、请求头、POST 请求体、JSON 字段或原始 HTTP 请求进行 fuzz，或者询问 ffuf 命令、字典选择、误报过滤、matcher/filter 调优，以及如何把命中结果重放到 Burp/ZAP 时，使用本技能。
 ---
 
 # ffuf-skill
 
-Use this skill to turn a Web fuzzing goal into a practical `ffuf` command, not into a long theory dump.
+用本技能把一个 Web 模糊测试目标变成可用的 `ffuf` 命令，而不是一大篇理论。
 
-Focus on these request locations:
-- URL path segments
-- Query parameter names
-- Query parameter values
-- Header names or values
-- Form body fields
-- JSON body fields
-- Raw HTTP request files with one or more `FUZZ` markers
+聚焦以下请求位置：
+- URL 路径片段
+- 查询参数名
+- 查询参数值
+- 请求头名或值
+- 表单请求体字段
+- JSON 请求体字段
+- 含一个或多个 `FUZZ` 标记的原始 HTTP 请求文件
 
-Do not drift into unrelated offensive guidance. Keep the help scoped to authorized testing and the user's stated target.
+不要偏离到无关的攻击性指导。把帮助限定在授权测试和用户声明的目标范围内。
 
-## Safety boundary
+## 安全边界
 
-- Help only with authorized testing, labs, demos, or user-owned systems.
-- If authorization is unclear, ask one short clarification before giving target-specific commands.
-- Do not pretend a target is authorized when the user has not said so.
+- 只协助授权测试、实验环境、演示或用户自有的系统。
+- 如果授权不明确，在给出针对具体目标的命令前，先问一句简短澄清。
+- 用户没有说明时，不要假定目标已获授权。
 
-## Default response style
+## 默认回复风格
 
-Match the user's language.
+与用户使用的语言保持一致。
 
-For most requests, structure the answer as:
+对大多数请求，按下面的结构组织回答：
 
-### Recommended command
+### 推荐命令
 
-Provide one primary `ffuf` command first. If there is a meaningful variant, provide one alternative command after it.
+先给出一条主要的 `ffuf` 命令。如果有意义明确的变体，再在其后给出一条备选命令。
 
-### Why this setup
+### 为什么这样配置
 
-Explain the key flags briefly:
-- fuzz location
-- chosen wordlist
-- request method/body/headers
-- why the selected matcher/filter is a reasonable starting point
+简要说明关键参数：
+- fuzz 位置
+- 所选字典
+- 请求方法/请求体/请求头
+- 为什么所选的 matcher/filter 是合理的起点
 
-### Noise-control tips
+### 降低噪声的建议
 
-Explain how to reduce false positives for this case.
+说明在当前场景下如何减少误报。
 
-### What to look for
+### 该关注什么
 
-Tell the user what result differences usually matter, such as:
-- changed status code
-- different response size
-- different word or line count
-- regex hit in body or headers
-- unusual timing
+告诉用户哪些结果差异通常有意义，例如：
+- 状态码变化
+- 响应长度不同
+- 单词数或行数不同
+- 响应体或响应头中出现正则命中
+- 异常的响应时间
 
-Keep the explanation concise. The user asked for something runnable.
+解释保持简洁。用户要的是能直接跑起来的东西。
 
-If the prompt is missing one essential detail, ask one short question first. Good examples:
-- which request location should be fuzzed
-- whether the user already has a raw request file
-- which baseline response should be filtered out
+如果提示缺少一项关键细节，先问一个简短问题。好的例子：
+- 应该 fuzz 哪个请求位置
+- 用户是否已有原始请求文件
+- 应该过滤掉哪条基线响应
 
-If the request is already clear enough, do not pause to ask extra questions.
+如果请求已经足够清楚，就不要停下来问额外问题。
 
-## Local dictionaries
+## 本地字典
 
-`dicts/` is the local dictionary directory for this skill.
+`dicts/` 是本技能使用的本地字典目录。
 
-How to use it:
-- Prefer dictionaries from `ffuf-skill/dicts/` when generating commands.
-- Do not assume `SecLists` or other external wordlists are installed.
-- If the user does not specify a dictionary, recommend a likely file from `dicts/` based on the fuzz target.
-- If `dicts/` does not yet contain a suitable file, say what category is needed, such as parameter names, headers, JSON keys, paths, or payload values.
+使用方法：
+- 生成命令时，优先使用 `ffuf-skill/dicts/` 中的字典。
+- 不要假定已安装 `SecLists` 或其他外部字典。
+- 如果用户没有指定字典，根据 fuzz 目标推荐 `dicts/` 中可能合适的文件。
+- 如果 `dicts/` 中还没有合适的文件，说明需要哪一类字典，例如参数名、请求头、JSON 键、路径或 payload 值。
 
-Dictionary inventory placeholder:
+字典清单占位：
 
-| File | Purpose | Typical use | Notes |
+| 文件 | 用途 | 典型用法 | 备注 |
 | --- | --- | --- | --- |
 
-Suggested dictionary categories for this directory:
-- `params.txt`: common query or form parameter names
-- `json-fields.txt`: common JSON field names
-- `header-names.txt`: common header names
-- `header-values.txt`: header payloads or candidate values
-- `paths.txt`: common directories, endpoints, or filenames
-- `values.txt`: common IDs, roles, flags, or payload values
+本目录建议的字典分类：
+- `params.txt`：常见查询参数或表单参数名
+- `json-fields.txt`：常见 JSON 字段名
+- `header-names.txt`：常见请求头名
+- `header-values.txt`：请求头 payload 或候选值
+- `paths.txt`：常见目录、接口或文件名
+- `values.txt`：常见 ID、角色、标志位或 payload 值
 
-## Core workflow
+## 核心工作流
 
-Follow this sequence.
+按以下顺序执行。
 
-1. Identify the fuzz point
-- Decide whether the user wants to fuzz a path, query key, query value, header, form field, JSON field, or a raw request.
-- If the prompt already includes a request sample, reuse its method, headers, and body shape.
+1. 识别 fuzz 点
+- 判断用户想 fuzz 的是路径、查询键、查询值、请求头、表单字段、JSON 字段，还是原始请求。
+- 如果提示中已包含请求样例，复用它的方法、请求头和请求体结构。
 
-2. Pick the request format
-- Prefer `-u` for simple path or query fuzzing.
-- Prefer `-request <file>` when the user already has a raw HTTP request from Burp or another proxy.
-- Use `-X`, `-H`, and `-d` when reconstructing a request inline is still simple.
-- When the user already has a real authenticated request, prefer `-request` so cookies, tokens, and odd headers stay intact.
+2. 选择请求格式
+- 简单的路径或查询 fuzz，优先用 `-u`。
+- 当用户已有来自 Burp 或其他代理的原始 HTTP 请求时，优先用 `-request <file>`。
+- 当内联重建请求仍然简单时，使用 `-X`、`-H` 和 `-d`。
+- 当用户已有真实的带认证请求时，优先用 `-request`，以保持 cookie、token 和特殊请求头完整。
 
-3. Pick the dictionary
-- Parameter name fuzzing: choose a parameter-name or API-field dictionary.
-- Header fuzzing: choose a header-name dictionary or a value payload dictionary.
-- JSON or form value fuzzing: choose payloads or candidate values.
-- Path fuzzing: choose path, file, or endpoint dictionaries.
+3. 选择字典
+- 参数名 fuzz：选择参数名或 API 字段字典。
+- 请求头 fuzz：选择请求头名字典或值 payload 字典。
+- JSON 或表单值 fuzz：选择 payload 或候选值。
+- 路径 fuzz：选择路径、文件或接口字典。
 
-4. Add a starting matcher or filter
-- Start simple.
-- If the application returns varied status codes, begin with `-mc`.
-- If the application returns the same status code for everything, begin with `-mc all` plus `-fs`, `-fw`, or `-fl`.
-- Use regex or timing only when there is a clear reason.
+4. 添加起始 matcher 或 filter
+- 从简单开始。
+- 如果应用返回多种状态码，先用 `-mc`。
+- 如果应用对一切请求都返回同一状态码，先用 `-mc all` 加上 `-fs`、`-fw` 或 `-fl`。
+- 只有在有明确理由时才使用正则或时间差。
 
-5. Tell the user how to validate hits
-- Suggest replaying likely hits to Burp/ZAP with `-replay-proxy` when manual inspection matters.
-- Point out which differences are likely signal versus background noise.
+5. 告诉用户如何验证命中
+- 当人工检查重要时，建议用 `-replay-proxy` 把可疑命中重放到 Burp/ZAP。
+- 指出哪些差异更像信号，哪些只是背景噪声。
 
-6. Prefer one best command over many mediocre ones
-- Give one default command first.
-- Add one alternative only if there is a real tradeoff, such as `-request` versus inline reconstruction, or `-fs` versus `-fw`.
-- Do not dump five variants unless the user asked for comparison.
+6. 宁可给一条最佳命令，也不要给一堆平庸命令
+- 先给一条默认命令。
+- 只有在存在真正取舍时才加一条备选，例如 `-request` 与内联重建之间，或 `-fs` 与 `-fw` 之间。
+- 除非用户要求对比，否则不要倒出五个变体。
 
-## Command patterns
+## 命令模式
 
-### Path fuzzing
+### 路径 fuzz
 
-Use when the unknown part is a directory, endpoint, or filename in the URL path.
+当未知部分是 URL 路径中的目录、接口或文件名时使用。
 
-Example:
+示例：
 
 ```bash
 ffuf -w ffuf-skill/dicts/paths.txt -u 'https://target.example/FUZZ' -mc all -fs 1234
 ```
 
-### Query parameter name fuzzing
+### 查询参数名 fuzz
 
-Use when the application may accept undocumented GET parameter names.
+当应用可能接受未文档化的 GET 参数名时使用。
 
-This is one of the highest-value defaults when the user says "fuzz this request parameter" but only shows a URL.
+当用户说“fuzz 一下这个请求参数”却只给了一个 URL 时，这是最有价值的默认做法之一。
 
-Example:
+示例：
 
 ```bash
 ffuf -w ffuf-skill/dicts/params.txt -u 'https://target.example/search?FUZZ=test' -mc all -fs 4242
 ```
 
-### Query parameter value fuzzing
+### 查询参数值 fuzz
 
-Use when the parameter name is known and the interesting part is its value.
+当参数名已知、真正有意思的是它的值时使用。
 
-Example:
+示例：
 
 ```bash
 ffuf -w ffuf-skill/dicts/values.txt -u 'https://target.example/api/items?id=FUZZ' -mc all -fw 87
 ```
 
-### Header fuzzing
+### 请求头 fuzz
 
-Use when the header name or value may change application behavior.
+当请求头名或值可能改变应用行为时使用。
 
-Typical cases:
-- IP-related headers such as `X-Forwarded-For`
-- cache or routing headers
-- feature or debug headers
-- custom application headers
+典型场景：
+- 与 IP 相关的请求头，例如 `X-Forwarded-For`
+- 缓存或路由请求头
+- 功能开关或调试请求头
+- 应用自定义请求头
 
-Example header value fuzzing:
+请求头值 fuzz 示例：
 
 ```bash
 ffuf -w ffuf-skill/dicts/header-values.txt -u 'https://target.example/profile' -H 'X-Forwarded-For: FUZZ' -mc all -fl 52
 ```
 
-Example header name fuzzing:
+请求头名 fuzz 示例：
 
 ```bash
 ffuf -w ffuf-skill/dicts/header-names.txt -u 'https://target.example/profile' -H 'FUZZ: 127.0.0.1' -mc all -fl 52
 ```
 
-### Form body fuzzing
+### 表单请求体 fuzz
 
-Use when the request body is form-encoded.
+当请求体是表单编码时使用。
 
-Example:
+示例：
 
 ```bash
 ffuf -w ffuf-skill/dicts/form-fields.txt -u 'https://target.example/login' -X POST -H 'Content-Type: application/x-www-form-urlencoded' -d 'FUZZ=test' -mc all -fs 3010
 ```
 
-### JSON body fuzzing
+### JSON 请求体 fuzz
 
-Use when the request body is JSON. Remember to keep `Content-Type: application/json`.
+当请求体是 JSON 时使用。记得保留 `Content-Type: application/json`。
 
-Example field value fuzzing:
+字段值 fuzz 示例：
 
 ```bash
 ffuf -w ffuf-skill/dicts/json-values.txt -u 'https://target.example/api/user' -X POST -H 'Content-Type: application/json' -d '{"role":"FUZZ"}' -mc all -fw 91
 ```
 
-Example field name fuzzing:
+字段名 fuzz 示例：
 
 ```bash
 ffuf -w ffuf-skill/dicts/json-fields.txt -u 'https://target.example/api/user' -X POST -H 'Content-Type: application/json' -d '{"FUZZ":"test"}' -mc all -fw 91
 ```
 
-### Raw request fuzzing
+### 原始请求 fuzz
 
-Use `-request` when the user already has a complete request captured in Burp or wants to fuzz multiple custom headers/body fields without rebuilding the request inline.
+当用户已有在 Burp 中捕获的完整请求，或希望在不内联重建请求的情况下 fuzz 多个自定义请求头/请求体字段时，使用 `-request`。
 
-Example:
+示例：
 
 ```bash
 ffuf -w ffuf-skill/dicts/params.txt -request request.txt -mc all -fs 4242
 ```
 
-If the request is plain HTTP rather than HTTPS, add `-request-proto http`.
+如果请求是普通 HTTP 而非 HTTPS，添加 `-request-proto http`。
 
-## Matchers and filters
+## Matcher 与 filter
 
-The most important part of this skill is choosing a sane starting point for signal versus noise.
+本技能最关键的部分，是为“信号与噪声”选一个合理的起点。
 
-### Good defaults
+### 好的默认选择
 
-- Use `-mc` when meaningful responses already differ by status code.
-- Use `-mc all` when the application hides behavior behind a uniform status code.
-- Then filter the known baseline with one of:
-  - `-fs` for response size
-  - `-fw` for word count
-  - `-fl` for line count
+- 当有意义的响应已经能靠状态码区分时，使用 `-mc`。
+- 当应用把行为藏在统一状态码后面时，使用 `-mc all`。
+- 然后用以下之一过滤已知基线：
+  - `-fs` 按响应大小
+  - `-fw` 按单词数
+  - `-fl` 按行数
 
-### When to prefer each control
+### 何时优先用哪种控制
 
-- Prefer `-fs` when the application is stable and returns nearly identical bodies.
-- Prefer `-fw` when content length changes slightly because user input is reflected.
-- Prefer `-fl` when the page template is stable but words vary too much.
-- Use `-mr` or `-fr` when the user cares about a specific string or header pattern.
-- Use `-mt` or `-ft` for timing-based differences only when delay is the actual signal.
+- 当应用稳定、返回的响应体几乎完全一致时，优先用 `-fs`。
+- 当内容长度因用户输入回显而轻微变化时，优先用 `-fw`。
+- 当页面模板稳定但单词数变化过大时，优先用 `-fl`。
+- 当用户关心特定字符串或请求头模式时，使用 `-mr` 或 `-fr`。
+- 只有在延迟本身就是信号时，才用 `-mt` 或 `-ft` 做时间差判断。
 
-### Baseline-first habit
+### 基线优先的习惯
 
-If the application behavior is unclear, tell the user to first send one or two known-bad requests and note the common response:
-- status code
-- size
-- words
-- lines
+如果应用行为不清楚，告诉用户先发一两次已知失败的请求，记录常见响应特征：
+- 状态码
+- 大小
+- 单词数
+- 行数
 
-Then build the first filter around that baseline instead of guessing.
+然后围绕该基线构建第一个 filter，而不是凭感觉猜。
 
-When helpful, tell the user this explicitly:
-- if status code is uniform, start with `-mc all`
-- if body length is stable, try `-fs`
-- if input reflection changes length slightly, try `-fw`
-- if only a specific marker matters, use `-mr`
+在有帮助时，明确告诉用户：
+- 如果状态码统一，先用 `-mc all`
+- 如果响应体长度稳定，试试 `-fs`
+- 如果输入回显导致长度轻微变化，试试 `-fw`
+- 如果只有某个特定标记重要，使用 `-mr`
 
-## Multi-wordlist usage
+## 多字典用法
 
-Only introduce multiple wordlists when the user clearly needs it.
+只有当用户明确需要时才引入多字典。
 
-- `clusterbomb` tries every combination and grows very fast.
-- `pitchfork` walks wordlists in lockstep and is useful for paired data.
+- `clusterbomb` 会尝试所有组合，规模增长极快。
+- `pitchfork` 让多个字典同步推进，适合成对数据。
 
-For ordinary Web parameter fuzzing, one wordlist is usually the right default.
+对普通的 Web 参数 fuzz，一个字典通常就是正确的默认选择。
 
-## Replay and output
+## 重放与输出
 
-- Use `-replay-proxy http://127.0.0.1:8080` when the user wants promising hits sent to Burp or ZAP for manual review.
-- Use `-o <file> -of json` when the user wants structured output for later processing.
-- Use `-json` when the user wants machine-readable stdout during automation.
+- 当用户想把有希望的命中送到 Burp 或 ZAP 人工审查时，使用 `-replay-proxy http://127.0.0.1:8080`。
+- 当用户想要便于后续处理的结构化输出时，使用 `-o <file> -of json`。
+- 当用户在自动化中需要机器可读的 stdout 时，使用 `-json`。
 
-## Anti-patterns
+## 反模式
 
-Avoid these common mistakes:
-- forgetting `Content-Type: application/json` for JSON body fuzzing
-- rebuilding a complex authenticated request inline when `-request` would preserve it safely
-- stacking too many filters before establishing a baseline
-- assuming every interesting hit will use a different status code
-- recommending multi-wordlist modes for simple single-parameter fuzzing
+避免这些常见错误：
+- JSON 请求体 fuzz 时忘记 `Content-Type: application/json`
+- 明明 `-request` 能安全保留复杂的带认证请求，却去内联重建它
+- 在建立基线之前就叠加过多 filter
+- 假定每个有价值的命中都会使用不同的状态码
+- 对简单的单参数 fuzz 推荐多字典模式
 
-## When to read references
+## 何时查阅参考资料
 
-Read `references/ffuf-web-params.md` when:
-- you need a denser parameter cheat sheet
-- you need more example templates
-- you need a quick reminder of matcher/filter tradeoffs
-- the user asks about ffuf configuration or scraper-related features
+在以下情况下阅读 `references/ffuf-web-params.md`：
+- 你需要更密集的参数速查表
+- 你需要更多示例模板
+- 你需要快速回顾 matcher/filter 的取舍
+- 用户询问 ffuf 配置或 scraper 相关功能
 
-## Example prompts this skill should handle well
+## 本技能应能很好处理的示例提示
 
 - `帮我写一个 ffuf 命令，fuzz 这个 GET 请求里可能存在的隐藏参数名。`
 - `我有个 Burp 导出的 request.txt，想 fuzz JSON body 里的字段名。`

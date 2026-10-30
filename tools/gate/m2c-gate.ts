@@ -3,7 +3,7 @@
  * least one new fact.
  *
  * This script is intentionally outside `bun test`: it calls a real model, costs money and
- * needs `~/.tch-agent/config` credentials. Run it with:
+ * needs `~/.cairnweave/config` credentials. Run it with:
  *
  *   bun run tools/gate/m2c-gate.ts
  *

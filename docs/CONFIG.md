@@ -68,9 +68,14 @@ curl -X PUT http://127.0.0.1:8000/settings/runtime \
 | DELETE | `/settings/agent/skills/{name}` | 删除目录并从白名单移除；内置技能会把顶层目录名记进 `.deleted-builtins.json` |
 | POST | `/settings/agent/skills/{name}/restore` | 仅内置技能：清除删除记录并回填文件，不自动启用；非内置 404，未删除仍存在 409 |
 | PUT | `/settings/agent/skills/{name}/enabled` | 请求体 `{enabled}`，只改 `cairn-worker` prompt 的 `meta.skills` |
+| GET | `/settings/agent/skills/{name}/files` | 只读文件树 `{directory, files:[{path,size}], truncated}`；`SKILL.md` 永远排第一，其余按路径排序 |
+| GET | `/settings/agent/skills/{name}/file?path=` | 只读单文件 `{path, size, content, truncated, binary}`；`path` 必填，越界/目录/软链接 400，未知技能或文件 404 |
 
 - 技能文件存在不等于生效：`buildResourceLoader` 只加载 prompt 白名单里的名字。内置 17 个，
   `cairn-worker` 默认引用其中 12 个；其余 5 个可在页签里「启用」。
+- 浏览只走 GET：列表最多 200 个文件、递归深度 8、单文件读 256 KiB 前缀，超限分别置
+  `truncated`；含 NUL 的内容标记 `binary` 且不回传正文。路径逐段拒绝空段、`.`、`..`、
+  超长段与 `\/:*?"<>|` 及控制字符，再做词法 + realpath 双重包含检查，软链接一律拒绝。
 - 名字须匹配 `^[a-z0-9]+(?:-[a-z0-9]+)*$` 且 ≤64 字符，并与目录名一致；删除/启停按目录名
   另做 `[A-Za-z0-9][A-Za-z0-9._-]*` 校验，`..` 等越界标识返回 400。
 - 删除内置只写删除记录并移除文件，重启或再次打开页签都不会回填；「恢复」只回填文件。
@@ -220,6 +225,10 @@ curl -X PUT http://127.0.0.1:8000/settings/runtime \
 - 技能页签列出内置/自定义、已启用/未启用与已删除技能，行内启停、删除（内置先说明跨重启并
   提供恢复）与恢复；新增表单提交 `{name, description, content, enabled}`，与 API 同构地
   校验名称、单行描述与正文。
+- 「预览」打开 `data-modal="skillDetail"` 详情弹窗（叠在设置弹窗之上，Esc 仍只关最上层）：
+  左侧由 `skillDetailTree()` 把扁平路径还原成目录 + 文件两级视图并显示大小，右侧
+  `<pre>` 原样渲染正文；打开即自动预览排序后的第一个文件。已删除的内置没有文件，行内
+  不出现「预览」；启停按钮在详情头部，成功后按最新列表刷新徽标；启停写入期间不允许关闭。
 - 运行配置字段按「执行环境 / 调度 / 任务超时 / 图切片与证据 / Worker 与选择 / 保留与预算 /
   策略触发 / 提案」分组；数字、开关、下拉与多选（`allow_kinds`）四种控件。执行环境组放
   local / container 下拉与「测试有效性」按钮；测试结果在组内逐项列出（✓/✗ + 说明），
@@ -245,7 +254,11 @@ curl -X PUT http://127.0.0.1:8000/settings/runtime \
 - `apps/cairn/src/http/api.ui.test.ts`：统一设置弹窗与页签、每个可编辑路径恰好一个控件、
   最小 patch（含 `runtime.execution`）、执行环境测试按钮的请求体/结果/切换清空、空数字
   输入、400/409 行内错误、二次确认重置、写入期间禁止关闭、浏览器标题跟随项目名；以及
-  技能页签的按需加载与计数、表单校验与请求体、启停/删除确认/恢复、行内错误。
+  技能页签的按需加载与计数、表单校验与请求体、启停/删除确认/恢复、行内错误，技能详情弹窗
+  的文件树与首个文件自动预览、路径编码、二进制/截断标记、写入期间禁止关闭与关闭后复位。
 - `apps/cairn/src/http/api.skills.test.ts`：内置播种与白名单计数、创建（立即启用/不启用）、
   非法载荷与 413、重名与已删除内置 409、启停与 404/400、路径穿越拒绝、自定义删除、
-  内置删除跨重启持久化与恢复语义、跨源与 operator token 守卫。
+  内置删除跨重启持久化与恢复语义、跨源与 operator token 守卫；文件浏览的排序与截断标记、
+  正文逐字节回传、嵌套目录读取、二进制与 256 KiB 截断、穿越/未知技能/缺失文件拒绝。
+- `apps/cairn/src/agent-config-dir.test.ts`：默认目录解析与环境变量覆盖、拒绝根同时覆盖
+  新旧两代、迁移只在目标为空时复制、跳过软链接、超过 64 MiB 上限、旧目录保持不变。

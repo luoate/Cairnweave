@@ -18,9 +18,9 @@ import {
   mkdirSync,
   realpathSync,
 } from "node:fs";
-import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
+import { agentConfigDeniedRoots } from "../agent-config-dir";
 import { CONTAINER_AGENT_CONFIG } from "../runtime/paths";
 import { AuditStreamSender, type AuditStreamSenderOptions } from "./audit-stream";
 import { analyzeCommand } from "./command";
@@ -157,11 +157,9 @@ export class HostBridge {
             taskId: options.taskId,
             sessionDir: options.sessionDir,
           });
-    this.deniedRoots = [
-      CONTAINER_AGENT_CONFIG,
-      resolve(homedir(), ".tch-agent", "config"),
-      resolve(homedir(), ".tch-agent"),
-    ].map((path) => canonicalPath(path));
+    this.deniedRoots = [CONTAINER_AGENT_CONFIG, ...agentConfigDeniedRoots()].map(
+      (path) => canonicalPath(path),
+    );
     this.protectedWriteRoots = (options.protectedWriteRoots ?? []).map((path) =>
       canonicalPath(resolve(path)),
     );

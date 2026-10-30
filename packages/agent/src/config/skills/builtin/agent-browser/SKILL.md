@@ -1,21 +1,21 @@
 ---
 name: agent-browser
-description: Browser automation CLI for AI agents. Use when the user needs to interact with websites, including navigating pages, filling forms, clicking buttons, taking screenshots, extracting data, testing web apps, or automating any browser task. Triggers include requests to "open a website", "fill out a form", "click a button", "take a screenshot", "scrape data from a page", "test this web app", "login to a site", "automate browser actions", or any task requiring programmatic web interaction.
+description: 面向 AI agent 的浏览器自动化 CLI。当用户需要与网站交互时使用，包括导航页面、填写表单、点击按钮、截图、提取数据、测试 Web 应用，或自动化任何浏览器任务。触发场景包括“打开某个网站”“填写表单”“点击按钮”“截图”“从页面抓取数据”“测试这个 Web 应用”“登录某个站点”“自动化浏览器操作”等请求，以及任何需要以编程方式与 Web 交互的任务。
 allowed-tools: Bash(npx agent-browser:*), Bash(agent-browser:*)
 ---
 
-# Browser Automation with agent-browser
+# 使用 agent-browser 进行浏览器自动化
 
-The CLI uses Chrome/Chromium via CDP directly. Install via `npm i -g agent-browser`, `brew install agent-browser`, or `cargo install agent-browser`. Run `agent-browser install` to download Chrome. Existing Chrome, Brave, Playwright, and Puppeteer installations are detected automatically. Run `agent-browser upgrade` to update to the latest version.
+该 CLI 通过 CDP 直接使用 Chrome/Chromium。可通过 `npm i -g agent-browser`、`brew install agent-browser` 或 `cargo install agent-browser` 安装。运行 `agent-browser install` 下载 Chrome。已安装的 Chrome、Brave、Playwright 和 Puppeteer 会被自动检测。运行 `agent-browser upgrade` 可更新到最新版本。
 
-## Core Workflow
+## 核心工作流
 
-Every browser automation follows this pattern:
+每个浏览器自动化任务都遵循以下模式：
 
-1. **Navigate**: `agent-browser open <url>`
-2. **Snapshot**: `agent-browser snapshot -i` (get element refs like `@e1`, `@e2`)
-3. **Interact**: Use refs to click, fill, select
-4. **Re-snapshot**: After navigation or DOM changes, get fresh refs
+1. **导航**：`agent-browser open <url>`
+2. **快照**：`agent-browser snapshot -i`（获取形如 `@e1`、`@e2` 的元素引用）
+3. **交互**：使用引用进行点击、填写、选择
+4. **重新快照**：导航或 DOM 变化后，重新获取引用
 
 ```bash
 agent-browser open https://example.com/form
@@ -29,9 +29,9 @@ agent-browser wait 2000
 agent-browser snapshot -i  # Check result
 ```
 
-## Command Chaining
+## 命令串联
 
-Commands can be chained with `&&` in a single shell invocation. The browser persists between commands via a background daemon, so chaining is safe and more efficient than separate calls.
+命令可以在单次 shell 调用中用 `&&` 串联。浏览器通过后台守护进程在命令之间保持状态，因此串联是安全的，且比分多次调用更高效。
 
 ```bash
 # Chain open + snapshot in one call (open already waits for page load)
@@ -44,13 +44,13 @@ agent-browser fill @e1 "user@example.com" && agent-browser fill @e2 "password123
 agent-browser open https://example.com && agent-browser screenshot
 ```
 
-**When to chain:** Use `&&` when you don't need to read the output of an intermediate command before proceeding (e.g., open + wait + screenshot). Run commands separately when you need to parse the output first (e.g., snapshot to discover refs, then interact using those refs).
+**何时串联：** 当你不需要先读取中间命令的输出就能继续时（例如 open + wait + screenshot），使用 `&&`。当你需要先解析输出时（例如先用 snapshot 发现引用，再用这些引用进行交互），请分开运行命令。
 
-## Handling Authentication
+## 处理认证
 
-When automating a site that requires login, choose the approach that fits:
+在自动化需要登录的站点时，选择适合的方式：
 
-**Option 1: Import auth from the user's browser (fastest for one-off tasks)**
+**方案 1：从用户浏览器导入认证状态（一次性任务最快）**
 
 ```bash
 # Connect to the user's running Chrome (they're already logged in)
@@ -59,9 +59,9 @@ agent-browser --auto-connect state save ./auth.json
 agent-browser --state ./auth.json open https://app.example.com/dashboard
 ```
 
-State files contain session tokens in plaintext -- add to `.gitignore` and delete when no longer needed. Set `AGENT_BROWSER_ENCRYPTION_KEY` for encryption at rest.
+状态文件以明文形式包含会话令牌——请将其加入 `.gitignore`，并在不再需要时删除。设置 `AGENT_BROWSER_ENCRYPTION_KEY` 可启用静态加密。
 
-**Option 2: Chrome profile reuse (zero setup)**
+**方案 2：复用 Chrome 用户配置（零配置）**
 
 ```bash
 # List available Chrome profiles
@@ -71,7 +71,7 @@ agent-browser profiles
 agent-browser --profile Default open https://gmail.com
 ```
 
-**Option 3: Persistent profile (for recurring tasks)**
+**方案 3：持久化配置目录（适用于周期性任务）**
 
 ```bash
 # First run: login manually or via automation
@@ -82,7 +82,7 @@ agent-browser --profile ~/.myapp open https://app.example.com/login
 agent-browser --profile ~/.myapp open https://app.example.com/dashboard
 ```
 
-**Option 4: Session name (auto-save/restore cookies + localStorage)**
+**方案 4：会话名称（自动保存/恢复 cookies 和 localStorage）**
 
 ```bash
 agent-browser --session-name myapp open https://app.example.com/login
@@ -93,16 +93,16 @@ agent-browser close  # State auto-saved
 agent-browser --session-name myapp open https://app.example.com/dashboard
 ```
 
-**Option 5: Auth vault (credentials stored encrypted, login by name)**
+**方案 5：认证保管库（凭据加密存储，按名称登录）**
 
 ```bash
 echo "$PASSWORD" | agent-browser auth save myapp --url https://app.example.com/login --username user --password-stdin
 agent-browser auth login myapp
 ```
 
-`auth login` navigates with `load` and then waits for login form selectors to appear before filling/clicking, which is more reliable on delayed SPA login screens.
+`auth login` 以 `load` 策略导航，然后等待登录表单选择器出现后再填写/点击，这在延迟渲染的 SPA 登录页面上更可靠。
 
-**Option 6: State file (manual save/load)**
+**方案 6：状态文件（手动保存/加载）**
 
 ```bash
 # After logging in:
@@ -112,9 +112,9 @@ agent-browser state load ./auth.json
 agent-browser open https://app.example.com/dashboard
 ```
 
-See [references/authentication.md](references/authentication.md) for OAuth, 2FA, cookie-based auth, and token refresh patterns.
+关于 OAuth、2FA、基于 cookie 的认证以及令牌刷新模式，参见 [references/authentication.md](references/authentication.md)。
 
-## Essential Commands
+## 常用命令
 
 ```bash
 # Batch: ALWAYS use batch for 2+ sequential commands. Commands run in order.
@@ -233,13 +233,13 @@ agent-browser -v chat "fill in the login form"            # Verbose (show comman
 agent-browser --model openai/gpt-4o chat "take a screenshot"  # Override model
 ```
 
-## Streaming
+## 流式传输
 
-Every session automatically starts a WebSocket stream server on an OS-assigned port. Use `agent-browser stream status` to see the bound port and connection state. Use `stream disable` to tear it down, and `stream enable --port <port>` to re-enable on a specific port.
+每个会话都会自动在操作系统分配的端口上启动一个 WebSocket 流服务器。使用 `agent-browser stream status` 查看绑定的端口和连接状态。使用 `stream disable` 将其关闭，使用 `stream enable --port <port>` 在指定端口上重新启用。
 
-## Batch Execution
+## 批量执行
 
-ALWAYS use `batch` when running 2+ commands in sequence. Batch executes commands in order, so dependent commands (like navigate then screenshot) work correctly. Each quoted argument is a separate command.
+按顺序运行 2 个及以上命令时，务必使用 `batch`。Batch 按顺序执行命令，因此有依赖关系的命令（例如先导航再截图）可以正确工作。每个带引号的参数都是一条独立命令。
 
 ```bash
 # Navigate and take a snapshot
@@ -255,24 +255,24 @@ agent-browser batch "click @e1" "wait 1000" "screenshot"
 agent-browser batch --bail "open https://example.com" "click @e1" "screenshot"
 ```
 
-Only use a single command (not batch) when you need to read the output before deciding the next command. For example, you must run `snapshot -i` as a single command when you need to read the refs to decide what to click. After reading the snapshot, batch the remaining steps.
+只有在需要读取输出后才能决定下一条命令时，才使用单条命令（而非 batch）。例如，当你需要读取引用来决定点击哪个元素时，必须将 `snapshot -i` 作为单条命令运行。读取快照后，再将其余步骤放入 batch。
 
-Stdin mode is also supported for programmatic use:
+也支持 stdin 模式，便于程序化调用：
 
 ```bash
 echo '[["open","https://example.com"],["screenshot"]]' | agent-browser batch --json
 agent-browser batch --bail < commands.json
 ```
 
-## Efficiency Strategies
+## 效率策略
 
-These patterns minimize tool calls and token usage.
+这些模式可以最大限度地减少工具调用次数和 token 消耗。
 
-**Use `--urls` to avoid re-navigation.** When you need to visit links from a page, use `snapshot -i --urls` to get all href URLs upfront. Then `open` each URL directly instead of clicking refs and navigating back.
+**使用 `--urls` 避免重复导航。** 当需要访问页面中的链接时，使用 `snapshot -i --urls` 一次性获取所有 href URL。然后直接 `open` 每个 URL，而不是点击引用后再导航回来。
 
-**Snapshot once, act many times.** Never re-snapshot the same page. Extract all needed info (refs, URLs, text) from a single snapshot, then batch the remaining actions.
+**一次快照，多次操作。** 绝不要对同一页面重复快照。从一次快照中提取所有需要的信息（引用、URL、文本），然后将其余操作批量执行。
 
-**Multi-page workflow (e.g. "visit N sites and screenshot each"):**
+**多页面工作流（例如“访问 N 个站点并分别截图”）：**
 
 ```bash
 # 1. Get all URLs in one call
@@ -284,11 +284,11 @@ agent-browser batch "open https://example.com/article" "screenshot"
 agent-browser batch "open https://other.com/page" "screenshot"
 ```
 
-This approach uses 4 tool calls instead of 14+. Never go back to the listing page between visits.
+这种方法使用 4 次工具调用，而不是 14 次以上。绝不要在两次访问之间返回列表页。
 
-## Common Patterns
+## 常见模式
 
-### Form Submission
+### 表单提交
 
 ```bash
 # Navigate and get the form structure
@@ -297,7 +297,7 @@ agent-browser batch "open https://example.com/signup" "snapshot -i"
 agent-browser batch "fill @e1 \"Jane Doe\"" "fill @e2 \"jane@example.com\"" "select @e3 \"California\"" "check @e4" "click @e5" "wait 2000"
 ```
 
-### Authentication with Auth Vault (Recommended)
+### 使用认证保管库进行认证（推荐）
 
 ```bash
 # Save credentials once (encrypted with AGENT_BROWSER_ENCRYPTION_KEY)
@@ -313,9 +313,9 @@ agent-browser auth show github
 agent-browser auth delete github
 ```
 
-`auth login` waits for username/password/submit selectors before interacting, with a timeout tied to the default action timeout.
+`auth login` 在交互之前会等待用户名/密码/提交选择器出现，其超时时间与默认操作超时时间一致。
 
-### Authentication with State Persistence
+### 使用状态持久化进行认证
 
 ```bash
 # Login once and save state
@@ -327,7 +327,7 @@ agent-browser batch "fill @e1 \"$USERNAME\"" "fill @e2 \"$PASSWORD\"" "click @e3
 agent-browser batch "state load auth.json" "open https://app.example.com/dashboard"
 ```
 
-### Session Persistence
+### 会话持久化
 
 ```bash
 # Auto-save/restore cookies and localStorage across browser restarts
@@ -349,9 +349,9 @@ agent-browser state clear myapp
 agent-browser state clean --older-than 7
 ```
 
-### Working with Iframes
+### 处理 Iframe
 
-Iframe content is automatically inlined in snapshots. Refs inside iframes carry frame context, so you can interact with them directly.
+Iframe 的内容会自动内联到快照中。Iframe 内的引用带有 frame 上下文，因此可以直接与之交互。
 
 ```bash
 agent-browser batch "open https://example.com/checkout" "snapshot -i"
@@ -369,7 +369,7 @@ agent-browser batch "frame @e2" "snapshot -i"
 agent-browser frame main          # Return to main frame
 ```
 
-### Data Extraction
+### 数据提取
 
 ```bash
 agent-browser batch "open https://example.com/products" "snapshot -i"
@@ -381,7 +381,7 @@ agent-browser snapshot -i --json
 agent-browser get text @e1 --json
 ```
 
-### Parallel Sessions
+### 并行会话
 
 ```bash
 agent-browser --session site1 open https://site-a.com
@@ -393,7 +393,7 @@ agent-browser --session site2 snapshot -i
 agent-browser session list
 ```
 
-### Connect to Existing Chrome
+### 连接到现有 Chrome
 
 ```bash
 # Auto-discover running Chrome with remote debugging enabled
@@ -404,9 +404,9 @@ agent-browser --auto-connect snapshot
 agent-browser --cdp 9222 snapshot
 ```
 
-Auto-connect discovers Chrome via `DevToolsActivePort`, common debugging ports (9222, 9229), and falls back to a direct WebSocket connection if HTTP-based CDP discovery fails.
+自动连接会通过 `DevToolsActivePort`、常见调试端口（9222、9229）发现 Chrome；如果基于 HTTP 的 CDP 发现失败，则会回退为直接建立 WebSocket 连接。
 
-### Color Scheme (Dark Mode)
+### 配色方案（深色模式）
 
 ```bash
 # Persistent dark mode via flag (applies to all pages and new tabs)
@@ -419,7 +419,7 @@ AGENT_BROWSER_COLOR_SCHEME=dark agent-browser open https://example.com
 agent-browser set media dark
 ```
 
-### Viewport & Responsive Testing
+### 视口与响应式测试
 
 ```bash
 # Set a custom viewport size (default is 1280x720)
@@ -440,9 +440,9 @@ agent-browser set device "iPhone 14"
 agent-browser screenshot device.png
 ```
 
-The `scale` parameter (3rd argument) sets `window.devicePixelRatio` without changing CSS layout. Use it when testing retina rendering or capturing higher-resolution screenshots.
+`scale` 参数（第 3 个参数）会设置 `window.devicePixelRatio`，但不改变 CSS 布局。在测试 retina 渲染或截取更高分辨率截图时使用它。
 
-### Visual Browser (Debugging)
+### 可视化浏览器（调试）
 
 ```bash
 agent-browser --headed open https://example.com
@@ -453,9 +453,9 @@ agent-browser profiler start         # Start Chrome DevTools profiling
 agent-browser profiler stop trace.json # Stop and save profile (path optional)
 ```
 
-Use `AGENT_BROWSER_HEADED=1` to enable headed mode via environment variable. Browser extensions work in both headed and headless mode.
+可通过环境变量 `AGENT_BROWSER_HEADED=1` 启用有头模式。浏览器扩展在有头和无头模式下均可工作。
 
-### Local Files (PDFs, HTML)
+### 本地文件（PDF、HTML）
 
 ```bash
 # Open local files with file:// URLs
@@ -464,7 +464,7 @@ agent-browser --allow-file-access open file:///path/to/page.html
 agent-browser screenshot output.png
 ```
 
-### iOS Simulator (Mobile Safari)
+### iOS 模拟器（Mobile Safari）
 
 ```bash
 # List available iOS simulators
@@ -486,17 +486,17 @@ agent-browser -p ios screenshot mobile.png
 agent-browser -p ios close
 ```
 
-**Requirements:** macOS with Xcode, Appium (`npm install -g appium && appium driver install xcuitest`)
+**环境要求：** 安装 Xcode 的 macOS，以及 Appium（`npm install -g appium && appium driver install xcuitest`）
 
-**Real devices:** Works with physical iOS devices if pre-configured. Use `--device "<UDID>"` where UDID is from `xcrun xctrace list devices`.
+**真机：** 如果已预先配置，也可用于物理 iOS 设备。使用 `--device "<UDID>"`，其中 UDID 来自 `xcrun xctrace list devices`。
 
-## Security
+## 安全
 
-All security features are opt-in. By default, agent-browser imposes no restrictions on navigation, actions, or output.
+所有安全功能均为按需开启（opt-in）。默认情况下，agent-browser 对导航、操作或输出不施加任何限制。
 
-### Content Boundaries (Recommended for AI Agents)
+### 内容边界（推荐 AI agent 使用）
 
-Enable `--content-boundaries` to wrap page-sourced output in markers that help LLMs distinguish tool output from untrusted page content:
+启用 `--content-boundaries` 可将来自页面的输出包裹在标记中，帮助 LLM 区分工具输出与不可信的页面内容：
 
 ```bash
 export AGENT_BROWSER_CONTENT_BOUNDARIES=1
@@ -507,9 +507,9 @@ agent-browser snapshot
 # --- END_AGENT_BROWSER_PAGE_CONTENT nonce=<hex> ---
 ```
 
-### Domain Allowlist
+### 域名允许列表
 
-Restrict navigation to trusted domains. Wildcards like `*.example.com` also match the bare domain `example.com`. Sub-resource requests, WebSocket, and EventSource connections to non-allowed domains are also blocked. Include CDN domains your target pages depend on:
+将导航限制在可信域名内。像 `*.example.com` 这样的通配符也会匹配裸域名 `example.com`。指向非允许域名的子资源请求、WebSocket 和 EventSource 连接同样会被阻止。请把目标页面依赖的 CDN 域名也加入列表：
 
 ```bash
 export AGENT_BROWSER_ALLOWED_DOMAINS="example.com,*.example.com"
@@ -517,33 +517,33 @@ agent-browser open https://example.com        # OK
 agent-browser open https://malicious.com       # Blocked
 ```
 
-### Action Policy
+### 操作策略
 
-Use a policy file to gate destructive actions:
+使用策略文件来管控破坏性操作：
 
 ```bash
 export AGENT_BROWSER_ACTION_POLICY=./policy.json
 ```
 
-Example `policy.json`:
+`policy.json` 示例：
 
 ```json
 { "default": "deny", "allow": ["navigate", "snapshot", "click", "scroll", "wait", "get"] }
 ```
 
-Auth vault operations (`auth login`, etc.) bypass action policy but domain allowlist still applies.
+认证保管库操作（如 `auth login` 等）会绕过操作策略，但域名允许列表仍然生效。
 
-### Output Limits
+### 输出限制
 
-Prevent context flooding from large pages:
+防止大页面导致上下文泛滥：
 
 ```bash
 export AGENT_BROWSER_MAX_OUTPUT=50000
 ```
 
-## Diffing (Verifying Changes)
+## 差异比较（验证变更）
 
-Use `diff snapshot` after performing an action to verify it had the intended effect. This compares the current accessibility tree against the last snapshot taken in the session.
+在执行操作后使用 `diff snapshot` 验证是否产生了预期效果。它会将当前可访问性树与本次会话中上一次的快照进行比较。
 
 ```bash
 # Typical workflow: snapshot -> action -> diff
@@ -552,7 +552,7 @@ agent-browser click @e2            # Perform action
 agent-browser diff snapshot        # See what changed (auto-compares to last snapshot)
 ```
 
-For visual regression testing or monitoring:
+用于视觉回归测试或监控：
 
 ```bash
 # Save a baseline screenshot, then compare later
@@ -564,13 +564,13 @@ agent-browser diff screenshot --baseline baseline.png
 agent-browser diff url https://staging.example.com https://prod.example.com --screenshot
 ```
 
-`diff snapshot` output uses `+` for additions and `-` for removals, similar to git diff. `diff screenshot` produces a diff image with changed pixels highlighted in red, plus a mismatch percentage.
+`diff snapshot` 的输出使用 `+` 表示新增、`-` 表示移除，类似 git diff。`diff screenshot` 会生成一张差异图，变化的像素以红色高亮，并给出不匹配百分比。
 
-## Timeouts and Slow Pages
+## 超时与慢速页面
 
-The default timeout is 25 seconds. This can be overridden with the `AGENT_BROWSER_DEFAULT_TIMEOUT` environment variable (value in milliseconds).
+默认超时时间为 25 秒。可通过 `AGENT_BROWSER_DEFAULT_TIMEOUT` 环境变量覆盖（值以毫秒为单位）。
 
-**Important:** `open` already waits for the page `load` event before returning. In most cases, no additional wait is needed before taking a snapshot or screenshot. Only add an explicit wait when content loads asynchronously after the initial page load.
+**重要：** `open` 在返回前已经等待了页面的 `load` 事件。大多数情况下，在截图或快照前不需要额外等待。只有当内容在页面初次加载后异步加载时，才需显式添加等待。
 
 ```bash
 # Wait for a specific element to appear (preferred for dynamic content)
@@ -590,11 +590,11 @@ agent-browser wait --text "Results loaded"
 agent-browser wait --fn "document.querySelectorAll('.item').length > 0"
 ```
 
-**Avoid `wait --load networkidle`** unless you are certain the site has no persistent network activity. Ad-heavy sites, sites with analytics/tracking, and sites with websockets will cause `networkidle` to hang indefinitely. Prefer `wait 2000` or `wait <selector>` instead.
+**避免使用 `wait --load networkidle`**，除非你确定该站点没有持续的网络活动。广告较多的站点、带有分析/跟踪的站点以及使用 websocket 的站点会导致 `networkidle` 无限挂起。建议改用 `wait 2000` 或 `wait <selector>`。
 
-## JavaScript Dialogs (alert / confirm / prompt)
+## JavaScript 对话框（alert / confirm / prompt）
 
-When a page opens a JavaScript dialog (`alert()`, `confirm()`, or `prompt()`), it blocks all other browser commands (snapshot, screenshot, click, etc.) until the dialog is dismissed. If commands start timing out unexpectedly, check for a pending dialog:
+当页面打开 JavaScript 对话框（`alert()`、`confirm()` 或 `prompt()`）时，它会阻塞所有其他浏览器命令（snapshot、screenshot、click 等），直到对话框被关闭。如果命令意外开始超时，请检查是否存在待处理的对话框：
 
 ```bash
 # Check if a dialog is blocking
@@ -610,11 +610,11 @@ agent-browser dialog accept "my input"
 agent-browser dialog dismiss
 ```
 
-When a dialog is pending, all command responses include a `warning` field indicating the dialog type and message. In `--json` mode this appears as a `"warning"` key in the response object.
+当有对话框待处理时，所有命令响应都会包含一个 `warning` 字段，指明对话框类型和消息。在 `--json` 模式下，该信息会以响应对象中的 `"warning"` 键出现。
 
-## Session Management and Cleanup
+## 会话管理与清理
 
-When running multiple agents or automations concurrently, always use named sessions to avoid conflicts:
+在并发运行多个 agent 或自动化任务时，务必使用命名会话以避免冲突：
 
 ```bash
 # Each agent gets its own isolated session
@@ -625,7 +625,7 @@ agent-browser --session agent2 open site-b.com
 agent-browser session list
 ```
 
-Always close your browser session when done to avoid leaked processes:
+完成后务必关闭浏览器会话，以避免进程泄漏：
 
 ```bash
 agent-browser close                    # Close default session
@@ -633,21 +633,21 @@ agent-browser --session agent1 close   # Close specific session
 agent-browser close --all              # Close all active sessions
 ```
 
-If a previous session was not closed properly, the daemon may still be running. Use `agent-browser close` to clean it up, or `agent-browser close --all` to shut down every session at once.
+如果之前的会话未正常关闭，守护进程可能仍在运行。使用 `agent-browser close` 清理它，或使用 `agent-browser close --all` 一次性关闭所有会话。
 
-To auto-shutdown the daemon after a period of inactivity (useful for ephemeral/CI environments):
+要在空闲一段时间后自动关闭守护进程（适用于临时/CI 环境）：
 
 ```bash
 AGENT_BROWSER_IDLE_TIMEOUT_MS=60000 agent-browser open example.com
 ```
 
-## Ref Lifecycle (Important)
+## 引用生命周期（重要）
 
-Refs (`@e1`, `@e2`, etc.) are invalidated when the page changes. Always re-snapshot after:
+当页面发生变化时，引用（`@e1`、`@e2` 等）会失效。以下情况后务必重新快照：
 
-- Clicking links or buttons that navigate
-- Form submissions
-- Dynamic content loading (dropdowns, modals)
+- 点击会触发导航的链接或按钮
+- 提交表单
+- 动态内容加载（下拉菜单、模态框）
 
 ```bash
 agent-browser click @e5              # Navigates to new page
@@ -655,9 +655,9 @@ agent-browser snapshot -i            # MUST re-snapshot
 agent-browser click @e1              # Use new refs
 ```
 
-## Annotated Screenshots (Vision Mode)
+## 标注截图（视觉模式）
 
-Use `--annotate` to take a screenshot with numbered labels overlaid on interactive elements. Each label `[N]` maps to ref `@eN`. This also caches refs, so you can interact with elements immediately without a separate snapshot.
+使用 `--annotate` 截取一张在交互元素上叠加编号标签的截图。每个标签 `[N]` 对应引用 `@eN`。这还会缓存引用，因此你可以立即与元素交互，而无需单独执行快照。
 
 ```bash
 agent-browser screenshot --annotate
@@ -668,16 +668,16 @@ agent-browser screenshot --annotate
 agent-browser click @e2              # Click using ref from annotated screenshot
 ```
 
-Use annotated screenshots when:
+在以下情况下使用标注截图：
 
-- The page has unlabeled icon buttons or visual-only elements
-- You need to verify visual layout or styling
-- Canvas or chart elements are present (invisible to text snapshots)
-- You need spatial reasoning about element positions
+- 页面上有未标注的图标按钮或纯视觉元素
+- 需要验证视觉布局或样式
+- 存在 canvas 或图表元素（文本快照无法看到）
+- 需要对元素位置进行空间推理
 
-## Semantic Locators (Alternative to Refs)
+## 语义定位器（引用的替代方案）
 
-When refs are unavailable or unreliable, use semantic locators:
+当引用不可用或不可靠时，使用语义定位器：
 
 ```bash
 agent-browser find text "Sign In" click
@@ -687,9 +687,9 @@ agent-browser find placeholder "Search" type "query"
 agent-browser find testid "submit-btn" click
 ```
 
-## JavaScript Evaluation (eval)
+## JavaScript 求值（eval）
 
-Use `eval` to run JavaScript in the browser context. **Shell quoting can corrupt complex expressions** -- use `--stdin` or `-b` to avoid issues.
+使用 `eval` 在浏览器上下文中运行 JavaScript。**Shell 引号处理可能会破坏复杂表达式**——请使用 `--stdin` 或 `-b` 来避免问题。
 
 ```bash
 # Simple expressions work with regular quoting
@@ -709,17 +709,17 @@ EVALEOF
 agent-browser eval -b "$(echo -n 'Array.from(document.querySelectorAll("a")).map(a => a.href)' | base64)"
 ```
 
-**Why this matters:** When the shell processes your command, inner double quotes, `!` characters (history expansion), backticks, and `$()` can all corrupt the JavaScript before it reaches agent-browser. The `--stdin` and `-b` flags bypass shell interpretation entirely.
+**为什么这很重要：** 当 shell 处理你的命令时，内层双引号、`!` 字符（历史展开）、反引号和 `$()` 都可能在 JavaScript 到达 agent-browser 之前将其破坏。`--stdin` 和 `-b` 标志可以完全绕过 shell 解释。
 
-**Rules of thumb:**
+**经验法则：**
 
-- Single-line, no nested quotes -> regular `eval 'expression'` with single quotes is fine
-- Nested quotes, arrow functions, template literals, or multiline -> use `eval --stdin <<'EVALEOF'`
-- Programmatic/generated scripts -> use `eval -b` with base64
+- 单行、无嵌套引号 -> 使用单引号的常规 `eval 'expression'` 即可
+- 嵌套引号、箭头函数、模板字面量或多行 -> 使用 `eval --stdin <<'EVALEOF'`
+- 程序化/生成的脚本 -> 使用 `eval -b` 配合 base64
 
-## Configuration File
+## 配置文件
 
-Create `agent-browser.json` in the project root for persistent settings:
+在项目根目录创建 `agent-browser.json` 以持久化配置：
 
 ```json
 {
@@ -729,25 +729,25 @@ Create `agent-browser.json` in the project root for persistent settings:
 }
 ```
 
-Priority (lowest to highest): `~/.agent-browser/config.json` < `./agent-browser.json` < env vars < CLI flags. Use `--config <path>` or `AGENT_BROWSER_CONFIG` env var for a custom config file (exits with error if missing/invalid). All CLI options map to camelCase keys (e.g., `--executable-path` -> `"executablePath"`). Boolean flags accept `true`/`false` values (e.g., `--headed false` overrides config). Extensions from user and project configs are merged, not replaced.
+优先级（从低到高）：`~/.agent-browser/config.json` < `./agent-browser.json` < 环境变量 < CLI 标志。使用 `--config <path>` 或 `AGENT_BROWSER_CONFIG` 环境变量指定自定义配置文件（若文件缺失或无效则报错退出）。所有 CLI 选项都映射为 camelCase 键（例如 `--executable-path` -> `"executablePath"`）。布尔标志接受 `true`/`false` 值（例如 `--headed false` 会覆盖配置）。来自用户配置和项目配置的扩展会被合并，而非替换。
 
-## Deep-Dive Documentation
+## 深入阅读文档
 
-| Reference                                                            | When to Use                                               |
-| -------------------------------------------------------------------- | --------------------------------------------------------- |
-| [references/commands.md](references/commands.md)                     | Full command reference with all options                   |
-| [references/snapshot-refs.md](references/snapshot-refs.md)           | Ref lifecycle, invalidation rules, troubleshooting        |
-| [references/session-management.md](references/session-management.md) | Parallel sessions, state persistence, concurrent scraping |
-| [references/authentication.md](references/authentication.md)         | Login flows, OAuth, 2FA handling, state reuse             |
-| [references/video-recording.md](references/video-recording.md)       | Recording workflows for debugging and documentation       |
-| [references/profiling.md](references/profiling.md)                   | Chrome DevTools profiling for performance analysis        |
-| [references/proxy-support.md](references/proxy-support.md)           | Proxy configuration, geo-testing, rotating proxies        |
+| 参考文档                                                             | 使用场景                               |
+| -------------------------------------------------------------------- | ----------------------------------------- |
+| [references/commands.md](references/commands.md)                     | 包含所有选项的完整命令参考                |
+| [references/snapshot-refs.md](references/snapshot-refs.md)           | 引用生命周期、失效规则、故障排查          |
+| [references/session-management.md](references/session-management.md) | 并行会话、状态持久化、并发抓取            |
+| [references/authentication.md](references/authentication.md)         | 登录流程、OAuth、2FA 处理、状态复用        |
+| [references/video-recording.md](references/video-recording.md)       | 用于调试和文档记录的录制工作流            |
+| [references/profiling.md](references/profiling.md)                   | 用于性能分析的 Chrome DevTools 性能剖析    |
+| [references/proxy-support.md](references/proxy-support.md)           | 代理配置、地域测试、轮换代理              |
 
-## Cloud Providers
+## 云服务提供商
 
-Use `-p <provider>` (or `AGENT_BROWSER_PROVIDER`) to run against a cloud browser instead of launching a local Chrome instance. Supported providers: `agentcore`, `browserbase`, `browserless`, `browseruse`, `kernel`.
+使用 `-p <provider>`（或 `AGENT_BROWSER_PROVIDER`）针对云端浏览器运行，而不是启动本地 Chrome 实例。支持的提供商：`agentcore`、`browserbase`、`browserless`、`browseruse`、`kernel`。
 
-### AgentCore (AWS Bedrock)
+### AgentCore（AWS Bedrock）
 
 ```bash
 # Credentials auto-resolved from env vars or AWS CLI (SSO, IAM roles, etc.)
@@ -760,11 +760,11 @@ AGENTCORE_PROFILE_ID=my-profile agent-browser -p agentcore open https://example.
 AGENTCORE_REGION=eu-west-1 agent-browser -p agentcore open https://example.com
 ```
 
-Set `AWS_PROFILE` to select a named AWS profile.
+设置 `AWS_PROFILE` 以选择具名的 AWS 配置文件。
 
-## Browser Engine Selection
+## 浏览器引擎选择
 
-Use `--engine` to choose a local browser engine. The default is `chrome`.
+使用 `--engine` 选择本地浏览器引擎。默认为 `chrome`。
 
 ```bash
 # Use Lightpanda (fast headless browser, requires separate install)
@@ -778,15 +778,15 @@ agent-browser open example.com
 agent-browser --engine lightpanda --executable-path /path/to/lightpanda open example.com
 ```
 
-Supported engines:
-- `chrome` (default) -- Chrome/Chromium via CDP
-- `lightpanda` -- Lightpanda headless browser via CDP (10x faster, 10x less memory than Chrome)
+支持的引擎：
+- `chrome`（默认）—— 通过 CDP 使用 Chrome/Chromium
+- `lightpanda` —— 通过 CDP 使用 Lightpanda 无头浏览器（比 Chrome 快 10 倍，内存占用低 10 倍）
 
-Lightpanda does not support `--extension`, `--profile`, `--state`, or `--allow-file-access`. Install Lightpanda from https://lightpanda.io/docs/open-source/installation.
+Lightpanda 不支持 `--extension`、`--profile`、`--state` 或 `--allow-file-access`。请从 https://lightpanda.io/docs/open-source/installation 安装 Lightpanda。
 
-## Observability Dashboard
+## 可观测性面板
 
-The dashboard is a standalone background server that shows live browser viewports, command activity, and console output for all sessions.
+该面板是一个独立的常驻后台服务，可展示所有会话的实时浏览器视口、命令活动和控制台输出。
 
 ```bash
 # Start the dashboard server (background, port 4848)
@@ -799,11 +799,11 @@ agent-browser open example.com
 agent-browser dashboard stop
 ```
 
-The dashboard runs independently of browser sessions on port 4848 (configurable with `--port`). All sessions automatically stream to the dashboard. Sessions can also be created from the dashboard UI with local engines or cloud providers.
+面板独立于浏览器会话运行，监听端口 4848（可通过 `--port` 配置）。所有会话都会自动串流到面板。也可以从面板 UI 中使用本地引擎或云服务提供商创建会话。
 
-### Dashboard AI Chat
+### 面板 AI 对话
 
-The dashboard has an optional AI chat tab powered by the Vercel AI Gateway. Enable it by setting:
+面板有一个可选的 AI 对话标签页，由 Vercel AI Gateway 提供支持。通过设置以下内容启用：
 
 ```bash
 export AI_GATEWAY_API_KEY=gw_your_key_here
@@ -811,15 +811,15 @@ export AI_GATEWAY_MODEL=anthropic/claude-sonnet-4.6           # optional default
 export AI_GATEWAY_URL=https://ai-gateway.vercel.sh           # optional default
 ```
 
-The Chat tab is always visible in the dashboard. Set `AI_GATEWAY_API_KEY` to enable AI responses.
+对话标签页在面板中始终可见。设置 `AI_GATEWAY_API_KEY` 以启用 AI 响应。
 
-## Ready-to-Use Templates
+## 即用模板
 
-| Template                                                                 | Description                         |
+| 模板                                                                     | 描述                                 |
 | ------------------------------------------------------------------------ | ----------------------------------- |
-| [templates/form-automation.sh](templates/form-automation.sh)             | Form filling with validation        |
-| [templates/authenticated-session.sh](templates/authenticated-session.sh) | Login once, reuse state             |
-| [templates/capture-workflow.sh](templates/capture-workflow.sh)           | Content extraction with screenshots |
+| [templates/form-automation.sh](templates/form-automation.sh)             | 带校验的表单填写                    |
+| [templates/authenticated-session.sh](templates/authenticated-session.sh) | 登录一次，复用状态                  |
+| [templates/capture-workflow.sh](templates/capture-workflow.sh)           | 结合截图的内容提取                  |
 
 ```bash
 ./templates/form-automation.sh https://example.com/form

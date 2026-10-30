@@ -1,6 +1,6 @@
 ---
 name: recon
-description: Fast reconnaissance - discover assets, entry points, attack surface, and hypotheses
+description: 快速侦察——发现资产、入口点、攻击面与可验证假设
 tags: [pentest, recon, discovery]
 ---
 

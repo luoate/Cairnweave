@@ -5,6 +5,7 @@
 cairn.db
 cairn.db-shm
 cairn.db-wal
+.cairnweave
 .tch-agent
 **/auth.json
 .env

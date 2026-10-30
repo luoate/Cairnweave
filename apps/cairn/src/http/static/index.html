@@ -3072,10 +3072,12 @@
                   <span x-show="skill.deleted" class="text-[10px] px-1.5 py-0.5 rounded bg-rose-50 text-rose-600 border border-rose-200">已删除</span>
                   <span x-show="!skill.deleted" class="text-[10px]" :class="skill.enabled ? 'text-teal-600' : 'text-slate-400'" x-text="skill.enabled ? '已启用' : '未启用'"></span>
                 </div>
-                <p class="text-[11px] text-slate-400 mt-1 break-words" x-text="skill.deleted ? '内置技能已删除，重启后不会自动释放；恢复后可重新启用。' : skill.description"></p>
+                <p class="text-[11px] text-slate-400 mt-1 break-words line-clamp-2" x-text="skill.deleted ? '内置技能已删除，重启后不会自动释放；恢复后可重新启用。' : skill.description"></p>
                 <p x-show="skill.directory !== skill.name" class="text-[10px] text-slate-400 mt-0.5 break-all" x-text="'目录：' + skill.directory"></p>
               </div>
               <div class="flex shrink-0 items-center gap-1.5">
+                <button x-show="!skill.deleted" @click="openSkillDetail(skill)"
+                  class="px-2 py-1 text-[11px] text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 transition">预览</button>
                 <button x-show="!skill.deleted" @click="toggleSkill(skill)" :disabled="skillToggle.loading"
                   class="px-2 py-1 text-[11px] border rounded-lg transition disabled:opacity-40"
                   :class="skill.enabled ? 'text-slate-500 border-slate-200 hover:bg-slate-50' : 'text-brand-600 border-brand-200 hover:bg-brand-50'"
@@ -3133,6 +3135,67 @@
               class="px-3 py-1.5 text-xs bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition shadow-sm shadow-brand-200 disabled:opacity-40 disabled:cursor-not-allowed"
               x-text="isSavingSkill ? '添加中…' : '添加技能'"></button>
           </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Skill Detail (M26) -->
+<div x-show="showSkillDetail" x-cloak data-modal="skillDetail" x-effect="syncModal('skillDetail', showSkillDetail, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('skillDetail')">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl mx-4 border border-slate-200/60 overflow-hidden flex flex-col max-h-[85vh]" @click.stop>
+    <div class="px-5 py-4 border-b border-slate-200/80 flex items-start justify-between gap-4">
+      <div class="min-w-0">
+        <div class="flex flex-wrap items-center gap-2">
+          <h3 class="text-base font-semibold text-slate-700 font-mono break-all" x-text="skillDetail.name"></h3>
+          <span class="text-[10px] px-1.5 py-0.5 rounded border"
+            :class="skillDetail.builtin ? 'bg-slate-50 text-slate-500 border-slate-200' : 'bg-brand-50 text-brand-600 border-brand-200'"
+            x-text="skillDetail.builtin ? '内置' : '自定义'"></span>
+          <span class="text-[10px]" :class="skillDetail.enabled ? 'text-teal-600' : 'text-slate-400'" x-text="skillDetail.enabled ? '已启用' : '未启用'"></span>
+        </div>
+        <p class="text-[11px] text-slate-400 mt-1 break-words line-clamp-2" x-text="skillDetail.description"></p>
+      </div>
+      <div class="flex shrink-0 items-center gap-2">
+        <button x-show="!skillDetail.deleted && !skillDetail.loading" @click="toggleSkillFromDetail()" :disabled="skillToggle.loading"
+          class="px-3 py-1.5 text-sm border rounded-xl transition disabled:opacity-40"
+          :class="skillDetail.enabled ? 'text-slate-500 border-slate-200 hover:bg-slate-50' : 'text-brand-600 border-brand-200 hover:bg-brand-50'"
+          x-text="skillToggle.loading ? '处理中…' : (skillDetail.enabled ? '停用' : '启用')"></button>
+        <button @click="dismissModal('skillDetail')" data-autofocus class="px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">关闭</button>
+      </div>
+    </div>
+    <div class="flex-1 min-h-0 grid grid-cols-[minmax(170px,230px)_1fr]">
+      <div class="border-r border-slate-200/80 bg-slate-50/60 overflow-auto p-3 space-y-0.5">
+        <p class="text-[10px] uppercase tracking-wide text-slate-400 px-2 pb-1">文件</p>
+        <p x-show="skillDetail.loading" class="px-2 text-[11px] text-slate-400">加载中…</p>
+        <p x-show="skillDetail.error" class="px-2 text-[11px] text-rose-600 break-words" x-text="skillDetail.error"></p>
+        <template x-for="row in skillDetailTree()" :key="row.type + ':' + row.path">
+          <div>
+            <p x-show="row.type === 'dir'" class="px-2 py-0.5 text-[10px] text-slate-400 font-mono break-all"
+              :style="`padding-left:${8 + row.depth * 12}px`" x-text="row.label + '/'"></p>
+            <button x-show="row.type === 'file'" @click="selectSkillFile(row.path)"
+              class="w-full text-left px-2 py-1 rounded-lg text-[11px] font-mono break-all transition"
+              :class="skillDetail.path === row.path ? 'bg-white text-brand-600 border border-brand-200' : 'text-slate-600 hover:bg-white border border-transparent'"
+              :style="`margin-left:${row.depth * 12}px`">
+              <span x-text="row.label"></span>
+              <span class="float-right text-[10px] text-slate-400" x-text="formatBytes(row.size)"></span>
+            </button>
+          </div>
+        </template>
+        <p x-show="!skillDetail.loading && !skillDetail.error && skillDetail.files.length === 0" class="px-2 text-[11px] text-slate-400">没有可读文件。</p>
+        <p x-show="skillDetail.truncated" class="px-2 pt-1 text-[10px] text-amber-600">文件过多，只列出前 200 个。</p>
+      </div>
+      <div class="overflow-auto bg-white">
+        <div class="p-4">
+          <div class="flex items-start justify-between gap-3 mb-2">
+            <p class="text-[11px] text-slate-500 font-mono break-all" x-text="skillDetail.path || '选择左侧文件预览'"></p>
+            <p class="text-[10px] text-slate-400 shrink-0" x-text="skillDetailFileMeta()"></p>
+          </div>
+          <p x-show="skillDetail.contentLoading" class="text-[11px] text-slate-400">读取中…</p>
+          <p x-show="skillDetail.contentError" class="text-[11px] text-rose-600 break-words" x-text="skillDetail.contentError"></p>
+          <p x-show="skillDetail.binary" class="text-[11px] text-slate-400">这是二进制文件，不显示内容。</p>
+          <p x-show="skillDetail.truncatedContent" class="text-[11px] text-amber-600 mb-2">超过 256 KiB，只读取了开头部分。</p>
+          <pre x-show="!skillDetail.contentLoading && !skillDetail.contentError && !skillDetail.binary && skillDetail.content"
+            class="text-[12px] leading-5 font-mono whitespace-pre-wrap break-words text-slate-700 select-text" x-text="skillDetail.content"></pre>
         </div>
       </div>
     </div>
@@ -3257,6 +3320,7 @@ function cairnApp() {
     exportTab: 'yaml',
     exportProjectId: '',
     showDeleteModal: false,
+    showSkillDetail: false,
 
     newProject: { title: '', origin: '', goal: '', bootstrap: true, targetsText: '', scopeNotes: '', hints: [{ content: '' }], verificationKind: 'auto', challengeCode: '' },
     isCreatingProject: false,
@@ -3301,6 +3365,11 @@ function cairnApp() {
     skillDelete: { directory: '', name: '', builtin: false, loading: false, error: '' },
     skillToggle: { directory: '', loading: false },
     skillRestore: { directory: '', loading: false },
+    skillDetail: {
+      directory: '', name: '', builtin: false, enabled: false, deleted: false, description: '',
+      loading: false, error: '', files: [], truncated: false,
+      path: '', content: '', contentLoading: false, contentError: '', binary: false, size: null, truncatedContent: false,
+    },
     deleteConfirm: { id: '', title: '' },
     isDeletingProject: false,
     showConfirmModal: false,
@@ -4134,6 +4203,11 @@ function cairnApp() {
         },
         delete: () => this.closeDeleteModal(),
         confirm: () => this.closeConfirmModal(),
+        skillDetail: () => {
+          if (this.skillToggle.loading) return;
+          this.showSkillDetail = false;
+          this.resetSkillDetail();
+        },
       };
     },
 
@@ -8014,6 +8088,102 @@ function cairnApp() {
         target.loading = false;
         target.error = e.message;
       }
+    },
+
+    resetSkillDetail(skill) {
+      this.skillDetail = {
+        directory: skill ? skill.directory : '',
+        name: skill ? skill.name : '',
+        builtin: skill ? skill.builtin === true : false,
+        enabled: skill ? skill.enabled === true : false,
+        deleted: skill ? skill.deleted === true : false,
+        description: skill ? (skill.description || '') : '',
+        loading: false, error: '', files: [], truncated: false,
+        path: '', content: '', contentLoading: false, contentError: '',
+        binary: false, size: null, truncatedContent: false,
+      };
+    },
+
+    async openSkillDetail(skill) {
+      if (!skill || skill.deleted) return;
+      this.resetSkillDetail(skill);
+      this.skillDetail.loading = true;
+      this.showSkillDetail = true;
+      try {
+        const data = await this.api('GET', `/settings/agent/skills/${encodeURIComponent(skill.directory)}/files`);
+        this.skillDetail.files = Array.isArray(data.files) ? data.files : [];
+        this.skillDetail.truncated = data.truncated === true;
+        this.skillDetail.loading = false;
+        const first = this.skillDetail.files[0];
+        if (first) await this.selectSkillFile(first.path);
+      } catch (e) {
+        this.skillDetail.loading = false;
+        this.skillDetail.error = e.message;
+      }
+    },
+
+    skillDetailTree() {
+      const rows = [];
+      const seenDirs = new Set();
+      for (const file of this.skillDetail.files) {
+        const parts = String(file.path || '').split('/');
+        for (let i = 0; i < parts.length - 1; i += 1) {
+          const dirPath = parts.slice(0, i + 1).join('/');
+          if (seenDirs.has(dirPath)) continue;
+          seenDirs.add(dirPath);
+          rows.push({ type: 'dir', path: dirPath, depth: i, label: parts[i], size: null });
+        }
+        rows.push({
+          type: 'file', path: file.path, depth: parts.length - 1,
+          label: parts[parts.length - 1], size: Number(file.size) || 0,
+        });
+      }
+      return rows;
+    },
+
+    skillDetailFileMeta() {
+      const detail = this.skillDetail;
+      if (!detail.path) return '';
+      const parts = [];
+      if (detail.size !== null) parts.push(this.formatBytes(detail.size));
+      if (detail.binary) parts.push('二进制文件');
+      else if (detail.truncatedContent) parts.push('截断预览');
+      return parts.join(' · ');
+    },
+
+    async selectSkillFile(path) {
+      const detail = this.skillDetail;
+      if (!detail.directory || !path) return;
+      detail.path = path;
+      detail.content = '';
+      detail.contentError = '';
+      detail.binary = false;
+      detail.size = null;
+      detail.truncatedContent = false;
+      detail.contentLoading = true;
+      try {
+        const data = await this.api(
+          'GET',
+          `/settings/agent/skills/${encodeURIComponent(detail.directory)}/file?path=${encodeURIComponent(path)}`,
+        );
+        detail.binary = data.binary === true;
+        detail.content = detail.binary ? '' : (typeof data.content === 'string' ? data.content : '');
+        detail.size = Number.isFinite(data.size) ? data.size : null;
+        detail.truncatedContent = data.truncated === true;
+      } catch (e) {
+        detail.contentError = e.message;
+      } finally {
+        detail.contentLoading = false;
+      }
+    },
+
+    async toggleSkillFromDetail() {
+      const detail = this.skillDetail;
+      const skill = this.skillsConfig.skills.find(item => item.directory === detail.directory);
+      if (!skill) return;
+      await this.toggleSkill(skill);
+      const fresh = this.skillsConfig.skills.find(item => item.directory === detail.directory);
+      if (fresh) detail.enabled = fresh.enabled === true;
     },
 
     async saveAgentProvider() {

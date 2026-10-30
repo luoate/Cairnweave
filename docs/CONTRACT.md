@@ -131,7 +131,7 @@ Host Bridge 每做一次工具决策就追加一行 JSON：
 ## 8. 安全边界
 
 `task.json`、`result.json`、`usage.json` 与日志里**不得出现模型凭据**。凭据只存在于
-agent 配置目录（`~/.tch-agent/config`）；控制面写派发文件时只写 profile id 与
+agent 配置目录（`~/.cairnweave/config`，M26 前为 `~/.tch-agent/config`）；控制面写派发文件时只写 profile id 与
 model-prefs 条目名。Host Bridge 是工具调用层的闸门，不是代码沙箱；对抗不可信代码时以
 容器网络/文件系统命名空间为准。控制面 API 与 UI 没有身份认证，默认只绑定回环地址，
 远程部署必须加网络层访问控制。

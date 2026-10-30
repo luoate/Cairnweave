@@ -155,6 +155,28 @@ export function registerAgentSkillsRoutes(
     return json({ skill: skillRow(store, restored, new Set(prompt?.meta.skills ?? [])) });
   });
 
+  guarded("GET", "/settings/agent/skills/{name}/files", async ({ params }) => {
+    const store = await manager();
+    const directory = readDirectory(params.name);
+    try {
+      return json({ directory, ...store.listSkillFiles(directory) });
+    } catch (error) {
+      throw skillFileError(error);
+    }
+  });
+
+  guarded("GET", "/settings/agent/skills/{name}/file", async ({ params, url }) => {
+    const store = await manager();
+    const directory = readDirectory(params.name);
+    const path = url.searchParams.get("path");
+    if (path === null || path === "") throw new HttpError(400, "path is required");
+    try {
+      return json({ directory, ...store.readSkillFile(directory, path) });
+    } catch (error) {
+      throw skillFileError(error);
+    }
+  });
+
   guarded("PUT", "/settings/agent/skills/{name}/enabled", async ({ params, request }) => {
     const store = await manager();
     const directory = readDirectory(params.name);
@@ -302,6 +324,15 @@ async function readBody(request: Request): Promise<Record<string, unknown>> {
 
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** The read-only file helpers throw plain errors, so the route maps them to statuses. */
+function skillFileError(error: unknown): HttpError {
+  const message = describe(error);
+  if (message.includes("not found") || message.includes("ENOENT")) {
+    return new HttpError(404, message.includes("not found") ? message : "skill file not found");
+  }
+  return new HttpError(400, message);
 }
 
 function json(value: unknown): Response {

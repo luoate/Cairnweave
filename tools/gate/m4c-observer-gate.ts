@@ -3,7 +3,7 @@
  * the Observer sidecar performs a real review on the same task.
  *
  * This gate is intentionally outside `bun test`: it calls a real model and costs money.
- * It needs credentials under `~/.tch-agent/config` (override with CAIRN_AGENT_CONFIG_DIR).
+ * It needs credentials under `~/.cairnweave/config` (override with CAIRN_AGENT_CONFIG_DIR).
  *
  *   bun run tools/gate/m4c-observer-gate.ts
  *
@@ -61,7 +61,7 @@ const ALLOWED_SIDECAR_TOOLS = new Set([
 const directory = mkdtempSync(join(tmpdir(), "cairn-m4c-observer-gate-"));
 const workspaceRoot = join(directory, "workspace");
 const agentConfigDir =
-  process.env["CAIRN_AGENT_CONFIG_DIR"]?.trim() || join(homedir(), ".tch-agent", "config");
+  process.env["CAIRN_AGENT_CONFIG_DIR"]?.trim() || join(homedir(), ".cairnweave", "config");
 const db = configureDatabase(join(directory, "cairn.db"));
 
 const config = parseDispatchConfig({

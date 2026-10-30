@@ -9,7 +9,7 @@ export { createSolverSession } from "./solver/session"
 export type { SolverSession } from "./solver/session"
 export { initBuiltinPrompts } from "./config/prompts/index"
 export { initBuiltinSkills } from "./config/skills/index"
-export { DEFAULT_CONFIG_DIR, TCH_AGENT_HOME_DIR } from "./config/index"
+export { CAIRNWEAVE_HOME_DIR, DEFAULT_CONFIG_DIR, TCH_AGENT_HOME_DIR } from "./config/index"
 
 import { ConfigManager } from "./config/index"
 import { ChallengeManager } from "./challenge/manager"

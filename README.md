@@ -46,7 +46,7 @@ worker 在项目沙箱里跑真实模型，每个任务启动一次进程，只�
 | 只读运维视图 | 运行、慢层、审计、证据、提案、看板、成本、统计、报告、Writeup 十个侧栏页签，全部只发 GET（人工重规划除外） |
 | 运行期配置 | Observer、并发、超时、证据门、预算、策略阈值、提案参数等可在页头「设置 → 运行与执行」里热调，覆盖存 SQLite，重启不丢 |
 | 两种执行模式 | `runtime.execution: local` 本地子进程；`container` 每项目一个长期容器、每任务一次 `docker exec`，配置只读挂载、不挂 Docker socket；调度器空闲时可在「设置」里在线切换，并用「测试有效性」先检查 Bun / Docker / 镜像 / 试启动 / 工作区 |
-| 技能管理 | 页头「设置 → 技能」里新增、删除、启停与恢复技能；内置 17 个，仅写入 `cairn-worker` prompt 白名单的才生效；删除内置技能会在 `.deleted-builtins.json` 里留痕，重启不回填，可一键恢复 |
+| 技能管理 | 页头「设置 → 技能」里新增、删除、启停与恢复技能；「预览」打开独立详情弹窗，左树右正文地浏览技能目录里的 `SKILL.md`、`references/`、`scripts/`；内置 17 个，仅写入 `cairn-worker` prompt 白名单的才生效；删除内置技能会在 `.deleted-builtins.json` 里留痕，重启不回填，可一键恢复 |
 | 审计与实时流 | 任务结束导入 `audit.jsonl` 到哈希链账本；可选实时流按 `(task_id, seq)` 幂等追加，只降低暴露窗口，不改变最终一致性 |
 
 ## 架构
@@ -62,7 +62,7 @@ cairn serve（控制面，一个进程）
         ▼  项目工作区（每项目绑定到 /cairn/workspace）
   cairn worker --task <task.json>（按任务拉起；容器模式下是 docker exec）
         ├─ solver：默认确定性 fake；CAIRN_SOLVER=breachweave 用 packages/agent
-        ├─ 模型/凭据：~/.tch-agent/config（容器内只读挂载到 /cairn/agent-config）
+        ├─ 模型/凭据：~/.cairnweave/config（旧 ~/.tch-agent/config 首启自动复制；容器内只读挂载到 /cairn/agent-config）
         ├─ Host Bridge：每次 tool_call 前做 Scope 硬校验，逐条写 audit.jsonl
         ├─ Observer：主 Solver 只读项目看板；独立 sidecar 维护看板并提交候选
         ├─ 提案候选：<session>/observer/proposals/*.json（控制面在任务结束时导入）
@@ -176,7 +176,7 @@ proposals:                    # 默认开启，但只演练
 | GET | `/projects/{id}/writeup/archive` | 正文与全部附件的 zip 包 |
 | GET/PUT/DELETE | `/settings/runtime` | 运行配置覆盖（仅 `--config` 模式） |
 | GET/POST/PUT/DELETE | `/settings/agent*` | 模型与密钥管理，详见 [docs/MODELS.md](docs/MODELS.md) |
-| GET/POST/PUT/DELETE | `/settings/agent/skills*` | 技能列表、新增、删除、启停与内置恢复 |
+| GET/POST/PUT/DELETE | `/settings/agent/skills*` | 技能列表、新增、删除、启停、内置恢复，以及只读的文件树 `/skills/{name}/files` 与单文件预览 `/skills/{name}/file?path=` |
 
 写路由在设置 `CAIRN_OPERATOR_TOKEN` 后要求 `X-Cairn-Operator-Token`，并拒绝 Origin 与请求
 host 不一致的浏览器写请求。
@@ -188,18 +188,18 @@ host 不一致的浏览器写请求。
 - 列表：搜索、状态筛选、三种排序、按项目记忆视图；页面隐藏时暂停轮询，失败 5s→60s 退避。
 - 项目页：图视图、Fact 详情、Flag 横幅、授权范围、运行 / 慢层 / 审计 / 证据 / 提案 /
   看板 / 成本 / 统计 / 报告 / Writeup 页签。
-- 页头：设置、停止全部；浏览器标题跟随当前项目名；12 个弹窗共用一套模态栈（Esc 只关最上层、
+- 页头：设置、停止全部；浏览器标题跟随当前项目名；13 个弹窗共用一套模态栈（Esc 只关最上层、
   Tab 焦点陷阱、关闭回焦），写操作期间禁用并在失败时就地报错。
 - 「设置」是一个带五个页签的弹窗：运行与执行（含 local/container 切换、运行期覆盖与
-  执行环境「测试有效性」）、模型与密钥、技能（新增 / 删除 / 启停 / 恢复内置）、
-  本地偏好（操作者与默认布局，仅存浏览器）、服务端设置。
+  执行环境「测试有效性」）、模型与密钥、技能（新增 / 删除 / 启停 / 恢复内置，行内「预览」
+  打开技能详情弹窗浏览文件）、本地偏好（操作者与默认布局，仅存浏览器）、服务端设置。
 
 所有只读页签只发 GET；唯一的显式写操作是慢层的“请求重规划”。
 
 ## 模型与密钥
 
-真实 Solver 读取 BreachWeave 的配置目录（默认 `~/.tch-agent/config`，
-`CAIRN_AGENT_CONFIG_DIR` 可覆盖）：`auth.json` 存凭据，`models.json` 存 provider / baseUrl /
+真实 Solver 读取 BreachWeave 的配置目录（默认 `~/.cairnweave/config`，旧版 `~/.tch-agent/config`
+里的内容会在首次启动时复制过来且不删除原目录；`CAIRN_AGENT_CONFIG_DIR` 可覆盖）：`auth.json` 存凭据，`models.json` 存 provider / baseUrl /
 协议与模型，`model-prefs.json` 是短 ID 到模型的映射（`cairn-worker` 指向当前默认模型）。
 `worker_profiles` 把这些短 ID 组成命名 profile，交给统计驱动的派发选择。
 

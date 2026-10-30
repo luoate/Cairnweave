@@ -1,6 +1,6 @@
-import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { DEFAULT_AGENT_CONFIG_DIR } from "../agent-config-dir";
 import type { DispatchConfig } from "../config";
 import { DockerRuntime } from "./docker";
 import { LocalRuntime } from "./local";
@@ -54,5 +54,5 @@ export function resolveAgentConfigDir(config: DispatchConfig): string {
   if (fromConfig !== undefined && fromConfig.trim() !== "") return fromConfig;
   const fromEnv = process.env["CAIRN_AGENT_CONFIG_DIR"];
   if (fromEnv !== undefined && fromEnv.trim() !== "") return fromEnv;
-  return join(homedir(), ".tch-agent", "config");
+  return DEFAULT_AGENT_CONFIG_DIR;
 }

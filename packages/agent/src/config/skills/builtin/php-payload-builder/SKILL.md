@@ -7,7 +7,7 @@ description: |
   构造 webshell、构造诊断页、构造文件下载器、heredoc 写法、base64 编码写入时使用。
 ---
 
-# PHP Payload Builder
+# PHP Payload 构造器
 
 你处理的是"如何在 bash/shell 命令中安全构造和写入 PHP 代码"这个问题。PHP payload 在 CTF 中失败的首要原因不是 payload 本身有问题，而是被 bash 的变量展开、引号嵌套、特殊字符解释破坏了。
 

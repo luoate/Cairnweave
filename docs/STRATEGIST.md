@@ -478,7 +478,7 @@ CAIRN_GATE_BUDGET_TOKENS=1000 CAIRN_GATE_EXPECT_EXHAUSTED=1 \
 | `CAIRN_GATE_REPORT` | `runs/m13-baseline.json` | 报告路径 |
 | `CAIRN_GATE_KEEP` | 未设置 | `1` 保留临时工作区 |
 
-需要 `~/.tch-agent/config` 中的真实凭据；gate 只打印配置目录路径，不打印密钥。
+需要 `~/.cairnweave/config` 中的真实凭据；gate 只打印配置目录路径，不打印密钥。
 
 ### 断言链
 

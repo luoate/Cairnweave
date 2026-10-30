@@ -6,6 +6,11 @@ import {
 } from "@cairn/graph";
 import { join } from "node:path";
 
+import {
+  agentConfigDirFromEnv,
+  isDefaultAgentConfigDir,
+  migrateAgentConfigDir,
+} from "../agent-config-dir";
 import { AuditTokenRegistry } from "../audit-stream/tokens";
 import {
   ConfigError,
@@ -99,6 +104,18 @@ export async function runControl(args: readonly string[]): Promise<number> {
     return 1;
   }
 
+  // The agent config directory is now named after the project. The legacy directory is
+  // copied over once, before builtin prompts and skills seed the new home, and is left in
+  // place so an operator can roll back to an older build.
+  const agentConfigDir =
+    config === null ? agentConfigDirFromEnv() : resolveAgentConfigDir(config);
+  if (isDefaultAgentConfigDir(agentConfigDir)) {
+    await migrateAgentConfigDir({
+      targetDir: agentConfigDir,
+      log: (message) => console.log(`[control] ${message}`),
+    });
+  }
+
   if (config !== null && !validateSettings(db, config)) {
     return 1;
   }
@@ -129,9 +146,8 @@ export async function runControl(args: readonly string[]): Promise<number> {
       containerSeed = (async () => {
         try {
           const agent = await import("@cairn/agent");
-          const configDir = resolveAgentConfigDir(config);
-          await agent.initBuiltinSkills(configDir);
-          await agent.initBuiltinPrompts(configDir);
+          await agent.initBuiltinSkills(agentConfigDir);
+          await agent.initBuiltinPrompts(agentConfigDir);
           return true;
         } catch (error) {
           console.error(
@@ -193,8 +209,7 @@ export async function runControl(args: readonly string[]): Promise<number> {
     db,
     staticDir,
     verification,
-    agentConfigDir:
-      config === null ? undefined : resolveAgentConfigDir(config),
+    agentConfigDir,
     ...(config === null
       ? {}
       : {

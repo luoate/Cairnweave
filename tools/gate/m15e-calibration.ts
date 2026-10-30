@@ -9,7 +9,7 @@
  * `CAIRN_GATE_PROFILE_B_MODEL` at a second model-prefs entry to compare models.
  *
  * This gate is intentionally outside `bun test`: it calls a real model and costs money.
- * It needs credentials under `~/.tch-agent/config` (override with CAIRN_AGENT_CONFIG_DIR).
+ * It needs credentials under `~/.cairnweave/config` (override with CAIRN_AGENT_CONFIG_DIR).
  *
  *   bun run tools/gate/m15e-calibration.ts
  *
@@ -56,7 +56,7 @@ import {
 import { projectWorkspace } from "../../apps/cairn/src/scheduler/tasks";
 
 const AGENT_CONFIG_DIR =
-  process.env["CAIRN_AGENT_CONFIG_DIR"]?.trim() || join(homedir(), ".tch-agent", "config");
+  process.env["CAIRN_AGENT_CONFIG_DIR"]?.trim() || join(homedir(), ".cairnweave", "config");
 const MAX_TASKS = envInt("CAIRN_GATE_MAX_TASKS", 2, 2, 20);
 const MAX_MINUTES = envInt("CAIRN_GATE_MAX_MINUTES", 10, 1, 120);
 const MIN_RUNS = envInt("CAIRN_GATE_MIN_RUNS", 1, 0, 20);

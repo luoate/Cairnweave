@@ -611,7 +611,7 @@ describe("modal focus management", () => {
     }
     // An unclosed overlay would nest every later modal inside it, hiding them.
     expect(depth).toBe(0);
-    expect(Object.keys(overlayDepths).length).toBe(12);
+    expect(Object.keys(overlayDepths).length).toBe(13);
     for (const [name, level] of Object.entries(overlayDepths)) {
       expect(level, name).toBe(0);
     }
@@ -1604,6 +1604,181 @@ describe("skill settings tab", () => {
     expect(app.skillsConfig.loading).toBe(false);
     expect(app.skillsConfig.loaded).toBe(false);
     expect(app.skillsConfig.error).toBe("config dir is unreadable");
+  });
+});
+
+describe("skill detail modal", () => {
+  function skillRow(overrides: Record<string, unknown> = {}) {
+    return {
+      name: "recon",
+      directory: "recon",
+      description: "Fast reconnaissance",
+      builtin: true,
+      deleted: false,
+      enabled: true,
+      ...overrides,
+    };
+  }
+
+  function filesFixture() {
+    return {
+      directory: "recon",
+      files: [
+        { path: "SKILL.md", size: 120 },
+        { path: "references/payloads.md", size: 2048 },
+      ],
+      truncated: false,
+    };
+  }
+
+  test("wires the preview button, file tree and body pane to one modal", () => {
+    const html = readFileSync(INDEX_PATH, "utf8");
+    expect(html).toContain('data-modal="skillDetail"');
+    expect(html).toContain('@click="openSkillDetail(skill)"');
+    expect(html).toContain('template x-for="row in skillDetailTree()"');
+    expect(html).toContain('@click="selectSkillFile(row.path)"');
+    expect(html).toContain("@click=\"toggleSkillFromDetail()\"");
+    expect(html).toContain("/files`");
+    expect(html).toContain("/file?path=");
+    expect(html).toContain('x-show="skillDetail.binary"');
+  });
+
+  test("lists files and previews the first entry on open", async () => {
+    const app = loadState();
+    const calls: string[] = [];
+    app.api = async (method: string, path: string) => {
+      calls.push(`${method} ${path}`);
+      if (path.endsWith("/files")) return filesFixture();
+      return { ...filesFixture().files[0], content: "# Recon\n", truncated: false, binary: false };
+    };
+
+    await app.openSkillDetail(skillRow());
+    expect(app.showSkillDetail).toBe(true);
+    expect(calls).toEqual([
+      "GET /settings/agent/skills/recon/files",
+      "GET /settings/agent/skills/recon/file?path=SKILL.md",
+    ]);
+    expect(app.skillDetailTree()).toEqual([
+      { type: "file", path: "SKILL.md", depth: 0, label: "SKILL.md", size: 120 },
+      { type: "dir", path: "references", depth: 0, label: "references", size: null },
+      { type: "file", path: "references/payloads.md", depth: 1, label: "payloads.md", size: 2048 },
+    ]);
+    expect(app.skillDetail.content).toBe("# Recon\n");
+    expect(app.skillDetail.loading).toBe(false);
+    expect(app.skillDetailFileMeta()).toBe("120 B");
+  });
+
+  test("encodes nested paths and marks binary plus truncated reads", async () => {
+    const app = loadState();
+    const calls: string[] = [];
+    app.api = async (_method: string, path: string) => {
+      calls.push(path);
+      if (path.includes("probe")) {
+        return { path: "scripts/probe shell.sh", size: 40, content: "\u0000\u0000", truncated: false, binary: true };
+      }
+      return { path: "SKILL.md", size: 300000, content: "# big", truncated: true, binary: false };
+    };
+    app.resetSkillDetail(skillRow());
+
+    await app.selectSkillFile("scripts/probe shell.sh");
+    expect(calls[0]).toBe("/settings/agent/skills/recon/file?path=scripts%2Fprobe%20shell.sh");
+    expect(app.skillDetail.binary).toBe(true);
+    expect(app.skillDetail.content).toBe("");
+    expect(app.skillDetailFileMeta()).toContain("二进制文件");
+
+    await app.selectSkillFile("SKILL.md");
+    expect(app.skillDetail.truncatedContent).toBe(true);
+    expect(app.skillDetailFileMeta()).toBe("293.0 KiB · 截断预览");
+    expect(app.skillDetail.contentLoading).toBe(false);
+  });
+
+  test("keeps read failures inside the preview pane and refuses deleted skills", async () => {
+    const app = loadState();
+    let calls = 0;
+    app.api = async () => {
+      calls += 1;
+      throw new Error("skill file not found");
+    };
+
+    await app.openSkillDetail(skillRow({ deleted: true }));
+    expect(app.showSkillDetail).toBe(false);
+    expect(calls).toBe(0);
+
+    await app.openSkillDetail(skillRow());
+    expect(app.showSkillDetail).toBe(true);
+    expect(app.skillDetail.error).toBe("skill file not found");
+    expect(app.skillDetail.loading).toBe(false);
+  });
+
+  test("toggles from the header and refreshes the badge", async () => {
+    const app = loadState();
+    const calls: Array<[string, string]> = [];
+    app.showToast = () => {};
+    app.api = async (method: string, path: string) => {
+      calls.push([method, path]);
+      if (path.endsWith("/files")) return filesFixture();
+      if (method === "PUT") return { name: "recon", directory: "recon", enabled: false };
+      return {
+        prompt: "cairn-worker",
+        promptFound: true,
+        enabledCount: 0,
+        skills: [skillRow({ enabled: false })],
+      };
+    };
+
+    await app.openSkillDetail(skillRow());
+    app.skillsConfig = { ...app.skillsConfig, skills: [skillRow()] };
+    calls.length = 0;
+    await app.toggleSkillFromDetail();
+    expect(calls[0]).toEqual(["PUT", "/settings/agent/skills/recon/enabled"]);
+    expect(app.skillDetail.enabled).toBe(false);
+    expect(app.skillToggle.loading).toBe(false);
+  });
+
+  test("blocks closing while a write is in flight and resets on close", () => {
+    const app = loadState();
+    app.showSkillDetail = true;
+    app.skillDetail = { ...app.skillDetail, directory: "recon", files: filesFixture().files };
+    app.skillToggle = { directory: "recon", loading: true };
+
+    app.dismissModal("skillDetail");
+    expect(app.showSkillDetail).toBe(true);
+
+    app.skillToggle = { directory: "", loading: false };
+    app.dismissModal("skillDetail");
+    expect(app.showSkillDetail).toBe(false);
+    expect(app.skillDetail.directory).toBe("");
+    expect(app.skillDetail.files).toEqual([]);
+    expect(app.skillDetail.content).toBe("");
+  });
+
+  test("autofocuses its own closer and returns focus to the skill row", async () => {
+    const html = readFileSync(INDEX_PATH, "utf8");
+    const modal = html.slice(html.indexOf('data-modal="skillDetail"'));
+    expect(modal.slice(0, 2600)).toContain("data-autofocus");
+
+    const focusLog: string[] = [];
+    const trigger = { focus: () => { focusLog.push("trigger"); } };
+    const target = { focus: () => { focusLog.push("target"); } };
+    const element = { querySelector: (selector: string) => (selector === "[data-autofocus]" ? target : null) };
+    const hadDocument = "document" in globalThis;
+    (globalThis as any).document = { activeElement: trigger, contains: () => true };
+    try {
+      const app = loadState();
+      app.showSkillDetail = true;
+      app.syncModal("skillDetail", true, element);
+      expect(app.modalReturnFocus.skillDetail).toBe(trigger);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(focusLog).toEqual(["target"]);
+
+      app.showSkillDetail = false;
+      app.syncModal("skillDetail", false, element);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(focusLog).toEqual(["target", "trigger"]);
+      expect(app.modalReturnFocus.skillDetail).toBeUndefined();
+    } finally {
+      if (!hadDocument) delete (globalThis as any).document;
+    }
   });
 });
 

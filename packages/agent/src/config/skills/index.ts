@@ -1,6 +1,16 @@
-import { resolve, dirname } from "path"
+import { resolve, dirname, join, sep } from "path"
 import { mkdir } from "fs/promises"
-import { existsSync, readdirSync, readFileSync, statSync } from "fs"
+import {
+    closeSync,
+    existsSync,
+    lstatSync,
+    openSync,
+    readdirSync,
+    readFileSync,
+    realpathSync,
+    readSync,
+    statSync,
+} from "fs"
 import { loadSkillsFromDir } from "@mariozechner/pi-coding-agent"
 import type { Skill } from "@mariozechner/pi-coding-agent"
 import { BUILTIN_SKILL_FILES } from "../builtin-assets.generated"
@@ -10,6 +20,13 @@ const DELETED_BUILTINS_FILE = ".deleted-builtins.json"
 const SKILL_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 const MAX_SKILL_NAME = 64
 const SAFE_DIRECTORY = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
+
+// 只读浏览的上限：技能目录里只有 markdown、脚本与参考文件。
+const MAX_SKILL_FILES = 200
+const MAX_SKILL_FILE_BYTES = 256 * 1024
+const MAX_SKILL_DEPTH = 8
+/** 路径段允许 Unicode 文件名，但分隔符、控制字符与保留名一律拒绝。 */
+const UNSAFE_PATH_SEGMENT = /[\\/:*?"<>|\u0000-\u001f\u007f]/
 
 function builtinSkillFiles(): Record<string, string> {
     return BUILTIN_SKILL_FILES as unknown as Record<string, string>
@@ -87,6 +104,130 @@ export function listSkills(dir: string): Skill[] {
 
 export function getSkill(dir: string, name: string): Skill | undefined {
     return listSkills(dir).find((s) => s.name === name)
+}
+
+// ── 只读文件浏览 ──
+
+export interface SkillFileEntry {
+    /** 技能目录内的 POSIX 相对路径。 */
+    path: string
+    size: number
+}
+
+export interface SkillFileListing {
+    files: SkillFileEntry[]
+    /** 达到数量或深度上限时为真，列表可能不完整。 */
+    truncated: boolean
+}
+
+export interface SkillFileContent extends SkillFileEntry {
+    content: string
+    truncated: boolean
+    binary: boolean
+}
+
+/** 空段、`.`、`..`、超长段与保留字符都视为不安全。 */
+function isUnsafeSegment(segment: string): boolean {
+    return (
+        segment === "" ||
+        segment === "." ||
+        segment === ".." ||
+        segment.length > 128 ||
+        UNSAFE_PATH_SEGMENT.test(segment)
+    )
+}
+
+function skillBaseDir(dir: string, name: string): string {
+    assertSkillDirectory(name)
+    const base = resolve(dir, "skills", name)
+    if (!existsSync(base)) throw new Error(`skill "${name}" not found`)
+    return realpathSync(base)
+}
+
+function walkSkillFiles(
+    base: string,
+    relative: string,
+    depth: number,
+    files: SkillFileEntry[],
+): boolean {
+    let truncated = false
+    const entries = readdirSync(relative === "" ? base : join(base, relative), {
+        withFileTypes: true,
+    }).sort((a, b) => a.name.localeCompare(b.name))
+    for (const entry of entries) {
+        if (entry.isSymbolicLink()) continue
+        const child = relative === "" ? entry.name : `${relative}/${entry.name}`
+        if (entry.isDirectory()) {
+            if (depth >= MAX_SKILL_DEPTH) {
+                truncated = true
+                continue
+            }
+            if (walkSkillFiles(base, child, depth + 1, files)) truncated = true
+        } else if (entry.isFile()) {
+            if (files.length >= MAX_SKILL_FILES) {
+                truncated = true
+                break
+            }
+            files.push({ path: child, size: statSync(join(base, child)).size })
+        }
+    }
+    return truncated
+}
+
+/** 列出技能目录内的文件，SKILL.md 永远排在最前。 */
+export function listSkillFiles(dir: string, name: string): SkillFileListing {
+    const base = skillBaseDir(dir, name)
+    const files: SkillFileEntry[] = []
+    const truncated = walkSkillFiles(base, "", 0, files)
+    files.sort((a, b) => {
+        const top = (path: string) => (path === "SKILL.md" ? 0 : 1)
+        return top(a.path) - top(b.path) || a.path.localeCompare(b.path)
+    })
+    return { files, truncated }
+}
+
+/**
+ * 读取技能内的单个文本文件。路径逐段校验并限定在技能目录内，软链接拒绝，
+ * 二进制文件只返回标记，超大文件返回前 MAX_SKILL_FILE_BYTES 字节。
+ */
+export function readSkillFile(dir: string, name: string, relativePath: string): SkillFileContent {
+    const base = skillBaseDir(dir, name)
+    if (relativePath === "" || relativePath.includes("\\")) {
+        throw new Error("invalid skill file path")
+    }
+    const segments = relativePath.split("/")
+    if (segments.some((segment) => isUnsafeSegment(segment))) {
+        throw new Error("invalid skill file path")
+    }
+    const target = join(base, ...segments)
+    if (target !== base && !target.startsWith(base + sep)) throw new Error("invalid skill file path")
+
+    const info = lstatSync(target)
+    if (!info.isFile()) throw new Error("not a file")
+    // An ancestor directory may itself be a symlink, so containment is checked on the
+    // resolved path too; only files inside this skill directory are ever readable.
+    const real = realpathSync(target)
+    if (!real.startsWith(base + sep)) throw new Error("invalid skill file path")
+
+    const length = Math.min(info.size, MAX_SKILL_FILE_BYTES)
+    const buffer = new Uint8Array(length)
+    let descriptor: number | undefined
+    let read = 0
+    try {
+        descriptor = openSync(target, "r")
+        read = readSync(descriptor, buffer, 0, length, 0)
+    } finally {
+        if (descriptor !== undefined) closeSync(descriptor)
+    }
+    const text = new TextDecoder("utf-8", { fatal: false }).decode(buffer.subarray(0, read))
+    const binary = text.includes("\u0000")
+    return {
+        path: segments.join("/"),
+        size: info.size,
+        content: binary ? "" : text.replace(/\u0000/g, ""),
+        truncated: !binary && info.size > length,
+        binary,
+    }
 }
 
 // ── CRUD ──

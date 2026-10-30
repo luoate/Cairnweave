@@ -26,7 +26,7 @@
  *     bun run tools/gate/m16-model-ab.ts
  *
  * Optional environment:
- *   CAIRN_AGENT_CONFIG_DIR=~/.tch-agent/config   agent config directory
+ *   CAIRN_AGENT_CONFIG_DIR=~/.cairnweave/config   agent config directory
  *   CAIRN_AB_TASKS=2                             explore tasks per arm (1-6)
  *   CAIRN_AB_MAX_MINUTES=20                      total wall-clock cap
  *   CAIRN_AB_REPORT=path                         default runs/m16-model-ab.json
@@ -55,7 +55,7 @@ import { Scheduler } from "../../apps/cairn/src/scheduler/loop";
 import { projectWorkspace } from "../../apps/cairn/src/scheduler/tasks";
 
 const AGENT_CONFIG_DIR =
-  process.env["CAIRN_AGENT_CONFIG_DIR"]?.trim() || join(homedir(), ".tch-agent", "config");
+  process.env["CAIRN_AGENT_CONFIG_DIR"]?.trim() || join(homedir(), ".cairnweave", "config");
 const MODEL_A = process.env["CAIRN_AB_MODEL_A"]?.trim() ?? "";
 const MODEL_B = process.env["CAIRN_AB_MODEL_B"]?.trim() ?? "";
 const TASKS = envInt("CAIRN_AB_TASKS", 2, 1, 6);

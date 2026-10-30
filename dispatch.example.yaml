@@ -12,7 +12,7 @@
 #   bun run cairn serve --config dispatch.yaml
 #
 # This file contains no credentials. Model/credential configuration lives in
-# BreachWeave's ~/.tch-agent config (auth.json); never commit secrets here.
+# ~/.cairnweave/config (auth.json); never commit secrets here.
 
 # Kept for compatibility with Cairn's config; the in-process scheduler does not
 # call this HTTP endpoint.
@@ -220,14 +220,14 @@ retention:
 #     timeout_ms: 5000
 
 # Environment variables passed to every worker process. They are not written
-# into task.json. Prefer ~/.tch-agent/config/auth.json for model credentials;
+# into task.json. Prefer ~/.cairnweave/config/auth.json for model credentials;
 # do not put secrets in this file.
 # Selects the real solver; omit or set "fake" for deterministic/offline runs.
 # common_env:
 #   CAIRN_SOLVER: "breachweave"
 #   # Local mode only. Container mode sets CAIRN_AGENT_CONFIG_DIR itself and
 #   # mounts the config read-only at /cairn/agent-config.
-#   CAIRN_AGENT_CONFIG_DIR: "C:/Users/me/.tch-agent/config"
+#   CAIRN_AGENT_CONFIG_DIR: "C:/Users/me/.cairnweave/config"
 #   https_proxy: "http://127.0.0.1:7897"
 
 # Container mode. One container per project; the project workspace is

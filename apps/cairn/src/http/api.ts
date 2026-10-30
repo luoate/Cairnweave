@@ -126,7 +126,7 @@ export interface ApiOptions {
    * behavior.
    */
   operatorToken?: string;
-  /** Agent config directory for the model/credential routes. Defaults to env or ~/.tch-agent/config. */
+  /** Agent config directory for the model/credential routes. Defaults to env or ~/.cairnweave/config. */
   agentConfigDir?: string;
   /** Test seam; production lazily imports `@cairn/agent`'s ConfigManager. */
   agentConfigFactory?: AgentConfigOptions["factory"];

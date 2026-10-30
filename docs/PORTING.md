@@ -149,7 +149,7 @@ M1 已记录的偏离（均不影响合法客户端）：
    项目产出 2 个 Fact，bootstrap 项目产出 1 个 Fact）。M2c 的 gate 用真实模型：
    bootstrap 项目在临时 workspace 中读取 `marker.txt`，产出 Fact `f001`（描述含
    `CAIRN-M2C-GATE-9c41`）并 completed。gate 不计入 `bun test`，因为它需要
-   `~/.tch-agent/config` 凭据并产生模型费用；reason-only 项目可合法通过
+   `~/.cairnweave/config` 凭据并产生模型费用；reason-only 项目可合法通过
    `data.complete` 结束而不新增 Fact，所以 gate 固定走 bootstrap 路径。
 5. **M3 硬拦截 gate**：`tools/gate/m3-gate.ts` 不调用模型、不产生费用。它直接用与 Solver
    相同的 Host Bridge 验证：in-scope 网络放行、out-of-scope/工作区外读取/未知工具拒绝、
@@ -221,6 +221,6 @@ M1 已记录的偏离（均不影响合法客户端）：
 | Docker Python SDK vs CLI | 统一走 CLI，输出解析加测试；错误语义按退出码映射 |
 | Windows 路径/信号差异 | 路径转换集中在 `runtime/paths.ts`；本地模式可在 Windows 开发/测试，生产隔离走容器；bind mount 用 `--mount type=bind` 避免盘符歧义 |
 | Solver 库的日志污染 stdout | 结果写文件，stdout 仅诊断；worker 启动时接管 console |
-| 模型凭据进入仓库/任务文件 | 凭据只在 `~/.tch-agent/config`；`models.json` 的自定义 provider 用环境变量名占位；task/result 不含凭据；检索与 code review 时检查 |
+| 模型凭据进入仓库/任务文件 | 凭据只在 `~/.cairnweave/config`（旧版 `~/.tch-agent/config` 首启复制、不删除）；`models.json` 的自定义 provider 用环境变量名占位；task/result 不含凭据；检索与 code review 时检查 |
 | 本地模式缺少 POSIX shell | Windows 上 `bash` 工具不可用，模型回退到跨平台文件工具；gate 已验证该路径；生产用容器（`Dockerfile.worker` 自带 shell 与 procps） |
 | AGPL + Apache 混合 | 整体 AGPL-3.0；保留 BreachWeave 许可声明；分发时提供源码 |

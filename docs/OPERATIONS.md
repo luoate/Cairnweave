@@ -59,8 +59,8 @@ worker 启动真实 Solver 前会把 `task.scope.targets` 与工作区/会话路
   等端点；主机名按字面匹配（不做 DNS），支持 `*.example.com` 与 IPv4 CIDR。识别为网络
   工具却提取不到端点时 **拒绝**。
 - 文件：读只能在工作区或 `file:` scope 目标内；写只能在项目工作区内；agent 配置目录
-  （`/cairn/agent-config`、`~/.tch-agent`）始终拒绝；按 realpath + 词法双重判断，阻止
-  符号链接逃逸。
+  （`/cairn/agent-config`、`~/.cairnweave`、旧版 `~/.tch-agent` 与 `CAIRN_AGENT_CONFIG_DIR`
+  指定的目录）始终拒绝；按 realpath + 词法双重判断，阻止符号链接逃逸。
 - 未知工具默认 **拒绝**；只有明确列出的 worker 本地工具（subagent、document_finding、
   challenge 工具等）放行，`subagent` 的会话仍受同一闸门约束。
 - 每次 allow/block 都追加到 `<sessionDir>/audit.jsonl`（task_id、project_id、tool、
@@ -266,8 +266,9 @@ CAIRN_SOLVER=breachweave bun run cairn serve --port 8000 --db-path ./cairn.db \
 ```
 
 也可以在 `dispatch.yaml` 的 `common_env` 里设置 `CAIRN_SOLVER: breachweave`。真实 Solver
-读取 BreachWeave 的配置目录（默认 `~/.tch-agent/config`，`CAIRN_AGENT_CONFIG_DIR` 可
-覆盖），首次启动时会把内置 prompts/skills 补齐到该目录：
+读取 BreachWeave 的配置目录（默认 `~/.cairnweave/config`，`CAIRN_AGENT_CONFIG_DIR` 可
+覆盖；仍在使用默认目录时，首次启动会把旧版 `~/.tch-agent/config` 的内容复制过来，旧目录
+不删除），首次启动时会把内置 prompts/skills 补齐到该目录：
 
 - `auth.json`：provider 凭据；手工配置时**API key 只保存在这里**；
 - `models.json`：provider、baseUrl、api 协议与模型列表。自定义 provider 的 `apiKey`
@@ -307,7 +308,7 @@ CAIRN_SOLVER=breachweave bun run cairn serve --port 8000 --db-path ./cairn.db \
 ## 通过 API 与 UI 管理模型与密钥（M18a/M18b/M18d）
 
 控制面新增 `/settings/agent` 路由；目录按 `--config` 的 `common_env`
-（`CAIRN_AGENT_CONFIG_DIR`）→ 进程环境变量 → `~/.tch-agent/config` 解析，纯 HTTP 模式
+（`CAIRN_AGENT_CONFIG_DIR`）→ 进程环境变量 → `~/.cairnweave/config` 解析，纯 HTTP 模式
 同样可用。返回的 provider/模型列表带掩码状态，密钥、provider 与模型的自定义 header
 值都不会回传。静态 UI 的页头“模型与密钥”入口直接使用这些路由：Provider 页签维护
 provider 与密钥，模型页签负责拉取/手工录入、设为默认、测试与删除；密钥输入框永远
@@ -332,11 +333,11 @@ provider 与密钥，模型页签负责拉取/手工录入、设为默认、测�
 与请求 host 不一致的浏览器写请求。完整操作步骤、常见错误与 M16b 真实 A/B 记录见
 `docs/MODELS.md`。
 
-## 管理技能（M25）
+## 管理技能（M25，M26 统一浏览）
 
 「设置 → 技能」页签使用 `/settings/agent/skills` 路由；配置目录与模型设置相同，
-接管的是 `<configDir>/skills/<name>/SKILL.md`。内置技能共 17 个，`cairn-worker`
-prompt 默认启用其中 12 个；只有白名单里的技能会进入模型上下文。
+接管的是 `<configDir>/skills/<name>/SKILL.md`（及其 `references/`、`scripts/` 等附属文件）。
+内置技能共 17 个，`cairn-worker` prompt 默认启用其中 12 个；只有白名单里的技能会进入模型上下文。
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
@@ -345,12 +346,34 @@ prompt 默认启用其中 12 个；只有白名单里的技能会进入模型上
 | DELETE | `/settings/agent/skills/{name}` | 删除目录并移出白名单；内置技能把目录名记入 `.deleted-builtins.json` |
 | POST | `/settings/agent/skills/{name}/restore` | 仅内置：清除删除记录并回填文件，不自动启用 |
 | PUT | `/settings/agent/skills/{name}/enabled` | `{enabled}`，只改 `cairn-worker` prompt 的 `meta.skills` |
+| GET | `/settings/agent/skills/{name}/files` | 只读文件树 `{files:[{path,size}],truncated}`，`SKILL.md` 排第一；≤200 个文件、深度 ≤8 |
+| GET | `/settings/agent/skills/{name}/file?path=` | 只读单文件 `{content,size,truncated,binary}`，正文 ≤256 KiB 前缀；越界 400，缺失 404 |
 
 - 新增名须为小写 slug（`^[a-z0-9]+(?:-[a-z0-9]+)*$`，≤64），即目录名；描述单行 ≤1024，
   正文非空 ≤96 KiB，请求体 ≤512 KiB。
 - 删除内置跨重启持久：重新打开页签或重启服务都不会回填，直到点「恢复」。
 - 手动改 prompt 的 `skills` 数组与页签等价；直接改磁盘文件时，请保持 `SKILL.md` 的
   frontmatter 含非空 `description`，否则 SDK 会跳过该技能。
+- 浏览走页签行内的「预览」：左侧文件树、右侧正文，打开即预览第一个文件，头部仍可启停。
+  两条只读路由免 operator token（GET 一律开放），但绝不写出目录之外的路径——软链接、
+  `..`、绝对路径与含保留字符的文件名都会被拒绝。
+
+## 配置目录改名与迁移（M26）
+
+默认 agent 配置目录自 M26 起为 `~/.cairnweave/config`（Windows 下即 `%USERPROFILE%\.cairnweave\config`）。
+解析顺序不变：`--config` 的 `common_env.CAIRN_AGENT_CONFIG_DIR` → 进程环境变量 → 默认值。
+
+- 迁移在 `cairn serve` 启动、播种内置 prompts/skills **之前**执行，且只在解析结果仍是默认目录
+  时触发；用环境变量指定别处就不迁移。
+- 只在目标目录为空时复制；逐文件 `lstat`，跳过软链接，总量上限 64 MiB，绝不覆盖已存在的目标
+  文件。旧目录 `~/.tch-agent/config` **不会被删除或修改**，因此回滚只需把
+  `CAIRN_AGENT_CONFIG_DIR` 指回旧目录。
+- 复制完成后日志给出 `copied N agent config file(s) from ... to ...; the legacy directory is unchanged`；
+  命中上限或出错时不写入部分结果的语义保持不变——已复制的文件留在新目录，下次启动因目标非空
+  而跳过迁移，可手动清空新目录重试。
+- Host Bridge 的拒绝根同时包含 `~/.cairnweave`、`~/.tch-agent` 与显式配置的目录，模型密钥不会因
+  改名而变成可读的工作区文件。
+- BreachWeave 内核的 runtime、solvers 与 challenge 目录仍在 `~/.tch-agent` 下，未随本次改名迁移。
 
 ## 运行配置（M22 起，M24 统一入口，M24b 环境测试）
 

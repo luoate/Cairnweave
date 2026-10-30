@@ -108,6 +108,23 @@ export interface CreateSkillInput {
   content: string;
 }
 
+export interface SkillFileEntry {
+  /** POSIX path relative to the skill directory. */
+  path: string;
+  size: number;
+}
+
+export interface SkillFileListing {
+  files: SkillFileEntry[];
+  truncated: boolean;
+}
+
+export interface SkillFileContent extends SkillFileEntry {
+  content: string;
+  truncated: boolean;
+  binary: boolean;
+}
+
 export interface PromptFileView {
   name: string;
   meta: Record<string, unknown> & { skills?: string[] };
@@ -193,6 +210,8 @@ export class ConfigManager {
   listDeletedBuiltinSkills(): string[];
   isBuiltinSkill(name: string): boolean;
   restoreBuiltinSkill(name: string): Promise<void>;
+  listSkillFiles(name: string): SkillFileListing;
+  readSkillFile(name: string, path: string): SkillFileContent;
   getPrompt(name: string): Promise<PromptFileView | undefined>;
   setPrompt(prompt: PromptFileView): Promise<void>;
 }
@@ -211,4 +230,5 @@ export function initBuiltinPrompts(configDir: string): Promise<void>;
 export function initBuiltinSkills(configDir: string): Promise<void>;
 
 export const TCH_AGENT_HOME_DIR: string;
+export const CAIRNWEAVE_HOME_DIR: string;
 export const DEFAULT_CONFIG_DIR: string;

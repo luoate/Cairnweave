@@ -9,7 +9,7 @@ M1 已落地：`packages/graph`（schema/领域服务/导出）、`apps/cairn/sr
 （`scheduler/{tasks,loop}.ts`）、worker 角色（`roles/worker.ts`）、任务/结果文件协议、
 宽容 JSON 解析与确定性 fake solver。M2c 已落地：BreachWeave core 并入 `packages/agent`，
 worker 可用 `CAIRN_SOLVER=breachweave` 在进程内启动真实 Solver 会话，读取
-`~/.tch-agent/config` 的模型配置，并在软截止时向会话发送 wrap-up steer。M3 已落地：
+`~/.cairnweave/config`（M26 前为 `~/.tch-agent/config`）的模型配置，并在软截止时向会话发送 wrap-up steer。M3 已落地：
 `runtime/{types,local,docker,paths}.ts`（每项目容器或本地进程）、
 `host-bridge/{bridge,command,scope-targets,pi-extension,worker-extension}.ts`
 （`tool_call` 级 Scope 闸门与 `audit.jsonl`）、`packages/graph/src/artifacts.ts` 与
@@ -230,6 +230,21 @@ M25 把技能纳入同一个「设置」弹窗。config 层在
 「本地偏好」之间新增「技能」页签：内置/自定义、已启用/未启用、已删除分列展示，行内完成
 启停、删除确认（内置会说明删除跨重启并给出恢复入口）与恢复，底部表单新增技能并可选择
 「添加后立即启用」。以上不改动 worker 协议、图或调度语义。
+M26 把所有技能收进同一个入口，并给运行配置目录换名。config 层在
+`packages/agent/src/config/skills/index.ts` 增加只读的 `listSkillFiles`（≤200 个文件、递归
+深度 ≤8）与 `readSkillFile`（单文件读 256 KiB 前缀、含 NUL 判为二进制、路径逐段拒绝空段 /
+`.` / `..` / 超长段 / 保留字符与控制字符，再做词法与 realpath 双重包含检查并拒绝软链接），
+`ConfigManager` 透传为 `listSkillFiles` / `readSkillFile`；控制面据此挂
+`GET /settings/agent/skills/{name}/files` 与 `GET /settings/agent/skills/{name}/file?path=`，
+两者只读、沿用 GET 免 token 规则，非法路径 400、技能或文件缺失 404。UI 在每个技能行加
+「预览」，打开独立的 `skillDetail` 弹窗：左侧把扁平路径还原成目录树，右侧原样渲染正文，
+打开即自动预览排序后的第一个文件（`SKILL.md` 恒在首位），头部仍可启停。
+同一里程碑把默认 agent 配置目录从 `~/.tch-agent/config` 改名为 `~/.cairnweave/config`
+（`apps/cairn/src/agent-config-dir.ts`）：控制面启动时，只有仍使用默认目录才触发迁移，
+且只在目标目录为空时逐文件复制旧目录（跳过软链接、总量上限 64 MiB、绝不覆盖已有文件、
+绝不删除旧目录），因此失败可重跑、回滚只需改回环境变量；`CAIRN_AGENT_CONFIG_DIR` 显式
+指定目录时不迁移。Host Bridge 的拒绝根同时覆盖新旧两代目录与显式配置的目录，容器内
+只读挂载点 `/cairn/agent-config` 不变。
 M18f 打开 challenge/Flag 自动校验：`POST /projects` 未给 `verification` 时，控制面读
 `verification.challenge.code_env`（默认 `TCH_CHALLENGE_ID`）；非空即写入
 `{kind: challenge, challenge_code}`，否则按 `evidence_enforcement` 落 `evidence` /
@@ -307,7 +322,7 @@ scheduler 与 HTTP API 共用 `packages/graph/src/commands.ts` 的命令，不�
 | `.cairn/board/**` | Observer sidecar | 主 Solver（只读工具）、后续任务 | 项目工作区（跨任务持久） |
 | `observer-context.json` / `observer/**` | 控制面写 context；worker 写 review 状态 | review sidecar、人/审计 | `<sessionDir>/`（任务级） |
 | `observer/proposals/*.json` | Observer sidecar（主 Solver 结构化文件工具只读） | 控制面摄取 | `<sessionDir>/observer/proposals/`（任务级） |
-| 模型/凭据（`~/.tch-agent/config`） | 用户 | worker（只读使用） | 控制面主机（容器模式只读挂载） |
+| 模型/凭据（`~/.cairnweave/config`） | 用户 | worker（只读使用） | 控制面主机（容器模式只读挂载） |
 
 规则：worker 的任何输出都是**不可信输入**；控制面必须按契约校验后才写图。各文件的字段、
 校验与退出码见 [`CONTRACT.md`](./CONTRACT.md)。
@@ -853,6 +868,11 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
     会记入 `.deleted-builtins.json`、重启不回填，删除后可用「恢复」送回文件（不自动启用）；
     底部表单新增技能，可选「添加后立即启用」，名称/描述/正文发送前做与 API 同构的校验。
     任一技能写请求进行中，整个设置弹窗都不允许关闭。
+  - `技能详情`（M26）：`data-modal="skillDetail"` 的独立弹窗，叠在设置弹窗之上并进入同一个
+    模态栈。左列由 `GET .../files` 的扁平路径生成目录/文件两级树（含大小与 200 条截断提示），
+    右列用 `<pre>` 原样渲染 `GET .../file?path=` 的正文，并区分加载中、读取失败、二进制与
+    256 KiB 截断四种状态；打开时自动预览第一个文件，头部保留启停，启停写入期间不允许关闭，
+    关闭时复位状态。已删除的内置没有文件，因此行内不渲染「预览」。
   - `本地偏好`：操作者名称与默认布局，只写 `localStorage`。
   - `服务端设置`：`GET/PUT /settings` 的意图/推理超时。
 - 浏览器 `document.title` 跟随当前项目（M24）：打开项目显示「项目名 · Cairn」，
@@ -1050,7 +1070,8 @@ Host Bridge 是 pi 的 `tool_call` 扩展：它在工具执行**之前**拿到�
     **拒绝**。`bash -c "curl …"` 的引号内容同样按命令文本分析。
   - 文件工具（`read`/`grep`/`find`/`ls`/`write`/`edit`）：相对路径按工作区解析；写入必须
     落在项目工作区；读取必须落在工作区或 `file:` scope 根内；`realpath` 后判断，防止
-    symlink/junction 逃逸；`~/.tch-agent/config` 与 `/cairn/agent-config` 永远拒绝。
+    symlink/junction 逃逸；`~/.cairnweave`、`~/.tch-agent` 两代配置目录与
+    `/cairn/agent-config` 永远拒绝。
     容器内的每任务配置副本位于 `/tmp/cairn-agent-config/<task_id>/`，不在工作区或任何
     scope 根内，因此同样的读写规则会拒绝访问它；它只供 Solver 进程自己加载。
     `CAIRN_OBSERVER_BOARD_DIR` 另外作为 `protectedWriteRoots`：读取看板允许，结构化文件
@@ -1110,7 +1131,7 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
   时的行为一致。
 - BreachWeave 的 `cairn-worker` 系统提示词位于
   `packages/agent/src/config/prompts/builtin/cairn-worker.md`，首次启动时由
-  `initBuiltinPrompts` 释放到 `~/.tch-agent/config/prompts/`；conclude 的会话恢复也使用
+  `initBuiltinPrompts` 释放到 `~/.cairnweave/config/prompts/`；conclude 的会话恢复也使用
   同一提示词配置。它的 frontmatter `model: "cairn-worker"` 指向 `model-prefs.json` 中的
   同名条目。Observer 不依赖该 frontmatter 的 `observerEnabled`：启用与否由 scheduler
   注入的 `CAIRN_OBSERVER_ENABLED` 决定；启用时 `cairnObserverExtension` 另行附加
@@ -1197,7 +1218,8 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
     `cwd`；项目目录为 `<root>/<project_id>`。
 - `serve --config` 在容器模式启动时检查 Docker，并先把内置 prompts/skills 释放到
   agent 配置目录，再以只读方式挂载进容器；容器内跳过写入内置 prompts/skills 的逻辑。
-- 模型与凭据：沿用 BreachWeave 的 `~/.tch-agent/config`（`models.json`、`auth.json`、
+- 模型与凭据：沿用 BreachWeave 的配置布局，默认目录 M26 起为 `~/.cairnweave/config`
+  （`models.json`、`auth.json`、
   `model-prefs.json`、`provider-prefs.json`）与 prompt frontmatter 的 `model`。M15a 起
   启用 `worker_profiles` 时，任务里的 `model` 覆盖 prompt frontmatter 的选择，但仍
   解析到同一个 model-prefs 文件；没有任务级 `model` 时保持原行为。本地模式由

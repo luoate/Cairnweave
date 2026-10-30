@@ -1,6 +1,6 @@
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 
+import { agentConfigDirFromEnv } from "../agent-config-dir";
 import type { ConfigManager, ModelConfigEntry, ProviderPrefEntry } from "@cairn/agent";
 import { HttpError } from "@cairn/graph";
 
@@ -30,7 +30,7 @@ export interface AgentModelReferences {
 }
 
 export interface AgentConfigOptions {
-  /** Defaults to `CAIRN_AGENT_CONFIG_DIR` or `~/.tch-agent/config`. */
+  /** Defaults to `CAIRN_AGENT_CONFIG_DIR` or `~/.cairnweave/config`. */
   configDir?: string;
   /** Test seam; production lazily imports `@cairn/agent`. */
   factory?: (configDir: string) => Promise<ConfigManager>;
@@ -394,9 +394,7 @@ export function loadAgentConfigManager(options: AgentConfigOptions = {}): Promis
 function resolveConfigDir(explicit: string | undefined): string {
   const fromOption = explicit?.trim();
   if (fromOption !== undefined && fromOption !== "") return resolve(fromOption);
-  const fromEnv = process.env["CAIRN_AGENT_CONFIG_DIR"]?.trim();
-  if (fromEnv !== undefined && fromEnv !== "") return resolve(fromEnv);
-  return join(homedir(), ".tch-agent", "config");
+  return agentConfigDirFromEnv();
 }
 
 async function providerView(

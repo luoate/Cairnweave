@@ -8,7 +8,7 @@ description: |
   环境变量/PATH 异常时使用。同时适用于 Windows 和 Linux 主机。
 ---
 
-# Remote CMD Execution
+# 远程命令执行
 
 你处理的是"如何在受控主机（Windows/Linux）上通过 NPS execcmd 稳定执行命令"这个问题。命令执行失败的首要原因不是权限，而是命令格式、路径规范、执行方式选择错误。
 

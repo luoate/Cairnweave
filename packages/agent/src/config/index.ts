@@ -231,8 +231,10 @@ function sanitizeBaseUrlMappings(
     return next.length > 0 ? next : undefined
 }
 
+export const CAIRNWEAVE_HOME_DIR = resolve(homedir(), ".cairnweave")
+/** Legacy home; still holds the agent-internal runtime, solvers and challenge directories. */
 export const TCH_AGENT_HOME_DIR = resolve(homedir(), ".tch-agent")
-export const DEFAULT_CONFIG_DIR = resolve(TCH_AGENT_HOME_DIR, "config")
+export const DEFAULT_CONFIG_DIR = resolve(CAIRNWEAVE_HOME_DIR, "config")
 
 export interface PromptSessionExtensionLike {
     factory: ExtensionFactory
@@ -1205,6 +1207,12 @@ export class ConfigManager {
     }
     async restoreBuiltinSkill(name: string) {
         return skills.restoreBuiltinSkill(this.dir, name)
+    }
+    listSkillFiles(name: string): skills.SkillFileListing {
+        return skills.listSkillFiles(this.dir, name)
+    }
+    readSkillFile(name: string, path: string): skills.SkillFileContent {
+        return skills.readSkillFile(this.dir, name, path)
     }
 
     // ── Prompts ──

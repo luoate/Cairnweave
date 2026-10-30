@@ -7,8 +7,10 @@
 ## 1. 前置
 
 - 配置目录按 `--config` 的 `common_env.CAIRN_AGENT_CONFIG_DIR` → 进程环境变量
-  `CAIRN_AGENT_CONFIG_DIR` → `~/.tch-agent/config` 解析。`cairn serve` 不带 `--config`
-  时只看后两者，纯 HTTP 模式同样可用。
+  `CAIRN_AGENT_CONFIG_DIR` → `~/.cairnweave/config` 解析。`cairn serve` 不带 `--config`
+  时只看后两者，纯 HTTP 模式同样可用。仍在使用默认目录时，首次启动会把旧版
+  `~/.tch-agent/config` 的内容复制过来（只在目标为空时、绝不覆盖、绝不删除旧目录），
+  因此升级后 provider 与密钥直接可用。
 - 设置 `CAIRN_OPERATOR_TOKEN` 后，所有写路由要求 `X-Cairn-Operator-Token`；GET 保持
   开放。未设置时沿用本地单用户行为。跨源浏览器写请求一律 403。
 - 密钥只写不读：任何响应只返回掩码（`sk-...123456`）或 header 名称。真实值只落在

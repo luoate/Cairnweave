@@ -152,7 +152,7 @@ review。
 
 `review.ts` 每次 review 创建独立会话：
 
-- 配置目录使用 `CAIRN_AGENT_CONFIG_DIR`（缺省才回落到 `~/.tch-agent/config`），因此
+- 配置目录使用 `CAIRN_AGENT_CONFIG_DIR`（缺省才回落到 `~/.cairnweave/config`），因此
   容器内任务级只读配置副本可用；
 - 系统提示 = 上游 `OBSERVER_SYSTEM_PROMPT` + Cairn 适配段（没有 challenge
   state/difficulty/flag/hint 等概念）；

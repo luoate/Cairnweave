@@ -4,7 +4,7 @@ description: |
   Windows/Linux 场景下基于 Redis 未授权访问写入 Web 根并获取稳定命令执行、随后快速收敛到 NPS 的专项技能。只要用户提到 Redis、Redis未授权、6379、fscan 提示 unauthorized file、CONFIG SET dir/dbfilename、写 webshell、写计划任务、写 ssh key，或者已经确认 Redis 能写入 Web 目录，就应优先使用本技能，而不是走泛化 Web 利用或 SMB 分支。尤其在用户已经有上游跳板、NPS 通道、HTTP 映射端口时，必须优先触发本技能。
 ---
 
-# Redis Webroot RCE
+# Redis Web 根目录 RCE
 
 你处理的是一条非常具体的攻击链：`Redis 未授权 -> 写 Web 根 -> 最小 PHP 闭环 -> 命令执行 -> NPS 接管`。
 
@@ -41,7 +41,7 @@ WebShell 只是过渡控制面，不是长期通道。
 
 ## 标准流程
 
-### Phase 1: 基线确认
+### 阶段 1：基线确认
 
 先确认以下事实：
 
@@ -63,7 +63,7 @@ curl --noproxy '*' http://127.0.0.1:<mapped_http_port>/
 - `dbfilename`
 - HTTP 根页是否可访问
 
-### Phase 2: 最小闭环页
+### 阶段 2：最小闭环页
 
 默认使用独立文件名，例如 `redis_test.php`。
 
@@ -85,11 +85,11 @@ curl --noproxy '*' -s -X POST http://127.0.0.1:<mapped_http_port>/redis_test.php
 - 返回中只要包含 `RCOK`，即便前面带 `REDIS0007...`，也视为 PHP 解析和 POST 参数都已打通。
 - 不要因为响应前缀有 RDB 噪音就回退到“Redis 没写进去”。
 
-### Phase 3: 命令执行页
+### 阶段 3：命令执行页
 
 闭环成立后，**不要直接部署 system() webshell**。先落诊断页确认执行环境。
 
-#### Phase 2.5: 环境诊断（必须步骤）
+#### 阶段 2.5：环境诊断（必须步骤）
 
 闭环验证成功后、部署命令执行页之前，必须先落一个诊断页确认 PHP 执行环境：
 
@@ -137,7 +137,7 @@ Windows 场景下验证顺序固定为：
 
 如果 `whoami` 成功，不要继续花时间换各种一句话木马，直接转入 NPS 接管。
 
-### Phase 4: NPS 收口
+### 阶段 4：NPS 收口
 
 优先通过上游跳板的 `44944/files/...` 拉取 `npc`，再用 `wmic process call create` 启动。
 

@@ -4,7 +4,8 @@
  *
  * This gate is intentionally outside `bun test`: it calls a real model and costs money.
  * It needs Docker, an image built from `Dockerfile.worker`, and credentials under
- * `~/.tch-agent/config` (override with CAIRN_AGENT_CONFIG_DIR).
+ * `~/.cairnweave/config` (override with CAIRN_AGENT_CONFIG_DIR; the legacy
+ * `~/.tch-agent/config` is copied in on first start).
  *
  *   docker build -f Dockerfile.worker -t cairn-worker:latest .
  *   bun run tools/gate/m3-real-container-gate.ts
@@ -65,7 +66,7 @@ const dockerArgv = [process.env["CAIRN_DOCKER"]?.trim() || "docker"];
 const directory = mkdtempSync(join(tmpdir(), "cairn-m3-real-container-"));
 const workspaceRoot = join(directory, "workspace");
 const agentConfigDir =
-  process.env["CAIRN_AGENT_CONFIG_DIR"]?.trim() || join(homedir(), ".tch-agent", "config");
+  process.env["CAIRN_AGENT_CONFIG_DIR"]?.trim() || join(homedir(), ".cairnweave", "config");
 
 const checks: Array<{ name: string; status: "pass" | "fail"; detail: string }> = [];
 const logs: string[] = [];
