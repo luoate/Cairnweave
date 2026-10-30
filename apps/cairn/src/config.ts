@@ -469,12 +469,19 @@ const TOP_LEVEL_KEYS = new Set([
 /**
  * Sections an operator may override at runtime from the web UI. The stored patch keeps
  * dispatch.yaml's snake_case shape; it is merged onto the parsed document and re-parsed,
- * so these validators stay the only source of truth. Deployment settings (execution,
- * container, credentials, Observer, audit stream, prompt group, worker profiles) remain
- * file-only and need a restart.
+ * so these validators stay the only source of truth. Deployment settings (container
+ * image/network, credentials, Observer, audit stream, prompt group, worker profiles)
+ * remain file-only and need a restart. `runtime.execution` is editable, but the store
+ * only accepts a switch while the scheduler is idle; see `RuntimeConfigStore`.
  */
 const EDITABLE_OVERRIDE_KEYS: Record<string, readonly string[]> = {
-  runtime: ["max_workers", "max_running_projects", "max_project_workers", "interval"],
+  runtime: [
+    "execution",
+    "max_workers",
+    "max_running_projects",
+    "max_project_workers",
+    "interval",
+  ],
   tasks: ["bootstrap", "reason", "explore", "graph_slice", "evidence"],
   worker: [
     "soft_deadline_ratio",

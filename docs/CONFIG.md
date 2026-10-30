@@ -1,7 +1,9 @@
-# 运行配置（M22，M23 补充提案默认值）
+# 运行配置（M22 起；M24 扩展执行模式与统一设置入口）
 
 dispatch.yaml 仍是配置的事实来源；M22 增加一层**运行期覆盖**，让不含部署信息的调度参数
-可以在页头「运行配置」弹窗里改，并在下一个调度周期生效，不必重启进程。Observer 复盘在
+可以在页头「设置 → 运行与执行」里改，并在下一个调度周期生效，不必重启进程。M24 把
+`runtime.execution`（local / container）也纳入可编辑项（仅在调度器空闲时切换），并把
+运行配置、模型密钥、本地偏好与服务端设置收进同一个「设置」弹窗。Observer 复盘在
 M22 改为默认开启（`observer.enabled` 默认 `true`），提案自 M23 起默认 `enabled: true` +
 `mode: dry_run`（完整校验并记录，不写图）。
 
@@ -62,10 +64,26 @@ curl -X PUT http://127.0.0.1:8000/settings/runtime \
 
 | 键 | 默认 | 说明 |
 | --- | --- | --- |
+| `execution` | local | `local` / `container`；只在调度器空闲时切换（见下） |
 | `max_workers` | 3 | 全局并发任务上限，正整数 |
 | `max_running_projects` | 2 | 同时调度的项目数，正整数 |
 | `max_project_workers` | 1 | 单项目并发任务，正整数且 ≤ `max_workers` |
 | `interval` | 3 | 调度 tick 秒数，正整数；改动会重挂定时器 |
+
+### 执行模式切换
+
+`PUT /settings/runtime` 接受 `{"runtime":{"execution":"container"}}`（或反向切回
+`local`）。`RuntimeConfigStore` 在解析成功后、写入活配置前调用 `validateNext`：
+
+- 切到 `container` 时先检查本机 `docker`；不可用返回 400 并说明原因。
+- 调度器有任务在跑时返回 400（“wait for running tasks to finish…”）；正在切换时同样拒绝，
+  避免并发替换后端。
+- 校验通过后，`Scheduler.reconfigure()` 用新的执行模式重建 runtime 后端：等空闲 → 创建
+  新后端 → 关闭旧后端 → 重新解析工作区根目录。进入容器模式时，控制面先把内置
+  prompts / skills 播种到宿主 agent 配置目录（容器内只读挂载）。
+- dispatch.yaml 没有 `container:` 段也能切过去：校验时补上 `cairn-worker:latest` /
+  `bridge` / `remove` 三个默认值，但这些默认值**不写入覆盖 patch**，之后改 YAML 仍然生效。
+- 容器本身的 image / network_mode / worker_argv、挂载与凭据仍是只读项。
 
 ### 任务 `tasks`
 
@@ -147,10 +165,10 @@ curl -X PUT http://127.0.0.1:8000/settings/runtime \
 展示：
 
 - `server`
-- `runtime.execution`、`runtime.prompt_group`、`runtime.healthcheck_timeout`、
-  `runtime.worker_healthcheck`
+- `runtime.prompt_group`、`runtime.healthcheck_timeout`、`runtime.worker_healthcheck`
 - `common_env`（只显示键名，不显示值）
 - container / local 的 `workspace_root` 与 `completed_action`
+- container 的 `image` / `network_mode` / `worker_argv` / `cap_add`
 - `observer`（`enabled`、`model`、节奏、`kernel_tasks`）
 - `audit_stream`
 - `worker_profiles`
@@ -158,21 +176,28 @@ curl -X PUT http://127.0.0.1:8000/settings/runtime \
 
 ## 6. 前端行为
 
-- 页头两个工具条各有一个滑块图标，打开 `data-modal="runtime"` 弹窗；Esc / 背景 / 关闭
-  按钮走统一的模态栈，写请求进行中不允许关闭。
-- 字段按「调度 / 任务超时 / 图切片与证据 / Worker 与选择 / 保留与预算 / 策略触发 / 提案」
-  分组；数字、开关、下拉与多选（`allow_kinds`）四种控件。
+- 页头两个工具条各有一个齿轮按钮，打开 `data-modal="settings"` 弹窗；Esc / 背景 / 关闭
+  按钮走统一的模态栈，任一写入（运行配置、模型配置、服务端设置）进行中都不允许关闭。
+- 弹窗有四个页签：运行与执行、模型与密钥、本地偏好、服务端设置；切换页签时按需加载
+  （运行配置只在首次打开时拉取，保留未保存的编辑；模型配置只加载一次，保存后刷新）。
+- 运行配置字段按「执行环境 / 调度 / 任务超时 / 图切片与证据 / Worker 与选择 / 保留与预算 /
+  策略触发 / 提案」分组；数字、开关、下拉与多选（`allow_kinds`）四种控件。执行环境页只
+  放 local / container 下拉，并在下方提示需要空闲调度器与 Docker。
 - 与 `defaults` 不同的字段显示琥珀色「已覆盖」，顶部显示覆盖项数量与更新时间。
 - 「保存并生效」发送最小 patch；服务端拒绝时把具体约束错误显示在弹窗里。
 - 「恢复 dispatch.yaml 默认值」需要连续点击两次（4 秒内），然后发 `DELETE`。
+- 浏览器标题在打开项目时显示「项目名 · Cairn」，回到列表后恢复「Cairn」。
 
 ## 7. 测试
 
 - `apps/cairn/src/config-overrides.test.ts`：键白名单、深合并、视图形状、原地同步保持
-  引用、持久化与重启重放、非法值不改配置、跨字段冲突、重置、坏数据清理。
+  引用、持久化与重启重放、非法值不改配置、跨字段冲突、重置、坏数据清理、执行模式切换
+  （容器默认值注入）与 `validateNext` 拒绝。
 - `apps/cairn/src/http/api.settings-runtime.test.ts`：GET/PUT/DELETE、409、400（未知键 /
-  越界 / 非法 JSON）、413、operator token、跨源拒绝、错误不落库。
+  越界 / 非法 JSON）、413、operator token、跨源拒绝、错误不落库、执行模式切换与
+  `validateNext` 400。
 - `apps/cairn/src/scheduler/loop.test.ts`：`reconfigure()` 在启动后重挂定时器、启动前调用
-  无副作用。
-- `apps/cairn/src/http/api.ui.test.ts`：弹窗挂载点、每个可编辑路径恰好一个控件、最小
-  patch、空数字输入、400/409 行内错误、二次确认重置、写入期间禁止关闭。
+  无副作用、空闲时替换 runtime 后端。
+- `apps/cairn/src/http/api.ui.test.ts`：统一设置弹窗与页签、每个可编辑路径恰好一个控件、
+  最小 patch（含 `runtime.execution`）、空数字输入、400/409 行内错误、二次确认重置、
+  写入期间禁止关闭、浏览器标题跟随项目名。

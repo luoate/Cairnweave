@@ -8,7 +8,7 @@
 没有 Python ↔ TypeScript 桥，没有 JSONL RPC。
 
 [![CI](https://github.com/luoate/Cairnweave/actions/workflows/ci.yml/badge.svg)](https://github.com/luoate/Cairnweave/actions/workflows/ci.yml)
-[![tests](https://img.shields.io/badge/tests-740%20passed-brightgreen.svg)](docs/MILESTONES.md)
+[![tests](https://img.shields.io/badge/tests-748%20passed-brightgreen.svg)](docs/MILESTONES.md)
 [![license](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![runtime](https://img.shields.io/badge/runtime-Bun%201.4.4-black.svg)](package.json)
 
@@ -44,8 +44,8 @@ worker 在项目沙箱里跑真实模型，每个任务启动一次进程，只�
 | Flag 与校验 | `/flag` 从已索引工件与会话工具输出中提取真实 flag，拒绝占位符与掩码；challenge 项目按外部计分校验 |
 | 成本与预算 | `runs` 记录模型 / Token / 成本；意图级 priority 与预算、单项目 token/成本配额、逐 Fact 与逐意图的成本归因与因果边 |
 | 只读运维视图 | 运行、慢层、审计、证据、提案、看板、成本、统计、报告、Writeup 十个侧栏页签，全部只发 GET（人工重规划除外） |
-| 运行期配置 | Observer、并发、超时、证据门、预算、策略阈值、提案参数等可在页头「运行配置」里热调，覆盖存 SQLite，重启不丢 |
-| 两种执行模式 | `runtime.execution: local` 本地子进程；`container` 每项目一个长期容器、每任务一次 `docker exec`，配置只读挂载、不挂 Docker socket |
+| 运行期配置 | Observer、并发、超时、证据门、预算、策略阈值、提案参数等可在页头「设置 → 运行与执行」里热调，覆盖存 SQLite，重启不丢 |
+| 两种执行模式 | `runtime.execution: local` 本地子进程；`container` 每项目一个长期容器、每任务一次 `docker exec`，配置只读挂载、不挂 Docker socket；调度器空闲时可在「设置」里在线切换 |
 | 审计与实时流 | 任务结束导入 `audit.jsonl` 到哈希链账本；可选实时流按 `(task_id, seq)` 幂等追加，只降低暴露窗口，不改变最终一致性 |
 
 ## 架构
@@ -138,7 +138,7 @@ proposals:                    # 默认开启，但只演练
 ```
 
 `dry_run` 会执行全部来源、证据与去重校验，把结果记入 `proposals` 表（`would_apply`），
-但不写图；需要落图时改成 `apply`，或在「运行配置」弹窗里热切换。
+但不写图；需要落图时改成 `apply`，或在「设置 → 运行与执行」里热切换。
 
 运行期可改的字段（并发、间隔、超时、证据门、预算、策略阈值、提案参数、选择策略等）
 通过 `GET/PUT/DELETE /settings/runtime` 存进 SQLite 覆盖层，深合并回 YAML 解析结果后
@@ -186,8 +186,10 @@ host 不一致的浏览器写请求。
 - 列表：搜索、状态筛选、三种排序、按项目记忆视图；页面隐藏时暂停轮询，失败 5s→60s 退避。
 - 项目页：图视图、Fact 详情、Flag 横幅、授权范围、运行 / 慢层 / 审计 / 证据 / 提案 /
   看板 / 成本 / 统计 / 报告 / Writeup 页签。
-- 页头：运行配置、模型与密钥、停止全部；13 个以上的弹窗共用一套模态栈（Esc 只关最上层、
+- 页头：设置、停止全部；浏览器标题跟随当前项目名；12 个弹窗共用一套模态栈（Esc 只关最上层、
   Tab 焦点陷阱、关闭回焦），写操作期间禁用并在失败时就地报错。
+- 「设置」是一个带四个页签的弹窗：运行与执行（含 local/container 切换与运行期覆盖）、
+  模型与密钥、本地偏好（操作者与默认布局，仅存浏览器）、服务端设置。
 
 所有只读页签只发 GET；唯一的显式写操作是慢层的“请求重规划”。
 
@@ -200,7 +202,7 @@ host 不一致的浏览器写请求。
 
 ### 通过 API 与 UI 管理模型与密钥
 
-页头 CPU 图标打开「模型与密钥」弹窗，后端是 `/settings/agent` 系列路由：provider 与模型
+页头齿轮按钮打开「设置」，在「模型与密钥」页签里管理模型：后端是 `/settings/agent` 系列路由：provider 与模型
 CRUD、内置目录与远端 `/models` 发现、单模型或 provider 级连通性测试、设为默认 worker 模型。
 API key 只写不读（响应只回掩码），写入 `auth.json` 并按上游 SDK 要求同步到 `models.json`；
 自定义请求头同样只写，只回名字。删除仍被引用的条目返回 409，`?force=true` 才级联清理。
@@ -222,7 +224,7 @@ API key 只写不读（响应只回掩码），写入 `auth.json` 并按上游 S
 ## 测试与 CI
 
 ```bash
-bun test             # 740 passed / 75 files（fake solver，不需凭据）
+bun test             # 748 passed / 75 files（fake solver，不需凭据）
 bun run typecheck    # tsc --noEmit
 bun run check        # typecheck + test，与 CI 相同
 ```
@@ -247,7 +249,7 @@ gate 放在 `tools/gate/`，手动执行、不计入 CI，命令与环境变量�
 | [WRITEUP.md](docs/WRITEUP.md) | 中文 Writeup：草稿组成、载荷、附件包、Flag 置信度与模型撰写 |
 | [MODELS.md](docs/MODELS.md) | 模型与密钥的一页操作手册 |
 | [PORTING.md](docs/PORTING.md) | Python Cairn → TypeScript 的模块映射与对照测试策略 |
-| [MILESTONES.md](docs/MILESTONES.md) | M1–M23 实现记录、完整验证清单与里程碑表 |
+| [MILESTONES.md](docs/MILESTONES.md) | M1–M24 实现记录、完整验证清单与里程碑表 |
 
 ## 仓库结构
 
@@ -263,6 +265,7 @@ apps/cairn/src/
   http/project-board.ts  只读看板读取（M23）
   http/static/           Cairn Web UI（Alpine.js，无构建步骤）
   config.ts              dispatch.yaml 校验（Bun.YAML）
+  config-overrides.ts    运行期覆盖：SQLite patch ↔ dispatch.yaml（M22/M24）
   prompts/               prompt 加载、渲染与上游默认模板
   scheduler/             tick、派发、租约、证据、提案、策略、保留、审计
   verification/oracle.ts 完成 oracle：evidence / challenge / off

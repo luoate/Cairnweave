@@ -200,7 +200,7 @@ proposals:
   intent 或已应用提案重复时标为 `duplicate`；`hint` 按内容去重。项目非 active 时
   拒绝。审核失败只记录，不影响 worker 结果。
 - `dry_run` 默认开启：它执行全部校验，但只记录 `dry_run`，不写图；需要写图时再改
-  `mode: apply`，或在「运行配置」弹窗里热切换。
+  `mode: apply`，或在「设置 → 运行与执行」里热切换。
 - 只读查询：`GET /projects/{id}/proposals[?status=&kind=]`；UI 的“提案”页签同样只发
   GET。看板另走 `GET /projects/{id}/board`（M23）。控制面 API 仍未认证，远程/容器部署
   必须加网络层访问控制。
@@ -332,10 +332,12 @@ provider 与密钥，模型页签负责拉取/手工录入、设为默认、测�
 与请求 host 不一致的浏览器写请求。完整操作步骤、常见错误与 M16b 真实 A/B 记录见
 `docs/MODELS.md`。
 
-## 运行配置（M22）
+## 运行配置（M22 起，M24 统一入口）
 
-`--config` 启动时，页头滑块图标打开「运行配置」弹窗。覆盖存进 SQLite，重启后保留，
+`--config` 启动时，页头齿轮按钮打开「设置 → 运行与执行」。覆盖存进 SQLite，重启后保留，
 并在下一个调度 tick 生效；`DELETE` 清空全部覆盖回到 dispatch.yaml 的原值。
+`runtime.execution` 也可在这里切换（local / container），但要求调度器空闲且本机有
+Docker；切换在任务全部结束后重建 runtime 后端，不会中断在跑的任务。
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |

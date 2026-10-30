@@ -73,7 +73,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 
 import type { AuditTokenRegistry } from "../audit-stream/tokens";
-import type { DispatchConfig } from "../config";
+import type { DispatchConfig, ExecutionMode } from "../config";
 import {
   VerificationService,
   type VerificationOptions,
@@ -186,8 +186,13 @@ interface RunningTask {
 export class Scheduler {
   private readonly db: CairnDatabase;
   private readonly config: DispatchConfig;
-  private readonly workspaceRoot: string;
-  private readonly runtime: RuntimeBackend;
+  /** Explicit workspace root from options; re-applied when the execution mode changes. */
+  private readonly workspaceRootOverride: string | undefined;
+  private workspaceRoot: string;
+  private runtime: RuntimeBackend;
+  /** Rebuilds the backend for a mode switch; null when a test injected one. */
+  private readonly runtimeFactory: (() => RuntimeBackend) | null;
+  private runtimeMode: ExecutionMode;
   private readonly log: (message: string) => void;
   /** Test override; otherwise the lease cadence follows runtime.interval. */
   private readonly leaseIntervalOverrideMs: number | null;
@@ -206,16 +211,24 @@ export class Scheduler {
   constructor(options: SchedulerOptions) {
     this.db = options.db;
     this.config = options.config;
+    this.workspaceRootOverride = options.workspaceRoot;
     this.workspaceRoot = resolveWorkspaceRoot(options.config, options.workspaceRoot);
     this.log = options.log ?? ((message) => console.error(`[scheduler] ${message}`));
     this.now = options.now ?? (() => new Date());
-    this.runtime =
-      options.runtime ??
-      createRuntime({
-        config: options.config,
-        log: this.log,
-        ...(options.workerArgv === undefined ? {} : { workerArgv: options.workerArgv }),
-      });
+    this.runtimeMode = options.config.runtime.execution;
+    if (options.runtime !== undefined) {
+      this.runtime = options.runtime;
+      this.runtimeFactory = null;
+    } else {
+      const workerArgv = options.workerArgv;
+      this.runtimeFactory = () =>
+        createRuntime({
+          config: this.config,
+          log: this.log,
+          ...(workerArgv === undefined ? {} : { workerArgv }),
+        });
+      this.runtime = this.runtimeFactory();
+    }
     this.leaseIntervalOverrideMs = options.leaseIntervalMs ?? null;
     this.leaseIntervalMs =
       this.leaseIntervalOverrideMs ?? this.config.runtime.interval * 1000;
@@ -244,6 +257,14 @@ export class Scheduler {
     return this.running.size;
   }
 
+  get executionMode(): ExecutionMode {
+    return this.runtimeMode;
+  }
+
+  get busy(): boolean {
+    return this.running.size > 0;
+  }
+
   /** Background mode used by `cairn serve --config`. */
   start(): void {
     if (this.timer !== null) return;
@@ -259,16 +280,56 @@ export class Scheduler {
   }
 
   /**
-   * Re-arms interval-driven timers after a runtime settings change. Values such as workers,
-   * budgets and timeouts are read from `this.config` on every tick, so this only has to
-   * cover the two intervals captured when the timers were created.
+   * Re-arms interval-driven timers after a runtime settings change and swaps the runtime
+   * backend when `runtime.execution` changed. Values such as workers, budgets and
+   * timeouts are read from `this.config` on every tick, so this only has to cover the two
+   * intervals captured when the timers were created.
    */
   reconfigure(): void {
-    if (this.timer === null) return;
-    this.clearTimers();
-    this.leaseIntervalMs =
-      this.leaseIntervalOverrideMs ?? this.config.runtime.interval * 1000;
-    this.armTimers();
+    if (this.timer !== null) {
+      this.clearTimers();
+      this.leaseIntervalMs =
+        this.leaseIntervalOverrideMs ?? this.config.runtime.interval * 1000;
+      this.armTimers();
+    }
+    this.applyRuntimeMode();
+  }
+
+  /**
+   * Swaps local↔container after an operator change. `RuntimeConfigStore` refuses the
+   * change while tasks are running, but a task can still be in flight here; in that case
+   * the swap waits for the scheduler to go idle so no container is stopped mid-task.
+   */
+  private applyRuntimeMode(): void {
+    const mode = this.config.runtime.execution;
+    if (mode === this.runtimeMode || this.runtimeFactory === null) return;
+    if (this.running.size > 0) {
+      this.log(
+        `runtime.execution is now ${mode}; switching after ${this.running.size} running task(s) finish`,
+      );
+      void this.waitForIdle().then(
+        () => this.applyRuntimeMode(),
+        () => {},
+      );
+      return;
+    }
+    const previous = this.runtime;
+    let next: RuntimeBackend;
+    try {
+      next = this.runtimeFactory();
+    } catch (error) {
+      this.log(`cannot switch runtime to ${mode}: ${describe(error)}`);
+      return;
+    }
+    this.runtime = next;
+    this.runtimeMode = mode;
+    this.workspaceRoot = resolveWorkspaceRoot(this.config, this.workspaceRootOverride);
+    try {
+      previous.close();
+    } catch (error) {
+      this.log(`runtime shutdown failed during mode switch: ${describe(error)}`);
+    }
+    this.log(`runtime switched to ${mode}`);
   }
 
   private armTimers(): void {

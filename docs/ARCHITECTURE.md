@@ -1,4 +1,4 @@
-# 架构（M23 更新）
+# 架构（M24 更新）
 
 本文固定合并后的角色边界、数据所有权和失败语义。实现以本文为准；需要改动时先改本文并
 记录原因。
@@ -200,6 +200,17 @@ M23 默认打开 Observer 的两类产物：`proposals` 默认 `enabled: true` +
 引用数与长度设上限，并返回 `ideas_total` / `memory_total` / `truncated`。看板缺失或
 纯 HTTP 模式返回 `available: false`，不视为错误。UI 在「提案」与「成本」之间新增只读
 「看板」页签，按状态/类型着色展示想法与记忆。
+M24 把执行模式变成可在线切换的运行配置，并把所有前端可写设置收进一个「设置」弹窗：
+`runtime.execution` 进入可编辑白名单；`RuntimeConfigStore` 新增 `validateNext` 钩子，
+在解析成功之后、原地同步之前拒绝“调度器忙 / 正在切换 / 本机没有 Docker”的请求，因此
+坏切换不会留下半套配置。`Scheduler` 记录当前模式，`reconfigure()` 发现模式变化时先等
+`running` 清空，再用运行时工厂重建后端（测试注入的后端不重建），关闭旧后端并重新解析
+工作区根目录；进入容器模式前控制面把内置 prompts/skills 播种到宿主 agent 配置目录。
+dispatch.yaml 缺少 `container:` 段时，存储层只在解析前补上镜像/网络/收尾动作三个默认值，
+不写进覆盖 patch。API 的 `workspaceRoot` 由字符串改为 getter，工件、证据、Flag 与
+Writeup 路由在切换后立即读新根。前端合并了原先的「运行配置 / 模型与密钥 / 本地偏好 /
+服务端设置」四个弹窗：页头只剩一个齿轮按钮，弹窗内用页签切换并按需加载；浏览器标题
+跟随当前项目名。
 M18f 打开 challenge/Flag 自动校验：`POST /projects` 未给 `verification` 时，控制面读
 `verification.challenge.code_env`（默认 `TCH_CHALLENGE_ID`）；非空即写入
 `{kind: challenge, challenge_code}`，否则按 `evidence_enforcement` 落 `evidence` /
@@ -805,18 +816,21 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
   因果边和每个 run 的直接产出。它不把意图合计与 Fact 合计相加。
 - 这些面板只在打开页签或点刷新时拉取，全部使用 GET；错误在面板内显示并可重试，
   不弹写操作、不参与调度。UI 本身不带认证，远程/容器部署仍需网络层限制整个 API。
-- `模型与密钥`（M18b）是唯一非项目级、且带写操作的弹窗（`data-modal="agent"`）：
-  打开时读取 `GET /settings/agent`，Provider 页签管理 provider（协议下拉来自
-  `protocols`，名称建议来自 `builtinProviders`），模型页签管理条目并可在
-  `POST /providers/{id}/discover` 后从下拉选择模型、自动回填显示名。密钥输入永远为空，
-  留空表示不修改；保存后重读配置。删除先走行内确认，409 时显示依赖方并切换
-  “强制删除”；所有请求期间关闭按钮与提交按钮同时禁用。操作步骤与错误对照见
-  `docs/MODELS.md`。
-- `运行配置`（M22）是页头第二个写弹窗（`data-modal="runtime"`）：打开时读取
-  `GET /settings/runtime`，按分组渲染数字/开关/下拉/多选控件，与文件基线不同的字段
-  显示“已覆盖”；保存只发最小 patch（`PUT`），服务端 400 的行内错误原样显示。恢复默认
-  需要 4 秒内二次点击并发 `DELETE`。只读区展示需要改 dispatch.yaml 的部署项。字段、
-  热生效范围与边界见 `docs/CONFIG.md`。
+- `设置`（M24）是页头唯一的写弹窗（`data-modal="settings"`），四个页签按需加载：
+  - `运行与执行`（M22/M24）：读取 `GET /settings/runtime`，按分组渲染数字/开关/下拉/多选，
+    与文件基线不同的字段显示“已覆盖”；首个分组是 local/container 执行模式下拉。保存只发
+    最小 patch（`PUT`），服务端 400 的行内错误原样显示；恢复默认需要 4 秒内二次点击并发
+    `DELETE`。只读区展示需要改 dispatch.yaml 的部署项。
+  - `模型与密钥`（M18b）：读取 `GET /settings/agent`，Provider 页签管理 provider（协议下拉
+    来自 `protocols`，名称建议来自 `builtinProviders`），模型页签管理条目并可在
+    `POST /providers/{id}/discover` 后从下拉选择模型、自动回填显示名。密钥输入永远为空，
+    留空表示不修改；保存后重读配置。删除先走行内确认，409 时显示依赖方并切换
+    “强制删除”；所有请求期间关闭按钮与提交按钮同时禁用。操作步骤与错误对照见
+    `docs/MODELS.md`。
+  - `本地偏好`：操作者名称与默认布局，只写 `localStorage`。
+  - `服务端设置`：`GET/PUT /settings` 的意图/推理超时。
+- 浏览器 `document.title` 跟随当前项目（M24）：打开项目显示「项目名 · Cairn」，
+  列表页显示「Cairn」。字段、热生效范围与边界见 `docs/CONFIG.md`。
 
 实时审计流（M9）：
 

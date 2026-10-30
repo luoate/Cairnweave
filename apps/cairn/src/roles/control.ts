@@ -89,26 +89,6 @@ export async function runControl(args: readonly string[]): Promise<number> {
       console.error(`[control] ${message}`);
       return 2;
     }
-    if (config.runtime.execution === "container") {
-      const docker = checkDocker();
-      if (!docker.ok) {
-        console.error(
-          `[control] Docker is required for runtime.execution=container: ${docker.detail}`,
-        );
-        return 2;
-      }
-      try {
-        // The worker mount is read-only, so builtin prompts and skills are seeded here,
-        // once, on the host directory that becomes /cairn/agent-config.
-        const agent = await import("@cairn/agent");
-        const configDir = resolveAgentConfigDir(config);
-        await agent.initBuiltinSkills(configDir);
-        await agent.initBuiltinPrompts(configDir);
-      } catch (error) {
-        console.error(`[control] cannot prepare the agent config directory: ${String(error)}`);
-        return 2;
-      }
-    }
   }
 
   let db: CairnDatabase;
@@ -133,9 +113,38 @@ export async function runControl(args: readonly string[]): Promise<number> {
   // Empty means "not configured": the manual /complete route keeps its historical
   // unauthenticated behavior, so local single-user setups do not need to set anything.
   const operatorToken = process.env["CAIRN_OPERATOR_TOKEN"]?.trim();
+  // Assigned after the runtime overrides are constructed, because `onApply` may run while
+  // the store replays a stored patch. Stored overrides are applied before the scheduler is
+  // built, so its first tick and its timers already use the effective configuration.
   let scheduler: Scheduler | null = null;
-  // Stored overrides are applied before the scheduler is built, so its first tick and its
-  // timers already use the effective configuration. Later saves mutate the same object.
+
+  // The worker mount is read-only, so builtin prompts and skills are seeded here on the
+  // host directory that becomes /cairn/agent-config. This covers the effective config,
+  // which may come from a stored override rather than dispatch.yaml, and is retried after
+  // a failure so a later switch into container mode can still succeed.
+  let containerSeed: Promise<boolean> | null = null;
+  function seedContainerAgentConfig(): Promise<boolean> {
+    if (config === null) return Promise.resolve(true);
+    if (containerSeed === null) {
+      containerSeed = (async () => {
+        try {
+          const agent = await import("@cairn/agent");
+          const configDir = resolveAgentConfigDir(config);
+          await agent.initBuiltinSkills(configDir);
+          await agent.initBuiltinPrompts(configDir);
+          return true;
+        } catch (error) {
+          console.error(
+            `[control] cannot prepare the agent config directory: ${String(error)}`,
+          );
+          containerSeed = null;
+          return false;
+        }
+      })();
+    }
+    return containerSeed;
+  }
+
   const runtimeConfig =
     config === null || configSource === null
       ? null
@@ -144,8 +153,42 @@ export async function runControl(args: readonly string[]): Promise<number> {
           config,
           source: configSource,
           log: (message) => console.error(`[control] ${message}`),
-          onApply: () => scheduler?.reconfigure(),
+          validateNext: (next, current) => {
+            if (next.runtime.execution === current.runtime.execution) return null;
+            if (next.runtime.execution === "container") {
+              const docker = checkDocker();
+              if (!docker.ok) {
+                return `Docker is required for container mode: ${docker.detail}`;
+              }
+            }
+            if (scheduler !== null && scheduler.busy) {
+              return "wait for running tasks to finish before switching the execution mode";
+            }
+            if (scheduler !== null && scheduler.executionMode !== current.runtime.execution) {
+              return "the scheduler is still switching execution modes; retry in a moment";
+            }
+            return null;
+          },
+          onApply: () => {
+            scheduler?.reconfigure();
+            // Entering container mode needs the builtin prompts/skills on the host
+            // directory that gets mounted read-only; the next tick is seconds away.
+            if (config !== null && config.runtime.execution === "container") {
+              void seedContainerAgentConfig();
+            }
+          },
         });
+
+  if (config !== null && config.runtime.execution === "container") {
+    const docker = checkDocker();
+    if (!docker.ok) {
+      console.error(
+        `[control] Docker is required for runtime.execution=container: ${docker.detail}`,
+      );
+      return 2;
+    }
+    if (!(await seedContainerAgentConfig())) return 2;
+  }
   const api = createApi({
     db,
     staticDir,
@@ -163,7 +206,11 @@ export async function runControl(args: readonly string[]): Promise<number> {
     ...(operatorToken === undefined || operatorToken === "" ? {} : { operatorToken }),
     ...(config === null
       ? {}
-      : { workspaceRoot: resolveWorkspaceRoot(config), budget: config.budget }),
+      : {
+          // A getter so artifact/evidence routes follow a live local↔container switch.
+          workspaceRoot: () => (config === null ? process.cwd() : resolveWorkspaceRoot(config)),
+          budget: config.budget,
+        }),
     ...(config === null || !config.auditStream.enabled ? {} : { auditTokens }),
     ...(runtimeConfig === null ? {} : { runtimeConfig }),
   });

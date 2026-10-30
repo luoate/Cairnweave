@@ -104,9 +104,10 @@ export interface ApiOptions {
   staticDir?: string;
   /**
    * Host workspace root, present only when the scheduler is enabled. Evidence digests can
-   * still be read without it, but live verification reports `unverified`.
+   * still be read without it, but live verification reports `unverified`. A getter follows
+   * a live local↔container switch, whose roots may differ.
    */
-  workspaceRoot?: string;
+  workspaceRoot?: string | (() => string);
   /** Enables the authenticated live audit append endpoint when provided. */
   auditTokens?: AuditTokenRegistry;
   /**
@@ -438,7 +439,7 @@ function parseStrategistLimit(raw: string | null): number {
 
 function buildRoutes(
   db: CairnDatabase,
-  workspaceRoot?: string,
+  workspaceRootOption?: string | (() => string),
   auditTokens?: AuditTokenRegistry,
   budget?: BudgetConfig,
   verification?: VerificationService,
@@ -448,6 +449,8 @@ function buildRoutes(
   runtimeConfig: RuntimeConfigStore | null = null,
 ): Route[] {
   const routes: Route[] = [];
+  const workspaceRoot = (): string | undefined =>
+    typeof workspaceRootOption === "function" ? workspaceRootOption() : workspaceRootOption;
   const oracle = verification ?? new VerificationService(db, DEFAULT_VERIFICATION);
 
   function route(method: string, template: string, handler: RouteHandler): void {
@@ -466,7 +469,7 @@ function buildRoutes(
   });
   registerWriteupRoutes(route, {
     db,
-    ...(workspaceRoot === undefined ? {} : { workspaceRoot }),
+    ...(workspaceRootOption === undefined ? {} : { workspaceRoot: workspaceRootOption }),
     verificationFallback: oracle.defaultKind,
     ...(operatorToken === undefined ? {} : { operatorToken }),
     agentConfig,
@@ -557,8 +560,9 @@ function buildRoutes(
           latest: getLatestVerificationCheck(conn, projectId),
         },
       });
-      if (workspaceRoot === undefined) return json(withVerification(emptyFlagResult()));
-      const workspace = projectWorkspace(workspaceRoot, projectId);
+      const root = workspaceRoot();
+      if (root === undefined) return json(withVerification(emptyFlagResult()));
+      const workspace = projectWorkspace(root, projectId);
       return json(
         withVerification(
           collectProjectFlag({
@@ -733,10 +737,9 @@ function buildRoutes(
     db.withConn((conn) => {
       const projectId = params["project_id"]!;
       getProjectOr404(conn, projectId);
-      if (workspaceRoot === undefined) return json(emptyProjectBoard());
-      return json(
-        readProjectBoard({ workspace: projectWorkspace(workspaceRoot, projectId) }),
-      );
+      const root = workspaceRoot();
+      if (root === undefined) return json(emptyProjectBoard());
+      return json(readProjectBoard({ workspace: projectWorkspace(root, projectId) }));
     }),
   );
 
@@ -801,7 +804,8 @@ function buildRoutes(
     if (files === null) {
       throw new HttpError(404, "Fact not found");
     }
-    if (workspaceRoot === undefined) {
+    const root = workspaceRoot();
+    if (root === undefined) {
       return json(
         files.map((file) => ({
           ...file,
@@ -811,7 +815,7 @@ function buildRoutes(
         })),
       );
     }
-    return json(verifyEvidenceFiles(files, projectWorkspace(workspaceRoot, projectId)));
+    return json(verifyEvidenceFiles(files, projectWorkspace(root, projectId)));
   });
 
   route("DELETE", "/projects/{project_id}", ({ params }) =>

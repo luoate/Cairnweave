@@ -3,8 +3,10 @@
 # One container per project runs `sleep infinity`; every task is a separate
 # `docker exec bun /app/apps/cairn/src/cli.ts worker --task <task.json>`.
 #
-# The image deliberately does not contain pentest tooling: extend it per engagement so
-# the toolset is reviewable. `procps` is required for task-level termination (pkill).
+# The image ships a reviewable baseline toolset: curl/wget, nmap/netcat/socat,
+# DNS and routing probes, python3, git/jq/unzip, plus ripgrep/fd for the agent's own
+# grep/find tools. Add engagement-specific exploit tooling here so it stays auditable.
+# `procps` is required for task-level termination (pkill).
 #
 #   docker build -f Dockerfile.worker -t cairn-worker:latest .
 #
@@ -19,7 +21,15 @@ FROM ${BUN_IMAGE}
 WORKDIR /app
 
 RUN apt-get update \
- && apt-get install -y --no-install-recommends procps ca-certificates \
+ && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
+      procps ca-certificates \
+      curl wget \
+      nmap netcat-openbsd socat openssh-client \
+      dnsutils iputils-ping traceroute net-tools whois \
+      python3 python3-pip \
+      git jq unzip file xxd \
+      ripgrep fd-find \
+ && ln -sf /usr/bin/fdfind /usr/local/bin/fd \
  && rm -rf /var/lib/apt/lists/*
 
 COPY . .

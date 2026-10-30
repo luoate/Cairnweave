@@ -16,6 +16,7 @@ import {
 } from "@cairn/graph";
 
 import {
+  ConfigError,
   parseDispatchConfig,
   parseRuntimeOverridePatch,
   type ConfigOptions,
@@ -31,6 +32,7 @@ import {
 
 export interface EditableRuntimeConfig {
   runtime: {
+    execution: ExecutionMode;
     max_workers: number;
     max_running_projects: number;
     max_project_workers: number;
@@ -95,7 +97,6 @@ export interface EditableRuntimeConfig {
 export interface ReadOnlyRuntimeConfig {
   server: string;
   runtime: {
-    execution: ExecutionMode;
     prompt_group: string;
     healthcheck_timeout: number;
     worker_healthcheck: WorkerHealthcheckMode;
@@ -136,6 +137,12 @@ export interface RuntimeConfigStoreOptions {
   configOptions?: ConfigOptions;
   now?: () => Date;
   log?: (message: string) => void;
+  /**
+   * Last chance to reject a parsed patch before the live config is mutated. Returning a
+   * message turns into a `ConfigError`, so the running scheduler keeps its previous
+   * settings. Used to refuse an execution-mode switch while tasks are in flight.
+   */
+  validateNext?: (next: DispatchConfig, current: DispatchConfig) => string | null;
   /** Called after a successful change; the scheduler re-arms interval timers here. */
   onApply?: () => void;
 }
@@ -176,6 +183,27 @@ export function mergeOverrideDocuments(
     merged[key] = isPlainObject(current) && isPlainObject(value)
       ? mergeOverrideDocuments(current, value)
       : structuredClone(value);
+  }
+  return merged;
+}
+
+/**
+ * A dispatch.yaml without a `container` section still parses while execution is local,
+ * so the first switch to container from the UI has nothing to mount or exec into. These
+ * defaults match `Dockerfile.worker` and are merged in for validation only; they are not
+ * stored in the override patch, so a later dispatch.yaml edit still wins.
+ */
+const CONTAINER_SECTION_DEFAULTS = {
+  image: "cairn-worker:latest",
+  network_mode: "bridge",
+  completed_action: "remove",
+} as const;
+
+function withContainerDefaults(merged: Record<string, unknown>): Record<string, unknown> {
+  const runtime = merged["runtime"];
+  if (!isPlainObject(runtime) || runtime["execution"] !== "container") return merged;
+  if (!isPlainObject(merged["container"])) {
+    merged["container"] = { ...CONTAINER_SECTION_DEFAULTS };
   }
   return merged;
 }
@@ -265,10 +293,14 @@ export class RuntimeConfigStore {
   }
 
   private install(patch: RuntimeOverridePatch, updatedAt: string | null): void {
-    const merged = mergeOverrideDocuments(this.base, patch);
+    const merged = withContainerDefaults(mergeOverrideDocuments(this.base, patch));
     // Throws ConfigError before anything is mutated, so a rejected patch leaves the
     // running scheduler on its previous configuration.
     const next = parseDispatchConfig(merged, this.options.configOptions);
+    const rejection = this.options.validateNext?.(next, this.options.config) ?? null;
+    if (rejection !== null) {
+      throw new ConfigError(rejection);
+    }
     syncConfigInPlace(this.options.config, next);
     this.overrides = patch;
     this.updatedAt = updatedAt;
@@ -279,6 +311,7 @@ export class RuntimeConfigStore {
 function editableView(config: DispatchConfig): EditableRuntimeConfig {
   return {
     runtime: {
+      execution: config.runtime.execution,
       max_workers: config.runtime.maxWorkers,
       max_running_projects: config.runtime.maxRunningProjects,
       max_project_workers: config.runtime.maxProjectWorkers,
@@ -361,7 +394,6 @@ function readOnlyView(config: DispatchConfig): ReadOnlyRuntimeConfig {
   return {
     server: config.server,
     runtime: {
-      execution: config.runtime.execution,
       prompt_group: config.runtime.promptGroup,
       healthcheck_timeout: config.runtime.healthcheckTimeout,
       worker_healthcheck: config.runtime.workerHealthcheck,

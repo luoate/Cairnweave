@@ -460,7 +460,7 @@ describe("modal focus management", () => {
     const overlays = [...html.matchAll(/<div x-show="(show[A-Za-z]+)"[^>]*>/g)]
       .map((match) => ({ flag: match[1], tag: match[0] }))
       .filter((overlay) => overlay.tag.includes("overlay"));
-    expect(overlays.length).toBeGreaterThanOrEqual(13);
+    expect(overlays.length).toBeGreaterThanOrEqual(12);
 
     const modalNames: string[] = [];
     for (const overlay of overlays) {
@@ -611,7 +611,7 @@ describe("modal focus management", () => {
     }
     // An unclosed overlay would nest every later modal inside it, hiding them.
     expect(depth).toBe(0);
-    expect(Object.keys(overlayDepths).length).toBe(15);
+    expect(Object.keys(overlayDepths).length).toBe(12);
     for (const [name, level] of Object.entries(overlayDepths)) {
       expect(level, name).toBe(0);
     }
@@ -660,7 +660,7 @@ describe("modal focus management", () => {
     const html = readFileSync(INDEX_PATH, "utf8");
     const flags = [...html.matchAll(/<div x-show="(show[A-Za-z]+)"[^>]*class="fixed inset-0[^"]*overlay"/g)]
       .map((match) => match[1]);
-    expect(flags.length).toBeGreaterThanOrEqual(13);
+    expect(flags.length).toBeGreaterThanOrEqual(12);
     for (const flag of flags) {
       const start = html.indexOf(`<div x-show="${flag}"`);
       // Each overlay markup ends at the next `<!-- ... -->` section marker.
@@ -731,7 +731,7 @@ describe("form validation and submitting states", () => {
     ]) {
       expect(html, flag).toContain(`:disabled="${flag}"`);
     }
-    for (const closer of ["conclude", "complete", "hint", "reopen", "rename", "settings", "intent", "agent"]) {
+    for (const closer of ["conclude", "complete", "hint", "reopen", "rename", "settings", "intent"]) {
       expect(html).toContain(`@click="dismissModal('${closer}')"`);
     }
     expect(html).toContain("x-text=\"isCreatingProject ? '创建中…' : '创建'\"");
@@ -973,12 +973,12 @@ describe("detail and graph interaction parity", () => {
 });
 
 describe("model and key settings", () => {
-  test("wires a dedicated overlay to the agent config routes", () => {
+  test("wires the model settings tab to the agent config routes", () => {
     const html = readFileSync(INDEX_PATH, "utf8");
     const app = loadState();
-    expect(html).toContain('data-modal="agent"');
-    expect(html).toContain("openAgentSettings()");
-    expect(app.modalClosers().agent).toBeTruthy();
+    expect(html).toContain('data-modal="settings"');
+    expect(html).toContain('data-settings-tab="agent"');
+    expect(app.modalClosers().settings).toBeTruthy();
     expect(html).toContain("/settings/agent");
     expect(html).toContain("/discover`");
     expect(html).toContain("/test`");
@@ -1403,19 +1403,19 @@ describe("model and key settings", () => {
 
   test("keeps the settings modal open while an agent write is pending", () => {
     const app = loadState();
-    app.showAgentSettings = true;
+    app.showSettings = true;
     app.isSavingAgentProvider = true;
-    app.dismissModal("agent");
-    expect(app.showAgentSettings).toBe(true);
+    app.dismissModal("settings");
+    expect(app.showSettings).toBe(true);
 
     app.isSavingAgentProvider = false;
     app.agentDelete = { kind: "provider", id: "p1", name: "p1", force: false, loading: true, error: "" };
-    app.dismissModal("agent");
-    expect(app.showAgentSettings).toBe(true);
+    app.dismissModal("settings");
+    expect(app.showSettings).toBe(true);
 
     app.agentDelete.loading = false;
-    app.dismissModal("agent");
-    expect(app.showAgentSettings).toBe(false);
+    app.dismissModal("settings");
+    expect(app.showSettings).toBe(false);
   });
 
   test("sets the default model through the dedicated route", async () => {
@@ -1439,7 +1439,13 @@ describe("model and key settings", () => {
 describe("runtime settings modal", () => {
   function editableFixture() {
     return {
-      runtime: { max_workers: 4, max_running_projects: 2, max_project_workers: 2, interval: 1 },
+      runtime: {
+        execution: "local",
+        max_workers: 4,
+        max_running_projects: 2,
+        max_project_workers: 2,
+        interval: 1,
+      },
       tasks: {
         bootstrap: { timeout: 900, conclude_timeout: 120 },
         reason: { timeout: 900, max_intents: 5 },
@@ -1501,7 +1507,6 @@ describe("runtime settings modal", () => {
       read_only: {
         server: "127.0.0.1:8001",
         runtime: {
-          execution: "local",
           prompt_group: "default",
           healthcheck_timeout: 30,
           worker_healthcheck: "startup_and_task",
@@ -1536,11 +1541,12 @@ describe("runtime settings modal", () => {
     return app.runtimeGroups().flatMap((group: any) => group.fields);
   }
 
-  test("ships the modal and one entry point per toolbar", () => {
+  test("ships one settings entry point per toolbar and a dedicated runtime tab", () => {
     const html = readFileSync(INDEX_PATH, "utf8");
-    expect(html).toContain('data-modal="runtime"');
+    expect(html).toContain('data-modal="settings"');
+    expect(html).toContain('data-settings-tab="runtime"');
     expect(html).toContain("runtimeGroups()");
-    expect(html.match(/@click="openRuntimeSettings\(\)"/g)?.length).toBe(2);
+    expect(html.match(/@click="openSettings\(\)"/g)?.length).toBe(2);
   });
 
   test("renders every editable path exactly once", () => {
@@ -1560,12 +1566,50 @@ describe("runtime settings modal", () => {
       return view;
     };
 
-    await app.openRuntimeSettings();
-    expect(app.showRuntimeSettings).toBe(true);
+    await app.openSettings("runtime");
+    expect(app.showSettings).toBe(true);
+    expect(app.settingsTab).toBe("runtime");
     expect(app.runtimeConfig.loading).toBe(false);
     expect(app.runtimeConfig.view).toBe(view);
     expect(app.runtimeForm).toEqual(view.editable);
     expect(app.runtimeForm).not.toBe(view.editable);
+  });
+
+  test("opens the consolidated dialog on the requested tab and loads it once", async () => {
+    const app = loadState();
+    const calls: string[] = [];
+    app.api = async (method: string, path: string) => {
+      calls.push(`${method} ${path}`);
+      if (path === "/settings/runtime") return viewFixture();
+      if (path === "/settings/agent") {
+        return { defaultModelPrefId: null, providers: [], models: [], protocols: [], builtinProviders: [] };
+      }
+      return { intent_timeout: 5, reason_timeout: 5 };
+    };
+
+    await app.openSettings();
+    expect(app.showSettings).toBe(true);
+    expect(app.settingsTab).toBe("runtime");
+
+    await app.setSettingsTab("agent");
+    await app.setSettingsTab("server");
+    await app.setSettingsTab("runtime");
+    expect(calls).toEqual(["GET /settings/runtime", "GET /settings/agent", "GET /settings"]);
+    expect(app.settingsWritePending()).toBe(false);
+  });
+
+  test("switches execution through the runtime patch", () => {
+    const app = loadState();
+    app.runtimeConfig.view = viewFixture();
+    app.runtimeForm = app.cloneData(app.runtimeConfig.view.editable);
+    const execution = fieldsOf(app).find((field: any) => field.path === "runtime.execution");
+
+    expect(execution.type).toBe("select");
+    expect(execution.options.map((option: any) => option.value)).toEqual(["local", "container"]);
+    app.setRuntimeFieldValue(execution, "container");
+    expect(app.runtimePatch()).toEqual({ runtime: { execution: "container" } });
+    app.setRuntimeFieldValue(execution, "local");
+    expect(app.runtimePatch()).toEqual({});
   });
 
   test("surfaces the 409 message when no dispatch config is loaded", async () => {
@@ -1576,7 +1620,7 @@ describe("runtime settings modal", () => {
       throw conflict;
     };
 
-    await app.openRuntimeSettings();
+    await app.openSettings("runtime");
     expect(app.runtimeForm).toBeNull();
     expect(app.runtimeConfig.view).toBeNull();
     expect(app.runtimeConfig.error).toBe("no dispatch config is loaded");
@@ -1686,13 +1730,27 @@ describe("runtime settings modal", () => {
 
   test("blocks closing while a runtime write is pending", () => {
     const app = loadState();
-    app.showRuntimeSettings = true;
+    app.showSettings = true;
     app.runtimeConfig.saving = true;
-    app.dismissModal("runtime");
-    expect(app.showRuntimeSettings).toBe(true);
+    app.dismissModal("settings");
+    expect(app.showSettings).toBe(true);
 
     app.runtimeConfig.saving = false;
-    app.dismissModal("runtime");
-    expect(app.showRuntimeSettings).toBe(false);
+    app.dismissModal("settings");
+    expect(app.showSettings).toBe(false);
+  });
+
+  test("uses the open project title as the document title", () => {
+    const html = readFileSync(INDEX_PATH, "utf8");
+    const app = loadState();
+    expect(html).toContain('x-effect="syncDocumentTitle()"');
+    expect(app.documentTitle()).toBe("Cairn");
+
+    app.view = "graph";
+    app.project = { project: { title: "web-01" } };
+    expect(app.documentTitle()).toBe("web-01 · Cairn");
+
+    app.project = { project: { title: "   " } };
+    expect(app.documentTitle()).toBe("Cairn");
   });
 });

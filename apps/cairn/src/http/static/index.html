@@ -226,7 +226,7 @@
   }
 </script>
 </head>
-<body class="bg-slate-50 text-slate-800 h-screen flex flex-col overflow-hidden" :class="{ 'select-none cursor-col-resize': isResizingPanel }" x-data="cairnApp()">
+<body class="bg-slate-50 text-slate-800 h-screen flex flex-col overflow-hidden" :class="{ 'select-none cursor-col-resize': isResizingPanel }" x-data="cairnApp()" x-effect="syncDocumentTitle()">
 
 <!-- The control plane has no authentication; keep this visible in every view. -->
 <div class="shrink-0 flex items-center gap-2 border-b border-amber-200/70 bg-amber-50/90 px-4 py-1.5 text-[11px] text-amber-700">
@@ -289,16 +289,7 @@
       </button>
     </div>
     <div class="flex items-center gap-1.5 ml-1">
-      <button @click="showLocalPrefs = true" class="h-7 max-w-40 px-2.5 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition inline-flex items-center shrink-0">
-        <span class="truncate block" x-text="actorName()"></span>
-      </button>
-      <button @click="openAgentSettings()" class="h-7 w-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition inline-flex items-center justify-center shrink-0" title="模型与密钥" aria-label="模型与密钥">
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2"/><path d="M9 3v4M15 3v4M9 17v4M15 17v4M3 9h4M3 15h4M17 9h4M17 15h4"/></svg>
-      </button>
-      <button @click="openRuntimeSettings()" class="h-7 w-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition inline-flex items-center justify-center shrink-0" title="运行配置" aria-label="运行配置">
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/><circle cx="9" cy="7" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="7" cy="17" r="2"/></svg>
-      </button>
-      <button @click="loadSettings(); showSettings = true" class="h-7 w-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition inline-flex items-center justify-center shrink-0">
+      <button @click="openSettings()" class="h-7 w-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition inline-flex items-center justify-center shrink-0" title="设置" aria-label="设置" data-settings-button>
         <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7 7 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a7 7 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a7 7 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a7 7 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.28Z"/><path d="M15 12a3 3 0 1 1-6 0-3 3 0 0 1 6 0Z"/></svg>
       </button>
     </div>
@@ -553,16 +544,7 @@
       </button>
     </div>
     <div class="flex items-center gap-1.5 ml-1">
-      <button @click="showLocalPrefs = true" class="h-7 max-w-40 px-2.5 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition inline-flex items-center shrink-0">
-        <span class="truncate block" x-text="actorName()"></span>
-      </button>
-      <button @click="openAgentSettings()" class="h-7 w-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition inline-flex items-center justify-center shrink-0" title="模型与密钥" aria-label="模型与密钥">
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2"/><path d="M9 3v4M15 3v4M9 17v4M15 17v4M3 9h4M3 15h4M17 9h4M17 15h4"/></svg>
-      </button>
-      <button @click="openRuntimeSettings()" class="h-7 w-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition inline-flex items-center justify-center shrink-0" title="运行配置" aria-label="运行配置">
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/><circle cx="9" cy="7" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="7" cy="17" r="2"/></svg>
-      </button>
-      <button @click="loadSettings(); showSettings = true" class="h-7 w-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition inline-flex items-center justify-center shrink-0">
+      <button @click="openSettings()" class="h-7 w-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition inline-flex items-center justify-center shrink-0" title="设置" aria-label="设置" data-settings-button>
         <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7 7 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a7 7 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a7 7 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a7 7 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.28Z"/><path d="M15 12a3 3 0 1 1-6 0-3 3 0 0 1 6 0Z"/></svg>
       </button>
     </div>
@@ -2619,14 +2601,36 @@
   </div>
 </div>
 
-<!-- Local Preferences -->
-<div x-show="showLocalPrefs" x-cloak data-modal="localPrefs" x-effect="syncModal('localPrefs', showLocalPrefs, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('localPrefs')">
-  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 border border-slate-200/60" @click.stop>
-    <h3 class="text-base font-semibold text-slate-700 mb-4">本地偏好</h3>
-    <div class="space-y-4">
+<!-- Settings (M24): runtime mode, model keys, local prefs and server config in one dialog -->
+<div x-show="showSettings" x-cloak data-modal="settings" x-effect="syncModal('settings', showSettings, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('settings')">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-4xl mx-4 border border-slate-200/60 overflow-hidden" @click.stop>
+    <div class="px-5 py-4 border-b border-slate-200/80 flex items-start justify-between gap-4">
+      <div class="min-w-0">
+        <h3 class="text-base font-semibold text-slate-700">设置</h3>
+        <p class="text-[11px] text-slate-400 mt-0.5">运行模式、模型密钥、本地偏好与服务端配置集中在这里；密钥与请求头只写不回显。</p>
+      </div>
+      <button @click="dismissModal('settings')" :disabled="settingsWritePending()" data-autofocus class="shrink-0 whitespace-nowrap px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition disabled:opacity-40 disabled:cursor-not-allowed">关闭</button>
+    </div>
+    <div class="flex items-center gap-1 border-b border-slate-200/80 px-5 pt-3 overflow-x-auto" role="tablist">
+      <button @click="setSettingsTab('runtime')" role="tab" :aria-selected="settingsTab === 'runtime'" data-settings-tab="runtime"
+        class="px-3 py-1.5 text-xs font-medium rounded-t-lg border-b-2 whitespace-nowrap transition"
+        :class="settingsTab === 'runtime' ? 'border-brand-400 text-brand-600' : 'border-transparent text-slate-400 hover:text-slate-600'">运行与执行</button>
+      <button @click="setSettingsTab('agent')" role="tab" :aria-selected="settingsTab === 'agent'" data-settings-tab="agent"
+        class="px-3 py-1.5 text-xs font-medium rounded-t-lg border-b-2 whitespace-nowrap transition"
+        :class="settingsTab === 'agent' ? 'border-brand-400 text-brand-600' : 'border-transparent text-slate-400 hover:text-slate-600'">模型与密钥</button>
+      <button @click="setSettingsTab('local')" role="tab" :aria-selected="settingsTab === 'local'" data-settings-tab="local"
+        class="px-3 py-1.5 text-xs font-medium rounded-t-lg border-b-2 whitespace-nowrap transition"
+        :class="settingsTab === 'local' ? 'border-brand-400 text-brand-600' : 'border-transparent text-slate-400 hover:text-slate-600'">本地偏好</button>
+      <button @click="setSettingsTab('server')" role="tab" :aria-selected="settingsTab === 'server'" data-settings-tab="server"
+        class="px-3 py-1.5 text-xs font-medium rounded-t-lg border-b-2 whitespace-nowrap transition"
+        :class="settingsTab === 'server' ? 'border-brand-400 text-brand-600' : 'border-transparent text-slate-400 hover:text-slate-600'">服务端设置</button>
+    </div>
+    <div class="max-h-[75vh] overflow-y-auto">
+      <div x-show="settingsTab === 'local'" class="p-5">
+        <div class="space-y-4">
       <div>
         <label class="text-[11px] text-slate-400 mb-1 block font-medium">操作者</label>
-        <input x-model="localPrefs.actor_name" data-autofocus placeholder="你的名字" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+        <input x-model="localPrefs.actor_name" placeholder="你的名字" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
       </div>
       <div>
         <label class="text-[11px] text-slate-400 mb-1 block font-medium">默认布局</label>
@@ -2642,19 +2646,16 @@
       <p class="text-[11px] text-slate-400">仅保存在当前浏览器。</p>
     </div>
     <div class="flex justify-end gap-2 mt-5">
-      <button @click="dismissModal('localPrefs')" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">关闭</button>
+      <button @click="dismissModal('settings')" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">关闭</button>
       <button @click="saveLocalSettings()" class="px-4 py-2 text-sm bg-slate-800 text-white rounded-xl font-medium hover:bg-slate-900 transition shadow-sm">保存本地设置</button>
     </div>
-  </div>
-</div>
+      </div>
 
-<!-- Settings -->
-<div x-show="showSettings" x-cloak data-modal="settings" x-effect="syncModal('settings', showSettings, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('settings')">
-  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 border border-slate-200/60" @click.stop>
-    <h3 class="text-base font-semibold text-slate-700 mb-4">服务端设置</h3>
-    <div>
+<!-- Server Settings -->
+      <div x-show="settingsTab === 'server'" class="p-5">
+        <div>
       <label class="text-[11px] text-slate-400 mb-1 block font-medium">意图超时（秒）</label>
-      <input type="number" x-model.number="settingsForm.intent_timeout" data-autofocus @input="settingsFormError = ''" aria-label="意图超时（秒）" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
+      <input type="number" x-model.number="settingsForm.intent_timeout" @input="settingsFormError = ''" aria-label="意图超时（秒）" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
     </div>
     <div class="mt-4">
       <label class="text-[11px] text-slate-400 mb-1 block font-medium">推理超时（秒）</label>
@@ -2668,20 +2669,11 @@
         class="px-4 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition shadow-sm shadow-brand-200 disabled:opacity-40 disabled:cursor-not-allowed"
         x-text="isSavingSettings ? '保存中…' : '保存服务端设置'"></button>
     </div>
-  </div>
-</div>
-
-<!-- Runtime Settings (M22) -->
-<div x-show="showRuntimeSettings" x-cloak data-modal="runtime" x-effect="syncModal('runtime', showRuntimeSettings, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('runtime')">
-  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-4xl mx-4 border border-slate-200/60 overflow-hidden" @click.stop>
-    <div class="px-5 py-4 border-b border-slate-200/80 flex items-start justify-between gap-4">
-      <div class="min-w-0">
-        <h3 class="text-base font-semibold text-slate-700">运行配置</h3>
-        <p class="text-[11px] text-slate-400 mt-0.5">覆盖保存在 SQLite，调度器在下一个周期生效；标注为只读的项需修改 dispatch.yaml 并重启。</p>
       </div>
-      <button @click="dismissModal('runtime')" :disabled="runtimeWritePending()" data-autofocus class="shrink-0 whitespace-nowrap px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition disabled:opacity-40 disabled:cursor-not-allowed">关闭</button>
-    </div>
-    <div class="max-h-[70vh] overflow-y-auto p-5 space-y-4">
+
+<!-- Runtime Settings + execution mode (M22/M24) -->
+      <div x-show="settingsTab === 'runtime'" class="p-5 space-y-4">
+        <p class="text-[11px] text-slate-400">覆盖保存在 SQLite 并在下一个周期生效；只读项需修改 dispatch.yaml 并重启。执行模式只能在调度器空闲时切换。</p>
       <p x-show="runtimeConfig.loading" class="text-[11px] text-slate-400">加载中…</p>
       <div x-show="runtimeConfig.error" class="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] text-rose-700 break-words" x-text="runtimeConfig.error"></div>
 
@@ -2740,7 +2732,6 @@
               <span class="text-[10px] text-slate-400">Observer 复盘默认开启；提案仍由上方开关控制</span>
             </div>
             <div class="grid grid-cols-2 md:grid-cols-3 gap-x-3 gap-y-1.5 mt-2 text-[11px] text-slate-500">
-              <div>执行模式：<span class="text-slate-700" x-text="runtimeConfig.view.read_only.runtime.execution"></span></div>
               <div>Prompt 组：<span class="text-slate-700" x-text="runtimeConfig.view.read_only.runtime.prompt_group"></span></div>
               <div>健康检查：<span class="text-slate-700" x-text="runtimeConfig.view.read_only.runtime.worker_healthcheck + ' / ' + runtimeConfig.view.read_only.runtime.healthcheck_timeout + 's'"></span></div>
               <div>Observer：<span class="text-slate-700" x-text="runtimeConfig.view.read_only.observer.enabled ? '开启' : '关闭'"></span></div>
@@ -2759,8 +2750,7 @@
           </section>
         </div>
       </template>
-    </div>
-    <div class="px-5 py-3 border-t border-slate-200/80 flex items-center gap-2">
+      <div class="flex items-center gap-2 border-t border-slate-200/80 pt-3">
       <button @click="resetRuntimeSettings()" :disabled="runtimeWritePending() || !runtimeConfig.view"
         class="px-3 py-1.5 text-xs border rounded-lg transition disabled:opacity-40 disabled:cursor-not-allowed"
         :class="runtimeResetArmed ? 'border-rose-300 text-rose-600 bg-rose-50' : 'border-slate-200 text-slate-500 hover:bg-slate-50'"
@@ -2769,28 +2759,19 @@
       <button @click="saveRuntimeSettings()" :disabled="runtimeWritePending() || !runtimeForm"
         class="px-4 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition shadow-sm shadow-brand-200 disabled:opacity-40 disabled:cursor-not-allowed"
         x-text="runtimeConfig.saving ? '保存中…' : '保存并生效'"></button>
-    </div>
-  </div>
-</div>
+      </div>
+      </div>
 
 <!-- Agent Model Settings -->
-<div x-show="showAgentSettings" x-cloak data-modal="agent" x-effect="syncModal('agent', showAgentSettings, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('agent')">
-  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-3xl mx-4 border border-slate-200/60 overflow-hidden" @click.stop>
-    <div class="px-5 py-4 border-b border-slate-200/80 flex items-start justify-between gap-4">
-      <div class="min-w-0">
-        <h3 class="text-base font-semibold text-slate-700">模型与密钥</h3>
-        <p class="text-[11px] text-slate-400 mt-0.5" x-text="agentConfigHint()"></p>
+      <div x-show="settingsTab === 'agent'" class="p-5 space-y-4">
+      <p class="text-[11px] text-slate-400" x-text="agentConfigHint()"></p>
+      <div class="flex items-center gap-1 border-b border-slate-200/80 pb-2">
+        <button @click="agentTab = 'providers'" class="px-3 py-1.5 text-xs font-medium rounded-t-lg border-b-2 transition"
+          :class="agentTab === 'providers' ? 'border-brand-400 text-brand-600' : 'border-transparent text-slate-400 hover:text-slate-600'">Provider</button>
+        <button @click="agentTab = 'models'" class="px-3 py-1.5 text-xs font-medium rounded-t-lg border-b-2 transition"
+          :class="agentTab === 'models' ? 'border-brand-400 text-brand-600' : 'border-transparent text-slate-400 hover:text-slate-600'">模型</button>
+        <span class="ml-auto text-[10px] text-slate-400">密钥与请求头只写不回显</span>
       </div>
-      <button @click="dismissModal('agent')" :disabled="agentWritePending()" data-autofocus class="px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition disabled:opacity-40 disabled:cursor-not-allowed">关闭</button>
-    </div>
-    <div class="flex items-center gap-1 border-b border-slate-200/80 px-5 pt-3">
-      <button @click="agentTab = 'providers'" class="px-3 py-1.5 text-xs font-medium rounded-t-lg border-b-2 transition"
-        :class="agentTab === 'providers' ? 'border-brand-400 text-brand-600' : 'border-transparent text-slate-400 hover:text-slate-600'">Provider</button>
-      <button @click="agentTab = 'models'" class="px-3 py-1.5 text-xs font-medium rounded-t-lg border-b-2 transition"
-        :class="agentTab === 'models' ? 'border-brand-400 text-brand-600' : 'border-transparent text-slate-400 hover:text-slate-600'">模型</button>
-      <span class="ml-auto text-[10px] text-slate-400">密钥与请求头只写不回显</span>
-    </div>
-    <div class="max-h-[70vh] overflow-y-auto p-5 space-y-4">
       <div x-show="agentConfig.error" class="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] text-rose-700 break-words">
         无法读取模型配置：<span x-text="agentConfig.error"></span>
       </div>
@@ -3045,6 +3026,7 @@
           </div>
         </div>
       </div>
+      </div>
     </div>
   </div>
 </div>
@@ -3161,9 +3143,8 @@ function cairnApp() {
     showReopenModal: false,
     showRenameModal: false,
     showScopeModal: false,
-    showLocalPrefs: false,
     showSettings: false,
-    showAgentSettings: false,
+    settingsTab: 'runtime',
     showYamlModal: false,
     exportTab: 'yaml',
     exportProjectId: '',
@@ -3182,13 +3163,12 @@ function cairnApp() {
     renameForm: { projectId: '', originalTitle: '', title: '' },
     localPrefs: { actor_name: '本机用户', layout_mode: 'dagre_tb' },
     settingsForm: { intent_timeout: 5, reason_timeout: 5 },
-    showRuntimeSettings: false,
     runtimeConfig: { loading: false, saving: false, error: '', view: null },
     runtimeForm: null,
     runtimeResetArmed: false,
     runtimeResetTimer: null,
     agentTab: 'providers',
-    agentConfig: { loading: false, error: '', defaultModelPrefId: null, providers: [], models: [], protocols: [], builtinProviders: [] },
+    agentConfig: { loading: false, loaded: false, error: '', defaultModelPrefId: null, providers: [], models: [], protocols: [], builtinProviders: [] },
     agentProviderForm: { id: '', name: '', api: '', baseUrl: '', apiKey: '', headersText: '', clearHeaders: false, clearBaseUrl: false },
     agentProviderError: '',
     isSavingAgentProvider: false,
@@ -3873,6 +3853,16 @@ function cairnApp() {
       return projectTitle ? `${projectId} - ${projectTitle}` : projectId;
     },
 
+    documentTitle() {
+      const open = this.view === 'graph' && this.project && this.project.project;
+      const title = open ? String(this.project.project.title || '').trim() : '';
+      return title ? `${title} · Cairn` : 'Cairn';
+    },
+
+    syncDocumentTitle() {
+      if (typeof document !== 'undefined') document.title = this.documentTitle();
+    },
+
     deleteConfirmLabel() {
       return this.projectLabel(this.deleteConfirm.id, this.deleteConfirm.title);
     },
@@ -4020,17 +4010,8 @@ function cairnApp() {
         rename: () => {
           if (!this.isRenaming) this.showRenameModal = false;
         },
-        localPrefs: () => {
-          this.showLocalPrefs = false;
-        },
         settings: () => {
-          if (!this.isSavingSettings) this.showSettings = false;
-        },
-        runtime: () => {
-          if (!this.runtimeWritePending()) this.showRuntimeSettings = false;
-        },
-        agent: () => {
-          if (!this.agentWritePending()) this.showAgentSettings = false;
+          if (!this.settingsWritePending()) this.showSettings = false;
         },
         yaml: () => {
           this.showYamlModal = false;
@@ -7269,7 +7250,6 @@ function cairnApp() {
         this.layoutMode = this.localPrefs.layout_mode;
         this.saveLocalPrefs();
         if (this.cy) this.cy.layout(this.layoutOpts()).run();
-        this.showLocalPrefs = false;
         this.showToast('本地偏好已保存');
       } catch(e) { this.showToast(e.message, 'error'); }
     },
@@ -7286,10 +7266,35 @@ function cairnApp() {
       this.isSavingSettings = true;
       try {
         await this.api('PUT', '/settings', this.settingsForm);
-        this.showSettings = false;
         this.showToast('服务端设置已保存');
       } catch(e) { this.showToast(e.message, 'error'); }
       finally { this.isSavingSettings = false; }
+    },
+
+    settingsWritePending() {
+      return this.runtimeWritePending() || this.isSavingSettings || this.agentWritePending();
+    },
+
+    async openSettings(tab = 'runtime') {
+      this.showSettings = true;
+      await this.setSettingsTab(tab);
+    },
+
+    async setSettingsTab(tab) {
+      const tabs = ['runtime', 'agent', 'local', 'server'];
+      this.settingsTab = tabs.includes(tab) ? tab : 'runtime';
+      if (this.settingsTab === 'runtime') {
+        this.runtimeResetArmed = false;
+        if (!this.runtimeConfig.view && !this.runtimeWritePending()) {
+          await this.loadRuntimeSettings();
+        }
+      } else if (this.settingsTab === 'agent') {
+        if (!this.agentConfig.loaded && !this.agentWritePending()) {
+          await this.loadAgentConfig();
+        }
+      } else if (this.settingsTab === 'server') {
+        await this.loadSettings();
+      }
     },
 
     runtimeWritePending() {
@@ -7349,6 +7354,16 @@ function cairnApp() {
       const select = (path, label, options) => ({ path, label, type: 'select', options });
       const multi = (path, label, options) => ({ path, label, type: 'multi', options });
       return [
+        {
+          title: '执行环境',
+          hint: '切换需调度器空闲；容器模式需要本机 Docker',
+          fields: [
+            select('runtime.execution', '执行模式', [
+              { value: 'local', label: '本地进程' },
+              { value: 'container', label: 'Docker 容器' },
+            ]),
+          ],
+        },
         {
           title: '调度',
           hint: '间隔改动会在下一个周期重新定时',
@@ -7478,13 +7493,6 @@ function cairnApp() {
       const view = this.runtimeConfig.view;
       if (!this.runtimeForm || !view) return {};
       return this.runtimeDiff(this.runtimeForm, view.defaults) || {};
-    },
-
-    async openRuntimeSettings() {
-      this.showRuntimeSettings = true;
-      this.runtimeConfig.error = '';
-      this.runtimeResetArmed = false;
-      await this.loadRuntimeSettings();
     },
 
     async loadRuntimeSettings() {
@@ -7698,19 +7706,6 @@ function cairnApp() {
       this.agentProviderError = '';
     },
 
-    async openAgentSettings() {
-      this.showAgentSettings = true;
-      this.agentTab = 'providers';
-      this.agentProviderError = '';
-      this.agentModelError = '';
-      this.agentDiscover = { providerId: '', loading: false, error: '', models: [] };
-      this.agentTest = { modelId: '', loading: false, ok: null, error: '', response: '' };
-      this.agentDelete = { kind: '', id: '', name: '', force: false, loading: false, error: '' };
-      this.resetAgentProviderForm();
-      this.resetAgentModelForm();
-      await this.loadAgentConfig();
-    },
-
     async loadAgentConfig() {
       this.agentConfig.loading = true;
       this.agentConfig.error = '';
@@ -7718,6 +7713,7 @@ function cairnApp() {
         const data = await this.api('GET', '/settings/agent');
         this.agentConfig = {
           loading: false,
+          loaded: true,
           error: '',
           defaultModelPrefId: data.defaultModelPrefId == null ? null : data.defaultModelPrefId,
           providers: Array.isArray(data.providers) ? data.providers : [],
@@ -7727,6 +7723,7 @@ function cairnApp() {
         };
       } catch (e) {
         this.agentConfig.loading = false;
+        this.agentConfig.loaded = false;
         this.agentConfig.error = e.message;
       }
     },

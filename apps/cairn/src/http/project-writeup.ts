@@ -73,8 +73,11 @@ export type WriteupGenerator = (
 
 export interface WriteupRouteOptions {
   db: CairnDatabase;
-  /** Host workspace root; absent in pure HTTP mode, which omits the flag and payload bytes. */
-  workspaceRoot?: string;
+  /**
+   * Host workspace root; absent in pure HTTP mode, which omits the flag and payload bytes.
+   * A getter follows a live local↔container switch, whose roots may differ.
+   */
+  workspaceRoot?: string | (() => string);
   /** Policy reported for legacy projects without a `project_verification` row. */
   verificationFallback: VerificationKind;
   operatorToken?: string;
@@ -212,7 +215,10 @@ export function registerWriteupRoutes(
   register: RouteRegistrar,
   options: WriteupRouteOptions,
 ): void {
-  const { db, workspaceRoot, verificationFallback } = options;
+  const { db, verificationFallback } = options;
+  const workspaceRootValue = options.workspaceRoot;
+  const workspaceRoot = (): string | undefined =>
+    typeof workspaceRootValue === "function" ? workspaceRootValue() : workspaceRootValue;
   const timeoutMs =
     typeof options.timeoutMs === "number" && options.timeoutMs > 0
       ? options.timeoutMs
@@ -229,7 +235,7 @@ export function registerWriteupRoutes(
 
   function archiveView(draft: Draft): ArchiveView {
     return {
-      available: workspaceRoot !== undefined && draft.artifacts.length > 0,
+      available: workspaceRoot() !== undefined && draft.artifacts.length > 0,
       files: draft.artifacts.length,
     };
   }
@@ -251,14 +257,15 @@ export function registerWriteupRoutes(
 
   register("GET", "/projects/{project_id}/writeup/archive", ({ params }) => {
     const projectId = params["project_id"]!;
-    if (workspaceRoot === undefined) {
+    const root = workspaceRoot();
+    if (root === undefined) {
       throw new HttpError(409, "workspace root is not mounted, so attachments cannot be read");
     }
     return db.withConn((conn) => {
       const draft = buildDraft(conn, projectId);
       const stored = getProjectWriteup(conn, draft.snapshot.project.id);
       const archive = buildWriteupArchive({
-        workspace: projectWorkspace(workspaceRoot, projectId),
+        workspace: projectWorkspace(root, projectId),
         artifacts: draft.artifacts,
         snapshot: draft.snapshot,
         markdown: stored === null ? draft.markdown : stored.markdown,
@@ -335,7 +342,8 @@ export function registerWriteupRoutes(
 
   function buildDraft(conn: Database, projectId: string): Draft {
     const artifacts = listProjectArtifacts(conn, projectId);
-    const workspace = workspaceRoot === undefined ? null : projectWorkspace(workspaceRoot, projectId);
+    const root = workspaceRoot();
+    const workspace = root === undefined ? null : projectWorkspace(root, projectId);
     const flag =
       workspace === null
         ? null

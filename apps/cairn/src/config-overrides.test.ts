@@ -41,12 +41,19 @@ function source(): Record<string, unknown> {
   return Bun.YAML.parse(SOURCE) as Record<string, unknown>;
 }
 
-function newStore(options: { config?: DispatchConfig; onApply?: () => void } = {}) {
+function newStore(
+  options: {
+    config?: DispatchConfig;
+    onApply?: () => void;
+    validateNext?: (next: DispatchConfig, current: DispatchConfig) => string | null;
+  } = {},
+) {
   return new RuntimeConfigStore({
     db,
     config: options.config ?? config,
     source: source(),
     ...(options.onApply === undefined ? {} : { onApply: options.onApply }),
+    ...(options.validateNext === undefined ? {} : { validateNext: options.validateNext }),
   });
 }
 
@@ -104,7 +111,8 @@ describe("RuntimeConfigStore", () => {
     expect(view.editable).toEqual(view.defaults);
     expect(view.overrides).toEqual([]);
     expect(view.updated_at).toBeNull();
-    expect(view.read_only.runtime.execution).toBe("local");
+    expect(view.editable.runtime.execution).toBe("local");
+    expect(view.read_only.runtime).not.toHaveProperty("execution");
     expect(view.read_only.observer.enabled).toBe(true);
   });
 
@@ -202,6 +210,40 @@ describe("RuntimeConfigStore", () => {
     expect(config.runtime.maxWorkers).toBe(4);
     expect(config.runtime.maxProjectWorkers).toBe(1);
     expect(store.view().overrides).toEqual([]);
+  });
+
+  test("switches to container mode with validation defaults", () => {
+    const store = newStore();
+    const view = store.apply({ runtime: { execution: "container" } });
+
+    expect(config.runtime.execution).toBe("container");
+    expect(config.container).toMatchObject({
+      image: "cairn-worker:latest",
+      networkMode: "bridge",
+      completedAction: "remove",
+    });
+    expect(view.editable.runtime.execution).toBe("container");
+    expect(view.overrides).toEqual(["runtime.execution"]);
+    expect(JSON.parse(db.withConn((conn) => getRuntimeConfigOverrides(conn)).overrides)).toEqual({
+      runtime: { execution: "container" },
+    });
+  });
+
+  test("lets validateNext reject a switch without touching the live config", () => {
+    const store = newStore({
+      validateNext: (next, current) =>
+        next.runtime.execution === current.runtime.execution
+          ? null
+          : "wait for running tasks to finish before switching the execution mode",
+    });
+    store.apply({ budget: { max_project_tokens: 7 } });
+
+    expect(() => store.apply({ runtime: { execution: "container" } })).toThrow(
+      "wait for running tasks to finish before switching the execution mode",
+    );
+    expect(config.runtime.execution).toBe("local");
+    expect(config.budget.maxProjectTokens).toBe(7);
+    expect(store.view().overrides).toEqual(["budget.max_project_tokens"]);
   });
 
   test("resets to the dispatch.yaml values", () => {

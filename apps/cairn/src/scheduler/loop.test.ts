@@ -1279,6 +1279,32 @@ describe("per-project concurrency quota", () => {
 });
 
 describe("runtime settings hot reload", () => {
+  test("swaps the backend when execution changes while idle", async () => {
+    const loop = scheduler();
+    try {
+      expect(loop.executionMode).toBe("local");
+      config.runtime.execution = "container";
+      config.container = {
+        image: "cairn-worker:latest",
+        networkMode: "bridge",
+        completedAction: "remove",
+        capAdd: [],
+        workspaceRoot: null,
+        workerArgv: ["bun", "/app/apps/cairn/src/cli.ts", "worker", "--task"],
+      };
+
+      loop.reconfigure();
+      expect(loop.executionMode).toBe("container");
+      expect(logs.some((message) => message.includes("runtime switched to container"))).toBe(true);
+
+      config.runtime.execution = "local";
+      loop.reconfigure();
+      expect(loop.executionMode).toBe("local");
+    } finally {
+      await loop.stop();
+    }
+  });
+
   test("re-arms interval timers after the config changes", async () => {
     const loop = scheduler();
     loop.start();

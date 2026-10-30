@@ -1,12 +1,12 @@
 # 里程碑与验证记录
 
-本文件保留 M1–M23 的实现记录、测试与浏览器验证清单、与 Python Cairn 的已知差异、
+本文件保留 M1–M24 的实现记录、测试与浏览器验证清单、与 Python Cairn 的已知差异、
 里程碑表以及与 Phase 0 的关系。产品概览、快速开始与 API 概览见 [README](../README.md)。
 
 ## 实现记录
 
-状态：**M23（提案默认演练开启 + 看板只读页签）**；M0–M4、M5a–M5c、
-M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M16b、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e、M18f、M18g、M19a、M19b、M20a、M20b、M21、M22、M23 的计划项全部完成。Phase 1 的
+状态：**M24（在线切换执行模式 + 统一设置入口）**；M0–M4、M5a–M5c、
+M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M16b、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e、M18f、M18g、M19a、M19b、M20a、M20b、M21、M22、M23、M24 的计划项全部完成。Phase 1 的
 “本地看板 + Observer 提案 + 证据门 + 单一写图者”闭环已具备；Observer 复盘自 M22 起默认
 开启（只读复盘，不改任务结果），提案自 M23 起默认 `dry_run`（完整校验并记录，不写图）。
 Phase 2 的触发持久化、意图优先级/预算、单项目 token/成本与并发配额、只读慢层观测、逐 Fact
@@ -176,6 +176,16 @@ sidecar 仍只能提交候选，控制面照常做来源/证据/去重校验并�
 回答 `available: false` 而不是报错。UI 在「提案」与「成本」之间新增只读「看板」页签，
 按状态/类型着色展示想法与记忆，显示条目计数与截断标记；页签同样只发 GET，写看板仍只
 发生在 Observer 的 sidecar 会话里。
+M24 把执行模式变成可在线切换的设置项，并统一前端入口。`runtime.execution` 进入运行期
+覆盖白名单：`RuntimeConfigStore` 新增 `validateNext` 钩子，在解析成功后、原地同步前拒绝
+“调度器有任务在跑 / 正在切换 / 本机无 Docker”的请求；校验通过后 `Scheduler.reconfigure()`
+发现模式变化，会等 `running` 清空再重建 runtime 后端、关闭旧后端，并重新解析工作区根
+目录。dispatch.yaml 缺少 `container:` 段时只在解析前补上镜像/网络/收尾动作默认值，不写进
+覆盖 patch。进入容器模式前，控制面把内置 prompts/skills 播种到宿主 agent 配置目录。API
+的 `workspaceRoot` 改为 getter，工件、证据、Flag 与 Writeup 路由在切换后立即读新根。前端
+把原先的「运行配置 / 模型与密钥 / 本地偏好 / 服务端设置」四个弹窗合并为一个带四页签的
+「设置」弹窗，页头只留一个齿轮按钮；弹窗打开与切换页签时按需加载。浏览器标题随当前
+项目变为「项目名 · Cairn」。
 `cairn serve` 是可运行的 Cairn 兼容服务：SQLite schema、领域服务、全部
 五个路由、YAML/timeline 导出、静态 Web UI 均已就位，并用 Python Cairn 生成的 golden
 做了逐字对照。进程内 scheduler、任务/结果文件 worker 协议、BreachWeave Solver 接入已在 M2
@@ -721,9 +731,9 @@ M16b 增加（第二个模型接入与真实 A/B）：
 `CAIRN_SOLVER=breachweave` 的真实 Solver 路径上，fake solver 会忽略它。
 
 
-## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a + M17a + M17b + M17c + M17d + M18a + M18b + M18c + M18d + M18e + M18f + M18g + M19a + M19b + M16b + M20a + M20b + M21 + M22 + M23，2026-10-29，Bun 1.4.4）
+## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a + M17a + M17b + M17c + M17d + M18a + M18b + M18c + M18d + M18e + M18f + M18g + M19a + M19b + M16b + M20a + M20b + M21 + M22 + M23 + M24，2026-10-30，Bun 1.4.4）
 
-- `bun test`：**740 passed**（75 个文件），0 failed。
+- `bun test`：**748 passed**（75 个文件），0 failed。
 - `bun run typecheck`：`tsc --noEmit` 通过。
 - **HTTP 对照**：`api.golden.json` 的 60 步请求（成功路径、400/403/404/405/409、租约过期、
   删除级联、导出、路由错误）由 Python FastAPI + 固定时钟生成；TS 重放后状态码、content-type
@@ -1180,6 +1190,7 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M21 ✅ | Flag 扫描置信度：solver-session 回退改为只解析 `role:"toolResult"` 的消息正文（`sessionToolText`），模型自己的 assistant 叙述不再是证据——它在叙述里写下的 `CTF2{c8xxxx}` 曾按出现次数压过工具返回的真实值；`isPlaceholder` 增加掩码判定（`...`/`…`/`**`/`x{3,}` 连写与 `uuid`/`guid`/`frag`/`partial`/`truncat*`/`sample`/`dummy`/`tbd`/`unknown`/`missing` 词段匹配，`fragment_of_the_flag` 与 base64 里的 `xx` 不误杀）；被拒文本不静默丢弃：`/flag` 新增 `candidates`（≤3 条，带 `occurrences`/`sources`/`placeholder`，artifacts 与会话两路合并去重、次数相加）与 `placeholder_suspect`；Writeup 草稿的 `flag_suspects` 逐字列出它们并写“只扫描到疑似占位或截断的 flag 文本”，判定语与撰写 prompt 同步禁止把占位串当答案或拼一个看似完整的 Flag；UI 在未采纳任何值时显示琥珀色「FLAG 可疑」条（列出原文、不给复制按钮），命中时绿色横幅加“另有 N 个候选”徽标 | 703 passed / 72 files（2026-10-29）；`bun run typecheck` 通过；浏览器实测 proj_010 绿色横幅为真实 Flag、注入掩码的 proj_007 显示琥珀色可疑条 |
 | M22 ✅ | Observer 默认开启（只读复盘、提案仍默认关闭）+ 运行配置前端可调：`RuntimeConfigStore` 把 snake_case patch 存入 SQLite `runtime_config_overrides`，深合并到 dispatch.yaml 解析前文档并复用 `parseDispatchConfig` 校验，成功后原地同步共享 `DispatchConfig`；新增 `GET/PUT/DELETE /settings/runtime`（operator token、同源、64 KiB、无 `--config` 409）；`Scheduler.reconfigure()` 重挂 tick/sweep 定时器，`evidence_enforcement` 改为 getter 热读；页头「运行配置」弹窗按七组渲染数字/开关/下拉/多选，标出覆盖项、只提交与文件基线的差异、二次确认恢复；新增 `docs/CONFIG.md` | 732 passed / 74 files（2026-10-29）；浏览器实测：临时 DB+配置起 `serve --port 8019`，把调度间隔 2→5 保存后 `GET` 返回 `overrides:["runtime.interval"]`、SQLite 落 `{"runtime":{"interval":5}}`，刷新页面后值与「已覆盖 1 项」仍在；把单项目 worker 数改成 9 被 400 行内拒绝（`runtime.max_project_workers cannot exceed runtime.max_workers`）且服务端仍是 1；两次点击恢复后回到 2 且覆盖清空 |
 | M23 ✅ | 提案默认演练开启 + 看板只读页签：`DEFAULT_PROPOSALS` 改为 `enabled: true` + `mode: dry_run`（审核照常、只记录不写图）；新增 `http/project-board.ts` 与只读 `GET /projects/{id}/board`，读取 `.cairn/board/board/` 的想法索引与记忆条目，拒绝符号链接/越界/非普通文件，限制条目与文本上限并返回 `ideas_total`/`memory_total`/`truncated`，缺失看板返回 `available:false`；UI 在「提案」与「成本」之间新增「看板」页签，按状态/类型着色展示并支持刷新与错误重试 | 740 passed / 75 files（2026-10-29）；`bun run typecheck` 通过；浏览器实测临时 DB+配置起 `serve --port 8020`，预置 3 条想法/3 条记忆的项目显示计数与徽标、`GET /projects/proj_001/board` 200，无看板项目显示“暂无看板数据”，控制台无脚本错误 |
+| M24 ✅ | 在线切换执行模式 + 统一设置入口：`runtime.execution` 进入运行期覆盖白名单，`RuntimeConfigStore` 新增 `validateNext` 钩子（拒绝调度器有任务在跑/正在切换/本机无 Docker），`Scheduler.reconfigure()` 模式变化时等 `running` 清空再重建 runtime 后端并重新解析工作区根；dispatch.yaml 缺 `container:` 段时只在校验前补镜像/网络/收尾默认值、不落覆盖 patch；进入容器前播种内置 prompts/skills；API `workspaceRoot` 改为 getter 供工件/证据/Flag/Writeup 路由热读；前端把运行配置、模型与密钥、本地偏好、服务端设置四个弹窗合并为一个四页签「设置」弹窗（页头单齿轮按钮、按需加载、写请求中禁止关闭），`document.title` 随项目变为「项目名 · Cairn」 | 748 passed / 75 files（2026-10-30）；`bun run typecheck` 通过；浏览器实测临时 DB+起 `serve --port 8021`：四个页签各自加载（agent 页签列出 provider、server 页签显示超时输入、local 页签显示操作者/布局），执行模式 local→container 保存后 `overrides:["runtime.execution"]` 且日志出现 `runtime switched to container`，切回 local 后覆盖清空；Esc 经 `dismissModal('settings')` 关闭；打开 proj_002 标题为「Browser Check · Cairn」，返回列表为「Cairn」 |
 
 ## 与 Phase 0 的关系
 

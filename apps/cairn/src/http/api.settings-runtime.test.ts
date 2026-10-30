@@ -86,17 +86,17 @@ describe("GET /settings/runtime", () => {
     expect(response.status).toBe(200);
     const view = (await response.json()) as {
       defaults: { budget: { max_project_tokens: number } };
-      editable: { runtime: { max_workers: number; execution?: string } };
+      editable: { runtime: { max_workers: number; execution: string } };
       overrides: string[];
       updated_at: string | null;
-      read_only: { runtime: { execution: string }; observer: { enabled: boolean } };
+      read_only: { runtime: Record<string, unknown>; observer: { enabled: boolean } };
     };
     expect(view.defaults.budget.max_project_tokens).toBe(1000);
     expect(view.editable.runtime.max_workers).toBe(4);
-    expect(view.editable.runtime).not.toHaveProperty("execution");
+    expect(view.editable.runtime.execution).toBe("local");
     expect(view.overrides).toEqual([]);
     expect(view.updated_at).toBeNull();
-    expect(view.read_only.runtime.execution).toBe("local");
+    expect(view.read_only.runtime).not.toHaveProperty("execution");
     expect(view.read_only.observer.enabled).toBe(true);
   });
 
@@ -141,6 +141,45 @@ describe("PUT /settings/runtime", () => {
       budget: { max_project_tokens: 50 },
       tasks: { graph_slice: { enabled: true, max_facts: 40 } },
     });
+  });
+
+  test("switches execution to container and persists the override", async () => {
+    const response = await call(makeApi(), "PUT", "/settings/runtime", {
+      runtime: { execution: "container" },
+    });
+
+    expect(response.status).toBe(200);
+    const view = (await response.json()) as {
+      editable: { runtime: { execution: string } };
+      overrides: string[];
+    };
+    expect(view.editable.runtime.execution).toBe("container");
+    expect(view.overrides).toEqual(["runtime.execution"]);
+    expect(config.runtime.execution).toBe("container");
+    expect(config.container).toMatchObject({ image: "cairn-worker:latest" });
+    expect(
+      JSON.parse(db.withConn((conn) => getRuntimeConfigOverrides(conn)).overrides),
+    ).toEqual({ runtime: { execution: "container" } });
+  });
+
+  test("maps a validateNext rejection to 400 and keeps the running mode", async () => {
+    const guarded = new RuntimeConfigStore({
+      db,
+      config,
+      source: document(),
+      validateNext: () => "wait for running tasks to finish before switching the execution mode",
+    });
+
+    const response = await call(makeApi({ store: guarded }), "PUT", "/settings/runtime", {
+      runtime: { execution: "container" },
+    });
+
+    expect(response.status).toBe(400);
+    expect(((await response.json()) as { detail: string }).detail).toBe(
+      "wait for running tasks to finish before switching the execution mode",
+    );
+    expect(config.runtime.execution).toBe("local");
+    expect(guarded.view().overrides).toEqual([]);
   });
 
   test("rejects unsupported and invalid values with 400", async () => {
