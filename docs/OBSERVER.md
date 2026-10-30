@@ -252,7 +252,7 @@ return answer;
 | kind | 应用方式 | 去重 / 拒绝 |
 | --- | --- | --- |
 | `hint` | `createHint`（creator 固定 `observer`） | 内容完全相同视为 `duplicate`；`hint_exists` |
-| `intent` | `createIntent`（未认领）+ `intent_meta` 记录 dedupe key | 已有相同 key 的未结束 intent 或已应用提案 → `duplicate`；`dedupe_key_applied` / `intent_open`；来源缺失 → `source_fact_missing` |
+| `intent` | `createIntent`（未认领）+ `intent_meta` 记录 dedupe key | 已有相同 key 的未结束 intent 或已应用提案 → `duplicate`；`dedupe_key_applied` / `intent_open`；已应用提案另按 key 去重、未结束 intent 另按描述相似度（M31）去重 → `intent_description_open`；来源缺失 → `source_fact_missing` |
 | `fact` | 以 `observer` 身份 `createIntent`（claimed）+ `concludeIntent`，带 `run_id` 与证据 | 描述完全相同 → `duplicate`；来源必须是存在的非 goal Fact；`require_evidence_for_fact` 时证据缺失/越界/无效 → `evidence_required` / `evidence_invalid`；否则落 `fact_exists` / `source_fact_missing` |
 
 `mode`：

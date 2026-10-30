@@ -11,10 +11,12 @@ import {
   createProposal,
   createProject,
   findAppliedProposalByDedupeKey,
+  findDuplicateOpenIntent,
   findFactByDescription,
   findHintByContent,
   findOpenIntentByDedupeKey,
   getIntentMeta,
+  normalizeIntentDescription,
   getProposal,
   listPendingProposals,
   listProjectIntentMeta,
@@ -242,6 +244,90 @@ describe("intent metadata and dedupe lookups", () => {
     expect(
       db.withConn((conn) => findOpenIntentByDedupeKey(conn, projectId, "probe-admin")),
     ).toBeNull();
+  });
+
+  test("treats reworded descriptions of the same direction as duplicates", () => {
+    const intent = db.withConn((conn) =>
+      createIntent(conn, projectId, {
+        from: ["origin"],
+        description: "利用 f003 的凭据通过 SMB 横向到 10.0.2.0/24",
+        creator: "cairn-worker",
+        worker: null,
+      }),
+    );
+
+    const same = db.withConn((conn) =>
+      findDuplicateOpenIntent(conn, projectId, {
+        dedupeKey: null,
+        description: "利用f003的凭据，通过SMB横向到10.0.2.0/24。",
+      }),
+    );
+    expect(same).toMatchObject({ reason: "description", intent: { id: intent.id } });
+
+    const different = db.withConn((conn) =>
+      findDuplicateOpenIntent(conn, projectId, {
+        dedupeKey: null,
+        description: "在 /upload 用 polyglot PHP 绕过上传限制",
+      }),
+    );
+    expect(different).toBeNull();
+  });
+
+  test("prefers an explicit key and never judges short or concluded intents", () => {
+    const keyed = db.withConn((conn) => {
+      const created = createIntent(conn, projectId, {
+        from: ["origin"],
+        description: "probe admin",
+        creator: "observer",
+        worker: null,
+      });
+      recordIntentMeta(conn, {
+        projectId,
+        intentId: created.id,
+        dedupeKey: "probe-admin",
+        source: "observer",
+      });
+      return created;
+    });
+
+    expect(
+      db.withConn((conn) =>
+        findDuplicateOpenIntent(conn, projectId, {
+          dedupeKey: "probe-admin",
+          description: "完全不同的方向",
+        }),
+      ),
+    ).toMatchObject({ reason: "dedupe_key", intent: { id: keyed.id } });
+
+    expect(
+      db.withConn((conn) =>
+        findDuplicateOpenIntent(conn, projectId, {
+          dedupeKey: null,
+          description: "probe",
+        }),
+      ),
+    ).toBeNull();
+
+    db.withConn((conn) => {
+      conn
+        .query(
+          "UPDATE intents SET to_fact_id = 'goal', concluded_at = ? WHERE id = ? AND project_id = ?",
+        )
+        .run("2026-01-01T00:00:00Z", keyed.id, projectId);
+    });
+    expect(
+      db.withConn((conn) =>
+        findDuplicateOpenIntent(conn, projectId, {
+          dedupeKey: "probe-admin",
+          description: "probe admin",
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  test("normalizes widths, case and punctuation before comparing", () => {
+    expect(normalizeIntentDescription("  ＡＢＣ，全角！ ")).toBe("abc全角");
+    expect(normalizeIntentDescription("SMB / Lateral,\n10.0.2.0")).toBe("smblateral10020");
   });
 
   test("finds only applied proposals for a dedupe key", () => {

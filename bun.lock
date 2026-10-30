@@ -12,7 +12,7 @@
     },
     "apps/cairn": {
       "name": "@cairn/app",
-      "version": "0.50.0-m30",
+      "version": "0.51.0-m31",
       "bin": {
         "cairn": "./src/cli.ts",
       },

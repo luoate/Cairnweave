@@ -315,6 +315,50 @@ describe("proposal review", () => {
     ]);
   });
 
+  test("dedupes a reworded intent by description when the keys differ", () => {
+    writeCandidate(
+      "intent-a.json",
+      candidate({
+        kind: "intent",
+        payload: {
+          description: "利用 f003 的凭据通过 SMB 横向到 10.0.2.0/24",
+          from: ["origin"],
+        },
+        dedupeKey: "lateral-smb",
+      }),
+    );
+    writeCandidate(
+      "intent-b.json",
+      candidate({
+        kind: "intent",
+        payload: {
+          description: "利用ｆ００３的凭据，通过ＳＭＢ横向到１０．０．２．０／２４。",
+          from: ["origin"],
+        },
+        dedupeKey: "lateral-smb-reworded",
+      }),
+    );
+    expect(ingest().ingested).toBe(2);
+
+    const result = review();
+    expect(result).toMatchObject({ applied: 1, duplicate: 1, rejected: 0 });
+    const applied = proposals().find((proposal) => proposal.status === "applied")!;
+    const duplicate = proposals().find((proposal) => proposal.status === "duplicate")!;
+    expect(duplicate.decision_reason).toBe("intent_description_open");
+    expect(duplicate.applied_id).toBe(applied.applied_id);
+
+    const intents = db.withConn((conn) =>
+      conn
+        .query(
+          "SELECT id, description FROM intents WHERE project_id = ? AND to_fact_id IS NULL",
+        )
+        .all(projectId),
+    );
+    expect(intents).toEqual([
+      { id: applied.applied_id, description: applied.payload.description },
+    ]);
+  });
+
   test("applies an evidence-backed fact and rejects duplicates", () => {
     mkdirSync(join(workspace, "notes"), { recursive: true });
     writeFileSync(join(workspace, "notes", "admin.txt"), "admin panel found\n", "utf8");

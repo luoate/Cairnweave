@@ -1,12 +1,12 @@
 # 里程碑与验证记录
 
-本文件保留 M1–M30 的实现记录、测试与浏览器验证清单、与 Python Cairn 的已知差异、
+本文件保留 M1–M31 的实现记录、测试与浏览器验证清单、与 Python Cairn 的已知差异、
 里程碑表以及与 Phase 0 的关系。产品概览、快速开始与 API 概览见 [README](../README.md)。
 
 ## 实现记录
 
-状态：**M30（按需子图 API：`GET /projects/{id}/subgraph`）**；M0–M4、M5a–M5c、
-M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M16b、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e、M18f、M18g、M19a、M19b、M20a、M20b、M21、M22、M23、M24、M24b、M25、M26、M26b、M27、M28、M29、M30 的计划项全部完成。Phase 1 的
+状态：**M31（描述级 Intent 去重）**；M0–M4、M5a–M5c、
+M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M16b、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e、M18f、M18g、M19a、M19b、M20a、M20b、M21、M22、M23、M24、M24b、M25、M26、M26b、M27、M28、M29、M30、M31 的计划项全部完成。Phase 1 的
 “本地看板 + Observer 提案 + 证据门 + 单一写图者”闭环已具备；Observer 复盘自 M22 起默认
 开启（只读复盘，不改任务结果），提案自 M23 起默认 `dry_run`（完整校验并记录，不写图）。
 Phase 2 的触发持久化、意图优先级/预算、单项目 token/成本与并发配额、只读慢层观测、逐 Fact
@@ -286,6 +286,15 @@ HTTP 侧 `GET /projects/{id}/subgraph` 默认返回 JSON，`format=yaml` 返回�
 `depth`/`max_facts`/`max_intents` 有显式上下界且越界返回 400 而不是静默夹取，`max_facts`
 最小 2 是因为 `origin`/`goal` 是项目头，裁掉会让 YAML 的 `project` 段失真。该接口只读，
 不改 `tasks.graph_slice` 的调度行为，全图导出与 golden 不受影响。
+M31 补上融合方案的第二个缺口：描述级 Intent 去重。此前 reason 与 Observer 提案只看
+`dedupe_key`，模型换个说法（同方向、不同 key）就会重复建意图，把并行 worker 引到同一处。
+`packages/graph/src/proposals.ts` 新增 `findDuplicateOpenIntent`：先按非空 `dedupe_key`
+精确匹配未结束 Intent，再对描述做 NFKC、转小写、去掉空白与标点（`\p{P}\p{S}`）归一化，
+在归一化后 ≥10 字符、长度比 ≥0.75 的前提下比较字符二元组的 Jaccard 相似度，≥0.9 即命中；
+命中原因区分 `dedupe_key` 与 `description`。只有未结束的 Intent 参与比较，已结束方向
+可以重新提出。reason 侧命中只跳过该条并计入 `deduped`（整轮仍算成功），提案侧返回
+`duplicate` + `intent_description_open`，`applied_id` 指向已存在的意图。匹配器不新增列、
+不落库，图模型、YAML 与 HTTP 响应均不变。
 `cairn serve` 是可运行的 Cairn 兼容服务：SQLite schema、领域服务、全部
 五个路由、YAML/timeline 导出、静态 Web UI 均已就位，并用 Python Cairn 生成的 golden
 做了逐字对照。进程内 scheduler、任务/结果文件 worker 协议、BreachWeave Solver 接入已在 M2
@@ -831,9 +840,9 @@ M16b 增加（第二个模型接入与真实 A/B）：
 `CAIRN_SOLVER=breachweave` 的真实 Solver 路径上，fake solver 会忽略它。
 
 
-## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a + M17a + M17b + M17c + M17d + M18a + M18b + M18c + M18d + M18e + M18f + M18g + M19a + M19b + M16b + M20a + M20b + M21 + M22 + M23 + M24 + M24b + M25 + M26 + M26b + M27 + M28 + M29 + M30，2026-10-31，Bun 1.4.4）
+## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a + M17a + M17b + M17c + M17d + M18a + M18b + M18c + M18d + M18e + M18f + M18g + M19a + M19b + M16b + M20a + M20b + M21 + M22 + M23 + M24 + M24b + M25 + M26 + M26b + M27 + M28 + M29 + M30 + M31，2026-10-31，Bun 1.4.4）
 
-- `bun test`：**827 passed**（80 个文件），0 failed。
+- `bun test`：**832 passed**（80 个文件），0 failed。
 - `bun run typecheck`：`tsc --noEmit` 通过。
 - **HTTP 对照**：`api.golden.json` 的 60 步请求（成功路径、400/403/404/405/409、租约过期、
   删除级联、导出、路由错误）由 Python FastAPI + 固定时钟生成；TS 重放后状态码、content-type
@@ -1267,6 +1276,13 @@ M16b 增加（第二个模型接入与真实 A/B）：
   `depth=abc`、`format=xml` 的 400，未知项目与未知节点的 404，以及 POST 的 405。
   同轮跑 `export.slice.test.ts`、`export.golden.test.ts`、`api.golden.test.ts`，M4b 切片与全图 golden
   均未变化。
+- **描述级 Intent 去重（M31）**：`packages/graph/src/proposals.test.ts` 覆盖三种情形——换个说法
+  （全角/标点/空白差异，`dedupe_key` 也不同）的未结束 Intent 被判为 `description` 重复，不同方向返回
+  `null`；显式 key 优先于描述匹配，短描述（<10 字符）与已结束 Intent 永不判重；`normalizeIntentDescription`
+  的 NFKC/小写/去标点结果被逐字钉住。`apps/cairn/src/scheduler/proposals.test.ts` 用两份 `apply` 模式提案
+  断言审核结果为 `duplicate` + `intent_description_open`，`applied_id` 指向已存在意图且只落一条开放 Intent；
+  `loop.test.ts` 用新 fixture `reworded-reason-worker.ts` 跑两轮 reason（初始 + 人工重规划）：第二轮两条
+  都被去重，`deduped > 0` 仍记为 `success`，open Intent 保持 1 条、`intent_meta` 只有一行。
 
 golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定时钟、`TZ=UTC`）。
 重新生成方法与约束见 `docs/PORTING.md`。
@@ -1353,6 +1369,7 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M28 ✅ | 前端字号刻度与可读性下限：`tools/ui/tailwind.config.mjs` 新增 `theme.extend.fontSize["2xs"] = ["0.6875rem", {lineHeight:"1.3"}]`（11px，中文可读下限）并补上 `fontFamily.mono`——顶层 `theme.fontFamily` 替换整条字族刻度，旧配置只列 `sans`，因此 `.font-mono` 编译不出规则、94 处调用点静默回退正文字体；`index.html` 的 472 处 `text-[9px]/[10px]/[11px]` 全部换成 `text-2xs`，3 处 `text-[12px]` 归 `text-xs`，两处 15px 标题归 `text-base`，`text-xs`/`text-sm` 不动以保持紧凑仪表盘密度，内联 `<style>` 不含 `font-size`；`api.ui.test.ts` 的 CSS 覆盖守卫豁免从 `font-mono` + `bg-white/92` 收到只剩 `bg-white/92`，并新增 `typography scale` 三个用例（markup 无 `text-[<数字`、产物最小 `font-size` ≥ 11px 且含 `.text-2xs`、配置同列 `sans`/`mono` 且产物 `.font-mono` 落到 `ui-monospace`）；cytoscape canvas 标签（边 7px / 节点 10px）按例外保留 | 806 passed / 78 files（2026-10-30）；`bun run check`（tsc + 全量）通过；重新生成产物 33,112 B（br 6,420 B）与入库文件逐字节相同；隐藏浏览器 532×555 几何 A/B 用 `git show HEAD:` 的 `index.html` + `app.css` 做真对照，六个状态（列表/详情/runs/audit/writeup/settings）最小字号 9px→11px、小于 11px 的节点 14/11/56/133/13/13 全部归零、含中文的小字 14/8/33/74/8/8 全部归零，而横向溢出容器（2）与越出视口元素（0/5/5/6/6/6）改前改后一致，`.font-mono` 实测族名以 `ui-monospace` 开头，控制台无消息。曾试给图标题 `h2` 加 `min-w-0`/`flex-1` 让 `truncate` 生效，实测在 532px 下会把项目名压到 0 宽（标题消失比原有溢出更糟）故回退，窄窗口排布留给后续响应式一轮 |
 | M29 ✅ | 后端热点两处：`packages/graph/src/db.ts` 为 `facts(project_id)` 增加 `facts_project` 索引——主键是 `(id, project_id)`，项目列表的 `fact_count` 子查询与 `GET /projects/{id}` 的按项目读 Fact 只能整表扫描，`EXPLAIN QUERY PLAN` 由 `SCAN facts` 变为 `SEARCH facts USING (COVERING) INDEX facts_project`；`/flag` 的会话兜底改为有界遍历：`readdirSync` 不再取 `withFileTypes`（Windows 上等于先给每个条目做一次 lstat），逐项用 `lstatSync(..., { throwIfNoEntry: false })`，新增 `SESSION_MAX_DIRECTORIES = 1000` 与 `SESSION_MAX_ENTRIES = 4000`（被跳过的目录/缺失的 `solver-session`/非 jsonl 文件都占额度），撞界即 `truncated: true`；`collectProjectFlag` 外包 10 s / 32 项的工作区级缓存，指纹为工件 `path + size`（新增或改大小立即失效，同名同大小改写等 TTL），返回副本并提供 `clearFlagCache()` | 814 passed / 78 files（2026-10-30）；`bun run check`（tsc + 全量）通过；`db.test.ts` 钉住两条查询计划的索引使用（含 `COUNT(*)` 的 covering 变体）；`api.flag.test.ts` 新增 `scanSolverSessionFlags bounds`（目录上界、条目上界、小工作区不误报）与 `collectProjectFlag cache`（TTL 边界 10_000 ms、新工件立即失效、工作区隔离、返回值副本）共 7 个用例；demo 工作区实测 proj_003 会话遍历 2372.9 ms → 150.0 ms、14 个项目合计 2401.9 ms → 358.4 ms、`collectProjectFlag` 冷启 675.0 ms 而全命中 0.3 ms，14 个项目的 `found`/`scanned_files` 改前改后一致（仅 proj_003 由 `truncated:false` 变为如实的 `true`）；索引在 12 项目 / 43 Fact 的 demo 上量不出耗时差异，按复杂度修正记录 |
 | M30 ✅ | 按需子图 API：`packages/graph/src/export.ts` 新增 `selectSubgraph`（`around` 兼容 Fact / Intent，Fact↔Intent 因果边 BFS，`depth` 默认 2、上限 4）、`exportProjectSubgraphYaml` 与 HTTP 只读 `GET /projects/{id}/subgraph`（`around`/`depth`/`max_facts`/`max_intents`/`format=json\|yaml`）；未结束 Intent 作为 0 跳种子保证并行方向可见，裁剪优先级为 `origin`/`goal` → focus → 已选 Intent 来源 → 跳数，被裁即 `truncated`；`max_facts` 最小 2（项目头需要 origin/goal），越界参数 400 而非静默夹取，未知节点 404 | 827 passed / 80 files（2026-10-31）；`bun run check`（tsc + 全量）通过；`export.subgraph.test.ts` 覆盖 focus fact/intent、depth 1→4 的边界（深度外的 Intent 产出 Fact 不被排序拉回）、未结束 Intent 种子、caps 与 truncated、未知节点 404、YAML 确定性与 `slice:` 段；`api.subgraph.test.ts` 覆盖默认 JSON 形状、`format=yaml`、Intent 焦点、缺失/非法参数 400、未知项目/节点 404 与 POST 405；M4b 切片、全图导出与 golden 逐字节不变 |
+| M31 ✅ | 描述级 Intent 去重：`packages/graph/src/proposals.ts` 新增 `findDuplicateOpenIntent`（未结束 Intent 先按非空 `dedupe_key` 精确匹配，再比较描述：NFKC + 小写 + 去空白/标点归一化、≥10 字符、长度比 ≥0.75、字符二元组 Jaccard ≥ 0.9）与 `normalizeIntentDescription`；reason 的 intents 分支与 Observer 提案审查都改用它，命中时 reason 跳过该条并计入 `deduped`（整轮仍算成功），提案返回 `duplicate` + `intent_description_open` 并指向已存在的意图；不带 `dedupe_key` 的 reason 意图也能被描述去重，已结束方向可重新提出；不新增列、不落库 | 832 passed / 80 files（2026-10-31）；`bun run check`（tsc + 全量）通过；`packages/graph/src/proposals.test.ts` 覆盖换说法（全角/标点/空白）判重、不同方向不判重、显式 key 优先、短描述与已结束 Intent 不判重、归一化输出；`proposals.test.ts`（scheduler）断言 `intent_description_open` 与只落一条开放 Intent；`loop.test.ts` 用 `reworded-reason-worker.ts` 验证首轮与重规划两轮去重后 open Intent 仍为 1、`intent_meta` 只有一行 |
 
 ## 与 Phase 0 的关系
 

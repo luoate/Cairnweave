@@ -209,6 +209,10 @@ reason 的 intent 条目可以多带三个可选字段：
 - `budget.max_seconds` / `budget.max_tool_calls`：正整数；至少出现一个，未知键拒绝。
 - `dedupe_key`：可选的稳定方向标识，去空白后 1–128 字符。控制面在创建前检查同一
   项目内仍打开的意图；key 已存在时跳过该条并计为去重成功。
+- 描述级去重（M31）：即使 `dedupe_key` 为空或不同，控制面也会把新描述与每个未结束
+  意图的描述做归一化比较——NFKC、转小写、去空白与标点后，字符二元组 Jaccard 相似度
+  ≥ 0.9（且长度比 ≥ 0.75、归一化后至少 10 字符）即视为同一方向并跳过。这条规则同样
+  用于 Observer 提案审查（`intent_description_open`），但不会合并已结束的 Intent。
 - 三个字段都由 `packages/contracts` 校验。非法条目会让整个 reason 结果被拒绝，而不是
   静默忽略。
 

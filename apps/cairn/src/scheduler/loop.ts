@@ -30,7 +30,7 @@ import {
   exportProjectSliceYaml,
   exportProjectYaml,
   findHintByContent,
-  findOpenIntentByDedupeKey,
+  findDuplicateOpenIntent,
   finishRun,
   getIntentMeta,
   getPendingConclude,
@@ -1311,10 +1311,11 @@ export class Scheduler {
           const from = requireFactIds(entry["from"]);
           const description = requireText(entry["description"]);
           const dedupeKey = dedupeKeyOf(entry["dedupe_key"]);
-          if (
-            dedupeKey !== null &&
-            findOpenIntentByDedupeKey(conn, running.projectId, dedupeKey) !== null
-          ) {
+          const duplicate = findDuplicateOpenIntent(conn, running.projectId, {
+            dedupeKey,
+            description,
+          });
+          if (duplicate !== null) {
             deduped += 1;
             continue;
           }

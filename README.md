@@ -269,7 +269,7 @@ gate 放在 `tools/gate/`，手动执行、不计入 CI，命令与环境变量�
 | [WRITEUP.md](docs/WRITEUP.md) | 中文 Writeup：草稿组成、载荷、附件包、Flag 置信度与模型撰写 |
 | [MODELS.md](docs/MODELS.md) | 模型与密钥的一页操作手册 |
 | [PORTING.md](docs/PORTING.md) | Python Cairn → TypeScript 的模块映射与对照测试策略 |
-| [MILESTONES.md](docs/MILESTONES.md) | M1–M29 实现记录、完整验证清单与里程碑表 |
+| [MILESTONES.md](docs/MILESTONES.md) | M1–M31 实现记录、完整验证清单与里程碑表 |
 
 ## 仓库结构
 

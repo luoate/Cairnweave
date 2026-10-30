@@ -17,7 +17,7 @@ import {
   findAppliedProposalByDedupeKey,
   findFactByDescription,
   findHintByContent,
-  findOpenIntentByDedupeKey,
+  findDuplicateOpenIntent,
   listFactSupersessions,
   listPendingProposals,
   recordIntentMeta,
@@ -307,9 +307,16 @@ function reviewIntent(
     return { status: "rejected", reason: "dedupe_key_required", appliedId: null };
   }
 
-  const open = findOpenIntentByDedupeKey(conn, proposal.project_id, dedupeKey);
+  const open = findDuplicateOpenIntent(conn, proposal.project_id, {
+    dedupeKey,
+    description,
+  });
   if (open !== null) {
-    return { status: "duplicate", reason: "intent_open", appliedId: open.id };
+    return {
+      status: "duplicate",
+      reason: open.reason === "dedupe_key" ? "intent_open" : "intent_description_open",
+      appliedId: open.intent.id,
+    };
   }
   const prior = findAppliedProposalByDedupeKey(
     conn,

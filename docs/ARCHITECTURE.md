@@ -416,8 +416,9 @@ scheduler 与 HTTP API 共用 `packages/graph/src/commands.ts` 的命令，不�
    conclude 回退）。校验通过后：
    - reason：`complete` → 先调用完成 oracle（M14a；见 §4.2），通过才关项目，失败则释放
      reason 租约并保持项目 active；intents → 先写 `hints`（按去空白内容去重），再以
-     `creator=cairn-worker` 创建意图（带 `dedupe_key` 时跳过已打开的同一方向）；
-     hints-only → 只写 Hint 并成功；noop → 成功。payload 校验在控制面按实时图状态做；
+     `creator=cairn-worker` 创建意图：创建前先按 `dedupe_key` 精确匹配未结束意图，
+     再按描述归一化（NFKC、小写、去空白与标点）后的二元组 Jaccard 相似度匹配（M31），
+     命中即跳过该条；hints-only → 只写 Hint 并成功；noop → 成功。payload 校验在控制面按实时图状态做；
    - explore：`accepted:false` → 释放意图；否则 conclude 意图产生 Fact，并写
      `fact_meta`（`run_id`、证据引用与状态）；
    - bootstrap：conclude 意图产生 Fact（同样写 `fact_meta`），再调用 oracle；通过才用
@@ -473,7 +474,8 @@ scheduler 与 HTTP API 共用 `packages/graph/src/commands.ts` 的命令，不�
   `project_id + task_id + 文件名` 派生，重复扫描幂等。结构校验通过后写入 `proposals`
   （`pending`）；任何错误只记日志。
 - **审核**：每条 pending 提案单独事务。`hint` 按内容去重后调用 `createHint`；
-  `intent` 要求 `dedupe_key`，按未结束 intent 与已应用提案去重后创建未认领 intent，
+  `intent` 要求 `dedupe_key`，先按未结束 intent（key 精确匹配 + 描述相似度，M31）与
+  已应用提案去重后创建未认领 intent，
   并在 `intent_meta` 记录 key；`fact` 必须有存在的非 goal 来源与合法证据，走
   `createIntent` + `concludeIntent`，与 worker 产出的 Fact 使用同一套证据固化逻辑。
   项目非 active、来源缺失、证据缺失/非法、重复均记为 `rejected`/`duplicate`。
@@ -676,7 +678,8 @@ stderr 归档到 `sessionDir/{stdout,stderr}.log`。需要 UI 实时进度时再
   删除。M11 用它存提案去重键；M12b 起 reason 创建的意图写 `source='strategist'`、
   `priority`（默认 50）与 `budget` JSON；M13b 起 reason 和已应用提案写
   `origin_run_id`，旧库自动补列且历史行保持 `NULL`。读取时归一化非法优先级/预算为
-  `NULL`。不进入图模型、YAML 或 HTTP 图响应。
+  `NULL`。M31 的按描述去重不新增列、不落库：只在与未结束意图比较时临时归一化，
+  因此不会进入图模型、YAML 或 HTTP 图响应。
 - `project_verification(project_id, kind, challenge_code, created_at)`（M14a），主键
   `project_id`，外键指向项目并级联删除。`kind` 为 `challenge | evidence | off`；
   没有行时读取合成 `evidence`，不改旧项目。
@@ -1471,7 +1474,8 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
     M13b 之前的意图没有 `origin_run_id`，其编排成本永久未归因。分摊保证总量守恒，但不是
     逐 token 计量，也不能作为对外计费凭证。M14b 补上了 reason 的 Hint/去重输出、人工
     重规划与资源压力触发；仍未解决：Prompt 扩展尚未在真实模型上做 A/B，Hint 质量与
-    dedupe key 的稳定性没有基线；`resource_pressure_ratio` 默认关闭，触发阈值需要按长
+    dedupe key 的稳定性没有基线（M31 的描述级去重只是兜底，相似度阈值同样没有真实模型
+    基线）；`resource_pressure_ratio` 默认关闭，触发阈值需要按长
     任务样本调整；人工重规划只有单项目级标记，没有排队、审批或原因审计。M14c 补上了
     `runs.model` 与 Fact→run→工具调用的 UI 下钻；仍未解决：model 只随 `usage.json`
     落库，fake solver、没有用量或被硬杀的任务为 `null`，conclude 是否应继承失败任务的

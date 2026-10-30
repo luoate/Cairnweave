@@ -207,6 +207,18 @@ function metaReasonScheduler(): Scheduler {
   });
 }
 
+function rewordedReasonScheduler(): Scheduler {
+  const fixture = join(import.meta.dir, "testdata", "reworded-reason-worker.ts");
+  return new Scheduler({
+    db,
+    config,
+    workspaceRoot: join(directory, "workspace"),
+    log: (message) => logs.push(message),
+    leaseIntervalMs: 500,
+    workerArgv: (taskPath) => [process.execPath, fixture, taskPath],
+  });
+}
+
 function usageScheduler(): Scheduler {
   const fixture = join(import.meta.dir, "testdata", "usage-worker.ts");
   return new Scheduler({
@@ -1013,6 +1025,55 @@ describe("Strategist priority and project budgets", () => {
         replan_requested_by: null,
         replan_reason: null,
       });
+    },
+    30_000,
+  );
+
+  test(
+    "drops a reworded direction and still counts the turn as a success",
+    async () => {
+      const project = createProjectRow(false);
+      const loop = rewordedReasonScheduler();
+      loop.tick();
+      await loop.waitForIdle();
+
+      const detail = load(project.project.id);
+      const open = detail.intents.filter((intent) => intent.to === null);
+      expect(open).toHaveLength(1);
+      expect(open[0]!.description).toBe("利用 f003 的凭据通过 SMB 横向到 10.0.2.0/24");
+
+      const runs = db.withConn((conn) => listProjectRuns(conn, project.project.id));
+      const reasonRuns = runs.filter((run) => run.kind === "reason");
+      expect(reasonRuns).toHaveLength(1);
+      expect(reasonRuns[0]!.outcome).toBe("success");
+
+      const meta = db.withConn((conn) =>
+        listProjectIntentMeta(conn, project.project.id),
+      );
+      expect(meta).toHaveLength(1);
+      expect(meta[0]).toMatchObject({
+        intent_id: open[0]!.id,
+        source: "strategist",
+        dedupe_key: "lateral-smb",
+      });
+
+      db.withConn((conn) =>
+        requestStrategistReplan(conn, project.project.id, {
+          reason: "recheck duplicates",
+          requestedBy: "tester",
+        }),
+      );
+      loop.tick();
+      await loop.waitForIdle();
+
+      const rerun = db
+        .withConn((conn) => listProjectRuns(conn, project.project.id))
+        .filter((run) => run.kind === "reason");
+      expect(rerun.map((run) => run.trigger)).toEqual(["initial", "manual_replan"]);
+      expect(rerun.every((run) => run.outcome === "success")).toBe(true);
+      expect(
+        load(project.project.id).intents.filter((intent) => intent.to === null),
+      ).toHaveLength(1);
     },
     30_000,
   );

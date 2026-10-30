@@ -292,7 +292,82 @@ export function findOpenIntentByDedupeKey(
     projectId,
     dedupeKey,
   );
-  if (row === null) return null;
+  return row === null ? null : intentWithSources(conn, projectId, row);
+}
+
+export type IntentDuplicateReason = "dedupe_key" | "description";
+
+export interface OpenIntentDuplicate {
+  intent: Intent;
+  reason: IntentDuplicateReason;
+}
+
+/** Shorter text is too easy to collide on, so it is never judged a duplicate. */
+const MIN_DUPLICATE_DESCRIPTION_CHARS = 10;
+const DUPLICATE_JACCARD = 0.9;
+const DUPLICATE_LENGTH_RATIO = 0.75;
+
+/**
+ * Normalizes a direction description for duplicate detection: compatibility form,
+ * lowercase, then whitespace and punctuation removed. Character bigrams make the
+ * comparison work for Chinese as well as space-separated languages.
+ */
+export function normalizeIntentDescription(text: string): string {
+  return text
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[\s\u3000]+/gu, "")
+    .replace(/[\p{P}\p{S}]+/gu, "");
+}
+
+/**
+ * Two open intents collide when they share an explicit dedupe key, or when their
+ * descriptions are near-identical after normalization. The description check keeps the
+ * graph from growing parallel directions that differ only by wording, without needing
+ * the model to remember to set a key.
+ */
+export function findDuplicateOpenIntent(
+  conn: Database,
+  projectId: string,
+  check: { dedupeKey?: string | null; description: string },
+): OpenIntentDuplicate | null {
+  const rows = all<IntentRow & { meta_dedupe_key: string | null }>(
+    conn,
+    `
+    SELECT i.*, m.dedupe_key AS meta_dedupe_key
+    FROM intents i
+    LEFT JOIN intent_meta m
+      ON m.intent_id = i.id AND m.project_id = i.project_id
+    WHERE i.project_id = ? AND i.to_fact_id IS NULL
+    ORDER BY i.created_at, i.id
+    `,
+    projectId,
+  );
+  const dedupeKey = check.dedupeKey?.trim() ?? "";
+  if (dedupeKey !== "") {
+    const keyed = rows.find((row) => row.meta_dedupe_key === dedupeKey);
+    if (keyed !== undefined) {
+      return { intent: intentWithSources(conn, projectId, keyed), reason: "dedupe_key" };
+    }
+  }
+
+  const target = normalizeIntentDescription(check.description);
+  if (target.length < MIN_DUPLICATE_DESCRIPTION_CHARS) return null;
+  const targetGrams = bigrams(target);
+  for (const row of rows) {
+    const other = normalizeIntentDescription(row.description);
+    if (other.length < MIN_DUPLICATE_DESCRIPTION_CHARS) continue;
+    const shorter = Math.min(target.length, other.length);
+    const longer = Math.max(target.length, other.length);
+    if (shorter / longer < DUPLICATE_LENGTH_RATIO) continue;
+    if (jaccardSimilarity(targetGrams, bigrams(other)) >= DUPLICATE_JACCARD) {
+      return { intent: intentWithSources(conn, projectId, row), reason: "description" };
+    }
+  }
+  return null;
+}
+
+function intentWithSources(conn: Database, projectId: string, row: IntentRow): Intent {
   const sources = all<{ fact_id: string }>(
     conn,
     "SELECT fact_id FROM intent_sources WHERE intent_id = ? AND project_id = ? ORDER BY rowid",
@@ -310,6 +385,23 @@ export function findOpenIntentByDedupeKey(
     created_at: row.created_at,
     concluded_at: row.concluded_at,
   };
+}
+
+function bigrams(text: string): Set<string> {
+  const grams = new Set<string>();
+  for (let index = 0; index + 1 < text.length; index += 1) {
+    grams.add(text.slice(index, index + 2));
+  }
+  return grams;
+}
+
+function jaccardSimilarity(left: Set<string>, right: Set<string>): number {
+  if (left.size === 0 || right.size === 0) return 0;
+  let shared = 0;
+  for (const gram of left) {
+    if (right.has(gram)) shared += 1;
+  }
+  return shared / (left.size + right.size - shared);
 }
 
 /** An already-applied proposal with the same direction, used for cross-kind/fact dedupe. */
