@@ -184,6 +184,10 @@ describe("intent metadata and dedupe lookups", () => {
       origin_run_id: null,
       priority: 90,
       budget: { max_seconds: 120, max_tool_calls: 8 },
+      status: "open",
+      status_reason: null,
+      status_at: null,
+      status_by: null,
       created_at: expect.any(String),
     });
     expect(

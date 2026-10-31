@@ -17,6 +17,7 @@ import {
   recordVerificationCheck,
   renderProjectReportMarkdown,
   run,
+  setIntentStatus,
   setProjectVerification,
   startRun,
   type CairnDatabase,
@@ -97,6 +98,7 @@ describe("buildProjectReport", () => {
       superseded_facts: 0,
       intents: 0,
       open_intents: 0,
+      abandoned_intents: 0,
       hints: 0,
     });
     expect(result.current_facts.map((fact) => fact.id)).toEqual(["goal", "origin"]);
@@ -147,6 +149,7 @@ describe("buildProjectReport", () => {
       superseded_facts: 1,
       intents: 2,
       open_intents: 0,
+      abandoned_intents: 0,
       hints: 1,
     });
     expect(result.current_facts.map((fact) => fact.id)).not.toContain(older);
@@ -157,6 +160,39 @@ describe("buildProjectReport", () => {
     expect(result.hints).toEqual([
       expect.objectContaining({ content: "try the admin path", creator: "operator" }),
     ]);
+  });
+
+  test("counts abandoned intents separately from open work", () => {
+    const intentId = db.withConn(
+      (conn) =>
+        createIntent(conn, projectId, {
+          from: ["origin"],
+          description: "dead end",
+          creator: "tester",
+          worker: null,
+        }).id,
+    );
+    db.withConn((conn) =>
+      setIntentStatus(conn, {
+        projectId,
+        intentId,
+        status: "abandoned",
+        reason: "no login form",
+        by: "operator",
+      }),
+    );
+
+    const result = report();
+
+    expect(result.graph).toEqual({
+      facts: 2,
+      current_facts: 2,
+      superseded_facts: 0,
+      intents: 1,
+      open_intents: 0,
+      abandoned_intents: 1,
+      hints: 0,
+    });
   });
 
   test("reports run totals, per-worker/model/profile buckets and cost shares", () => {

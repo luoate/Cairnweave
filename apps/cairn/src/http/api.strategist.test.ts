@@ -13,6 +13,7 @@ import {
   heartbeatIntent,
   recordIntentMeta,
   recordStrategistSuccess,
+  setIntentStatus,
   startRun,
   type CairnDatabase,
 } from "@cairn/graph";
@@ -175,6 +176,33 @@ describe("GET /projects/{id}/strategist", () => {
     });
     expect(body.intents[2]).toMatchObject({ priority: 10, budget: null, source: "human" });
     expect(body.intents.some((intent) => intent["id"] === ids.done)).toBe(false);
+  });
+
+  test("filters abandoned intents from the open list", async () => {
+    const intentId = db.withConn(
+      (conn) =>
+        createIntent(conn, projectId, {
+          from: ["origin"],
+          description: "dead end",
+          creator: "tester",
+          worker: null,
+        }).id,
+    );
+    db.withConn((conn) =>
+      setIntentStatus(conn, {
+        projectId,
+        intentId,
+        status: "abandoned",
+        reason: "no login form",
+        by: "operator",
+      }),
+    );
+
+    const response = await get(api(), `/projects/${projectId}/strategist`);
+    const body = (await response.json()) as {
+      intents: Array<Record<string, unknown>>;
+    };
+    expect(body.intents.some((intent) => intent["id"] === intentId)).toBe(false);
   });
 
   test("returns newest reason runs first and applies the limit", async () => {

@@ -343,6 +343,11 @@ export interface StrategistConfig {
   fallbackIntervalSeconds: number;
   /** Trigger when finished-run token or cost usage reaches this fraction of its limit. */
   resourcePressureRatio: number;
+  /**
+   * M37: allow a reason turn to retire one open intent through `data.abandon`.
+   * Operator abandonment is always available; this switch only covers model agency.
+   */
+  reasonAbandon: "off" | "on";
 }
 
 export const DEFAULT_STRATEGIST: StrategistConfig = {
@@ -355,6 +360,7 @@ export const DEFAULT_STRATEGIST: StrategistConfig = {
   staleIntentSeconds: 0,
   fallbackIntervalSeconds: 0,
   resourcePressureRatio: 0,
+  reasonAbandon: "off",
 };
 
 /**
@@ -1060,7 +1066,8 @@ function parseProposals(value: unknown): ProposalsConfig {
 
 function parseStrategist(value: unknown): StrategistConfig {
   const strategist = recordAt(value, "strategist");
-  const intAt = (key: keyof StrategistConfig): number => {
+  type NumericStrategistKey = Exclude<keyof StrategistConfig, "reasonAbandon">;
+  const intAt = (key: NumericStrategistKey): number => {
     const snake = key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
     return has(strategist, snake)
       ? nonNegativeInt(strategist[snake], `strategist.${snake}`)
@@ -1081,6 +1088,12 @@ function parseStrategist(value: unknown): StrategistConfig {
           "strategist.resource_pressure_ratio",
         )
       : DEFAULT_STRATEGIST.resourcePressureRatio,
+    reasonAbandon: has(strategist, "reason_abandon")
+      ? oneOf(strategist["reason_abandon"], "strategist.reason_abandon", [
+          "off",
+          "on",
+        ] as const)
+      : DEFAULT_STRATEGIST.reasonAbandon,
   };
 }
 

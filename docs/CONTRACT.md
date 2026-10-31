@@ -62,14 +62,14 @@ worker 视角的绝对路径；本地模式就是宿主路径，容器模式是 
 
 | kind | 可接受的 `data` |
 | --- | --- |
-| `reason` | `{"complete":{"from":[...],"description":"..."}}` 或 `{"intents":[...],"hints":[...]}`；intent 需 `from` + `description`，可选 `priority`（0–100）、`budget`（`max_seconds` / `max_tool_calls` 正整数）与 `dedupe_key`（≤128）；hint 只允许 `{"content":"..."}` |
+| `reason` | `{"complete":{"from":[...],"description":"..."}}` 或 `{"intents":[...],"hints":[...]}`；intent 需 `from` + `description`，可选 `priority`（0–100）、`budget`（`max_seconds` / `max_tool_calls` 正整数）与 `dedupe_key`（≤128）；hint 只允许 `{"content":"..."}`；M37 还可带 `"abandon":[{"intent_id":"...","reason":"..."}]`（≤1 条、理由 ≤500 字符，需 `strategist.reason_abandon: on` 才会生效） |
 | `bootstrap` | `{"fact":{"description":"..."},"complete":{"description":"..."}}` |
 | `explore` | `{"description":"..."}` |
 | `conclude` | `{"fact":{"description":"..."}}` |
 
 兼容性：控制面同时接受带信封与裸载荷，`intents` 也接受单数 `intent`。`complete` 与
-`intents`/`hints` 不能同时出现；`open_intents` 为空时不允许返回空 intents。数量由
-`tasks.reason.max_intents` 等配置截断。
+`intents`/`hints`/`abandon` 不能同时出现；`open_intents` 为空时不允许返回空 intents。
+数量由 `tasks.reason.max_intents` 等配置截断。
 
 ## 4. usage.json（worker → 控制面）
 

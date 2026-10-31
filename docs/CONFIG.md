@@ -193,6 +193,11 @@ ARCHITECTURE 的 Host Bridge 一节。
 `fallback_interval_seconds` 为非负整数，`resource_pressure_ratio` 为 0–1。0 表示关闭对应
 的触发器或上限；initial 与“没有未结束意图”是 urgent 触发，不受冷却与小时上限限制。
 
+`reason_abandon`（M37，`off` / `on`，默认 `off`）允许 reason 在结果里用 `abandon`
+每轮放弃至多一个已经失败过的 open 意图；操作员通过
+`POST /projects/{id}/intents/{intent_id}/abandon` 放弃不受该开关影响。它只能改
+dispatch.yaml，不在运行期可编辑视图里。
+
 ### 提案 `proposals`
 
 `enabled`（默认 true）、`mode`（默认 `dry_run`；`off` / `dry_run` / `apply`）、

@@ -22,6 +22,7 @@ import type {
   ProjectReportRunTotals,
   VerificationKind,
 } from "./models";
+import { listProjectIntentMeta } from "./proposals";
 import { buildProjectRunStats } from "./stats";
 import { listFactSupersessions } from "./supersedes";
 import { utcnow } from "./services";
@@ -59,6 +60,17 @@ export function buildProjectReport(
   const cost = buildProjectCostReport(conn, projectId);
   const audit = listProjectAudit(conn, projectId);
   const artifacts = listProjectArtifacts(conn, projectId);
+  const abandonedIntentIds = new Set(
+    listProjectIntentMeta(conn, projectId)
+      .filter((meta) => meta.status === "abandoned")
+      .map((meta) => meta.intent_id),
+  );
+  const openIntentCount = detail.intents.filter(
+    (intent) => intent.to === null && !abandonedIntentIds.has(intent.id),
+  ).length;
+  const abandonedIntentCount = detail.intents.filter(
+    (intent) => intent.to === null && abandonedIntentIds.has(intent.id),
+  ).length;
 
   const runTotals: ProjectReportRunTotals = {
     runs: stats.totals.runs,
@@ -93,7 +105,8 @@ export function buildProjectReport(
       current_facts: currentFacts.length,
       superseded_facts: supersessions.length,
       intents: detail.intents.length,
-      open_intents: detail.intents.filter((intent) => intent.to === null).length,
+      open_intents: openIntentCount,
+      abandoned_intents: abandonedIntentCount,
       hints: hints.length,
     },
     current_facts: currentFacts,

@@ -10,9 +10,11 @@
 import type { Database } from "bun:sqlite";
 
 import { all, get, run } from "./db";
+import { HttpError } from "./errors";
 import type {
   Intent,
   IntentBudget,
+  IntentLifecycleStatus,
   IntentMeta,
   Proposal,
   ProposalKind,
@@ -167,10 +169,17 @@ export function recordIntentMeta(conn: Database, input: RecordIntentMetaInput): 
   run(
     conn,
     `
-    INSERT OR REPLACE INTO intent_meta
+    INSERT INTO intent_meta
         (project_id, intent_id, dedupe_key, source, proposal_id, origin_run_id,
          priority, budget, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(project_id, intent_id) DO UPDATE SET
+        dedupe_key = excluded.dedupe_key,
+        source = excluded.source,
+        proposal_id = excluded.proposal_id,
+        origin_run_id = excluded.origin_run_id,
+        priority = excluded.priority,
+        budget = excluded.budget
     `,
     input.projectId,
     input.intentId,
@@ -182,6 +191,59 @@ export function recordIntentMeta(conn: Database, input: RecordIntentMetaInput): 
     input.budget ?? null,
     input.createdAt ?? utcnow(),
   );
+}
+
+export interface SetIntentStatusInput {
+  projectId: string;
+  intentId: string;
+  status: IntentLifecycleStatus;
+  reason: string | null;
+  /** `operator` or `reason`; stored verbatim for display. */
+  by: string;
+  at?: string;
+}
+
+/**
+ * Writes only the lifecycle columns. Manual intents may have no `intent_meta` row yet, so
+ * this upserts one without touching priority/budget/provenance (M37).
+ */
+export function setIntentStatus(
+  conn: Database,
+  input: SetIntentStatusInput,
+): IntentMeta {
+  const intent = get<{ id: string }>(
+    conn,
+    "SELECT id FROM intents WHERE id = ? AND project_id = ?",
+    input.intentId,
+    input.projectId,
+  );
+  if (intent === null) {
+    throw new HttpError(404, "Intent not found");
+  }
+  const now = input.at ?? utcnow();
+  run(
+    conn,
+    `
+    INSERT INTO intent_meta
+        (project_id, intent_id, status, status_reason, status_at, status_by, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(project_id, intent_id) DO UPDATE SET
+        status = excluded.status,
+        status_reason = excluded.status_reason,
+        status_at = excluded.status_at,
+        status_by = excluded.status_by
+    `,
+    input.projectId,
+    input.intentId,
+    input.status,
+    input.reason,
+    now,
+    input.by,
+    now,
+  );
+  const meta = getIntentMeta(conn, input.projectId, input.intentId);
+  if (meta === null) throw new Error("intent metadata was not stored");
+  return meta;
 }
 
 export function getIntentMeta(
@@ -221,6 +283,10 @@ interface IntentMetaRow {
   origin_run_id: string | null;
   priority: number | null;
   budget: string | null;
+  status: string | null;
+  status_reason: string | null;
+  status_at: string | null;
+  status_by: string | null;
   created_at: string;
 }
 
@@ -240,6 +306,10 @@ function intentMetaFromRow(row: IntentMetaRow): IntentMeta {
         ? row.priority
         : null,
     budget: parseIntentBudget(row.budget),
+    status: row.status === "abandoned" ? "abandoned" : "open",
+    status_reason: row.status === "abandoned" ? row.status_reason : null,
+    status_at: row.status === "abandoned" ? row.status_at : null,
+    status_by: row.status === "abandoned" ? row.status_by : null,
     created_at: row.created_at,
   };
 }

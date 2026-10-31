@@ -85,6 +85,7 @@ describe("dispatcher config", () => {
       staleIntentSeconds: 0,
       fallbackIntervalSeconds: 0,
       resourcePressureRatio: 0,
+      reasonAbandon: "off",
     });
     expect(config.budget).toEqual({
       maxProjectTokens: 0,
@@ -239,6 +240,7 @@ describe("dispatcher config", () => {
   stale_intent_seconds: 600
   fallback_interval_seconds: 900
   resource_pressure_ratio: 0.8
+  reason_abandon: on
 `,
     );
     expect(config.strategist).toEqual({
@@ -251,6 +253,7 @@ describe("dispatcher config", () => {
       staleIntentSeconds: 600,
       fallbackIntervalSeconds: 900,
       resourcePressureRatio: 0.8,
+      reasonAbandon: "on",
     });
 
     expect(() => parse(BASE + "strategist: {cooldown_seconds: -1}\n")).toThrow(

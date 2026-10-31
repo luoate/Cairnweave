@@ -154,6 +154,50 @@ describe("static operations UI", () => {
     expect(appScript).toContain("opsTabs()");
   });
 
+  test("stages intent abandonment with a reason and a second click", async () => {
+    const html = readFileSync(INDEX_PATH, "utf8");
+    expect(html).toContain('@click="abandonIntent(intent)"');
+    expect(html).toContain("strategistPanel.abandonReason");
+    expect(html).toContain("intentLifecycleCount()");
+
+    const app = loadState();
+    const calls: any[] = [];
+    app.api = async (method: string, path: string, body: unknown) => {
+      calls.push({ method, path, body });
+      return { intents: [] };
+    };
+    app.loadIntentLifecycle = async () => {};
+    app.loadStrategist = async () => {};
+    app.showToast = (message: string, level?: string) =>
+      calls.push({ kind: "toast", message, level });
+    app.selectedProjectId = "proj_1";
+    app.strategistPanel = {
+      abandonReason: "two attempts produced nothing",
+      armedIntentId: null,
+      abandoningId: null,
+    };
+    const intent = { id: "i002", description: "dead end" };
+
+    await app.abandonIntent(intent);
+    expect(calls.some((call) => call.method === "POST")).toBe(false);
+    expect(app.strategistPanel.armedIntentId).toBe("i002");
+
+    await app.abandonIntent(intent);
+    const post = calls.find((call) => call.method === "POST");
+    expect(post?.path).toBe("/projects/proj_1/intents/i002/abandon");
+    expect(post?.body).toEqual({ reason: "two attempts produced nothing" });
+    expect(app.strategistPanel.abandonReason).toBe("");
+    expect(app.strategistPanel.armedIntentId).toBe(null);
+
+    // An empty reason is refused before the second click can send anything.
+    calls.length = 0;
+    app.strategistPanel.abandonReason = "   ";
+    app.strategistPanel.armedIntentId = "i002";
+    await app.abandonIntent(intent);
+    expect(calls.some((call) => call.method === "POST")).toBe(false);
+    expect(calls.at(-1)).toMatchObject({ kind: "toast", level: "error" });
+  });
+
   test("wires the Chinese writeup tab with draft, generation and reset actions", () => {
     const html = readFileSync(INDEX_PATH, "utf8");
     const appScript = html.match(/<script>\s*(function cairnApp\(\)[\s\S]*?)<\/script>/)![1]!;

@@ -273,12 +273,25 @@ export function getCompletionIntentOr409(
   return rows[0]!;
 }
 
+/** The synthetic intent the scheduler creates to run the initial bootstrap task. */
+export const BOOTSTRAP_INTENT_DESCRIPTION = "bootstrap";
+export const BOOTSTRAP_INTENT_CREATOR = "dispatcher.bootstrap";
+
+export function isBootstrapIntent(intent: Intent): boolean {
+  return (
+    intent.description === BOOTSTRAP_INTENT_DESCRIPTION &&
+    intent.creator === BOOTSTRAP_INTENT_CREATOR &&
+    intent.from.length === 1 &&
+    intent.from[0] === "origin" &&
+    intent.to === null
+  );
+}
+
 export function intentToModel(
   conn: Database,
   row: IntentRow,
   projectId: string,
-): Intent {
-  const sources = all<{ fact_id: string }>(
+): Intent {  const sources = all<{ fact_id: string }>(
     conn,
     "SELECT fact_id FROM intent_sources WHERE intent_id = ? AND project_id = ? ORDER BY rowid",
     row.id,

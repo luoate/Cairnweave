@@ -13,11 +13,13 @@ import { join } from "node:path";
 
 import {
   configureDatabase,
+  createHint,
   createIntent,
   createProject,
   finishRun,
   getAuditStreamLoss,
   getFactMeta,
+  getIntentMeta,
   getProjectDetail,
   getStrategistState,
   getTaskAudit,
@@ -30,6 +32,7 @@ import {
   listProjectRuns,
   recordIntentMeta,
   recordPendingConclude,
+  recordStrategistSuccess,
   requestStrategistReplan,
   startRun,
   type CairnDatabase,
@@ -208,6 +211,24 @@ function failingReasonScheduler(): Scheduler {
     log: (message) => logs.push(message),
     leaseIntervalMs: 500,
     workerArgv: (taskPath) => [process.execPath, fixture, taskPath],
+  });
+}
+
+function abandonReasonScheduler(
+  target: string,
+  mode: "on" | "off",
+): Scheduler {
+  const fixture = join(import.meta.dir, "testdata", "abandon-reason-worker.ts");
+  return new Scheduler({
+    db,
+    config: parseDispatchConfig({
+      ...CONFIG,
+      strategist: { ...CONFIG.strategist, reason_abandon: mode },
+    }),
+    workspaceRoot: join(directory, "workspace"),
+    log: (message) => logs.push(message),
+    leaseIntervalMs: 500,
+    workerArgv: (taskPath) => [process.execPath, fixture, taskPath, target],
   });
 }
 
@@ -1014,6 +1035,141 @@ describe("Strategist trigger persistence", () => {
         listProjectRuns(conn, project.project.id),
       );
       expect(secondRuns.filter((run) => run.kind === "reason")).toHaveLength(1);
+    },
+    30_000,
+  );
+
+  test(
+    "retires a failing intent proposed by reason",
+    async () => {
+      const project = createProjectRow(false);
+      const intent = db.withConn((conn) =>
+        createIntent(conn, project.project.id, {
+          from: ["origin"],
+          description: "dead end",
+          creator: "tester",
+          worker: null,
+        }),
+      );
+      db.withConn((conn) => {
+        startRun(conn, {
+          id: "run_seed",
+          projectId: project.project.id,
+          taskId: "task_seed",
+          kind: "explore",
+          intentId: intent.id,
+          worker: "cairn-worker",
+          startedAt: "2026-10-31T09:00:00Z",
+        });
+        finishRun(conn, "run_seed", {
+          outcome: "failed",
+          finishedAt: "2026-10-31T09:01:00Z",
+          durationMs: 60_000,
+          detail: "login rejected",
+        });
+      });
+      // The first reason turn only runs once the fast layer has nothing unclaimed.
+      // Seed a successful watermark and a hint delta so this project is not "initial".
+      db.withConn((conn) => {
+        recordStrategistSuccess(conn, {
+          projectId: project.project.id,
+          runId: "run_reason_0",
+          trigger: "initial",
+          factCount: project.facts.length,
+          hintCount: 0,
+          openIntentCount: 1,
+          at: "2026-10-31T08:00:00Z",
+        });
+        createHint(conn, project.project.id, {
+          content: "new lead",
+          creator: "operator",
+        });
+      });
+
+      const loop = abandonReasonScheduler(intent.id, "on");
+      await loop.runUntilIdle();
+
+      const meta = db.withConn((conn) =>
+        getIntentMeta(conn, project.project.id, intent.id),
+      );
+      expect(meta).toMatchObject({
+        status: "abandoned",
+        status_by: "reason",
+        status_reason: "two failed attempts produced nothing",
+      });
+      const attempts = db
+        .withConn((conn) => listProjectRuns(conn, project.project.id))
+        .filter((run) => run.intent_id === intent.id);
+      expect(attempts).toHaveLength(1);
+      expect(
+        logs.some(
+          (line) => line.includes("abandoned intent") && line.includes(intent.id),
+        ),
+      ).toBe(true);
+      expect(
+        db.withConn((conn) => getProjectDetail(conn, project.project.id).project.status),
+      ).toBe("active");
+    },
+    30_000,
+  );
+
+  test(
+    "keeps the intent open when strategist.reason_abandon is off",
+    async () => {
+      const project = createProjectRow(false);
+      const intent = db.withConn((conn) =>
+        createIntent(conn, project.project.id, {
+          from: ["origin"],
+          description: "dead end",
+          creator: "tester",
+          worker: null,
+        }),
+      );
+      db.withConn((conn) => {
+        startRun(conn, {
+          id: "run_seed",
+          projectId: project.project.id,
+          taskId: "task_seed",
+          kind: "explore",
+          intentId: intent.id,
+          worker: "cairn-worker",
+          startedAt: "2026-10-31T09:00:00Z",
+        });
+        finishRun(conn, "run_seed", {
+          outcome: "failed",
+          finishedAt: "2026-10-31T09:01:00Z",
+          durationMs: 60_000,
+          detail: "login rejected",
+        });
+      });
+      // The first reason turn only runs once the fast layer has nothing unclaimed.
+      // Seed a successful watermark and a hint delta so this project is not "initial".
+      db.withConn((conn) => {
+        recordStrategistSuccess(conn, {
+          projectId: project.project.id,
+          runId: "run_reason_0",
+          trigger: "initial",
+          factCount: project.facts.length,
+          hintCount: 0,
+          openIntentCount: 1,
+          at: "2026-10-31T08:00:00Z",
+        });
+        createHint(conn, project.project.id, {
+          content: "new lead",
+          creator: "operator",
+        });
+      });
+
+      const loop = abandonReasonScheduler(intent.id, "off");
+      await loop.runUntilIdle();
+
+      const meta = db.withConn((conn) =>
+        getIntentMeta(conn, project.project.id, intent.id),
+      );
+      expect(meta?.status ?? "open").toBe("open");
+      expect(
+        logs.some((line) => line.includes("reason_abandon is off")),
+      ).toBe(true);
     },
     30_000,
   );

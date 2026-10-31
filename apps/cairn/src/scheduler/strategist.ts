@@ -45,6 +45,8 @@ export interface EvaluateStrategistInput {
   /** Running bootstrap/explore/conclude tasks for this project. */
   runningProductiveTasks: number;
   runningIntentIds: ReadonlySet<string>;
+  /** Intents retired through `intent_meta` (M37); they are not open work. */
+  abandonedIntentIds?: ReadonlySet<string>;
   /** Finished-run usage plus configured token/cost limits, when available. */
   budget?: StrategistBudgetUsage;
   now: Date;
@@ -62,7 +64,10 @@ export function evaluateStrategistTrigger(
   input: EvaluateStrategistInput,
 ): StrategistEvaluation {
   const { project, state, policy, now } = input;
-  const openIntents = project.intents.filter((intent) => intent.to === null);
+  const openIntents = project.intents.filter(
+    (intent) =>
+      intent.to === null && !(input.abandonedIntentIds?.has(intent.id) ?? false),
+  );
   const factsDelta = delta(project.facts.length, state?.last_fact_count ?? 0);
   const hintsDelta = delta(project.hints.length, state?.last_hint_count ?? 0);
   const lastSuccess = state?.last_success_at ?? null;

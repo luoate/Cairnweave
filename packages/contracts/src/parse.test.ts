@@ -71,7 +71,7 @@ describe("validateReasonPayload", () => {
     );
     expect(result).toEqual({
       kind: "intents",
-      data: { intents: [{ from: ["f001"], description: "one" }], hints: [] },
+      data: { intents: [{ from: ["f001"], description: "one" }], hints: [], abandons: [] },
     });
   });
 
@@ -110,7 +110,7 @@ describe("validateReasonPayload", () => {
       ),
     ).toEqual({
       kind: "intents",
-      data: { intents: [{ from: ["f001"], description: "one" }], hints: [] },
+      data: { intents: [{ from: ["f001"], description: "one" }], hints: [], abandons: [] },
     });
   });
 
@@ -153,7 +153,7 @@ describe("validateReasonPayload", () => {
       validateReasonPayload({ accepted: true, data: { intents: [intent] } }, true, 3),
     ).toEqual({
       kind: "intents",
-      data: { intents: [intent], hints: [] },
+      data: { intents: [intent], hints: [], abandons: [] },
     });
   });
 
@@ -216,6 +216,7 @@ describe("validateReasonPayload", () => {
       data: {
         intents: [{ from: ["f001"], description: "one" }],
         hints: [{ content: "check the login flow" }, { content: "inspect headers" }],
+        abandons: [],
       },
     });
   });
@@ -227,7 +228,7 @@ describe("validateReasonPayload", () => {
         false,
         3,
       ),
-    ).toEqual({ kind: "hints", data: [{ content: "hint only" }] });
+    ).toEqual({ kind: "hints", data: [{ content: "hint only" }], abandons: [] });
     expect(() =>
       validateReasonPayload(
         { accepted: true, data: { hints: [{ content: "hint only" }] } },
@@ -295,6 +296,147 @@ describe("validateReasonPayload", () => {
         ),
       ).toThrow("dedupe_key");
     }
+  });
+
+  test("accepts one abandon proposal, wrapped or bare", () => {
+    const expected = {
+      kind: "abandon" as const,
+      data: [{ intent_id: "i003", reason: "two attempts produced nothing" }],
+    };
+    expect(
+      validateReasonPayload(
+        {
+          accepted: true,
+          data: {
+            abandon: [
+              { intent_id: "  i003  ", reason: "  two attempts produced nothing  " },
+            ],
+          },
+        },
+        false,
+        3,
+      ),
+    ).toEqual(expected);
+    expect(
+      validateReasonPayload(
+        { abandon: [{ intent_id: "i003", reason: "two attempts produced nothing" }] },
+        false,
+        3,
+      ),
+    ).toEqual(expected);
+  });
+
+  test("accepts abandon alongside intents and hints", () => {
+    const result = validateReasonPayload(
+      {
+        accepted: true,
+        data: {
+          intents: [{ from: ["f001"], description: "next" }],
+          hints: [{ content: "check the login flow" }],
+          abandon: [{ intent_id: "i002", reason: "dead end" }],
+        },
+      },
+      false,
+      3,
+    );
+    expect(result).toMatchObject({
+      kind: "intents",
+      data: {
+        intents: [{ from: ["f001"], description: "next" }],
+        hints: [{ content: "check the login flow" }],
+        abandons: [{ intent_id: "i002", reason: "dead end" }],
+      },
+    });
+  });
+
+  test("keeps abandons with hints but no intents", () => {
+    expect(
+      validateReasonPayload(
+        {
+          accepted: true,
+          data: {
+            hints: [{ content: "note" }],
+            abandon: [{ intent_id: "i002", reason: "dead end" }],
+          },
+        },
+        false,
+        3,
+      ),
+    ).toEqual({
+      kind: "hints",
+      data: [{ content: "note" }],
+      abandons: [{ intent_id: "i002", reason: "dead end" }],
+    });
+  });
+
+  test("rejects complete combined with abandon", () => {
+    expect(() =>
+      validateReasonPayload(
+        {
+          accepted: true,
+          data: {
+            complete: { from: ["f001"], description: "done" },
+            abandon: [{ intent_id: "i002", reason: "dead end" }],
+          },
+        },
+        false,
+        3,
+      ),
+    ).toThrow("complete and abandon");
+  });
+
+  test("validates the abandon shape and caps the list at one", () => {
+    for (const entry of [
+      { intent_id: "", reason: "x" },
+      { intent_id: "i001", reason: "   " },
+      { intent_id: "i001", reason: "x".repeat(501) },
+      { intent_id: "i001", reason: "x", extra: 1 },
+      { reason: "x" },
+    ]) {
+      expect(() =>
+        validateReasonPayload({ accepted: true, data: { abandon: [entry] } }, false, 3),
+      ).toThrow("abandon");
+    }
+    expect(() =>
+      validateReasonPayload(
+        { accepted: true, data: { abandon: "nope" } },
+        false,
+        3,
+      ),
+    ).toThrow("abandon must be an array");
+    expect(() =>
+      validateReasonPayload(
+        {
+          accepted: true,
+          data: {
+            abandon: [
+              { intent_id: "i001", reason: "one" },
+              { intent_id: "i001", reason: "two" },
+            ],
+          },
+        },
+        false,
+        3,
+      ),
+    ).toThrow("duplicate abandon");
+
+    const capped = validateReasonPayload(
+      {
+        accepted: true,
+        data: {
+          abandon: [
+            { intent_id: "i001", reason: "one" },
+            { intent_id: "i002", reason: "two" },
+          ],
+        },
+      },
+      false,
+      3,
+    );
+    expect(capped).toEqual({
+      kind: "abandon",
+      data: [{ intent_id: "i001", reason: "one" }],
+    });
   });
 });
 

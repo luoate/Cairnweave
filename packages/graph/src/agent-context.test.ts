@@ -17,6 +17,7 @@ import {
   recordVerificationCheck,
   renderAgentContextYaml,
   run,
+  setIntentStatus,
   setProjectVerification,
   startRun,
   type CairnDatabase,
@@ -206,6 +207,9 @@ describe("buildAgentContext", () => {
         description: "check the admin panel",
         from: ["origin"],
         status: "open",
+        status_reason: null,
+        status_by: null,
+        status_at: null,
         attempts: 2,
         last_outcome: "success",
         last_error: null,
@@ -233,6 +237,32 @@ describe("buildAgentContext", () => {
     ]);
     expect(explore.facts.map((fact) => fact.id)).toEqual(["origin"]);
     expect(explore.budget).toBeNull();
+  });
+
+  test("marks abandoned intents and keeps their reason", () => {
+    const intentId = openIntent("dead end");
+    addRun({ id: "run_001", intentId, outcome: "failed" });
+    db.withConn((conn) =>
+      setIntentStatus(conn, {
+        projectId,
+        intentId,
+        status: "abandoned",
+        reason: "no login form after two attempts",
+        by: "operator",
+        at: "2026-10-31T10:00:00Z",
+      }),
+    );
+
+    const reason = build("reason");
+    expect(reason.intents.find((intent) => intent.id === intentId)).toMatchObject({
+      status: "abandoned",
+      status_reason: "no login form after two attempts",
+      status_by: "operator",
+      status_at: "2026-10-31T10:00:00Z",
+    });
+
+    const explore = build("explore", { focusIntentId: intentId });
+    expect(explore.intents[0]?.status).toBe("abandoned");
   });
 
   test("reports challenge progress and the latest verification check", () => {

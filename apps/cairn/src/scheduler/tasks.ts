@@ -193,7 +193,10 @@ export function prepareTask(input: PrepareTaskInput): PreparedTask {
   const intentMeta = new Map(
     (input.intentMeta ?? []).map((entry) => [entry.intent_id, entry]),
   );
-  const openIntents = project.intents.filter((intent) => intent.to === null);
+  const openIntents = project.intents.filter(
+    (intent) =>
+      intent.to === null && intentMeta.get(intent.id)?.status !== "abandoned",
+  );
 
   mkdirSync(hostSessionDir, { recursive: true });
   writeFileSync(hostGraphSnapshotPath, input.exportYaml.trim(), "utf8");
@@ -281,11 +284,19 @@ export function prepareTask(input: PrepareTaskInput): PreparedTask {
         }),
   };
 
-  const observer = prepareObserver(config, project, kind, task, scope, {
-    mapPath,
-    hostWorkspace,
-    hostSessionDir,
-  });
+  const observer = prepareObserver(
+    config,
+    project,
+    kind,
+    task,
+    scope,
+    {
+      mapPath,
+      hostWorkspace,
+      hostSessionDir,
+    },
+    intentMeta,
+  );
 
   writeFileSync(hostTaskPath, `${JSON.stringify(task, null, 2)}\n`, "utf8");
   return {
@@ -336,6 +347,7 @@ function prepareObserver(
   task: WorkerTask,
   scope: ScopePolicy,
   paths: ObserverPaths,
+  intentMeta: ReadonlyMap<string, IntentMeta>,
 ): PreparedObserver {
   const enabled =
     config.observer.enabled && config.observer.kernelTasks.includes(kind);
@@ -387,7 +399,10 @@ function prepareObserver(
 
   // Keep the focused intent first so the cap can never hide the intent this task is
   // actually working on from its reviewer.
-  const allOpenIntents = project.intents.filter((intent) => intent.to === null);
+  const allOpenIntents = project.intents.filter(
+    (intent) =>
+      intent.to === null && intentMeta.get(intent.id)?.status !== "abandoned",
+  );
   const focusedIntent = allOpenIntents.find((intent) => intent.id === task.intentId);
   const orderedOpenIntents =
     focusedIntent === undefined
@@ -564,6 +579,7 @@ function withReasonOutputPolicy(
   prompt: string,
   budget: ProjectBudgetSnapshot | undefined,
   maxIntents: number,
+  reasonAbandon: boolean,
 ): string {
   const sections = [
     `# Strategist Output Extensions
@@ -587,6 +603,16 @@ A reason turn may return intents and hints together:
 - Never put credentials, tokens or other secrets in an intent, hint or description. Captured flags are not treated as secrets here: when one is known, include the exact flag string verbatim.
 - \`complete\` cannot be combined with intents or hints.`,
   ];
+  if (reasonAbandon) {
+    sections.push(`# Retiring a Direction (optional)
+The investigation snapshot lists open intents with their attempts and last failure. You may retire at most one open intent that has already failed at least once and has never succeeded:
+\`\`\`json
+{"accepted": true, "data": {"abandon": [{"intent_id": "i003", "reason": "login is disabled; two attempts produced nothing"}]}}
+\`\`\`
+- Only open intents listed with attempts > 0; never the bootstrap intent or an intent that is currently running.
+- \`reason\` must be non-empty and at most 500 characters. The control plane validates the target and ignores invalid entries.
+- This is a strategy decision, not evidence: an abandoned intent is no longer dispatched, but it does not conclude anything or justify completion.`);
+  }
   if (budget !== undefined) {
     sections.push(`# Resource Budget
 Usage below counts finished runs; tasks still in flight have not reported yet.
@@ -632,6 +658,7 @@ function renderTaskPrompt(
         prompt,
         context.projectBudget,
         config.tasks.reason.maxIntents,
+        config.strategist.reasonAbandon === "on",
       );
     }
     case "explore": {

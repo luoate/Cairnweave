@@ -469,7 +469,7 @@
     <div class="flex-1"></div>
     <div class="flex items-center gap-4 text-xs text-slate-400">
       <span x-text="`${project.facts.length} 个事实`"></span>
-      <span x-text="`${project.intents.length} 个意图`"></span>
+      <span x-text="`${project.intents.length} 个意图${intentLifecycleCount() ? `（${intentLifecycleCount()} 已放弃）` : ''}`"></span>
     </div>
     <div class="flex items-center gap-1.5">
       <template x-if="!replay.active">
@@ -947,6 +947,9 @@
                 <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">执行器</span><span class="text-slate-600 text-right break-all" x-text="selectedIntentRecord().worker || '—'"></span></div>
                 <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">心跳</span><span class="text-slate-600 text-right break-words" x-text="selectedIntentRecord().last_heartbeat_at ? formatTime(selectedIntentRecord().last_heartbeat_at) : '—'"></span></div>
                 <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">创建时间</span><span class="text-slate-600 text-right break-words" x-text="formatTime(selectedIntentRecord().created_at)"></span></div>
+                <template x-if="intentLifecycleRecord(selectedIntentRecord().id)">
+                  <div class="flex items-start justify-between gap-3"><span class="text-rose-400 shrink-0">放弃原因</span><span class="text-rose-600 text-right break-words" x-text="intentLifecycleRecord(selectedIntentRecord().id).status_reason || '—'"></span></div>
+                </template>
                 <template x-if="selectedIntentRecord().concluded_at">
                   <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">结束时间</span><span class="text-slate-600 text-right break-words" x-text="formatTime(selectedIntentRecord().concluded_at)"></span></div>
                 </template>
@@ -1237,6 +1240,12 @@
                 <span class="text-2xs text-slate-400">按派发优先级</span>
               </div>
               <div class="p-3 space-y-2">
+                <div class="rounded-xl border border-slate-100 bg-slate-50/60 px-2.5 py-2">
+                  <label class="text-2xs text-slate-400">放弃原因（必填，≤500 字）</label>
+                  <input type="text" maxlength="500" x-model="strategistPanel.abandonReason"
+                    placeholder="例如：两次尝试均无结果"
+                    class="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-2xs text-slate-600 outline-none focus:border-brand-400" />
+                </div>
                 <template x-if="strategistPanel.data.intents.length === 0">
                   <p class="text-2xs text-slate-400">没有未结束意图。</p>
                 </template>
@@ -1251,9 +1260,16 @@
                         </div>
                         <p class="mt-1 text-2xs text-slate-600 leading-relaxed break-words" x-text="intent.description"></p>
                       </div>
-                      <span class="shrink-0 rounded-full border px-2 py-0.5 text-2xs font-medium"
-                        :class="intent.worker ? 'border-sky-200 bg-sky-50 text-sky-600' : 'border-slate-200 bg-white text-slate-500'"
-                        x-text="intent.worker ? '执行中' : '待认领'"></span>
+                      <div class="shrink-0 flex flex-col items-end gap-1">
+                        <span class="rounded-full border px-2 py-0.5 text-2xs font-medium"
+                          :class="intent.worker ? 'border-sky-200 bg-sky-50 text-sky-600' : 'border-slate-200 bg-white text-slate-500'"
+                          x-text="intent.worker ? '执行中' : '待认领'"></span>
+                        <button type="button" @click="abandonIntent(intent)"
+                          :disabled="strategistPanel.abandoningId === intent.id"
+                          class="rounded-lg border px-2 py-0.5 text-2xs font-medium transition disabled:opacity-40"
+                          :class="strategistPanel.armedIntentId === intent.id ? 'border-rose-300 bg-rose-50 text-rose-600' : 'border-slate-200 bg-white text-slate-500 hover:border-rose-200 hover:text-rose-500'"
+                          x-text="strategistPanel.abandoningId === intent.id ? '放弃中…' : (strategistPanel.armedIntentId === intent.id ? '再次点击确认' : '放弃')"></button>
+                      </div>
                     </div>
                     <div class="grid grid-cols-2 gap-x-3 gap-y-1 text-2xs">
                       <div><span class="text-slate-400">来源事实</span><div class="font-mono text-slate-500 break-all" x-text="(intent.from || []).join(', ') || '—'"></div></div>
@@ -3416,6 +3432,8 @@ function cairnApp() {
     view: 'list',
     projects: [],
     project: null,
+    /** M37: intent_id -> {status, status_reason, status_at, status_by}. */
+    intentLifecycle: {},
     selectedProjectId: '',
     polling: true,
     pollTimer: null,
@@ -4454,6 +4472,9 @@ function cairnApp() {
         loadedFor: '',
         replanReason: '',
         replanLoading: false,
+        abandonReason: '',
+        armedIntentId: null,
+        abandoningId: null,
       };
       this.auditPanel = {
         summaries: [],
@@ -4621,6 +4642,42 @@ function cairnApp() {
         this.showToast(e.message, 'error');
       } finally {
         this.strategistPanel.replanLoading = false;
+      }
+    },
+
+    async abandonIntent(intent) {
+      const projectId = this.selectedProjectId;
+      if (!projectId || !intent) return;
+      if (this.strategistPanel.abandoningId) return;
+      if (this.strategistPanel.armedIntentId !== intent.id) {
+        this.strategistPanel.armedIntentId = intent.id;
+        if (this._abandonArmTimer) clearTimeout(this._abandonArmTimer);
+        this._abandonArmTimer = setTimeout(() => {
+          this.strategistPanel.armedIntentId = null;
+        }, 4000);
+        return;
+      }
+      const reason = (this.strategistPanel.abandonReason || '').trim();
+      if (!reason) {
+        this.showToast('请先填写放弃原因', 'error');
+        return;
+      }
+      this.strategistPanel.abandoningId = intent.id;
+      try {
+        await this.api(
+          'POST',
+          `/projects/${encodeURIComponent(projectId)}/intents/${encodeURIComponent(intent.id)}/abandon`,
+          { reason },
+        );
+        this.strategistPanel.armedIntentId = null;
+        this.strategistPanel.abandonReason = '';
+        await this.loadIntentLifecycle(projectId);
+        this.showToast(`已放弃意图 ${intent.id}`);
+        await this.loadStrategist();
+      } catch (e) {
+        this.showToast(this.errorText(e), 'error');
+      } finally {
+        this.strategistPanel.abandoningId = null;
       }
     },
 
@@ -6088,6 +6145,7 @@ function cairnApp() {
       }
       await this.loadProject(id);
       await this.loadProjectScope(id);
+      await this.loadIntentLifecycle(id);
       this.loadProjectFlag(id);
       this.view = 'graph';
       this.focusGraphHeading();
@@ -6948,11 +7006,13 @@ function cairnApp() {
     },
     intentStatusClass(i) {
       if (i.to) return 'text-teal-600';
+      if (this.intentLifecycleRecord(i.id)?.status === 'abandoned') return 'text-rose-600';
       if (this.isBootstrapIntent(i)) return i.worker ? 'text-orange-600' : 'text-orange-400';
       return i.worker ? 'text-amber-600' : 'text-slate-400';
     },
     intentStatusLabel(i) {
       if (i.to) return '已结束';
+      if (this.intentLifecycleRecord(i.id)?.status === 'abandoned') return '已放弃';
       if (this.isBootstrapIntent(i)) return i.worker ? '初始探索运行中' : '初始探索等待中';
       return i.worker ? '进行中' : '待认领';
     },
@@ -7398,6 +7458,32 @@ function cairnApp() {
           this.scopePanel = { projectId, scope: null, loading: false, error: this.errorText(e) };
         }
       }
+    },
+
+    async loadIntentLifecycle(projectId) {
+      if (!projectId) {
+        this.intentLifecycle = {};
+        return;
+      }
+      try {
+        const data = await this.api('GET', `/projects/${encodeURIComponent(projectId)}/intents/lifecycle`);
+        if (this.selectedProjectId !== projectId) return;
+        const map = {};
+        for (const entry of (data && Array.isArray(data.intents) ? data.intents : [])) {
+          if (entry && typeof entry.intent_id === 'string') map[entry.intent_id] = entry;
+        }
+        this.intentLifecycle = map;
+      } catch {
+        if (this.selectedProjectId === projectId) this.intentLifecycle = {};
+      }
+    },
+
+    intentLifecycleRecord(intentId) {
+      return this.intentLifecycle[intentId] || null;
+    },
+
+    intentLifecycleCount() {
+      return Object.keys(this.intentLifecycle).length;
     },
 
     async loadProjectFlag(projectId) {

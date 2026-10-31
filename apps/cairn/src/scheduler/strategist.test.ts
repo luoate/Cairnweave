@@ -414,6 +414,16 @@ describe("Strategist trigger policy", () => {
       }),
     ).toMatchObject({ trigger: null, suppressed: "tasks_running" });
   });
+
+  test("abandoned intents are not open work", () => {
+    const evaluation = evaluate({
+      project: project({ intents: [{ id: "i1" }, { id: "i2" }] }),
+      state: state({ last_open_intent_count: 2 }),
+      abandonedIntentIds: new Set(["i1"]),
+      policy: { cooldownSeconds: 0 },
+    });
+    expect(evaluation.openIntentCount).toBe(1);
+  });
 });
 
 describe("resource pressure", () => {

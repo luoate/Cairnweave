@@ -19,8 +19,9 @@ import {
   type TaskUsage,
 } from "@cairn/contracts";
 import {
+  BOOTSTRAP_INTENT_CREATOR,
+  BOOTSTRAP_INTENT_DESCRIPTION,
   HttpError,
-  buildAgentContext,
   claimReason,
   completeProject,
   concludeIntent,
@@ -28,12 +29,14 @@ import {
   createHint,
   createIntent,
   deletePendingConclude,
+  expireWorkers,
   exportProjectSliceYaml,
   exportProjectYaml,
   findHintByContent,
   findDuplicateOpenIntent,
   finishRun,
   getIntentMeta,
+  getIntentOr404,
   getPendingConclude,
   getProjectDetail,
   getProjectScope,
@@ -42,11 +45,15 @@ import {
   hasPendingConclude,
   hasPendingFlagReviews,
   heartbeatIntent,
+  intentToModel,
+  isBootstrapIntent,
   isPendingConcludeSession,
   buildProfileRunStats,
+  buildAgentContext,
   listAllPendingConcludes,
   listProjectAttachments,
   listProjectIntentMeta,
+  listProjectRuns,
   listProjects,
   listRecentStrategistRuns,
   listRejectedFlags,
@@ -58,11 +65,12 @@ import {
   recordStrategistSuccess,
   releaseIntent,
   releaseReason,
-  renderAgentContextYaml,
   recordProjectArtifacts,
   refreshProjectArtifacts,
+  renderAgentContextYaml,
   renewIntentLease,
   renewReasonLease,
+  setIntentStatus,
   startRun,
   utcnow,
   type CairnDatabase,
@@ -108,13 +116,10 @@ import {
 } from "./tasks";
 
 const WORKER_NAME = "cairn-worker";
-
 /** Control-plane guidance explaining why a completion claim that cites a judged-fake value was refused. */
 export function rejectedCitationHint(flag: string): string {
   return `完成声明引用的 ${flag} 已被操作员判定为假 Flag，该声明被拒绝，继续探索或给出未出现过的 Flag。`;
 }
-const BOOTSTRAP_INTENT_DESCRIPTION = "bootstrap";
-const BOOTSTRAP_INTENT_CREATOR = "dispatcher.bootstrap";
 const KILL_GRACE_MS = 5_000;
 const RESULT_POLL_MS = 50;
 
@@ -701,6 +706,17 @@ export class Scheduler {
       );
       if (intent === undefined) {
         this.dropPending(summary.id, pending);
+      } else if (
+        this.intentMetaFor(summary.id).get(pending.intentId)?.status === "abandoned"
+      ) {
+        // The direction was retired while its salvage was queued: drop the conclude and
+        // release the lease instead of spending another task on it.
+        this.dropPending(summary.id, pending);
+        this.releaseBestEffort({
+          projectId: summary.id,
+          kind: "explore",
+          intentId: pending.intentId,
+        });
       } else if (this.isIntentRunning(summary.id, pending.intentId)) {
         return false;
       } else {
@@ -750,10 +766,12 @@ export class Scheduler {
         )
         .map((task) => task.intentId!),
     );
+    const intentMeta = this.intentMetaFor(summary.id);
     const unclaimed = project.intents.filter(
       (intent) =>
         intent.to === null &&
         intent.worker === null &&
+        intentMeta.get(intent.id)?.status !== "abandoned" &&
         !runningIntentIds.has(intent.id) &&
         !isBootstrapIntent(intent),
     );
@@ -761,7 +779,7 @@ export class Scheduler {
       return this.dispatchExplore(
         project,
         scope,
-        pickByPriority(unclaimed, this.intentMetaFor(summary.id)),
+        pickByPriority(unclaimed, intentMeta),
       );
     }
 
@@ -878,10 +896,9 @@ export class Scheduler {
           intent === undefined
             ? null
             : (getIntentMeta(conn, projectId, intent.id)?.budget ?? null);
-        // Reason sees open-intent dedupe keys and the project's finished-run spend so it
-        // can plan under the same budget the dispatch gate enforces.
-        const openIntentMeta =
-          kind === "reason" ? listProjectIntentMeta(conn, projectId) : undefined;
+        // Reason needs dedupe keys; every kind needs lifecycle status so abandoned
+        // intents never appear as open work in prompts or the observer snapshot.
+        const intentMeta = listProjectIntentMeta(conn, projectId);
         const projectBudget =
           kind === "reason"
             ? (() => {
@@ -894,6 +911,15 @@ export class Scheduler {
                 };
               })()
             : undefined;
+        const profile = selectWorkerProfile(
+          this.config.workerProfiles,
+          this.config.workerSelection,
+          buildProfileRunStats(conn),
+          pending?.workerProfile,
+        );
+        // Challenge files the operator uploaded; the prompt lists them so the worker knows
+        // what to read before it proposes a direction.
+        const attachments = listProjectAttachments(conn, projectId);
         // M36: project sidecar truth into the task's session directory. Reason and explore
         // read it next to graph.yaml; a bootstrap conclude has no graph to project.
         const agentContextYaml =
@@ -909,15 +935,6 @@ export class Scheduler {
                 }),
               )
             : undefined;
-        const profile = selectWorkerProfile(
-          this.config.workerProfiles,
-          this.config.workerSelection,
-          buildProfileRunStats(conn),
-          pending?.workerProfile,
-        );
-        // Challenge files the operator uploaded; the prompt lists them so the worker knows
-        // what to read before it proposes a direction.
-        const attachments = listProjectAttachments(conn, projectId);
         const prepared = prepareTask({
           config: this.config,
           project,
@@ -931,10 +948,10 @@ export class Scheduler {
                 resumeFromHostSessionDir: pending.hostSessionDir,
               }),
           ...(intentBudget === null ? {} : { budget: intentBudget }),
-          ...(openIntentMeta === undefined ? {} : { intentMeta: openIntentMeta }),
-          ...(agentContextYaml === undefined ? {} : { agentContextYaml }),
+          intentMeta,
           ...(projectBudget === undefined ? {} : { projectBudget }),
           ...(attachments.length === 0 ? {} : { attachments }),
+          ...(agentContextYaml === undefined ? {} : { agentContextYaml }),
           scope,
           workspaceRoot: this.workspaceRoot,
           pathMapper: (hostPath) => this.runtime.mapPath(hostPath),
@@ -1315,6 +1332,11 @@ export class Scheduler {
         return "success";
       case "hints": {
         this.applyReasonHints(conn, running.projectId, validated.data);
+        this.applyReasonAbandons(conn, running, validated.abandons);
+        return "success";
+      }
+      case "abandon": {
+        this.applyReasonAbandons(conn, running, validated.data);
         return "success";
       }
       case "complete": {
@@ -1398,7 +1420,12 @@ export class Scheduler {
             throw error;
           }
         }
-        return created > 0 || hintsCreated > 0 || deduped > 0
+        const abandonsApplied = this.applyReasonAbandons(
+          conn,
+          running,
+          validated.data.abandons,
+        );
+        return created > 0 || hintsCreated > 0 || deduped > 0 || abandonsApplied > 0
           ? "success"
           : "failed";
       }
@@ -1419,6 +1446,95 @@ export class Scheduler {
       created += 1;
     }
     return created;
+  }
+
+  /**
+   * M37: retire open intents proposed by a reason turn. Every rejection is advisory: an
+   * invalid target is logged and skipped, and the reason turn still counts as a success.
+   */
+  private applyReasonAbandons(
+    conn: Database,
+    running: RunningTask,
+    abandons: readonly Record<string, unknown>[],
+  ): number {
+    if (abandons.length === 0) return 0;
+    if (this.config.strategist.reasonAbandon !== "on") {
+      this.log(
+        `reason abandon ignored project=${running.projectId}: strategist.reason_abandon is off`,
+      );
+      return 0;
+    }
+    expireWorkers(conn, running.projectId);
+    let applied = 0;
+    for (const entry of abandons) {
+      const intentId =
+        typeof entry["intent_id"] === "string" ? entry["intent_id"].trim() : "";
+      const reason = typeof entry["reason"] === "string" ? entry["reason"].trim() : "";
+      if (intentId === "" || reason === "") continue;
+      let intent: Intent;
+      try {
+        intent = intentToModel(
+          conn,
+          getIntentOr404(conn, running.projectId, intentId),
+          running.projectId,
+        );
+      } catch {
+        this.log(
+          `reason abandon skipped project=${running.projectId} intent=${intentId}: not found`,
+        );
+        continue;
+      }
+      if (isBootstrapIntent(intent)) {
+        this.log(
+          `reason abandon skipped project=${running.projectId} intent=${intentId}: bootstrap intent`,
+        );
+        continue;
+      }
+      if (intent.to !== null) {
+        this.log(
+          `reason abandon skipped project=${running.projectId} intent=${intentId}: already concluded`,
+        );
+        continue;
+      }
+      if (intent.worker !== null) {
+        this.log(
+          `reason abandon skipped project=${running.projectId} intent=${intentId}: claimed`,
+        );
+        continue;
+      }
+      if (hasPendingConclude(conn, running.projectId, intentId)) {
+        this.log(
+          `reason abandon skipped project=${running.projectId} intent=${intentId}: conclude pending`,
+        );
+        continue;
+      }
+      const meta = getIntentMeta(conn, running.projectId, intentId);
+      if (meta?.status === "abandoned") continue;
+      const attempts = listProjectRuns(conn, running.projectId).filter(
+        (run) => run.intent_id === intentId && run.outcome !== null,
+      );
+      if (
+        attempts.length === 0 ||
+        attempts.some((run) => run.outcome === "success")
+      ) {
+        this.log(
+          `reason abandon skipped project=${running.projectId} intent=${intentId}: no failed attempt`,
+        );
+        continue;
+      }
+      setIntentStatus(conn, {
+        projectId: running.projectId,
+        intentId,
+        status: "abandoned",
+        reason,
+        by: "reason",
+      });
+      applied += 1;
+      this.log(
+        `abandoned intent project=${running.projectId} intent=${intentId} by=reason`,
+      );
+    }
+    return applied;
   }
 
   private applyExplore(
@@ -2006,6 +2122,7 @@ export class Scheduler {
       state: ReturnType<typeof getStrategistState>;
       recentRuns: ReturnType<typeof listRecentStrategistRuns>;
       reasonRunsLastHour: number;
+      abandonedIntentIds: Set<string>;
       budget?: {
         usedTokens: number;
         usedCostUsd: number;
@@ -2025,6 +2142,11 @@ export class Scheduler {
           (this.config.budget.maxProjectTokens > 0 ||
             this.config.budget.maxProjectCostUsd > 0);
         const usage = pressureEnabled ? getProjectUsage(conn, projectId) : null;
+        const abandonedIntentIds = new Set(
+          listProjectIntentMeta(conn, projectId)
+            .filter((meta) => meta.status === "abandoned")
+            .map((meta) => meta.intent_id),
+        );
         return {
           state: getStrategistState(conn, projectId),
           recentRuns:
@@ -2033,6 +2155,7 @@ export class Scheduler {
             policy.maxRunsPerHour > 0
               ? countReasonRunsSince(conn, projectId, since)
               : 0,
+          abandonedIntentIds,
           ...(usage === null
             ? {}
             : {
@@ -2059,6 +2182,7 @@ export class Scheduler {
       reasonRunsLastHour: snapshot.reasonRunsLastHour,
       runningProductiveTasks: runningTasks.length,
       runningIntentIds,
+      abandonedIntentIds: snapshot.abandonedIntentIds,
       ...(snapshot.budget === undefined ? {} : { budget: snapshot.budget }),
       now,
       policy,
@@ -2095,12 +2219,22 @@ export class Scheduler {
     if (trigger === undefined) return;
     try {
       if (outcome === "success") {
-        const detail = this.db.withConn((conn) =>
-          getProjectDetail(conn, running.projectId),
-        );
-        const openIntentCount = detail.intents.filter(
-          (intent) => intent.to === null,
-        ).length;
+        const snapshot = this.db.withConn((conn) => {
+          const detail = getProjectDetail(conn, running.projectId);
+          const abandoned = new Set(
+            listProjectIntentMeta(conn, running.projectId)
+              .filter((meta) => meta.status === "abandoned")
+              .map((meta) => meta.intent_id),
+          );
+          return {
+            detail,
+            openIntentCount: detail.intents.filter(
+              (intent) => intent.to === null && !abandoned.has(intent.id),
+            ).length,
+          };
+        });
+        const detail = snapshot.detail;
+        const openIntentCount = snapshot.openIntentCount;
         this.db.withConn((conn) =>
           recordStrategistSuccess(conn, {
             projectId: running.projectId,
@@ -2330,16 +2464,6 @@ function isInitialProject(project: ProjectDetail): boolean {
   }
   if (project.intents.length === 0) return true;
   return project.intents.every(isBootstrapIntent);
-}
-
-function isBootstrapIntent(intent: Intent): boolean {
-  return (
-    intent.description === BOOTSTRAP_INTENT_DESCRIPTION &&
-    intent.creator === BOOTSTRAP_INTENT_CREATOR &&
-    intent.from.length === 1 &&
-    intent.from[0] === "origin" &&
-    intent.to === null
-  );
 }
 
 /**

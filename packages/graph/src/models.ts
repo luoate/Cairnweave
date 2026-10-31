@@ -41,7 +41,10 @@ export interface IntentBudget {
   max_tool_calls?: number;
 }
 
-/** Sidecar metadata for an accepted intent (priority, budget, provenance). */
+/** Sidecar lifecycle of an intent; `concluded` is derived from `intents.to_fact_id`. */
+export type IntentLifecycleStatus = "open" | "abandoned";
+
+/** Sidecar metadata for an accepted intent (priority, budget, provenance, lifecycle). */
 export interface IntentMeta {
   project_id: string;
   intent_id: string;
@@ -52,6 +55,12 @@ export interface IntentMeta {
   origin_run_id: string | null;
   priority: number | null;
   budget: IntentBudget | null;
+  /** M37: open until an operator or reason retires the direction. */
+  status: IntentLifecycleStatus;
+  status_reason: string | null;
+  status_at: string | null;
+  /** `operator` or `reason`. */
+  status_by: string | null;
   created_at: string;
 }
 
@@ -414,7 +423,10 @@ export interface ProjectReport {
     current_facts: number;
     superseded_facts: number;
     intents: number;
+    /** Open intents that have not been abandoned (M37). */
     open_intents: number;
+    /** Open intents retired through `intent_meta.status` (M37). */
+    abandoned_intents: number;
     hints: number;
   };
   current_facts: Fact[];
@@ -463,8 +475,11 @@ export interface AgentContextIntent {
   id: string;
   description: string;
   from: string[];
-  /** `concluded` is derived from `to`; otherwise the intent is open. */
-  status: "open" | "concluded";
+  /** `concluded` is derived from `to`; `abandoned` comes from `intent_meta` (M37). */
+  status: "open" | "concluded" | "abandoned";
+  status_reason: string | null;
+  status_by: string | null;
+  status_at: string | null;
   attempts: number;
   last_outcome: RunOutcome | null;
   last_error: string | null;
@@ -531,6 +546,7 @@ export interface AgentContext {
   truncated: boolean;
   truncated_sections: string[];
 }
+
 export type ProposalKind = "fact" | "intent" | "hint";
 export type ProposalStatus = "pending" | "applied" | "rejected" | "duplicate" | "dry_run";
 export type ProposalSource = "observer" | "strategist" | "human";

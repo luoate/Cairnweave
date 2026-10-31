@@ -253,6 +253,10 @@ CREATE TABLE IF NOT EXISTS intent_meta (
     origin_run_id TEXT,
     priority INTEGER,
     budget TEXT,
+    status TEXT NOT NULL DEFAULT 'open',
+    status_reason TEXT,
+    status_at TEXT,
+    status_by TEXT,
     created_at TEXT NOT NULL,
     PRIMARY KEY (project_id, intent_id),
     FOREIGN KEY (intent_id, project_id) REFERENCES intents(id, project_id) ON DELETE CASCADE
@@ -440,6 +444,18 @@ function ensureIntentMetaColumns(conn: Database): void {
   );
   if (!columns.has("origin_run_id")) {
     conn.exec("ALTER TABLE intent_meta ADD COLUMN origin_run_id TEXT");
+  }
+  // M37: intent lifecycle. Existing rows stay open; abandonment is opt-in.
+  const additions = [
+    ["status", "TEXT NOT NULL DEFAULT 'open'"],
+    ["status_reason", "TEXT"],
+    ["status_at", "TEXT"],
+    ["status_by", "TEXT"],
+  ] as const;
+  for (const [name, definition] of additions) {
+    if (!columns.has(name)) {
+      conn.exec(`ALTER TABLE intent_meta ADD COLUMN ${name} ${definition}`);
+    }
   }
 }
 

@@ -19,10 +19,11 @@ export interface ReasonIntentBudget {
   max_tool_calls?: number;
 }
 
-/** New intents plus optional strategic hints produced by one reason turn. */
+/** New intents plus optional strategic hints and intent retirements from one reason turn. */
 export interface ReasonPlan {
   intents: JsonObject[];
   hints: JsonObject[];
+  abandons: JsonObject[];
 }
 
 export type ReasonPayloadResult =
@@ -30,8 +31,15 @@ export type ReasonPayloadResult =
   | { kind: "complete"; data: JsonObject }
   | { kind: "intents"; data: ReasonPlan }
   /** Hints without intents; only valid while other open intents still exist. */
-  | { kind: "hints"; data: JsonObject[] }
+  | { kind: "hints"; data: JsonObject[]; abandons: JsonObject[] }
+  /** M37: retire open intents without proposing new ones. */
+  | { kind: "abandon"; data: JsonObject[] }
   | { kind: "noop"; data: null };
+
+/** At most one intent may be retired per reason turn. */
+export const MAX_REASON_ABANDONS = 1;
+export const MAX_ABANDON_REASON_CHARS = 500;
+export const MAX_ABANDON_INTENT_ID_CHARS = 64;
 
 export interface BootstrapExecuteResult {
   factDescription: string;
@@ -67,6 +75,7 @@ export function validateReasonPayload(
     }
   }
   const hints = validateReasonHints(data["hints"], maxIntents);
+  const abandons = validateReasonAbandons(data["abandon"]);
 
   if (complete !== undefined && complete !== null) {
     if (intents !== undefined && intents !== null) {
@@ -74,6 +83,9 @@ export function validateReasonPayload(
     }
     if (hints.length > 0) {
       throw new Error("complete and hints cannot coexist");
+    }
+    if (abandons.length > 0) {
+      throw new Error("complete and abandon cannot coexist");
     }
     if (!isObject(complete) || !hasOwn(complete, "from") || !hasOwn(complete, "description")) {
       throw new Error("invalid complete payload");
@@ -101,18 +113,24 @@ export function validateReasonPayload(
       if (openIntentsEmpty) {
         throw new Error("intents is required when open_intents is empty");
       }
-      return hints.length > 0
-        ? { kind: "hints", data: hints }
+      if (hints.length > 0) {
+        return { kind: "hints", data: hints, abandons };
+      }
+      return abandons.length > 0
+        ? { kind: "abandon", data: abandons }
         : { kind: "noop", data: null };
     }
-    return { kind: "intents", data: { intents: limited, hints } };
+    return { kind: "intents", data: { intents: limited, hints, abandons } };
   }
 
   if (openIntentsEmpty) {
     throw new Error("intents is required when open_intents is empty");
   }
   if (hints.length > 0) {
-    return { kind: "hints", data: hints };
+    return { kind: "hints", data: hints, abandons };
+  }
+  if (abandons.length > 0) {
+    return { kind: "abandon", data: abandons };
   }
   return { kind: "noop", data: null };
 }
@@ -248,6 +266,24 @@ function looksLikeReasonData(payload: JsonObject): boolean {
   if (keysEqual(payload, ["hints"])) {
     return Array.isArray(payload["hints"]);
   }
+  if (keysEqual(payload, ["abandon"])) {
+    return Array.isArray(payload["abandon"]);
+  }
+  if (keysEqual(payload, ["abandon", "intents"])) {
+    return (
+      Array.isArray(payload["abandon"]) && Array.isArray(payload["intents"])
+    );
+  }
+  if (keysEqual(payload, ["abandon", "hints"])) {
+    return Array.isArray(payload["abandon"]) && Array.isArray(payload["hints"]);
+  }
+  if (keysEqual(payload, ["abandon", "hints", "intents"])) {
+    return (
+      Array.isArray(payload["abandon"]) &&
+      Array.isArray(payload["hints"]) &&
+      Array.isArray(payload["intents"])
+    );
+  }
   return false;
 }
 
@@ -326,6 +362,50 @@ function validateReasonHints(value: unknown, maxHints: number): JsonObject[] {
     return { content: content.trim() };
   });
   return hints.slice(0, maxHints);
+}
+
+function validateReasonAbandons(value: unknown): JsonObject[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) {
+    throw new Error("abandon must be an array");
+  }
+  const seen = new Set<string>();
+  const abandons = value.map((entry, index) => {
+    if (!isObject(entry)) {
+      throw new Error(`invalid abandon at index ${index}`);
+    }
+    const extra = Object.keys(entry).filter(
+      (key) => key !== "intent_id" && key !== "reason",
+    );
+    if (extra.length > 0) {
+      throw new Error(`unexpected abandon key at index ${index}: ${extra[0]}`);
+    }
+    const intentId =
+      typeof entry["intent_id"] === "string" ? entry["intent_id"].trim() : "";
+    if (intentId === "") {
+      throw new Error(`abandon intent_id at index ${index} must not be empty`);
+    }
+    if (intentId.length > MAX_ABANDON_INTENT_ID_CHARS) {
+      throw new Error(
+        `abandon intent_id at index ${index} must be at most ${MAX_ABANDON_INTENT_ID_CHARS} characters`,
+      );
+    }
+    const reason = typeof entry["reason"] === "string" ? entry["reason"].trim() : "";
+    if (reason === "") {
+      throw new Error(`abandon reason at index ${index} must not be empty`);
+    }
+    if (reason.length > MAX_ABANDON_REASON_CHARS) {
+      throw new Error(
+        `abandon reason at index ${index} must be at most ${MAX_ABANDON_REASON_CHARS} characters`,
+      );
+    }
+    if (seen.has(intentId)) {
+      throw new Error(`duplicate abandon intent_id at index ${index}`);
+    }
+    seen.add(intentId);
+    return { intent_id: intentId, reason };
+  });
+  return abandons.slice(0, MAX_REASON_ABANDONS);
 }
 
 function validateIntentBudget(value: unknown, index: number): void {

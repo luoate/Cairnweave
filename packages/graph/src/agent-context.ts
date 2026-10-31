@@ -43,6 +43,7 @@ export interface AgentContextLimits {
   maxFacts: number;
   maxIntents: number;
   maxConcludedIntents: number;
+  maxAbandonedIntents: number;
   maxAttempts: number;
   maxDeltaIds: number;
   maxDetailChars: number;
@@ -57,6 +58,7 @@ export const DEFAULT_AGENT_CONTEXT_LIMITS: AgentContextLimits = {
   maxFacts: 200,
   maxIntents: 100,
   maxConcludedIntents: 20,
+  maxAbandonedIntents: 20,
   maxAttempts: 20,
   maxDeltaIds: 50,
   maxDetailChars: 500,
@@ -311,6 +313,9 @@ export function renderAgentContextYaml(context: AgentContext): string {
           ["description", intent.description],
           ["from", [...intent.from]],
           ["status", intent.status],
+          ["status_reason", intent.status_reason],
+          ["status_by", intent.status_by],
+          ["status_at", intent.status_at],
           ["attempts", intent.attempts],
           ["last_outcome", intent.last_outcome],
           ["last_error", intent.last_error],
@@ -419,12 +424,27 @@ function selectIntents(input: {
       : [intentView(focus, input.intentMeta, input.runs, input.limits)];
   }
 
-  const allOpen = input.intents.filter((intent) => intent.to === null);
+  const isAbandoned = (intent: Intent): boolean =>
+    input.intentMeta.get(intent.id)?.status === "abandoned";
+  const allOpen = input.intents.filter(
+    (intent) => intent.to === null && !isAbandoned(intent),
+  );
+  const allAbandoned = input.intents.filter(
+    (intent) => intent.to === null && isAbandoned(intent),
+  );
   const allConcluded = input.intents.filter((intent) => intent.to !== null);
 
   const open = allOpen.sort((left, right) =>
     compareOpenIntents(left, right, input.intentMeta),
   );
+  const abandoned = allAbandoned
+    .sort((left, right) => {
+      const byTime = (
+        input.intentMeta.get(right.id)?.status_at ?? ""
+      ).localeCompare(input.intentMeta.get(left.id)?.status_at ?? "");
+      return byTime === 0 ? left.id.localeCompare(right.id) : byTime;
+    })
+    .slice(0, input.limits.maxAbandonedIntents);
   const concluded = allConcluded
     .sort((left, right) => {
       const byTime = (right.concluded_at ?? "").localeCompare(
@@ -434,10 +454,10 @@ function selectIntents(input: {
     })
     .slice(0, input.limits.maxConcludedIntents);
 
-  const selected = [...open, ...concluded];
+  const selected = [...open, ...abandoned, ...concluded];
   if (
     selected.length > input.limits.maxIntents ||
-    allOpen.length + allConcluded.length > selected.length
+    allOpen.length + allAbandoned.length + allConcluded.length > selected.length
   ) {
     input.truncatedSections.push("intents");
   }
@@ -471,11 +491,15 @@ function intentView(
   const attempts = runs.filter((run) => run.intent_id === intent.id);
   const last = finishedRuns(attempts)[0] ?? null;
   const meta = intentMeta.get(intent.id);
+  const abandoned = meta?.status === "abandoned";
   return {
     id: intent.id,
     description: intent.description,
     from: [...intent.from],
-    status: intent.to !== null ? "concluded" : "open",
+    status: intent.to !== null ? "concluded" : abandoned ? "abandoned" : "open",
+    status_reason: abandoned ? meta.status_reason : null,
+    status_by: abandoned ? meta.status_by : null,
+    status_at: abandoned ? meta.status_at : null,
     attempts: attempts.length,
     last_outcome: last?.outcome ?? null,
     last_error:

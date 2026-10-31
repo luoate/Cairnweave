@@ -19,6 +19,7 @@ import {
   createProject,
   decideFlagReview,
   expireReasonLeases,
+  expireWorkers,
   exportProjectSubgraphYaml,
   exportProjectTimeline,
   exportProjectYaml,
@@ -27,6 +28,8 @@ import {
   getCompletionIntentOr409,
   getFactMeta,
   getFlagReview,
+  getIntentMeta,
+  getIntentOr404,
   getLatestVerificationCheck,
   getProjectDetail,
   getProjectOr404,
@@ -38,6 +41,7 @@ import {
   heartbeatIntent,
   heartbeatReason,
   intentToModel,
+  isBootstrapIntent,
   listFactEvidence,
   listProjectArtifacts,
   listProjectAudit,
@@ -70,6 +74,7 @@ import {
   renderProjectReportMarkdown,
   requestStrategistReplan,
   selectSubgraph,
+  setIntentStatus,
   setProjectScope,
   SUBGRAPH_DEFAULT_DEPTH,
   SUBGRAPH_DEFAULT_FACTS,
@@ -80,6 +85,7 @@ import {
   type AuditEntry,
   type CairnDatabase,
   type FlagReviewDecision,
+  type IntentMeta,
   type IntentRow,
   type ProjectRow,
 } from "@cairn/graph";
@@ -95,7 +101,7 @@ import {
   type AgentConfigOptions,
 } from "./agent-config";
 import { registerAgentSkillsRoutes } from "./agent-skills";
-import { requireOperator } from "./auth";
+import { isCrossOrigin, requireOperator } from "./auth";
 import {
   emptyProjectBoard,
   readProjectBoard,
@@ -224,6 +230,32 @@ function parseVerifyFacts(value: unknown): string[] | undefined {
     }
     return fact.trim();
   });
+}
+
+function parseAbandonReason(value: unknown): string {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new HttpError(400, "body must be a JSON object");
+  }
+  const reason = (value as Record<string, unknown>)["reason"];
+  if (typeof reason !== "string") {
+    throw new HttpError(400, "reason must be a string");
+  }
+  const trimmed = reason.trim();
+  if (trimmed === "" || trimmed.length > 500) {
+    throw new HttpError(400, "reason must be 1-500 characters");
+  }
+  return trimmed;
+}
+
+/** Lifecycle record shared by the abandon route and the read-only list (M37). */
+function intentStatusView(meta: IntentMeta): Record<string, unknown> {
+  return {
+    intent_id: meta.intent_id,
+    status: meta.status,
+    status_reason: meta.status_reason,
+    status_at: meta.status_at,
+    status_by: meta.status_by,
+  };
 }
 
 function parseFlagReviewDecision(value: unknown): {
@@ -769,7 +801,12 @@ function buildRoutes(
         listProjectIntentMeta(conn, projectId).map((entry) => [entry.intent_id, entry]),
       );
       const intents = getProjectDetail(conn, projectId).intents
-        .filter((intent) => intent.to === null && intent.concluded_at === null)
+        .filter(
+          (intent) =>
+            intent.to === null &&
+            intent.concluded_at === null &&
+            meta.get(intent.id)?.status !== "abandoned",
+        )
         .map((intent) => {
           const extra = meta.get(intent.id);
           return {
@@ -777,6 +814,10 @@ function buildRoutes(
             priority: extra?.priority ?? DEFAULT_INTENT_PRIORITY,
             budget: extra?.budget ?? null,
             source: extra?.source ?? null,
+            status: extra?.status ?? "open",
+            status_reason: extra?.status_reason ?? null,
+            status_at: extra?.status_at ?? null,
+            status_by: extra?.status_by ?? null,
           };
         })
         // Mirrors the scheduler's explore order: priority DESC, then newest first.
@@ -1144,6 +1185,68 @@ function buildRoutes(
       json(createIntent(conn, params["project_id"]!, body), 201),
     );
   });
+
+  // M37: retire a dead exploration direction. The graph keeps the intent; only the
+  // sidecar lifecycle changes, so YAML exports stay Cairn-compatible.
+  route(
+    "POST",
+    "/projects/{project_id}/intents/{intent_id}/abandon",
+    async ({ params, request }) => {
+      if (isCrossOrigin(request)) {
+        throw new HttpError(403, "cross-origin request rejected");
+      }
+      requireOperator(request, operatorToken);
+      const reason = parseAbandonReason(await readBody(request));
+      return db.withConn((conn) => {
+        const projectId = params["project_id"]!;
+        const intentId = params["intent_id"]!;
+        expireWorkers(conn, projectId);
+        const intent = intentToModel(
+          conn,
+          getIntentOr404(conn, projectId, intentId),
+          projectId,
+        );
+        if (isBootstrapIntent(intent)) {
+          throw new HttpError(409, "bootstrap intent cannot be abandoned");
+        }
+        if (intent.to !== null) {
+          throw new HttpError(409, "intent already concluded");
+        }
+        if (intent.worker !== null) {
+          throw new HttpError(409, "intent is currently claimed");
+        }
+        const existing = getIntentMeta(conn, projectId, intentId);
+        if (existing?.status === "abandoned") {
+          return json(intentStatusView(existing));
+        }
+        return json(
+          intentStatusView(
+            setIntentStatus(conn, {
+              projectId,
+              intentId,
+              status: "abandoned",
+              reason,
+              by: "operator",
+            }),
+          ),
+        );
+      });
+    },
+  );
+
+  // Read-only sidecar view for the UI; the graph intent list stays unchanged.
+  route("GET", "/projects/{project_id}/intents/lifecycle", ({ params }) =>
+    db.withConn((conn) => {
+      const projectId = params["project_id"]!;
+      getProjectOr404(conn, projectId);
+      return json({
+        project_id: projectId,
+        intents: listProjectIntentMeta(conn, projectId)
+          .filter((meta) => meta.status !== "open")
+          .map(intentStatusView),
+      });
+    }),
+  );
 
   route(
     "POST",

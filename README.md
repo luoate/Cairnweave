@@ -8,7 +8,7 @@
 没有 Python ↔ TypeScript 桥，没有 JSONL RPC。
 
 [![CI](https://github.com/luoate/Cairnweave/actions/workflows/ci.yml/badge.svg)](https://github.com/luoate/Cairnweave/actions/workflows/ci.yml)
-[![tests](https://img.shields.io/badge/tests-980%20passed-brightgreen.svg)](docs/MILESTONES.md)
+[![tests](https://img.shields.io/badge/tests-1002%20passed-brightgreen.svg)](docs/MILESTONES.md)
 [![license](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![runtime](https://img.shields.io/badge/runtime-Bun%201.4.4-black.svg)](package.json)
 
@@ -40,6 +40,7 @@ worker 在项目沙箱里跑真实模型，每个任务启动一次进程，只�
 | --- | --- |
 | 图内核与调度 | projects / facts / intents / hints、SQLite 单一写者、bootstrap / reason / explore / conclude 四类任务，保留 Cairn 语义并用 Python 版做 golden 对照 |
 | Agent 上下文 | 任务级 `agent-context.yaml` 把 Fact 的当前/被取代状态、证据可用性、最近尝试、完成验证进度与 reason 增量交给决策层；只读投影，不改图与导出，`runtime.strategy_context: off` 可关闭 |
+| 意图生命周期 | 操作员（或开启 `strategist.reason_abandon` 后的 reason）可放弃已经尝试且从未成功的 open 意图；状态存 `intent_meta` 旁路，派发、提示、水位与报告都排除它，UI 提供原因输入与二次确认 |
 | Scope 硬校验 | `Host Bridge` 在每次模型工具调用前检查网络端点与文件路径，越界即拒绝，allow/block 全量写 `audit.jsonl`；无 `scope` 的项目不派发 |
 | 证据门控 | worker 声明的 `evidence_refs` 在写图前逐条校验（存在、非目录、非符号链接、不越界、最小字节），并固化 SHA-256 以便事后比对 |
 | 可验证完成 | 项目级 `evidence` / `challenge` / `off` 策略；worker 的 “complete” 只是声明，oracle 不通过就不关项目；支持手动 `/verify` |

@@ -22,6 +22,9 @@ export { extractJsonObject } from "./parse";
 
 export {
   DEFAULT_INTENT_PRIORITY,
+  MAX_ABANDON_INTENT_ID_CHARS,
+  MAX_ABANDON_REASON_CHARS,
+  MAX_REASON_ABANDONS,
   validateBootstrapConcludePayload,
   validateBootstrapExecutePayload,
   validateExplorePayload,

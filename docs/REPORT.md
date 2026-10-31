@@ -27,7 +27,7 @@ curl -s "http://127.0.0.1:8787/projects/proj_001/report?format=markdown"
                "evidence_refs": [], "checked_at": "..."}
   },
   "graph": {"facts": 12, "current_facts": 10, "superseded_facts": 2,
-            "intents": 8, "open_intents": 1, "hints": 3},
+            "intents": 8, "open_intents": 1, "abandoned_intents": 2, "hints": 3},
   "current_facts": [{"id": "f001", "description": "..."}],
   "hints": [{"id": "h001", "content": "...", "creator": "operator", "created_at": "..."}],
   "supersessions": [{"fact_id": "f002", "description": "...", "superseded_by": "f007",
@@ -51,7 +51,7 @@ curl -s "http://127.0.0.1:8787/projects/proj_001/report?format=markdown"
 | --- | --- |
 | `project` / `current_facts` / `hints` | 图（`getProjectDetail`）；`current_facts` 排除已被取代的 Fact，按 id 排序 |
 | `verification` | `project_verification` + `verification_checks`；没有策略行时按路由的默认策略（`evidence`）合成 |
-| `graph` | 图计数；`current_facts = facts - superseded_facts` |
+| `graph` | 图计数；`current_facts = facts - superseded_facts`；`open_intents` 排除已放弃意图（M37），`abandoned_intents` 单列 |
 | `supersessions` | `fact_meta.supersedes` 推导的反向边（M15b） |
 | `runs` | `runs` 旁路与 `/stats` 相同的分桶 |
 | `cost` | `/cost` 的总量、未归因余量与 `by_kind` |

@@ -709,12 +709,14 @@ stderr 归档到 `sessionDir/{stdout,stderr}.log`。需要 UI 实时进度时再
   不写。replan 三列由 `POST /replan` 写入，旧库自动补列。表只服务调度，不进入 YAML、
   HTTP 图响应或 worker 契约。
 - `intent_meta(project_id, intent_id, dedupe_key, source, proposal_id, origin_run_id,
-  priority, budget, created_at)`，主键 `(project_id, intent_id)`，外键指向项目并级联
-  删除。M11 用它存提案去重键；M12b 起 reason 创建的意图写 `source='strategist'`、
-  `priority`（默认 50）与 `budget` JSON；M13b 起 reason 和已应用提案写
-  `origin_run_id`，旧库自动补列且历史行保持 `NULL`。读取时归一化非法优先级/预算为
-  `NULL`。M31 的按描述去重不新增列、不落库：只在与未结束意图比较时临时归一化，
-  因此不会进入图模型、YAML 或 HTTP 图响应。
+  priority, budget, status, status_reason, status_at, status_by, created_at)`，主键
+  `(project_id, intent_id)`，外键指向项目并级联删除。M11 用它存提案去重键；M12b 起
+  reason 创建的意图写 `source='strategist'`、`priority`（默认 50）与 `budget` JSON；
+  M13b 起 reason 和已应用提案写 `origin_run_id`，旧库自动补列且历史行保持 `NULL`。
+  M37 增加生命周期列（`status` 默认 `open`，另有 `abandoned`），旧行自动补列并保持
+  open；`status_by` 记录 `operator` 或 `reason`，`status_reason` ≤500 字符。读取时
+  归一化非法优先级/预算为 `NULL`。M31 的按描述去重不新增列、不落库：只在与未结束
+  意图比较时临时归一化，因此不会进入图模型、YAML 或 HTTP 图响应。
 - `project_verification(project_id, kind, challenge_code, created_at)`（M14a），主键
   `project_id`，外键指向项目并级联删除。`kind` 为 `challenge | evidence | off`；
   没有行时读取合成 `evidence`，不改旧项目。
@@ -764,6 +766,15 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
   默认 `json`；`markdown` 用 `text/markdown` 返回同一对象的渲染结果。`audit` 与
   `artifacts` 只有汇总（任务数、事件数、时间边界、文件数与字节数），不含审计事件
   原文、工件路径或证据内容。未知项目 404；非法 `format` 400；其他方法 405。
+- `POST /projects/{id}/intents/{intent_id}/abandon`（M37）→ body `{reason}`（1–500
+  字符），把意图写入 `intent_meta.status='abandoned'`。要求项目 active、意图仍 open、
+  非 bootstrap 意图、当前没有 worker 占用；重复放弃幂等返回当前状态。返回
+  `{intent_id, status, status_reason, status_at, status_by}`；未知项目/意图 404，
+  已结束/被占用/bootstrap 409，空理由 400。跨源写请求 403；配置
+  `CAIRN_OPERATOR_TOKEN` 时要求 `X-Cairn-Operator-Token`。
+- `GET /projects/{id}/intents/lifecycle`（M37，只读）→
+  `{project_id, intents: [{intent_id, status, status_reason, status_at, status_by}]}`，
+  只列非 open 的意图；未知项目 404，只有 GET。
 - `GET /projects/{id}/board`（M23，只读）→ `{available, ideas, memory, ideas_total,
   memory_total, truncated}`。想法字段为 `id/status/content/result/created_at/updated_at`，
   记忆为 `id/kind/content/refs/source/created_at/updated_at`；状态限定
@@ -1189,6 +1200,28 @@ Writeup 是面向人的中文复盘文本，分两层，全部逻辑在 `package
 - **与报告的分工**：`/report` 仍是可分享的只读快照，不含工件路径与 Flag；Writeup
   面向复盘，含证据路径与 Flag 原文，因此只在同源/operator 守卫下写入，且不提供跨项目
   汇总。
+
+### 5.11 意图生命周期（M37）
+
+意图是否还值得探索，原先只能靠预算耗尽来回答。M37 在不动 `intents` 表的前提下增加旁路状态：
+
+- **状态**：`intent_meta.status` 为 `open | abandoned`（`concluded` 仍由 `to_fact_id`
+  派生）；另有 `status_reason`、`status_at`、`status_by`（`operator | reason`）。
+  旧行默认 open。`setIntentStatus` 用 UPSERT 只写状态列；`recordIntentMeta` 改成保留
+  这些列，避免重写优先级/预算时把放弃状态抹掉。
+- **写入**：操作员路由始终可用；reason 只有在 `strategist.reason_abandon: on`
+  （默认 `off`）时，才能通过 `data.abandon` 每轮最多放弃 1 个意图（≤500 字符理由）。
+  控制面要求目标 open、非 bootstrap、无 worker 占用、无 pending conclude、至少一次
+  finished run 且从未成功；不合法项只记日志并忽略，不把 reason 任务判失败。
+- **读取与派发**：快层不再派发 abandoned 意图；`open_intents` / `openIntentCount`、
+  reason 提示里的 open 列表、AgentContext、Observer context 与 `/report` 都排除它。
+  排队中的 conclude 若目标已被放弃会被丢弃并释放租约。`/strategist` 的 open 列表
+  由同一规则过滤。
+- **只读视图**：`GET /projects/{id}/intents/lifecycle` 供 UI 合并状态；图导出、
+  YAML/timeline 与 HTTP 图响应仍把意图显示为 open（旁路语义，已知边界）。
+- **验收**：`packages/graph/src/intent-lifecycle.test.ts`、
+  `apps/cairn/src/http/api.intent-lifecycle.test.ts`、`loop.test.ts` 的 reason 放弃
+  用例、`api.ui.test.ts` 的二次确认。
 
 ## 6. 沙箱与 Scope Policy
 

@@ -65,6 +65,7 @@ export {
   type Hint,
   type Intent,
   type IntentBudget,
+  type IntentLifecycleStatus,
   type IntentMeta,
   type ProjectDetail,
   type ProjectMeta,
@@ -111,6 +112,8 @@ export {
 
 export {
   buildIntents,
+  BOOTSTRAP_INTENT_CREATOR,
+  BOOTSTRAP_INTENT_DESCRIPTION,
   checkProjectActive,
   checkProjectCompleted,
   checkProjectHintWritable,
@@ -125,6 +128,7 @@ export {
   getReasonTimeout,
   getReleasableOpenIntentOr404,
   intentToModel,
+  isBootstrapIntent,
   nextFactId,
   nextHintId,
   nextIntentId,
@@ -225,12 +229,14 @@ export {
   listProjectProposals,
   recordIntentMeta,
   recordProposalDecision,
+  setIntentStatus,
   type CreateProposalInput,
   type IntentDuplicateReason,
   type OpenIntentDuplicate,
   type ProposalDecisionInput,
   type ProposalFilters,
   type RecordIntentMetaInput,
+  type SetIntentStatusInput,
 } from "./proposals";
 
 export {
