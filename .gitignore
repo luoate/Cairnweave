@@ -14,3 +14,5 @@ __pycache__/
 # Local control-plane database.
 cairn.db
 cairn.db-*
+# TypeScript incremental build cache.
+*.tsbuildinfo

@@ -1482,6 +1482,110 @@ describe("model and key settings", () => {
     expect(posts.length).toBe(4);
   });
 
+  test("stages challenge files in the create modal and authorizes the project after upload", async () => {
+    const html = readFileSync(INDEX_PATH, "utf8");
+    const modalStart = html.indexOf(`data-modal="newProject"`);
+    const modal = html.slice(modalStart, html.indexOf("<!-- Project Scope -->", modalStart));
+    expect(modal).toContain('@change="stageNewProjectFiles($event)"');
+    expect(modal).toContain("x-for=\"(file, idx) in newProject.files\"");
+    expect(modal).toContain('@click="removeNewProjectFile(idx)"');
+    expect(modal).toContain("newProject.files.length");
+
+    const app = loadState();
+    const calls: any[] = [];
+    app.api = async (method: string, path: string, body: unknown) => {
+      calls.push({ method, path, body });
+      if (method === "POST" && path === "/projects") return { project: { id: "proj_new" } };
+      return {};
+    };
+    app.loadProjects = async () => {};
+    app.openProject = async () => { calls.push({ method: "OPEN" }); };
+    app.selectSideTab = (tab: string) => { calls.push({ method: "TAB", tab }); };
+    app.showToast = () => {};
+    app.$refs = {};
+    app.uploadAttachment = async (file: any, projectId: string) => {
+      calls.push({ method: "UPLOAD", file: file.name, projectId });
+    };
+    const staged = [
+      { name: "handout.zip", size: 10, lastModified: 1 },
+      { name: "capture.pcap", size: 20, lastModified: 2 },
+    ];
+    app.newProject = {
+      title: "T", origin: "O", goal: "G", bootstrap: true, targetsText: "10.0.0.5",
+      scopeNotes: "n", hints: [{ content: "" }], verificationKind: "auto", challengeCode: "", files: [],
+    };
+
+    app.stageNewProjectFiles({ target: { files: staged, value: "picked" } });
+    expect(app.newProject.files.map((file: any) => file.name)).toEqual(["handout.zip", "capture.pcap"]);
+    // Re-picking a name replaces that file instead of staging a guaranteed 409.
+    app.stageNewProjectFiles({ target: { files: [{ name: "handout.zip", size: 11, lastModified: 3 }], value: "" } });
+    expect(app.newProject.files.map((file: any) => [file.name, file.size])).toEqual([["capture.pcap", 20], ["handout.zip", 11]]);
+    app.removeNewProjectFile(1);
+    expect(app.newProject.files.map((file: any) => file.name)).toEqual(["capture.pcap"]);
+    app.stageNewProjectFiles({ target: { files: staged, value: "" } });
+
+    await app.createProject();
+
+    const create = calls.find((call: any) => call.method === "POST" && call.path === "/projects");
+    // A staged project starts unauthorized so the scheduler cannot dispatch before uploads.
+    expect(create.body.scope).toBeUndefined();
+    expect(create.body.bootstrap_enabled).toBe(true);
+    const kinds = calls.map((call: any) => call.method === "OPEN" ? "OPEN" : call.method === "TAB" ? "TAB" : call.method);
+    const uploads = calls.filter((call: any) => call.method === "UPLOAD");
+    expect(uploads.map((call: any) => [call.file, call.projectId])).toEqual([["handout.zip", "proj_new"], ["capture.pcap", "proj_new"]]);
+    const scopePut = calls.find((call: any) => call.method === "PUT" && call.path === "/projects/proj_new/scope");
+    expect(scopePut.body).toEqual({ targets: ["10.0.0.5"], notes: "n" });
+    expect(kinds.indexOf("UPLOAD")).toBeLessThan(kinds.indexOf("PUT"));
+    expect(kinds.indexOf("PUT")).toBeLessThan(kinds.indexOf("OPEN"));
+    expect(kinds.indexOf("OPEN")).toBeLessThan(kinds.indexOf("TAB"));
+    expect(calls.find((call: any) => call.method === "TAB").tab).toBe("attachments");
+    expect(app.newProject.files).toEqual([]);
+
+    // Without staged files the scope still rides along in the create request.
+    calls.length = 0;
+    app.newProject = {
+      title: "T", origin: "O", goal: "G", bootstrap: true, targetsText: "10.0.0.5",
+      scopeNotes: "", hints: [{ content: "" }], verificationKind: "auto", challengeCode: "",
+    };
+    await app.createProject();
+    const plain = calls.find((call: any) => call.method === "POST" && call.path === "/projects");
+    expect(plain.body.scope).toEqual({ targets: ["10.0.0.5"] });
+    expect(calls.some((call: any) => call.method === "PUT")).toBe(false);
+    expect(calls.some((call: any) => call.method === "TAB")).toBe(false);
+  });
+
+  test("still authorizes a staged project when an upload fails and reports what was missed", async () => {
+    const app = loadState();
+    const calls: any[] = [];
+    const toasts: any[] = [];
+    app.api = async (method: string, path: string, body: unknown) => {
+      calls.push({ method, path, body });
+      if (method === "POST" && path === "/projects") return { project: { id: "proj_new" } };
+      return {};
+    };
+    app.loadProjects = async () => {};
+    app.openProject = async () => {};
+    app.selectSideTab = () => {};
+    app.showToast = (message: string, kind?: string) => { toasts.push([message, kind]); };
+    app.$refs = {};
+    app.uploadAttachment = async (file: any) => {
+      if (file.name === "broken.bin") throw new Error("too large");
+    };
+    app.newProject = {
+      title: "T", origin: "O", goal: "G", bootstrap: false, targetsText: "10.0.0.5",
+      scopeNotes: "", hints: [{ content: "" }], verificationKind: "auto", challengeCode: "",
+      files: [{ name: "ok.bin", size: 1 }, { name: "broken.bin", size: 2 }],
+    };
+
+    await app.createProject();
+
+    expect(calls.find((call: any) => call.method === "POST").body.scope).toBeUndefined();
+    expect(calls.find((call: any) => call.method === "PUT").path).toBe("/projects/proj_new/scope");
+    expect(toasts.at(-1)[0]).toContain("未完成");
+    expect(toasts.at(-1)[0]).toContain("broken.bin: too large");
+    expect(toasts.at(-1)[1]).toBe("error");
+  });
+
   test("turns a 409 delete into an explicit force action", async () => {
     const app = loadState();
     const calls: string[] = [];

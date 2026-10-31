@@ -2499,6 +2499,27 @@
         </template>
         <p x-show="newProject.verificationKind === 'auto'" class="text-2xs text-slate-400 mt-1">服务端存在 TCH_CHALLENGE_ID 时自动启用题目校验，否则默认按证据校验。</p>
       </div>
+      <div>
+        <div class="flex items-center justify-between mb-1">
+          <label class="text-2xs text-slate-400 font-medium uppercase tracking-wider">题目附件</label>
+          <span class="text-2xs text-slate-300">可选，创建后上传</span>
+        </div>
+        <label class="h-8 rounded-lg border border-dashed px-3 text-2xs font-medium inline-flex items-center gap-1.5 transition"
+          :class="isCreatingProject ? 'border-slate-200 bg-white text-slate-400 cursor-not-allowed opacity-40' : 'border-brand-200 bg-brand-50 text-brand-600 hover:bg-brand-100 cursor-pointer'">
+          <input type="file" multiple class="hidden" :disabled="isCreatingProject" @change="stageNewProjectFiles($event)" />
+          <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24"><path d="M12 19V5m0 0-5 5m5-5 5 5"/><path d="M5 19h14"/></svg>
+          <span x-text="newProject.files.length ? `已选 ${newProject.files.length} 个文件` : '选择题目文件'"></span>
+        </label>
+        <template x-for="(file, idx) in newProject.files" :key="`${file.name}:${file.size}:${file.lastModified}`">
+          <div class="mt-1.5 flex items-center gap-2 text-2xs">
+            <span class="font-mono text-slate-600 truncate flex-1" x-text="file.name"></span>
+            <span class="text-slate-400 shrink-0" x-text="formatBytes(file.size)"></span>
+            <button type="button" @click="removeNewProjectFile(idx)" :disabled="isCreatingProject" aria-label="移除附件"
+              class="px-1 text-slate-300 hover:text-rose-400 transition disabled:opacity-40">&times;</button>
+          </div>
+        </template>
+        <p class="text-2xs text-slate-400 mt-1">附件先写入项目工作区 attachments/，上传完成前不会派发任务。</p>
+      </div>
       <label class="flex items-center gap-2 px-1 text-sm text-slate-600">
         <input type="checkbox" x-model="newProject.bootstrap" class="h-4 w-4 rounded border-slate-300 text-brand-500 focus:ring-brand-200">
         <span>立即执行初始探索</span>
@@ -3422,7 +3443,7 @@ function cairnApp() {
     showDeleteModal: false,
     showSkillDetail: false,
 
-    newProject: { title: '', origin: '', goal: '', bootstrap: true, targetsText: '', scopeNotes: '', hints: [{ content: '' }], verificationKind: 'auto', challengeCode: '' },
+    newProject: { title: '', origin: '', goal: '', bootstrap: true, targetsText: '', scopeNotes: '', hints: [{ content: '' }], verificationKind: 'auto', challengeCode: '', files: [] },
     isCreatingProject: false,
     scopeForm: { projectId: '', projectTitle: '', targetsText: '', notes: '' },
     isSavingScope: false,
@@ -4937,8 +4958,7 @@ function cairnApp() {
       }
     },
 
-    async uploadAttachment(file) {
-      const projectId = this.selectedProjectId;
+    async uploadAttachment(file, projectId = this.selectedProjectId) {
       const path = `/projects/${encodeURIComponent(projectId)}/attachments?name=${encodeURIComponent(file.name)}`;
       const response = await fetch(path, { method: 'POST', body: file });
       const data = await response.json().catch(() => null);
@@ -7610,6 +7630,21 @@ function cairnApp() {
       this.showNewProject = true;
     },
 
+    stageNewProjectFiles(event) {
+      const input = event && event.target;
+      const picked = input && input.files ? Array.from(input.files) : [];
+      if (input) input.value = '';
+      if (picked.length === 0) return;
+      const names = new Set(picked.map((file) => file.name));
+      const current = Array.isArray(this.newProject.files) ? this.newProject.files : [];
+      this.newProject.files = current.filter((file) => !names.has(file.name)).concat(picked);
+    },
+
+    removeNewProjectFile(index) {
+      if (!Array.isArray(this.newProject.files)) return;
+      this.newProject.files.splice(index, 1);
+    },
+
     focusNewProjectError(errors) {
       const refs = {
         title: 'newProjectTitle',
@@ -7631,18 +7666,23 @@ function cairnApp() {
         return;
       }
       const targets = this.scopeTargets(this.newProject.targetsText);
+      const stagedFiles = Array.isArray(this.newProject.files) ? this.newProject.files.slice() : [];
       this.isCreatingProject = true;
       try {
         const actor = this.actorName();
         const hintContents = this.newProject.hints.filter(h => h.content?.trim());
         const notes = this.newProject.scopeNotes.trim();
+        const scope = { targets, ...(notes ? { notes } : {}) };
         const body = {
           title: this.newProject.title.trim(),
           origin: this.newProject.origin.trim(),
           goal: this.newProject.goal.trim(),
           bootstrap_enabled: this.newProject.bootstrap,
-          scope: { targets, ...(notes ? { notes } : {}) },
         };
+        // With files staged the project is created unauthorized on purpose: a project
+        // without an authorized scope is never dispatched, so every upload lands before
+        // the first worker builds its prompt. The scope is restored right after uploads.
+        if (stagedFiles.length === 0) body.scope = scope;
         const verificationKind = this.newProject.verificationKind;
         if (verificationKind === 'challenge') {
           body.verification = { kind: 'challenge', challenge_code: this.newProject.challengeCode.trim() };
@@ -7652,14 +7692,33 @@ function cairnApp() {
         const hints = hintContents.map(h => ({ content: h.content.trim(), creator: actor }));
         if (hints.length > 0) body.hints = hints;
         const data = await this.api('POST', '/projects', body);
+        const projectId = data.project.id;
         this.showNewProject = false;
         this.newProjectShowErrors = false;
-        this.newProject = { title:'', origin:'', goal:'', bootstrap: true, targetsText:'', scopeNotes:'', hints: [{ content:'' }], verificationKind: 'auto', challengeCode: '' };
+        this.newProject = { title:'', origin:'', goal:'', bootstrap: true, targetsText:'', scopeNotes:'', hints: [{ content:'' }], verificationKind: 'auto', challengeCode: '', files: [] };
         await this.loadProjects();
-        await this.openProject(data.project.id);
-        this.showToast('项目已创建');
+        const failures = stagedFiles.length === 0 ? [] : await this.uploadNewProjectFiles(projectId, stagedFiles, scope);
+        await this.openProject(projectId);
+        if (stagedFiles.length === 0) {
+          this.showToast('项目已创建');
+        } else {
+          this.selectSideTab('attachments');
+          if (failures.length === 0) this.showToast(`项目已创建，已上传 ${stagedFiles.length} 个附件`);
+          else this.showToast(`项目已创建，但有 ${failures.length} 项未完成：${failures[0]}`, 'error');
+        }
       } catch(e) { this.showToast(e.message, 'error'); }
       finally { this.isCreatingProject = false; }
+    },
+
+    async uploadNewProjectFiles(projectId, files, scope) {
+      const failures = [];
+      for (const file of files) {
+        try { await this.uploadAttachment(file, projectId); }
+        catch (e) { failures.push(`${file.name}: ${this.errorText(e)}`); }
+      }
+      try { await this.api('PUT', `/projects/${encodeURIComponent(projectId)}/scope`, scope); }
+      catch (e) { failures.push(`启用授权范围: ${this.errorText(e)}`); }
+      return failures;
     },
 
     openCreateIntent() {
