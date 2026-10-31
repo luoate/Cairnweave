@@ -1428,6 +1428,8 @@
                     <span class="font-mono text-2xs text-slate-400 shrink-0" x-text="`#${row.seq}`"></span>
                     <span class="font-mono text-2xs text-slate-600 truncate" x-text="auditEventTool(row.event)"></span>
                     <span class="text-2xs text-slate-400 truncate" x-text="auditEventAction(row.event)"></span>
+                    <span x-show="auditEventKindLabel(row.event)" class="shrink-0 rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-2xs font-semibold uppercase text-amber-700"
+                      x-text="auditEventKindLabel(row.event)"></span>
                   </div>
                   <span class="shrink-0 rounded-full border px-1.5 py-0.5 text-2xs font-semibold uppercase"
                     :class="auditDecisionClass(row.event)" x-text="auditDecisionLabel(row.event)"></span>
@@ -1438,7 +1440,7 @@
                     <p class="font-mono text-2xs text-slate-500 break-all" x-text="auditTargetsLabel(row.event)"></p>
                   </template>
                   <template x-if="auditEventReason(row.event)">
-                    <p class="text-rose-600 break-words" x-text="auditEventReason(row.event)"></p>
+                    <p :class="auditEventReasonClass(row.event)" x-text="auditEventReason(row.event)"></p>
                   </template>
                   <template x-if="auditEventDetail(row.event)">
                     <p class="text-slate-500 break-words" x-text="auditEventDetail(row.event)"></p>
@@ -2736,6 +2738,14 @@
                   </div>
                 </template>
               </div>
+              <ul x-show="group.notes" class="mt-2 space-y-1 border-t border-slate-100 pt-2 text-2xs leading-relaxed text-slate-500">
+                <template x-for="note in group.notes" :key="note">
+                  <li class="flex gap-1.5">
+                    <span class="shrink-0 text-slate-300">·</span>
+                    <span class="break-words" x-text="note"></span>
+                  </li>
+                </template>
+              </ul>
               <template x-if="group.test && (runtimeTest.running || runtimeTest.execution || runtimeTest.error)">
                 <div class="mt-2 rounded-lg border px-2.5 py-2 text-2xs"
                   :class="runtimeTest.running ? 'border-slate-200 bg-slate-50 text-slate-500' : (runtimeTest.ok ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-rose-200 bg-rose-50 text-rose-700')">
@@ -5087,6 +5097,23 @@ function cairnApp() {
       if (kind === 'failure') return 'border-rose-200 bg-rose-50 text-rose-600';
       if (kind === 'hint') return 'border-teal-200 bg-teal-50 text-teal-700';
       return 'border-slate-200 bg-slate-100 text-slate-500';
+    },
+
+    auditEventKind(event) {
+      if (!event || typeof event !== 'object' || typeof event.event !== 'string') return '';
+      return event.event;
+    },
+
+    auditEventKindLabel(event) {
+      const labels = { ssrf_candidate: 'SSRF 标记', tool_budget_exhausted: '工具预算耗尽' };
+      return labels[this.auditEventKind(event)] || '';
+    },
+
+    auditEventReasonClass(event) {
+      if (this.auditEventKind(event) === 'ssrf_candidate' && event.decision !== 'block') {
+        return 'text-amber-700 break-words';
+      }
+      return 'text-rose-600 break-words';
     },
 
     auditDecisionLabel(event) {
@@ -7678,6 +7705,24 @@ function cairnApp() {
               { value: 'off', label: '关闭' },
             ]),
             bool('verification.flag_review', 'Flag 人工复核', { on: 'manual', off: 'off' }),
+          ],
+        },
+        {
+          title: 'SSRF 标记',
+          hint: '授权请求里携带的其它主机字面量怎么处置',
+          notes: [
+            '携带目标：连接目的已经授权，但命令参数、URL 查询串或载荷文件里又写了另一个 host；它本身也在授权范围内时不算候选。',
+            '只记录（默认）：任务照常执行，越界的携带目标另写一条 ssrf_candidate 审计，可在「审计」页签回看。',
+            '拦截并拒绝：携带目标越界时该 tool_call 直接失败，同样留下审计。确认只记录模式里的噪声会误导判断、或要在真实目标前硬挡一跳时再切过来。',
+            '忽略：只看连接目的，不再检查携带字面量。这是相对旧版行为的放宽，仅在误报确实阻碍工作时使用。',
+            '硬底线：只记录与拦截并拒绝下，链路本地元数据段 169.254.0.0/16、GCP 元数据主机名以及 scope.protected_hosts（只在 dispatch.yaml 配置，登记本部署自身主机）一律拒绝；忽略会连硬底线一起关闭。',
+          ],
+          fields: [
+            select('scope.ssrf_markers', '标记模式', [
+              { value: 'observe', label: '只记录（默认）' },
+              { value: 'block', label: '拦截并拒绝' },
+              { value: 'off', label: '忽略' },
+            ]),
           ],
         },
         {

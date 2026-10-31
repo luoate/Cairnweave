@@ -31,6 +31,20 @@ afterEach(() => {
   rmSync(directory, { recursive: true, force: true });
 });
 
+type ToolCallHandler = Parameters<PiApiLike["on"]>[1];
+
+function toolCallHandler(extension: (pi: PiApiLike) => void): ToolCallHandler {
+  let handler: ToolCallHandler | null = null;
+  extension({
+    on(_event, registered) {
+      handler = registered;
+      return undefined;
+    },
+  });
+  if (handler === null) throw new Error("the extension registered no tool-call handler");
+  return handler;
+}
+
 function bridge(
   targets: string[] = ["127.0.0.1:8080", "*.example.test", "example.test"],
   overrides: {
@@ -484,5 +498,57 @@ describe("environment-driven bridge", () => {
     expect(() => createHostBridgeExtensionFromEnv()).toThrow("CAIRN_TASK_MAX_TOOL_CALLS");
     process.env[budgetKey] = "12";
     expect(() => createHostBridgeExtensionFromEnv()).not.toThrow();
+  });
+
+  test("enforces the SSRF marker mode carried by the policy", async () => {
+    process.env[key] = JSON.stringify({
+      projectId: "proj-1",
+      taskId: "task-1",
+      workspace,
+      sessionDir,
+      targets: ["127.0.0.1:8080"],
+      ssrfMarkers: "block",
+      protectedHosts: ["cairn-control.internal"],
+    });
+    const handler = toolCallHandler(createHostBridgeExtensionFromEnv());
+
+    const blocked = await handler({
+      toolName: "bash",
+      input: {
+        command: "curl -s -d 'callback=cairn-control.internal' http://127.0.0.1:8080/form",
+      },
+    });
+    expect(blocked?.block).toBe(true);
+    expect(blocked?.reason).toContain("hard floor");
+
+    const carried = await handler({
+      toolName: "bash",
+      input: { command: "curl -s 'http://127.0.0.1:8080/x?cb=http://10.0.0.9/admin'" },
+    });
+    expect(carried?.reason).toContain("SSRF markers are set to block");
+  });
+
+  test("refuses to start on an unrecognized marker mode or host list", () => {
+    process.env[key] = JSON.stringify({
+      projectId: "proj-1",
+      taskId: "task-1",
+      workspace,
+      sessionDir,
+      targets: ["127.0.0.1:8080"],
+      ssrfMarkers: "watch",
+    });
+    expect(() => createHostBridgeExtensionFromEnv()).toThrow("CAIRN_SCOPE_POLICY.ssrfMarkers");
+
+    process.env[key] = JSON.stringify({
+      projectId: "proj-1",
+      taskId: "task-1",
+      workspace,
+      sessionDir,
+      targets: ["127.0.0.1:8080"],
+      protectedHosts: "cairn-control.internal",
+    });
+    expect(() => createHostBridgeExtensionFromEnv()).toThrow(
+      "CAIRN_SCOPE_POLICY.protectedHosts",
+    );
   });
 });

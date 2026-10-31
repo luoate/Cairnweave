@@ -76,6 +76,7 @@ import { join, relative, sep } from "node:path";
 
 import type { AuditTokenRegistry } from "../audit-stream/tokens";
 import type { DispatchConfig, ExecutionMode } from "../config";
+import { protectedTargetHosts } from "../config";
 import { findFlags } from "../flags";
 import {
   VerificationService,
@@ -979,6 +980,11 @@ export class Scheduler {
     const extraEnv = observerEnvironment(prepared.observer);
     if (task.maxToolCalls !== undefined) {
       extraEnv["CAIRN_TASK_MAX_TOOL_CALLS"] = String(task.maxToolCalls);
+    }
+    extraEnv["CAIRN_SSRF_POLICY"] = this.config.scope.ssrfMarkers;
+    const protectedHosts = protectedTargetHosts(this.config);
+    if (protectedHosts.length > 0) {
+      extraEnv["CAIRN_SSRF_PROTECTED_HOSTS"] = protectedHosts.join(",");
     }
     if (this.auditStream !== null) {
       extraEnv["CAIRN_AUDIT_STREAM_URL"] = this.auditStream.url;

@@ -15,7 +15,9 @@
 import {
   appendFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
+  readFileSync,
   realpathSync,
 } from "node:fs";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
@@ -23,7 +25,7 @@ import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path
 import { agentConfigDeniedRoots } from "../agent-config-dir";
 import { CONTAINER_AGENT_CONFIG } from "../runtime/paths";
 import { AuditStreamSender, type AuditStreamSenderOptions } from "./audit-stream";
-import { analyzeCommand } from "./command";
+import { analyzeCommand, carriedFromUrl, carriedTargetsInText } from "./command";
 import {
   endpointAllowed,
   endpointFromUrl,
@@ -31,6 +33,40 @@ import {
   type Endpoint,
   type ParsedTarget,
 } from "./scope-targets";
+
+/**
+ * What to do with a host literal that the worker hands to an authorized destination inside
+ * the request itself (a URL query, a form body, a payload file). The destination, not the
+ * worker, would resolve it.
+ *
+ * - `block`: refuse unless the carried target is itself inside the authorized scope.
+ * - `observe`: record it and let the command run, except for the hard floor.
+ * - `off`: ignore carried targets entirely.
+ */
+export type SsrfMarkerPolicy = "block" | "observe" | "off";
+
+/** Hosts refused under every policy except `off`: cloud metadata and named infrastructure. */
+const HARD_FLOOR_HOSTS = new Set(["metadata.google.internal", "metadata.goog"]);
+/** 169.254.0.0/16, which carries the link-local metadata services. */
+const HARD_FLOOR_LINK_LOCAL_PREFIX = 0xa9fe;
+const MAX_CARRIED_TARGETS = 16;
+const PAYLOAD_MAX_FILE_BYTES = 64 * 1024;
+const PAYLOAD_MAX_TOTAL_BYTES = 256 * 1024;
+const FAIL_CLOSED_REASON =
+  "network command has no verifiable endpoint; refusing under fail-closed scope policy";
+
+/** One SSRF observation, recorded next to the decision it belongs to. */
+interface CarriedNotice {
+  endpoints: Endpoint[];
+  outOfScope: number;
+  policy: SsrfMarkerPolicy;
+  payloadFiles: string[];
+}
+
+interface ActionOutcome {
+  problem: string | null;
+  carried: CarriedNotice | null;
+}
 
 export interface HostBridgeOptions {
   projectId: string;
@@ -59,6 +95,13 @@ export interface HostBridgeOptions {
    * Subagent processes have their own bridge and counter.
    */
   maxToolCalls?: number;
+  /** How to treat carried targets. Defaults to `observe`. */
+  ssrfMarkers?: SsrfMarkerPolicy;
+  /**
+   * Hosts of this deployment's own facilities (control plane, audit stream, scoring
+   * service). A carried target naming one of them is refused even under `observe`.
+   */
+  protectedHosts?: readonly string[];
   /** Test hook. */
   auditPath?: string;
   /** Test hook. */
@@ -71,8 +114,8 @@ export interface BridgeDecision {
   action: string;
   targets: string[];
   reason?: string;
-  /** Set only for the budget-refusal class of decisions. */
-  event?: "tool_budget_exhausted";
+  /** Set for the budget refusal and for the SSRF marker observation line. */
+  event?: "tool_budget_exhausted" | "ssrf_candidate";
 }
 
 type Action =
@@ -138,6 +181,10 @@ export class HostBridge {
   private readonly now: () => Date;
   private readonly auditStream: AuditStreamSender | null;
   private readonly maxToolCalls: number | null;
+  private readonly ssrfMarkers: SsrfMarkerPolicy;
+  private readonly protectedHosts: string[];
+  /** Infrastructure names the analyzer reports even when a body carries no port. */
+  private readonly carriedHostNames: string[];
   private toolCallCount = 0;
 
   constructor(options: HostBridgeOptions) {
@@ -148,6 +195,14 @@ export class HostBridge {
       options.auditPath ?? resolve(options.sessionDir, "audit.jsonl");
     this.now = options.now ?? (() => new Date());
     this.maxToolCalls = options.maxToolCalls ?? null;
+    this.ssrfMarkers = options.ssrfMarkers ?? "observe";
+    this.protectedHosts = (options.protectedHosts ?? []).map((host) =>
+      host.trim().toLowerCase().replace(/\.$/, ""),
+    );
+    this.carriedHostNames =
+      this.ssrfMarkers === "off"
+        ? []
+        : [...new Set([...HARD_FLOOR_HOSTS, ...this.protectedHosts])];
     this.auditStream =
       options.auditStream === undefined
         ? null
@@ -186,6 +241,7 @@ export class HostBridge {
     const tool = toolName.trim().toLowerCase();
     const classification = classify(tool, input, this.workspace);
     let decision: BridgeDecision;
+    let carried: CarriedNotice | null = null;
 
     if (this.maxToolCalls !== null && this.toolCallCount >= this.maxToolCalls) {
       decision = {
@@ -197,86 +253,235 @@ export class HostBridge {
         ),
         event: "tool_budget_exhausted",
       };
-    } else if (this.maxToolCalls !== null) {
-      this.toolCallCount += 1;
-      decision = this.evaluateScoped(tool, classification);
     } else {
-      decision = this.evaluateScoped(tool, classification);
+      if (this.maxToolCalls !== null) this.toolCallCount += 1;
+      const outcome = this.evaluateScoped(tool, classification);
+      decision = outcome.decision;
+      carried = outcome.carried;
     }
 
     const auditError = this.writeAudit(decision, classification.detail);
-    if (auditError !== null) {
-      return {
-        allowed: false,
-        tool,
-        action: decision.action,
-        targets: decision.targets,
-        reason: `audit log is unavailable (${auditError}); failing closed`,
-      };
+    if (auditError === null && carried !== null) {
+      const markerError = this.writeCarriedAudit(decision, classification.detail, carried);
+      return markerError === null
+        ? decision
+        : this.auditUnavailable(tool, decision, markerError);
     }
-    return decision;
+    return auditError === null ? decision : this.auditUnavailable(tool, decision, auditError);
   }
 
-  private evaluateScoped(tool: string, classification: Classification): BridgeDecision {
+  private auditUnavailable(tool: string, decision: BridgeDecision, auditError: string) {
+    return {
+      allowed: false,
+      tool,
+      action: decision.action,
+      targets: decision.targets,
+      reason: `audit log is unavailable (${auditError}); failing closed`,
+    };
+  }
+
+  private evaluateScoped(
+    tool: string,
+    classification: Classification,
+  ): { decision: BridgeDecision; carried: CarriedNotice | null } {
     if (this.invalidTargets.length > 0) {
-      return this.decision(
-        false,
-        tool,
-        classification,
-        `task scope contains invalid target(s): ${this.invalidTargets
-          .map((entry) => `${entry.raw} (${entry.reason})`)
-          .join(", ")}`,
-      );
+      return {
+        decision: this.decision(
+          false,
+          tool,
+          classification,
+          `task scope contains invalid target(s): ${this.invalidTargets
+            .map((entry) => `${entry.raw} (${entry.reason})`)
+            .join(", ")}`,
+        ),
+        carried: null,
+      };
     }
     if (this.targets.length === 0) {
-      return this.decision(
-        false,
-        tool,
-        classification,
-        "task scope has no usable targets; failing closed",
-      );
+      return {
+        decision: this.decision(
+          false,
+          tool,
+          classification,
+          "task scope has no usable targets; failing closed",
+        ),
+        carried: null,
+      };
     }
     return this.evaluate(tool, classification);
   }
 
-  private evaluate(tool: string, classification: Classification): BridgeDecision {
+  private evaluate(
+    tool: string,
+    classification: Classification,
+  ): { decision: BridgeDecision; carried: CarriedNotice | null } {
+    let notice: CarriedNotice | null = null;
     for (const action of classification.actions) {
-      const problem = this.actionProblem(action);
-      if (problem !== null) {
-        return this.decision(false, tool, classification, problem);
+      const outcome = this.actionOutcome(action);
+      if (outcome.carried !== null) notice = outcome.carried;
+      if (outcome.problem !== null) {
+        return {
+          decision: this.decision(false, tool, classification, outcome.problem),
+          carried: notice,
+        };
       }
     }
-    return this.decision(true, tool, classification);
+    return { decision: this.decision(true, tool, classification), carried: notice };
   }
 
-  private actionProblem(action: Action): string | null {
+  private actionOutcome(action: Action): ActionOutcome {
     switch (action.kind) {
       case "invalid":
-        return action.reason;
+        return { problem: action.reason, carried: null };
       case "local":
-        return null;
-      case "file":
-        return this.fileProblem(action.mode, action.path);
+        return { problem: null, carried: null };
+      case "file": {
+        const problem = this.fileProblem(action.mode, action.path);
+        return { problem, carried: null };
+      }
       case "http": {
         const endpoint = endpointFromUrl(action.url);
-        if (endpoint === null) return `"${action.url}" is not a valid HTTP(S) URL`;
-        return this.endpointProblem(endpoint);
+        if (endpoint === null) {
+          return { problem: `"${action.url}" is not a valid HTTP(S) URL`, carried: null };
+        }
+        const problem = this.endpointProblem(endpoint);
+        if (problem !== null) return { problem, carried: null };
+        return this.carriedOutcome(carriedFromUrl(action.url, this.carriedHostNames), []);
       }
       case "bash": {
-        const analysis = analyzeCommand(action.command);
+        const analysis = analyzeCommand(action.command, this.carriedHostNames);
         if (analysis.unverifiable) {
-          return "network command has no verifiable endpoint; refusing under fail-closed scope policy";
+          return { problem: FAIL_CLOSED_REASON, carried: null };
         }
         for (const endpoint of analysis.endpoints) {
           const problem = this.endpointProblem(endpoint);
-          if (problem !== null) return problem;
+          if (problem !== null) return { problem, carried: null };
         }
         if (analysis.networkIntent && analysis.endpoints.length === 0) {
-          return "network command has no verifiable endpoint; refusing under fail-closed scope policy";
+          return { problem: FAIL_CLOSED_REASON, carried: null };
         }
-        return null;
+        const payload = this.readPayloadTargets(analysis.payloadRefs);
+        return this.carriedOutcome(
+          dedupeCarried([...analysis.carried, ...payload.endpoints]),
+          payload.files,
+        );
       }
     }
+  }
+
+  /**
+   * Carried targets never widen the scope of the destination check above. `block` refuses
+   * one that is not itself authorized, `observe` records it, and both still refuse a target
+   * that names this deployment's own facilities or a link-local metadata address.
+   *
+   * `off` skips all of it. Before M33 these literals were checked as destinations, so
+   * choosing `off` is a deliberate relaxation, not a return to the old behaviour.
+   */
+  private carriedOutcome(
+    carried: readonly Endpoint[],
+    payloadFiles: readonly string[],
+  ): ActionOutcome {
+    if (this.ssrfMarkers === "off") return { problem: null, carried: null };
+    if (carried.length === 0) return { problem: null, carried: null };
+    const notice: CarriedNotice = {
+      endpoints: [...carried],
+      outOfScope: carried.filter((endpoint) => !endpointAllowed(endpoint, this.targets)).length,
+      policy: this.ssrfMarkers,
+      payloadFiles: [...payloadFiles],
+    };
+    for (const endpoint of carried) {
+      if (this.isHardFloor(endpoint)) {
+        return {
+          problem: `carried target "${endpoint.raw}" is protected infrastructure; refused under the SSRF hard floor`,
+          carried: notice,
+        };
+      }
+    }
+    if (this.ssrfMarkers === "block") {
+      const refused = carried.find((endpoint) => !endpointAllowed(endpoint, this.targets));
+      if (refused !== undefined) {
+        return {
+          problem: `carried target "${refused.raw}" inside an authorized request is outside the scope (SSRF markers are set to block)`,
+          carried: notice,
+        };
+      }
+    }
+    // A carried literal that is itself authorized is not a hop worth reporting.
+    if (notice.outOfScope === 0) return { problem: null, carried: null };
+    return { problem: null, carried: notice };
+  }
+
+  private isHardFloor(endpoint: Endpoint): boolean {
+    const host = endpoint.host ?? "";
+    if (host === "" || endpoint.cidr !== undefined) return false;
+    if (HARD_FLOOR_HOSTS.has(host)) return true;
+    const octets = host.split(".");
+    if (octets.length === 4 && Number(octets[0]) * 256 + Number(octets[1]) === HARD_FLOOR_LINK_LOCAL_PREFIX) {
+      return true;
+    }
+    return this.protectedHosts.some(
+      (protectedHost) => host === protectedHost || host.endsWith(`.${protectedHost}`),
+    );
+  }
+
+  /**
+   * Payload files are the declared channel for a target that only the receiving server
+   * resolves. Reads are bounded and workspace-confined, so a hostile workspace cannot make
+   * the gate open files or stall: absolute paths, symlinked parents, binaries and oversized
+   * files are skipped, never refused.
+   */
+  private readPayloadTargets(refs: readonly string[]): { endpoints: Endpoint[]; files: string[] } {
+    const endpoints: Endpoint[] = [];
+    const files: string[] = [];
+    if (this.ssrfMarkers === "off" || refs.length === 0) return { endpoints, files };
+    let totalBytes = 0;
+    for (const ref of refs) {
+      if (endpoints.length >= MAX_CARRIED_TARGETS || totalBytes >= PAYLOAD_MAX_TOTAL_BYTES) break;
+      const text = this.readPayloadFile(ref, PAYLOAD_MAX_TOTAL_BYTES - totalBytes);
+      if (text === null) continue;
+      totalBytes += text.bufferedLength;
+      files.push(ref);
+      for (const endpoint of text.targets) {
+        if (endpoints.length >= MAX_CARRIED_TARGETS) break;
+        endpoints.push(endpoint);
+      }
+    }
+    return { endpoints, files };
+  }
+
+  private readPayloadFile(
+    ref: string,
+    remainingBytes: number,
+  ): { targets: Endpoint[]; bufferedLength: number } | null {
+    const raw = ref.replace(/^@/, "").trim();
+    if (raw === "" || raw === "-" || raw.includes("\0") || isAbsolute(raw) || raw.includes("\\") || raw.startsWith("/")) {
+      return null;
+    }
+    const candidate = canonicalPath(resolve(this.workspace, raw));
+    if (!isUnder(this.workspace, candidate)) return null;
+    const stats = lstatSync(candidate, { throwIfNoEntry: false });
+    if (stats === undefined || !stats.isFile() || stats.isSymbolicLink()) return null;
+    const limit = Math.min(PAYLOAD_MAX_FILE_BYTES, remainingBytes);
+    if (stats.size === 0 || stats.size > limit) return null;
+    let real: string;
+    try {
+      real = canonicalPath(realpathSync(candidate));
+    } catch {
+      return null;
+    }
+    if (!isUnder(this.workspace, real)) return null;
+    let buffer: Buffer;
+    try {
+      buffer = readFileSync(candidate);
+    } catch {
+      return null;
+    }
+    if (buffer.includes(0)) return null;
+    const text = buffer.toString("utf8");
+    return {
+      targets: carriedTargetsInText(text, this.carriedHostNames),
+      bufferedLength: buffer.length,
+    };
   }
 
   private endpointProblem(endpoint: Endpoint): string | null {
@@ -332,7 +537,7 @@ export class HostBridge {
   }
 
   private writeAudit(decision: BridgeDecision, detail: string): string | null {
-    const entry = {
+    return this.appendAudit({
       ts: this.now().toISOString(),
       task_id: this.taskId,
       project_id: this.projectId,
@@ -343,7 +548,37 @@ export class HostBridge {
       reason: decision.reason ?? null,
       detail: detail.slice(0, 400),
       ...(decision.event === undefined ? {} : { event: decision.event }),
-    };
+    });
+  }
+
+  /**
+   * One extra line per action that carried a target inside an authorized request, so an
+   * operator can see the shape of a server-side hop even when the policy let it through.
+   */
+  private writeCarriedAudit(
+    decision: BridgeDecision,
+    detail: string,
+    notice: CarriedNotice,
+  ): string | null {
+    const files = notice.payloadFiles.length;
+    return this.appendAudit({
+      ts: this.now().toISOString(),
+      task_id: this.taskId,
+      project_id: this.projectId,
+      tool: decision.tool,
+      action: decision.action,
+      targets: notice.endpoints.map((endpoint) => endpoint.raw),
+      decision: decision.allowed ? "allow" : "block",
+      reason:
+        `SSRF markers (${notice.policy}): ${notice.endpoints.length} carried target(s), ` +
+        `${notice.outOfScope} outside the authorized scope` +
+        (files === 0 ? "" : `, ${files} payload file(s) read`),
+      detail: detail.slice(0, 400),
+      event: "ssrf_candidate",
+    });
+  }
+
+  private appendAudit(entry: Record<string, unknown>): string | null {
     try {
       mkdirSync(dirname(this.auditPath), { recursive: true });
       appendFileSync(this.auditPath, `${JSON.stringify(entry)}\n`, "utf8");
@@ -485,4 +720,24 @@ export function isUnder(root: string, target: string): boolean {
 
 function normalizeForCompare(path: string): string {
   return process.platform === "win32" ? path.toLowerCase() : path;
+}
+
+/**
+ * The same host can reach the gate through several channels — a query parameter and the
+ * payload file that mirrors it — so one refusal names it once.
+ */
+function dedupeCarried(endpoints: readonly Endpoint[]): Endpoint[] {
+  const seen = new Set<string>();
+  const unique: Endpoint[] = [];
+  for (const endpoint of endpoints) {
+    if (unique.length >= MAX_CARRIED_TARGETS) break;
+    const key =
+      endpoint.cidr === undefined
+        ? `host:${endpoint.host ?? ""}:${endpoint.port ?? ""}`
+        : `cidr:${endpoint.cidr.base}/${endpoint.cidr.prefix}:${endpoint.port ?? ""}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(endpoint);
+  }
+  return unique;
 }

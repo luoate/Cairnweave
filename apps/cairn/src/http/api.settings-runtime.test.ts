@@ -173,6 +173,37 @@ describe("PUT /settings/runtime", () => {
     ).toEqual({ verification: { flag_review: "off" } });
   });
 
+  test("switches the SSRF marker mode but keeps protected hosts read-only", async () => {
+    const api = makeApi();
+
+    const response = await call(api, "PUT", "/settings/runtime", {
+      scope: { ssrf_markers: "block" },
+    });
+    expect(response.status).toBe(200);
+    const view = (await response.json()) as {
+      editable: { scope: { ssrf_markers: string } };
+      overrides: string[];
+    };
+    expect(view.editable.scope.ssrf_markers).toBe("block");
+    expect(view.overrides).toEqual(["scope.ssrf_markers"]);
+    expect(config.scope.ssrfMarkers).toBe("block");
+
+    const unknown = await call(api, "PUT", "/settings/runtime", {
+      scope: { ssrf_markers: "watch" },
+    });
+    expect(unknown.status).toBe(400);
+    expect(config.scope.ssrfMarkers).toBe("block");
+
+    const protectedHosts = await call(api, "PUT", "/settings/runtime", {
+      scope: { protected_hosts: ["cairn-control.internal"] },
+    });
+    expect(protectedHosts.status).toBe(400);
+    expect(((await protectedHosts.json()) as { detail: string }).detail).toBe(
+      "overrides.scope has unsupported key: protected_hosts",
+    );
+    expect(config.scope.protectedHosts).toEqual([]);
+  });
+
   test("switches execution to container and persists the override", async () => {
     const response = await call(makeApi(), "PUT", "/settings/runtime", {
       runtime: { execution: "container" },

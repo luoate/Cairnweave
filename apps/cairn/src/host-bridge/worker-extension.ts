@@ -8,7 +8,7 @@
  * without a scope gate.
  */
 
-import { HostBridge } from "./bridge";
+import { HostBridge, type SsrfMarkerPolicy } from "./bridge";
 import { hostBridgeExtension, type PiApiLike } from "./pi-extension";
 
 interface ScopePolicyEnvelope {
@@ -18,6 +18,10 @@ interface ScopePolicyEnvelope {
   sessionDir: string;
   targets: string[];
   artifactDir?: string;
+  /** scope.ssrf_markers; the bridge falls back to observe when absent. */
+  ssrfMarkers?: SsrfMarkerPolicy;
+  /** scope.protected_hosts plus this deployment's own named hosts. */
+  protectedHosts?: string[];
 }
 
 interface AuditStreamEnvelope {
@@ -68,6 +72,10 @@ function bridgeFromEnv(): HostBridge {
     sessionDir: policy.sessionDir,
     scopeTargets: policy.targets,
     ...(policy.artifactDir === undefined ? {} : { artifactDir: policy.artifactDir }),
+    ...(policy.ssrfMarkers === undefined ? {} : { ssrfMarkers: policy.ssrfMarkers }),
+    ...(policy.protectedHosts === undefined || policy.protectedHosts.length === 0
+      ? {}
+      : { protectedHosts: policy.protectedHosts }),
     ...(protectedWriteRoots.length === 0 ? {} : { protectedWriteRoots }),
     ...(stream === undefined ? {} : { auditStream: stream }),
     ...(maxToolCalls === undefined ? {} : { maxToolCalls }),
@@ -148,6 +156,21 @@ function parsePolicy(raw: string | undefined): ScopePolicyEnvelope {
       throw new Error('CAIRN_SCOPE_POLICY.artifactDir must be a relative path under "artifacts/"');
     }
   }
+  const ssrfMarkers = record["ssrfMarkers"];
+  if (ssrfMarkers !== undefined) {
+    if (ssrfMarkers !== "block" && ssrfMarkers !== "observe" && ssrfMarkers !== "off") {
+      throw new Error("CAIRN_SCOPE_POLICY.ssrfMarkers must be block, observe or off");
+    }
+  }
+  const protectedHosts = record["protectedHosts"];
+  if (protectedHosts !== undefined) {
+    if (
+      !Array.isArray(protectedHosts) ||
+      protectedHosts.some((host) => typeof host !== "string" || host.trim() === "")
+    ) {
+      throw new Error("CAIRN_SCOPE_POLICY.protectedHosts must be an array of hostnames");
+    }
+  }
   return {
     projectId,
     taskId,
@@ -155,6 +178,8 @@ function parsePolicy(raw: string | undefined): ScopePolicyEnvelope {
     sessionDir,
     targets: targets as string[],
     ...(artifactDir === undefined ? {} : { artifactDir }),
+    ...(ssrfMarkers === undefined ? {} : { ssrfMarkers: ssrfMarkers as SsrfMarkerPolicy }),
+    ...(protectedHosts === undefined ? {} : { protectedHosts: protectedHosts as string[] }),
   };
 }
 

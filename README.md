@@ -235,6 +235,11 @@ API key 只写不读（响应只回掩码），写入 `auth.json` 并按上游 S
 - **Host Bridge**：从 `bash` 命令提取 URL / `/dev/tcp` / IPv4 / IPv6 / CIDR / `host:port` 等端点，
   主机名按字面匹配（不做 DNS）；文件读写按 realpath + 词法双重判断，阻止符号链接逃逸；
   未知工具默认拒绝；审计不可写时同样拒绝。
+- **SSRF 标记**：授权请求内部携带的其它主机字面量（查询串、表单体、`@payload` 文件）与连接
+  目的分开判定。`scope.ssrf_markers` 默认 `observe`（放行并写 `ssrf_candidate` 审计行，UI
+  标成琥珀色徽标），可切 `block`（越界携带目标直接拒绝）或 `off`（忽略携带目标，是放宽）。
+  链路本地元数据段与本部署自身主机名在 `observe` / `block` 下都拒绝；`protected_hosts` 在
+  dispatch.yaml 登记。
 - **策略级，不是内核级**：Host Bridge 只看模型工具调用；`bash` 直连网络或写共享工作区仍需
   容器隔离（网络命名空间、不挂 socket、只读配置）来兜底。两者要同时启用。
 - **无内建认证**：UI 与 API 会直接修改控制面数据，默认只绑定 `127.0.0.1`；需要远程访问时

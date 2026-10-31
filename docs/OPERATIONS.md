@@ -63,8 +63,25 @@ worker 启动真实 Solver 前会把 `task.scope.targets` 与工作区/会话路
   指定的目录）始终拒绝；按 realpath + 词法双重判断，阻止符号链接逃逸。
 - 未知工具默认 **拒绝**；只有明确列出的 worker 本地工具（subagent、document_finding、
   challenge 工具等）放行，`subagent` 的会话仍受同一闸门约束。
+- **SSRF 标记（M33）**：授权请求*内部*携带的其它主机字面量（URL 查询串 / 片段、`--data`
+  表单体、`@payload` 引用的文件正文）与连接目的分开判定，`scope.ssrf_markers` 决定处置：
+  - `observe`（默认）：命令照常执行，越界的携带目标在同一次调用后多写一行
+    `event:"ssrf_candidate"` 审计；UI「审计」页签把它标成琥珀色「SSRF 标记」徽标，判定与
+    拒绝分开看。事后回溯用这条线，不打断任务。
+  - `block`：携带目标越界时该 tool_call 直接失败并同样留痕。观察到噪声会误导判断、或要在
+    真实目标前硬挡一跳时切这里。
+  - `off`：只看连接目的，不检查携带字面量。这是相对 M33 **之前**的放宽（旧版把携带字面量
+    当连接目的检查），只在误报确实阻碍工作时使用。
+  硬底线与模式无关：链路本地 `169.254.0.0/16`、GCP 元数据主机名、`scope.protected_hosts`
+  以及本部署 `server` / `audit_stream.url` 里的命名主机，在 `observe` 与 `block` 下都拒绝；
+  把控制面自身地址登记进 `protected_hosts` 是不改代码的防护手段（IP 字面量不参与自动登记，
+  本机 `127.0.0.1` 通常同时是靶机）。载荷文件只在 `observe` / `block` 下读取，且限定工作区
+  内的文本（单文件 64 KiB、总计 256 KiB、最多 16 个目标）；绝对路径、symlink、二进制一律
+  **跳过**而不是拒绝。三种模式在设置弹窗「运行配置 → SSRF 标记」切换，下一个任务生效；
+  `protected_hosts` 只在 dispatch.yaml 配置。
 - 每次 allow/block 都追加到 `<sessionDir>/audit.jsonl`（task_id、project_id、tool、
-  action、targets、decision、reason、detail）。审计不可写时同样拒绝。
+  action、targets、decision、reason、detail）。审计不可写时同样拒绝。M33 的携带目标观察是
+  同一次调用后的第二行，靠 `event:"ssrf_candidate"` 区分，不改表结构。
 - **边界**：这是模型工具调用的策略闸门，不是针对任意代码的沙箱。模型若通过未识别的
   程序发起网络请求，Host Bridge 看不到；容器隔离（网络命名空间、不挂 socket、只读配置）
   才是内核边界。两者必须同时启用。
@@ -382,6 +399,8 @@ provider 与密钥，模型页签负责拉取/手工录入、设为默认、测�
 `runtime.execution` 也可在这里切换（local / container），但要求调度器空闲且本机有
 Docker；切换在任务全部结束后重建 runtime 后端，不会中断在跑的任务。下拉旁的「测试有效性」
 会在保存前实际探测所选模式（Bun/工作区，或 Docker/镜像/试启动），结果逐项显示在弹窗里。
+「SSRF 标记」组（M33）在下拉下面直接把 `observe` / `block` / `off` 的区别写成说明；切换同样
+立即写入覆盖，但只对下一个任务的 worker 生效——已经在跑的 worker 沿用启动时注入的策略。
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |

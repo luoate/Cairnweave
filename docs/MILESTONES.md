@@ -1,12 +1,13 @@
 # 里程碑与验证记录
 
-本文件保留 M1–M32f 的实现记录、测试与浏览器验证清单、与 Python Cairn 的已知差异、
+本文件保留 M1–M33 的实现记录、测试与浏览器验证清单、与 Python Cairn 的已知差异、
 里程碑表以及与 Phase 0 的关系。产品概览、快速开始与 API 概览见 [README](../README.md)。
 
 ## 实现记录
 
-状态：**M32f（已判假 Flag 的转义变体不再回到横幅）**；M0–M4、M5a–M5c、
-M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M16b、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e、M18f、M18g、M19a、M19b、M20a、M20b、M21、M22、M23、M24、M24b、M25、M26、M26b、M27、M28、M29、M30、M31、M32、M32b、M32c、M32f 的计划项全部完成。Phase 1 的
+状态：**M33（授权请求里携带的其它主机字面量拆成 primary / carried，`scope.ssrf_markers`
+三档策略，默认只记录）**；M0–M4、M5a–M5c、
+M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M16b、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e、M18f、M18g、M19a、M19b、M20a、M20b、M21、M22、M23、M24、M24b、M25、M26、M26b、M27、M28、M29、M30、M31、M32、M32b、M32c、M32f、M33a、M33b、M33c、M33d 的计划项全部完成。Phase 1 的
 “本地看板 + Observer 提案 + 证据门 + 单一写图者”闭环已具备；Observer 复盘自 M22 起默认
 开启（只读复盘，不改任务结果），提案自 M23 起默认 `dry_run`（完整校验并记录，不写图）。
 Phase 2 的触发持久化、意图优先级/预算、单项目 token/成本与并发配额、只读慢层观测、逐 Fact
@@ -1341,6 +1342,30 @@ M16b 增加（第二个模型接入与真实 A/B）：
   拼写。`api.flag.test.ts` 新增分类器用例（转义粘连、真前缀、自定义格式三种）与一个端到端
   回归：同一工作区先扫出 `flag{…}`，带上 `rejectedFlags` 再扫则 `found: false`、
   `candidates` 为空、`placeholder_suspect` 为假。
+- **授权请求里携带的其它主机不再等于授权（M33）**：起因是操作员问「bash scope guard 拦截含
+  内网字面量的脚本，需要 SSRF 时是不是也过不去」。旧分析器只看命令字符串里出现过的地址，
+  把两种完全不同的意图折成一个判断：「我们下一步要连它」和「一个已经授权的请求的参数里写了
+  它」。M33a 把 `analyzeCommand` 的端点拆成 `primary`（连接目的，继续按 scope 硬拦）与
+  `carried`（URL 查询串/片段、`--data`/`-F` 正文、`@payload` 文件里的 host 字面量），并且
+  保留「有网络意图但提不出 primary 就拒绝」，所以脚本侧混淆目标字符串继续 fail-closed——
+  M33 的修法是让携带目标可见，不是让它绕过去。M33b 在 Bridge 上加 `scope.ssrf_markers`
+  三档策略：`observe` 照常放行、越界的携带目标另写一条 `event: "ssrf_candidate"` 审计；
+  `block` 让该 tool_call 直接失败；`off` 连检查一起关。`observe` 与 `block` 共用硬底线：链路
+  本地元数据段 `169.254.0.0/16`、GCP 元数据主机名、`scope.protected_hosts` 与从 `server` /
+  `audit_stream.url` 派生的控制面主机名（IP 字面量不参与，避免把目标 IP 误当自身设施）。
+  携带目标本身在授权范围内时不算候选。载荷文件只在工作区内读取并把其中的 host 变成*已声明*
+  的候选，工作区外与二进制载荷只跳过不拒。M33c 把开关接进五处触点：dispatch.yaml 新增
+  `scope` 段（`ssrf_markers` 默认 **observe**，按用户指令而非方案推荐的 block；
+  `protected_hosts` 登记本部署自身主机、只读）、运行覆盖白名单只放 `scope.ssrf_markers`、
+  scheduler 用 `CAIRN_SSRF_POLICY` / `CAIRN_SSRF_PROTECTED_HOSTS` 传给 worker、solver 折进
+  `CAIRN_SCOPE_POLICY`（任务 JSON 契约与 golden 不变）、设置弹窗新增「SSRF 标记」组并把三种
+  模式的区别写在组内；「审计」页签给 `ssrf_candidate` 行加琥珀色徽标，理由按「记录」与「拒绝」
+  分色。审计走既有 `audit_events.event` JSON 信封，无库迁移。
+  `apps/cairn/src/host-bridge/command.test.ts`（23 例）与 `bridge.ssrf.test.ts`（20 例）钉住
+  来源拆分、三种策略、硬底线、载荷边界；`config.test.ts` 44 例覆盖默认值与 `protected_hosts`
+  的裸主机名校验；`api.ui.test.ts` 89 例覆盖开关、每种模式的说明文案与审计徽标。
+  已知盲区不变：编码形式的携带目标（十进制/十六进制 IP、非 IP 主机名作参数）任何模式下都提不出来，
+  `observe` 并不扩大也不缩小这个盲区；模型用未识别的程序直连网络仍要由容器隔离兜底。
 
 golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定时钟、`TZ=UTC`）。
 重新生成方法与约束见 `docs/PORTING.md`。
@@ -1432,6 +1457,11 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M32b ✅ | Flag 复核改为后台进行：删掉 `tryDispatch` 的 pending 门禁，但保留完成门禁——`reviewCapturedFlags` 返回项目是否仍有 pending，reason / bootstrap 的完成声明在判定前不落地（reason 释放租约并按 `success` 记账，避免把“等判定”写成失败退避；bootstrap 保留已产出的 Fact 并保持 active），explore / conclude / reason / bootstrap 照常派发；判定后 Hint 触发下一次 reason，完成声明重新生效。判定路由对已结束项目只记录结果：`real_done` 不再调用 `completeProject`（active 且无 Fact 才 409），`real_more` / `fake` 仅在 active 时追加 Hint；UI 复核条文案改为“项目继续探索，判定前不会结束”，Toast 对已结束项目注明“仅记录判定”；调度器测试改写为“继续派发、完成被推迟、判定后完成”，新增 `flag-bootstrap-worker.ts` 夹具覆盖 proj_021 形状（bootstrap 一次性抓 flag 并声明完成），HTTP 保留已完成项目的 `real_done`、无 Fact 容忍与不追加 Hint 用例 | 864 passed / 83 files（2026-10-31）；`bun run check`（tsc + 全量）通过；`scheduler/flag-review.test.ts` 断言 pending 期间 run 数继续增长、项目保持 active、日志含 `completion deferred … operator flag review pending`，`fake` / `real_more` 判定后才 completed；bootstrap 用例断言 bootstrap 与后续 reason 的完成声明都被推迟、`fake` + operator Hint 后才完成；`api.flag-review.test.ts` 覆盖已完成项目 `real_done` 只记录判定（完成 Intent 仍为 1 条且 worker 为 `cairn-worker`）、无 Fact 也返回 200、`fake` 不追加 Hint；浏览器实测临时 DB 起 `serve --port 8033`：复核条显示“检测到以下 Flag，项目继续探索，判定前不会结束。请判断：”，DOM `.click()` 判「假 · 继续探索」后项目保持 active、`flag_reviews.rejected` 记入该值并写入 operator Hint，控制台无消息（应用内浏览器仍为隐藏态，截图不可用，改用页面内 DOM 查询与 `.click()`）；同一提交早先在 8031 端口的验证继续覆盖「真 · 停止」与已完成项目的判定记录 |
 | M32c ✅ | Flag 复核开关进入运行配置：`verification.flag_review` 加入运行期覆盖白名单（`manual` / `off`），`GET /settings/runtime` 的 `editable.verification` 暴露该值；设置弹窗「运行与执行 → 图切片与校验」新增「Flag 人工复核」checkbox（勾选写 `manual`、取消写 `off`，默认勾选），布尔控件通过 `on`/`off` 映射把配置枚举折成勾选状态，保存走最小 patch 与 SQLite 覆盖，调度器在下一个结果落图时按新值决定是否登记 | 867 passed / 83 files（2026-10-31）；`bun run check`（tsc + 全量）通过；`config-overrides.test.ts` 覆盖开关覆盖/重置与非法枚举，`api.settings-runtime.test.ts` 覆盖 PUT 读写与落库，`api.ui.test.ts` 覆盖 checkbox 映射与最小 patch；浏览器实测临时 DB 起 `serve --port 8035`：默认勾选，取消保存后 `editable.verification.flag_review` 为 `off`、`overrides:["verification.flag_review"]`、SQLite 落 `{"verification":{"flag_review":"off"}}`，重启服务后覆盖仍重放；再次勾选保存后覆盖清空、Toast「运行配置已恢复默认」，控制台无消息（应用内浏览器仍为隐藏态，用页面内 DOM 查询与事件派发验证） |
 | M32f ✅ | 已判假 Flag 的转义变体不再回到横幅：proj_023 里操作员判过「假」的值在没有点击的情况下重新挂上绿色横幅，拼写是 `nflag{…}`。`classifyFlags` 的前缀字符类 `([A-Za-z0-9_-]{1,64})` 贪婪吞掉工件中 JSON 转义正文 `\n` 的尾字母，把 `flag{…}` 读成 `nflag{…}`，而 `rankMatches` 的 rejected 过滤用 `Set.has` 精确比较，变体因此漏网；扫描文件数从 23 涨到 131 让工作区缓存指纹失效，横幅就自己回来了。修复在共享分类器：仅当匹配紧跟反斜杠、被吞的首字母属于转义尾 `n r t b f v u x 0`、剥掉这一个字符后仍是合法前缀时才剥，`\npicoCTF{…}` 保留 `picoCTF`、非反斜杠后的 `nflag{…}` 自定义格式保留自己的拼写 | 869 passed / 83 files（2026-10-31）；`bun run check`（tsc + 全量）通过；`api.flag.test.ts` 新增分类器三例（转义粘连 / 真前缀 / 自定义格式）与 `operator-rejected flag filtering` 端到端回归（同工作区带上 `rejectedFlags` 后 `found:false`、`candidates` 为空、`placeholder_suspect` 为假）；对真实 proj_023 工作区（165 个索引工件）回放 `collectProjectFlag`：修复后不带过滤扫到的是 `flag{…}` 原文，与库中被判假的那条字符串逐字一致，带上 rejected 判定则为 `found=false flag=null source=null`、候选为空、`scanned 176 / truncated=false` |
+
+| M33a ✅ | Host Bridge 端点来源拆分：`scope-targets.ts` 的 `Endpoint` 增加 `role?: "primary" \| "carried"`（缺省等于 primary，既有 scope 匹配语义不变）；`command.ts` 把 `analyzeCommand` 拆成两个通道——连接目的（URL 主机、`/dev/tcp`、IPv4/IPv6、CIDR、`user@host`、`-p`/`--ports=`/`nc` 位置参数）仍是 primary，授权请求内部携带的 host 字面量走 carried（URL 查询串与片段并解百分号转义、`--data`/`-F` 等正文取值、`@payload` 文件引用），新增 `namedHosts` 通道让「既无 scheme 也无端口」的裸主机名只按调用者点名的形式识别（避开 `/srv/name.cfg` 之类误报），carried 与载荷引用各有上界（16 个端点 / 8 个引用）防止单条命令撑大审计条目。**保留** fail-closed：有网络意图却提不出 primary 仍然拒绝，脚本侧混淆目标字符串过不去 | 43 passed（`command.test.ts` 23 例 + `bridge.ssrf.test.ts` 20 例，`bun test apps/cairn/src/host-bridge`）；全量与文档记在 M33d；`command.test.ts` 钉住 primary/carried 归属、同主机不重复上报、外层扫描端口不污染 carried、正文里的文件式取值不误判、一个 URL 一个条目、列表上界、点名主机只认字面出现过的 |
+| M33b ✅ | Bridge 侧策略与硬底线：`scope.ssrf_markers` = `block` / `observe` / `off`（默认 `observe`）；携带目标本身在授权范围内不算候选。`observe` 放行但把每个越界携带目标另写一行 `event: "ssrf_candidate"` 审计（排在它所隶属的决策行之后），`block` 让该 tool_call 直接失败并同样留审计，`off` 完全不检查。`observe` / `block` 共用硬底线：链路本地元数据段 `169.254.0.0/16`（前缀常量 `0xa9fe`）、`metadata.google.internal` / `metadata.goog`、`scope.protected_hosts` 与从 `server` / `audit_stream.url` 派生的控制面主机名（纯 IP 字面量不参与），主机名只在标签边界匹配；载荷文件只读工作区内的文本文件（单文件 64 KiB、合计 256 KiB），越界与二进制跳过而不拒 | `bridge.ssrf.test.ts` 20 例：三种策略的放行/拒绝与审计顺序、硬底线（链路本地、命名元数据、受保护主机、无 scheme 无端口的裸名）、`http` 工具同样生效、范围内的携带目标不自标、载荷四类边界；`bridge.test.ts` 另加 2 例断言 `CAIRN_SCOPE_POLICY.ssrfMarkers` / `protectedHosts` 生效与非法值拒绝。无库迁移：`audit_events.event` 是哈希链里的 JSON 信封，摄入只过滤空行/非对象/超长行，不按 `event` 取值 |
+| M33c ✅ | 配置、传输与开关：dispatch.yaml 新增 `scope` 段（`ssrf_markers` 默认 **observe**、`protected_hosts` 只接受裸主机名且只读）；`EDITABLE_OVERRIDE_KEYS.scope` 只放 `ssrf_markers`，`editable.scope` 出现在 `GET /settings/runtime`；scheduler `startProcess` 用 `CAIRN_SSRF_POLICY` / `CAIRN_SSRF_PROTECTED_HOSTS` 传递，solver 的 `ssrfMarkerFields` 折进 `CAIRN_SCOPE_POLICY`（任务 JSON 契约与 Python golden 不变，未识别的模式原样交给策略解析器，会话拒绝启动）；worker-extension 校验两字段。设置弹窗新增「SSRF 标记」组：`observe`（只记录，默认）/ `block`（拦截并拒绝）/ `off`（忽略）三档下拉，组内 `notes` 逐条解释携带目标定义、三档差别、硬底线以及 `off` 是相对旧行为的放宽；「审计」页签给 `ssrf_candidate` 行加琥珀色「SSRF 标记」徽标，理由按记录（琥珀）与拒绝（玫红）分色 | `api.ui.test.ts` 新增 3 例（开关最小 patch、三种模式说明文案都在 DOM 里、审计行徽标与理由配色）、`api.settings-runtime.test.ts` 1 例（PUT 读写 + `protected_hosts` 400）、`config-overrides.test.ts` 2 例、`config.test.ts` 7 例、`breachweave.test.ts` 3 例；`runtimeGroups()` 的组新增 `notes`，渲染器加一个 `x-show="group.notes"` 列表，`bun run ui:css` 无产物变化（新样式已在既有的预编译产物里） |
+| M33d ✅ | 收尾：调度器→worker 那一跳补集成测试（`scheduler/testdata/ssrf-env-worker.ts` 把收到的 `CAIRN_SSRF_POLICY` / `CAIRN_SSRF_PROTECTED_HOSTS` 写成一行 `ssrf_candidate` 审计，再委托真实 worker，测试从控制面账本里读回该值，钉住环境变量名与 `protectedTargetHosts` 的小写+排序结果）；README 安全模型、`docs/ARCHITECTURE.md`（端点来源与 SSRF 标记、审计、§12 边界）、`docs/CONFIG.md`（`scope` 段、生效时机、只读项、前端行为）、`docs/CONTRACT.md`（§5 示例行与摄入规则）、`docs/OPERATIONS.md`（Host Bridge 子项与「只影响下一个 worker」）同步；版本 `0.55.0-m33` | 931 passed / 85 files（2026-10-31）；`bun run check`（tsc + 全量）通过（本轮唯一新增的 tsc 失败是 `config.test.ts` 里 `"block"\|"observe"\|"off"` 数组需要 `as const`）；浏览器实测临时 DB + 临时 dispatch.yaml 起 `serve --config <临时配置> --port 8036`（工作区也指向临时目录；项目建成无 scope，日志如实 `[scheduler] skip project=proj_001 because it has no authorized scope`，全程不派发任何任务）：「SSRF 标记」组的下拉为 `observe,block,off` 且默认 `observe`，五条说明逐项可见；切到 `block` 后 `runtimePatch()` 只有 `{"scope":{"ssrf_markers":"block"}}`，点「保存并生效」后 `editable.scope.ssrf_markers` 为 `block`、`overrides:["scope.ssrf_markers"]`、「标记模式」出现可见「已覆盖」徽标；改回 `observe` 保存后覆盖清空、徽标消失；PUT 非法模式 400、`scope.protected_hosts` 400 且 detail 为 `overrides.scope has unsupported key: protected_hosts`；写 `block` 后重启服务，覆盖仍重放且 SQLite `runtime_config_overrides.overrides` 为 `{"scope":{"ssrf_markers":"block"}}`；「审计」页签在种入的一行普通决策 + 一行 `observe` 记录 + 一行硬底线拒绝上，渲染 2 枚琥珀「SSRF 标记」徽标，理由分别是 `text-amber-700`（记录）与 `text-rose-600`（拒绝），控制台无消息（应用内浏览器仍为隐藏态，用页面内 DOM 查询与 `.click()` 验证）；未验证的一跳：真实 Solver 进程内的 Bridge 只由 `bridge.test.ts` 的环境驱动用例覆盖，没有跑真实模型 |
 
 ## 与 Phase 0 的关系
 

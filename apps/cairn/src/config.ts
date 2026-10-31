@@ -153,6 +153,61 @@ export const DEFAULT_AUDIT_STREAM: AuditStreamConfig = {
 };
 
 /**
+ * Host Bridge scope behaviour. `ssrf_markers` decides what happens to a host literal that a
+ * worker hands to an *authorized* destination inside the request itself — a URL query, a form
+ * body, an uploaded payload — which only the receiving server resolves.
+ *
+ * - `observe`: record it in the audit log and let the command run.
+ * - `block`: refuse it unless the literal is itself inside the authorized scope.
+ * - `off`: ignore carried targets entirely. A deliberate relaxation: before M33 the bridge
+ *   checked these literals as destinations.
+ *
+ * Link-local metadata addresses and `protectedHosts` are refused under both `observe` and
+ * `block`, so the marker policy never reopens the deployment's own infrastructure.
+ */
+export type SsrfMarkerMode = "block" | "observe" | "off";
+
+export const SSRF_MARKER_MODES: readonly SsrfMarkerMode[] = ["block", "observe", "off"];
+
+export interface ScopeConfig {
+  ssrfMarkers: SsrfMarkerMode;
+  /** Hostnames of this deployment's own facilities, refused as carried targets. */
+  protectedHosts: string[];
+}
+
+export const DEFAULT_SCOPE: ScopeConfig = {
+  ssrfMarkers: "observe",
+  protectedHosts: [],
+};
+
+/**
+ * Hostnames the Host Bridge refuses to see carried inside an authorized request: the
+ * operator's list plus this deployment's own control plane and audit stream hosts.
+ *
+ * IP literals are deliberately left out. A local control plane shares 127.0.0.1 with the lab
+ * target, so protecting it would protect nothing and refuse the engagement instead; a named
+ * host (`host.docker.internal`, an internal FQDN) identifies our own infrastructure without
+ * that collision.
+ */
+export function protectedTargetHosts(config: DispatchConfig): string[] {
+  const hosts = new Set(config.scope.protectedHosts.map((host) => host.toLowerCase()));
+  for (const raw of [config.server, config.auditStream.url ?? ""]) {
+    const trimmed = raw.trim();
+    if (trimmed === "") continue;
+    let hostname: string;
+    try {
+      hostname = new URL(trimmed).hostname.toLowerCase().replace(/\.$/, "");
+    } catch {
+      continue;
+    }
+    if (hostname === "" || /^[\d.]+$/.test(hostname) || hostname.includes(":")) continue;
+    hosts.add(hostname);
+  }
+  hosts.delete("");
+  return [...hosts].sort();
+}
+
+/**
  * Completion verification. The policy is chosen per project when it is created
  * (`challenge`, `evidence`, or `off`), and `evidence_enforcement` supplies the default
  * for projects created through the API and for legacy projects without a policy row.
@@ -436,6 +491,7 @@ export interface DispatchConfig {
   retention: RetentionConfig;
   auditStream: AuditStreamConfig;
   verification: VerificationConfig;
+  scope: ScopeConfig;
   proposals: ProposalsConfig;
   strategist: StrategistConfig;
   budget: BudgetConfig;
@@ -467,6 +523,7 @@ const TOP_LEVEL_KEYS = new Set([
   "retention",
   "audit_stream",
   "verification",
+  "scope",
   "proposals",
   "strategist",
   "budget",
@@ -504,6 +561,7 @@ const EDITABLE_OVERRIDE_KEYS: Record<string, readonly string[]> = {
     "refresh_artifacts",
   ],
   verification: ["evidence_enforcement", "flag_review"],
+  scope: ["ssrf_markers"],
   proposals: [
     "enabled",
     "mode",
@@ -895,6 +953,38 @@ function parseVerification(value: unknown): VerificationConfig {
   };
 }
 
+/**
+ * `scope` is the Host Bridge section: how the action-level gate reads a host literal that a
+ * worker carries inside a request to an authorized destination.
+ */
+const SCOPE_SECTION_KEYS = new Set(["ssrf_markers", "protected_hosts"]);
+
+function parseScope(value: unknown): ScopeConfig {
+  const root = recordAt(value, "scope");
+  for (const key of Object.keys(root)) {
+    if (!SCOPE_SECTION_KEYS.has(key)) {
+      throw new ConfigError(`scope has unsupported key: ${key}`);
+    }
+  }
+  const protectedHosts = has(root, "protected_hosts")
+    ? stringList(root["protected_hosts"], "scope.protected_hosts").map((host, index) => {
+        const trimmed = host.trim();
+        if (trimmed === "" || /[\s/:@]/.test(trimmed)) {
+          throw new ConfigError(
+            `scope.protected_hosts[${index}] must be a bare hostname, got "${host}"`,
+          );
+        }
+        return trimmed;
+      })
+    : [...DEFAULT_SCOPE.protectedHosts];
+  return {
+    ssrfMarkers: has(root, "ssrf_markers")
+      ? oneOf(root["ssrf_markers"], "scope.ssrf_markers", SSRF_MARKER_MODES)
+      : DEFAULT_SCOPE.ssrfMarkers,
+    protectedHosts,
+  };
+}
+
 function parseProposalKinds(value: unknown): ProposalKindConfig[] {
   if (!Array.isArray(value)) {
     throw new ConfigError("proposals.allow_kinds must be an array of proposal kinds");
@@ -1191,6 +1281,13 @@ export function parseDispatchConfig(value: unknown, options: ConfigOptions = {})
         challenge: { ...DEFAULT_VERIFICATION.challenge },
       };
 
+  const scope = has(root, "scope")
+    ? parseScope(root["scope"])
+    : {
+        ssrfMarkers: DEFAULT_SCOPE.ssrfMarkers,
+        protectedHosts: [...DEFAULT_SCOPE.protectedHosts],
+      };
+
   const proposals = has(root, "proposals")
     ? parseProposals(root["proposals"])
     : { ...DEFAULT_PROPOSALS, allowKinds: [...DEFAULT_PROPOSALS.allowKinds] };
@@ -1233,6 +1330,7 @@ export function parseDispatchConfig(value: unknown, options: ConfigOptions = {})
     retention,
     auditStream,
     verification,
+    scope,
     proposals,
     strategist,
     budget,

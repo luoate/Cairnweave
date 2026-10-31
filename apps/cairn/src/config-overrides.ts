@@ -27,6 +27,7 @@ import {
   type ProposalKindConfig,
   type ProposalMode,
   type RuntimeOverridePatch,
+  type SsrfMarkerMode,
   type WorkerHealthcheckMode,
   type WorkerSelectionMode,
 } from "./config";
@@ -61,6 +62,9 @@ export interface EditableRuntimeConfig {
   verification: {
     evidence_enforcement: EvidenceEnforcement;
     flag_review: FlagReviewMode;
+  };
+  scope: {
+    ssrf_markers: SsrfMarkerMode;
   };
   proposals: {
     enabled: boolean;
@@ -361,6 +365,9 @@ function editableView(config: DispatchConfig): EditableRuntimeConfig {
     verification: {
       evidence_enforcement: config.verification.evidenceEnforcement,
       flag_review: config.verification.flagReview,
+    },
+    scope: {
+      ssrf_markers: config.scope.ssrfMarkers,
     },
     proposals: {
       enabled: config.proposals.enabled,

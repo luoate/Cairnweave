@@ -75,6 +75,7 @@ export class BreachWeaveSolver implements Solver {
         sessionDir: task.sessionDir,
         targets: task.scope.targets,
         ...(task.artifactDir === undefined ? {} : { artifactDir: task.artifactDir }),
+        ...ssrfMarkerFields(process.env),
       });
       process.env["CAIRN_HOST_BRIDGE_MODULE"] = join(
         import.meta.dir,
@@ -241,6 +242,23 @@ export function modelLabel(model: { provider?: unknown; id?: unknown } | undefin
 function safeId(value: string): string {
   const cleaned = value.replace(/[^A-Za-z0-9_-]/g, "-").slice(0, 64);
   return cleaned === "" ? "cairn-worker" : cleaned;
+}
+
+/**
+ * The scheduler hands the marker policy over as two plain environment variables; they are
+ * folded into CAIRN_SCOPE_POLICY so solver and subagent sessions load one document. An
+ * unrecognized value reaches the policy parser untouched, which refuses to start the session.
+ */
+export function ssrfMarkerFields(env: NodeJS.ProcessEnv): Record<string, unknown> {
+  const policy = env["CAIRN_SSRF_POLICY"]?.trim();
+  const hosts = (env["CAIRN_SSRF_PROTECTED_HOSTS"] ?? "")
+    .split(",")
+    .map((host) => host.trim())
+    .filter((host) => host !== "");
+  return {
+    ...(policy === undefined || policy === "" ? {} : { ssrfMarkers: policy }),
+    ...(hosts.length === 0 ? {} : { protectedHosts: hosts }),
+  };
 }
 
 function describe(error: unknown): string {

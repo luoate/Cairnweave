@@ -102,6 +102,14 @@ describe("runtime override patches", () => {
       }),
     ).toEqual(["proposals.allow_kinds", "tasks.reason.max_intents"]);
   });
+
+  test("keeps the SSRF marker mode editable and the protected hosts fixed", () => {
+    expect(() => parseRuntimeOverridePatch({ scope: { ssrf_markers: "block" } })).not.toThrow();
+    // Deployment identity is not a dial: the protected list only comes from dispatch.yaml.
+    expect(() =>
+      parseRuntimeOverridePatch({ scope: { protected_hosts: ["host.test"] } }),
+    ).toThrow("overrides.scope has unsupported key: protected_hosts");
+  });
 });
 
 describe("RuntimeConfigStore", () => {
@@ -187,6 +195,27 @@ describe("RuntimeConfigStore", () => {
 
     expect(store.reset().editable.verification.flag_review).toBe("manual");
     expect(config.verification.flagReview).toBe("manual");
+  });
+
+  test("switches the SSRF marker mode on the live config", () => {
+    const store = newStore();
+    expect(config.scope.ssrfMarkers).toBe("observe");
+    expect(store.view().editable.scope).toEqual({ ssrf_markers: "observe" });
+
+    const view = store.apply({ scope: { ssrf_markers: "block" } });
+    expect(config.scope.ssrfMarkers).toBe("block");
+    expect(view.overrides).toEqual(["scope.ssrf_markers"]);
+    expect(
+      JSON.parse(db.withConn((conn) => getRuntimeConfigOverrides(conn)).overrides),
+    ).toEqual({ scope: { ssrf_markers: "block" } });
+
+    expect(() => store.apply({ scope: { ssrf_markers: "watch" } })).toThrow(
+      "scope.ssrf_markers must be one of",
+    );
+    expect(config.scope.ssrfMarkers).toBe("block");
+
+    expect(store.reset().editable.scope.ssrf_markers).toBe("observe");
+    expect(config.scope.ssrfMarkers).toBe("observe");
   });
 
   test("replays stored overrides on a fresh config after restart", () => {

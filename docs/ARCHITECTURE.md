@@ -1158,7 +1158,8 @@ Writeup 是面向人的中文复盘文本，分两层，全部逻辑在 `package
 Host Bridge 是 pi 的 `tool_call` 扩展：它在工具执行**之前**拿到工具名与输入，拒绝时返回
 `{block:true, reason}`。它不执行工具，也不替模型重写命令。
 
-- **接入**：worker 把 `CAIRN_SCOPE_POLICY`（JSON：project/task/workspace/session/targets）
+- **接入**：worker 把 `CAIRN_SCOPE_POLICY`（JSON：project/task/workspace/session/targets，
+  M33 起还可带 `ssrfMarkers` 与 `protectedHosts`）
   与 `CAIRN_HOST_BRIDGE_MODULE`（`worker-extension.ts` 的绝对路径）放进 Solver 进程环境。
   `packages/agent` 在创建 Solver 会话**和每个 subagent 会话**时动态加载该模块；缺环境
   变量、模块不存在、策略非法都直接抛错，worker 不会无闸门运行。
@@ -1189,9 +1190,25 @@ Host Bridge 是 pi 的 `tool_call` 扩展：它在工具执行**之前**拿到�
 - **匹配语义**：hostname 按字面匹配，不做 DNS 解析；`*.example.com` 只匹配子域（不含
   apex）；`host:port` 要求端口一致；IPv4 CIDR 支持目标与端点都是 CIDR 时的子集判断。
   scheme 只接受 `http`/`https`；`file:` 目标支持本地路径形式。
+- **端点来源与 SSRF 标记（M33）**：分析器把命令里的字面量分成两类。`primary` 是这条命令
+  要连的地方，按上面的匹配语义强制；`carried` 是**已经授权的请求内部**又带上的另一个主机
+  字面量（URL 查询串 / 片段、`--data` / `-F` 表单体、`@payload` 引用的文件正文），它是否
+  被访问只由接收方服务器决定。`scope.ssrf_markers` 决定怎么处置越界的携带目标：
+  `observe`（默认）放行并另写一条 `ssrf_candidate` 审计；`block` 直接拒绝；`off` 完全忽略
+  携带目标——`off` 相对 M33 之前是**放宽**（旧版把携带字面量也当连接目的检查），不是更严。
+  硬底线在 `observe` 与 `block` 下都拒绝，与模式选择无关：链路本地 `169.254.0.0/16`、
+  `metadata.google.internal` / `metadata.goog`，以及 `scope.protected_hosts` 与本部署
+  `server` / `audit_stream.url` 里的**命名**主机（IP 字面量排除：本机 `127.0.0.1` 通常同时
+  是靶机）。携带目标本身就在授权范围内时不上报，避免噪声。载荷文件读取是有界且限定在
+  工作区的：绝对路径、symlink、二进制、超限文件都**跳过**而不是拒绝，否则一个异常工作区
+  就能让闸门卡死。策略经 `CAIRN_SSRF_POLICY` / `CAIRN_SSRF_PROTECTED_HOSTS` 由调度器交给
+  worker，再折进同一份 `CAIRN_SCOPE_POLICY`（它同时是 Bridge 的缓存键），因此 Solver 与其
+  subagent 共享一份判定。
 - **审计**：每次 allow/block 都向 `<sessionDir>/audit.jsonl` 追加一行（`ts`、`task_id`、
   `project_id`、`tool`、`action`、`targets`、`decision`、`reason`、截断后的 `detail`）。
-  审计写入失败时本次调用也按拒绝处理。`detail` 只截断保存，不落完整凭据。
+  审计写入失败时本次调用也按拒绝处理。`detail` 只截断保存，不落完整凭据。M33 的携带目标
+  观察在同一次调用里**追加第二行**，形状相同但带 `event: "ssrf_candidate"`；账本摄入不做
+  事件过滤，所以「审计」页签直接把它渲染成一枚琥珀色徽标，而不是伪装成一条拒绝。
 - **边界**：这是**工具调用策略闸门**，不是任意代码沙箱。它无法理解 `python -c` 里构造的
   任意 socket 逻辑，也不能替代内核隔离；容器网络命名空间才是最后的内核边界。因此本地
   模式只用于受控开发/靶场，生产必须用容器模式。凭据同理：Solver 进程必须能读取模型密钥
@@ -1424,6 +1441,12 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
 - Host Bridge 是**工具调用层**的策略闸门，不能阻止任意代码（例如 `python -c` 自己开
   socket）；它让常规工具路径可审计，容器网络命名空间才是内核边界。不得把本地模式当作
   对抗不可信代码的沙箱。
+- SSRF 标记（M33）同样是**字面量层**的信号，不是可达性证明：它只看命令文本与工作区载荷
+  文件里能读出的主机字面量，编码/拼接后由服务器解析出来的目标看不见。`observe` 的记录
+  意味着“这里出现了一个越界字面量”，值得回看，不代表命令做了坏事，也不代表它成功跳了；
+  `block` 只保证这一跳不被工具层放行，不保证模型换一种写法不能试。需要更硬的保证时用
+  `scope.protected_hosts` 把本部署自身设施登记进硬底线，而不是把模式当访问控制用——
+  `off` 是唯一会连硬底线一起关掉的选项。
 - Bridge 运行在 worker 内，`audit.jsonl` 与 `result.json` 一样由不可信进程写入；它能证明
   控制面看到的行为，但不是防篡改账本。需要强审计时把 `sessionDir` 放到控制面独占写入的
   位置（后续里程碑），或外加日志收集。

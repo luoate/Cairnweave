@@ -96,6 +96,19 @@ Host Bridge 每做一次工具决策就追加一行 JSON：
 
 - `decision` 为 `allow` / `block`；`reason` 在允许时为 `null`；`detail` 最多 400 字符；
   `targets` 是归一化后的目标；`event` 可选。
+- M33 的携带目标观察在同一次工具调用后**再追加一行**，`event` 固定为 `ssrf_candidate`：
+  `targets` 是请求内部携带的字面量（不是这条命令的连接目的，最多 16 个），`decision` 沿用
+  本次调度的判定（`observe` 通常是 `allow`，`block` 模式拒绝时为 `block`），`reason` 以
+  `SSRF markers (<mode>):` 开头并给出携带数、越界数与读取的载荷文件数。
+
+```json
+{"ts":"2026-10-31T00:00:00.000Z","task_id":"explore-...","project_id":"proj_001",
+ "tool":"bash","action":"command","targets":["http://10.0.0.9/admin"],"decision":"allow",
+ "reason":"SSRF markers (observe): 1 carried target(s), 1 outside the authorized scope, 1 payload file(s) read",
+ "detail":"command=curl --data-binary @payload.xml","event":"ssrf_candidate"}
+```
+
+  摄入不按 `event` 过滤（任何 JSON 对象行都进哈希链），所以新增事件类型不需要 schema 变更。
 - 单条事件的紧凑 JSON 上限 16,384 字符（`MAX_AUDIT_EVENT_TEXT_CHARS`）。
 - 任务结束时控制面把 `audit.jsonl` 导入项目级 `audit_events`，按 `(task_id, seq)` 计算
   哈希链（`prev_hash` / `hash`）；可经 `/projects/{id}/audit` 读取。链只防库内改行，不是

@@ -156,6 +156,22 @@ function auditScheduler(): Scheduler {
   });
 }
 
+function ssrfScheduler(): Scheduler {
+  const fixture = join(import.meta.dir, "testdata", "ssrf-env-worker.ts");
+  return new Scheduler({
+    db,
+    config: parseDispatchConfig({
+      ...CONFIG,
+      server: "http://cairn-control.test:8000",
+      scope: { ssrf_markers: "block", protected_hosts: ["Internal-Lab.test"] },
+    }),
+    workspaceRoot: join(directory, "workspace"),
+    log: (message) => logs.push(message),
+    leaseIntervalMs: 500,
+    workerArgv: (taskPath) => [process.execPath, fixture, taskPath],
+  });
+}
+
 function concurrentScheduler(): Scheduler {
   const fixture = join(import.meta.dir, "testdata", "concurrent-worker.ts");
   return new Scheduler({
@@ -739,6 +755,31 @@ describe("scheduler with the fake solver", () => {
         reported_at: "2026-03-01T00:00:00.000Z",
       });
       expect(logs.some((line) => line.includes("audit stream lost"))).toBe(true);
+    },
+    30_000,
+  );
+
+  test(
+    "hands the SSRF marker policy and protected hosts down to the worker",
+    async () => {
+      const project = createProjectRow(true);
+      const loop = ssrfScheduler();
+      await loop.runUntilIdle();
+
+      expect(load(project.project.id).project.status).toBe("completed");
+      const summaries = db.withConn((conn) =>
+        listProjectAudit(conn, project.project.id),
+      );
+      expect(summaries.length).toBeGreaterThan(0);
+      for (const summary of summaries) {
+        const audit = db.withConn((conn) =>
+          getTaskAudit(conn, project.project.id, summary.task_id),
+        );
+        expect(audit.events[0]!.event).toMatchObject({
+          event: "ssrf_candidate",
+          detail: "ssrf_markers=block protected=cairn-control.test,internal-lab.test",
+        });
+      }
     },
     30_000,
   );

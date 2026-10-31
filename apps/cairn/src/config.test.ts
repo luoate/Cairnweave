@@ -8,6 +8,7 @@ import {
   defaultVerificationPolicy,
   loadDispatchConfig,
   parseDispatchConfig,
+  protectedTargetHosts,
   type ConfigOptions,
 } from "./config";
 import { DEFAULT_PROMPT_REQUIRED_TOKENS } from "./prompts/prompting";
@@ -723,5 +724,61 @@ describe("config validation", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("SSRF marker scope", () => {
+  test("defaults to observe", () => {
+    expect(parse(BASE).scope).toEqual({ ssrfMarkers: "observe", protectedHosts: [] });
+  });
+
+  test("accepts every marker mode", () => {
+    for (const mode of ["block", "observe", "off"] as const) {
+      expect(parse(`${BASE}scope: {ssrf_markers: ${mode}}\n`).scope.ssrfMarkers).toBe(mode);
+    }
+  });
+
+  test("rejects an unknown marker mode or key", () => {
+    expect(() => parse(`${BASE}scope: {ssrf_markers: watch}\n`)).toThrow(
+      "scope.ssrf_markers must be one of",
+    );
+    expect(() => parse(`${BASE}scope: {carried: observe}\n`)).toThrow(
+      "scope has unsupported key: carried",
+    );
+  });
+
+  test("keeps protected hosts as bare hostnames", () => {
+    const config = parse(
+      `${BASE}scope:\n  protected_hosts: ["Cairn-Control.internal", host.test]\n`,
+    );
+    expect(config.scope.protectedHosts).toEqual(["Cairn-Control.internal", "host.test"]);
+    expect(() =>
+      parse(`${BASE}scope: {protected_hosts: ["http://host.test/"]}\n`),
+    ).toThrow("must be a bare hostname");
+    expect(() => parse(`${BASE}scope: {protected_hosts: host.test}\n`)).toThrow(
+      "scope.protected_hosts",
+    );
+  });
+
+  test("adds this deployment's named control plane to the protected hosts", () => {
+    const config = parse(
+      `${BASE}audit_stream: {enabled: true, url: "https://cairn-audit.internal/ingest"}\n` +
+        `scope: {protected_hosts: ["host.docker.internal"]}\n`,
+    );
+    expect(protectedTargetHosts(config)).toEqual([
+      "cairn-audit.internal",
+      "host.docker.internal",
+    ]);
+  });
+
+  test("does not protect an IP-literal control plane", () => {
+    // The lab target and a local server share 127.0.0.1; protecting it would refuse the engagement.
+    expect(protectedTargetHosts(parse(BASE))).toEqual([]);
+  });
+
+  test("folds protected hosts into the marker policy only when they are configured", () => {
+    const config = parse(`${BASE}scope: {ssrf_markers: off, protected_hosts: ["Host.test"]}\n`);
+    expect(config.scope.ssrfMarkers).toBe("off");
+    expect(protectedTargetHosts(config)).toEqual(["host.test"]);
   });
 });

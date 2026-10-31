@@ -39,6 +39,13 @@ export interface Endpoint {
   host?: string;
   port?: number;
   cidr?: IPv4Cidr;
+  /**
+   * Where the literal came from. `primary` is a destination the command connects to;
+   * `carried` is a host literal inside an authorized request — a URL's query or fragment,
+   * a request body or a form field — which the command does not contact itself but the
+   * receiving server might. Absent means primary.
+   */
+  role?: "primary" | "carried";
 }
 
 export function parseScopeTargets(rawTargets: readonly string[]): ParsedScope {

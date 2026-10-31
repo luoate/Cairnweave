@@ -1812,6 +1812,7 @@ describe("runtime settings modal", () => {
         refresh_artifacts: false,
       },
       verification: { evidence_enforcement: "completion", flag_review: "manual" },
+      scope: { ssrf_markers: "observe" },
       proposals: {
         enabled: false,
         mode: "off",
@@ -1979,6 +1980,36 @@ describe("runtime settings modal", () => {
     app.setRuntimeFieldValue(review, true);
     expect(app.runtimeFieldValue(review)).toBe(true);
     expect(app.runtimePatch()).toEqual({});
+  });
+
+  test("switches the SSRF marker mode and spells out what each mode does", () => {
+    const app = loadState();
+    app.runtimeConfig.view = viewFixture();
+    app.runtimeForm = app.cloneData(app.runtimeConfig.view.editable);
+    const markers = fieldsOf(app).find(
+      (field: any) => field.path === "scope.ssrf_markers",
+    );
+
+    expect(markers.type).toBe("select");
+    expect(markers.options.map((option: any) => option.value)).toEqual([
+      "observe",
+      "block",
+      "off",
+    ]);
+    expect(app.runtimeFieldValue(markers)).toBe("observe");
+
+    app.setRuntimeFieldValue(markers, "block");
+    expect(app.runtimePatch()).toEqual({ scope: { ssrf_markers: "block" } });
+
+    const group = app
+      .runtimeGroups()
+      .find((entry: any) =>
+        (entry.fields ?? []).some((field: any) => field.path === "scope.ssrf_markers"),
+      );
+    const notes: string = (group.notes ?? []).join("\n");
+    for (const phrase of ["只记录", "拦截并拒绝", "忽略", "169.254.0.0/16", "protected_hosts"]) {
+      expect(notes).toContain(phrase);
+    }
   });
 
   test("tests the selected execution mode and clears a stale result on change", async () => {
@@ -2221,6 +2252,33 @@ function cssHasSelector(css: string, token: string): boolean {
   }
   return false;
 }
+
+describe("SSRF marker rows in the audit ledger", () => {
+  const marker = (decision: string) => ({
+    tool: "bash",
+    action: "exec",
+    decision,
+    event: "ssrf_candidate",
+    targets: ["http://10.0.0.9/admin"],
+    reason: "SSRF markers (observe): 1 carried target(s), 1 outside the authorized scope",
+  });
+
+  test("badges the observation line and keeps it apart from a refusal", () => {
+    const app = loadState();
+
+    expect(app.auditEventKind(marker("allow"))).toBe("ssrf_candidate");
+    expect(app.auditEventKindLabel(marker("allow"))).toBe("SSRF 标记");
+    expect(app.auditEventKindLabel({ tool: "bash", decision: "allow" })).toBe("");
+    expect(app.auditEventReasonClass(marker("allow"))).toBe("text-amber-700 break-words");
+    expect(app.auditEventReasonClass(marker("block"))).toBe("text-rose-600 break-words");
+  });
+
+  test("renders the badge in the audit event list", () => {
+    const html = readFileSync(INDEX_PATH, "utf8");
+    expect(html).toContain("auditEventKindLabel(row.event)");
+    expect(html).toContain(':class="auditEventReasonClass(row.event)"');
+  });
+});
 
 describe("static asset delivery", () => {
   test("revalidates a vendored asset with its ETag instead of re-transferring it", async () => {

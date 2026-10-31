@@ -170,6 +170,16 @@ curl -X PUT http://127.0.0.1:8000/settings/runtime \
 | `evidence_enforcement` | completion | `completion` 阻断无证据完成，`off` 关闭；对新建项目与无策略行的项目生效 |
 | `flag_review` | manual | `manual` 把抓到 flag 形状的值登记为后台复核（派发不暂停，完成声明等判定；操作员判定真·还有更多 / 真·停止 / 假·继续探索）；`off` 关闭复核。运行配置弹窗的「Flag 人工复核」开关直接切换这两个值，默认打开 |
 
+### 范围 `scope`（M33）
+
+| 键 | 默认 | 说明 |
+| --- | --- | --- |
+| `ssrf_markers` | observe | Host Bridge 对「携带目标」的处置方式。携带目标 = 连接目的本身已授权，但请求里又写了另一个主机字面量（URL 查询串 / 表单体 / `--data` / 载荷文件），只有接收方服务器会去解析它。`observe` 让命令照常执行，另写一条 `ssrf_candidate` 审计行；`block` 直接拒绝越界的携带目标；`off` 完全忽略携带目标——相对 M33 之前是放宽（旧版把这些字面量当连接目的检查），只在确认误报阻碍工作时使用。运行配置弹窗的「SSRF 标记」下拉切换三者 |
+| `protected_hosts` | 空 | 本部署自身设施的主机名，必须是不带 scheme、端口、路径的裸主机名。硬底线 = 链路本地 `169.254.0.0/16` + `metadata.google.internal` / `metadata.goog` + 这份名单 + `server`、`audit_stream.url` 里的**命名**主机（IP 字面量排除：本机 `127.0.0.1` 通常同时是靶机，把它列为受保护只会让任务做不下去）。硬底线在 `observe` 与 `block` 下都拒绝，只有 `off` 会把它一起关掉 |
+
+`protected_hosts` 是部署身份而不是旋钮，因此不进运行期覆盖白名单；判定与审计细节见
+ARCHITECTURE 的 Host Bridge 一节。
+
 ### 预算 `budget`
 
 `max_project_tokens`、`max_project_cost_usd`、`max_project_tasks` 默认都是 0（不限制）。
@@ -199,6 +209,7 @@ curl -X PUT http://127.0.0.1:8000/settings/runtime \
 | `runtime.interval`、`retention.sweep_interval_seconds` | `Scheduler.reconfigure()` 重挂定时器 |
 | `verification.evidence_enforcement` | 下一次 `VerificationService.defaultKind` 读取（getter） |
 | `verification.flag_review` | 下一个任务结果落图时的复核登记与完成门禁（派发不停） |
+| `scope.ssrf_markers` | 下一次任务准备的 worker 环境（`CAIRN_SSRF_POLICY` 折进 `CAIRN_SCOPE_POLICY`）；已启动的 worker 沿用注入时的模式 |
 | `worker.*` | 下一次 `prepareTask`；运行中的任务沿用已经写好的 `task.json` |
 
 正在运行的任务不会被改写或中断；新配置只影响之后的派发。
@@ -215,6 +226,7 @@ curl -X PUT http://127.0.0.1:8000/settings/runtime \
 - container 的 `image` / `network_mode` / `worker_argv` / `cap_add`
 - `observer`（`enabled`、`model`、节奏、`kernel_tasks`）
 - `audit_stream`
+- `scope.protected_hosts`（部署自身设施名单，只在 yaml 配置；弹窗只读区不展示，模式本身可切）
 - `worker_profiles`
 - `verification.challenge` 的环境变量名与超时
 
@@ -231,11 +243,13 @@ curl -X PUT http://127.0.0.1:8000/settings/runtime \
   左侧由 `skillDetailTree()` 把扁平路径还原成目录 + 文件两级视图并显示大小，右侧
   `<pre>` 原样渲染正文；打开即自动预览排序后的第一个文件。已删除的内置没有文件，行内
   不出现「预览」；启停按钮在详情头部，成功后按最新列表刷新徽标；启停写入期间不允许关闭。
-- 运行配置字段按「执行环境 / 调度 / 任务超时 / 图切片与校验 / Worker 与选择 / 保留与预算 /
-  策略触发 / 提案」分组；数字、开关、下拉与多选（`allow_kinds`）四种控件。执行环境组放
+- 运行配置字段按「执行环境 / 调度 / 任务超时 / 图切片与校验 / SSRF 标记 / Worker 与选择 /
+  保留与预算 / 策略触发 / 提案」分组；数字、开关、下拉与多选（`allow_kinds`）四种控件。执行环境组放
   local / container 下拉与「测试有效性」按钮；测试结果在组内逐项列出（✓/✗ + 说明），
   切换执行模式后清空旧结果，写入进行中时按钮禁用。「图切片与校验」里的「Flag 人工复核」
-  是 checkbox 开关，勾选写入 `manual`、取消写入 `off`，默认勾选。
+  是 checkbox 开关，勾选写入 `manual`、取消写入 `off`，默认勾选。「SSRF 标记」组把三种
+  模式的区别写在字段下方的说明里（只记录 / 拦截并拒绝 / 忽略，以及硬底线在 `off` 下也会
+  关闭），操作员不需要翻文档就能判断该切哪一个。
 - 与 `defaults` 不同的字段显示琥珀色「已覆盖」，顶部显示覆盖项数量与更新时间。
 - 「保存并生效」发送最小 patch；服务端拒绝时把具体约束错误显示在弹窗里。
 - 「恢复 dispatch.yaml 默认值」需要连续点击两次（4 秒内），然后发 `DELETE`。
@@ -245,10 +259,12 @@ curl -X PUT http://127.0.0.1:8000/settings/runtime \
 
 - `apps/cairn/src/config-overrides.test.ts`：键白名单、深合并、视图形状、原地同步保持
   引用、持久化与重启重放、非法值不改配置、跨字段冲突、重置、坏数据清理、执行模式切换
-  （容器默认值注入）、`Flag 人工复核` 开关的覆盖/重置与非法枚举、`validateNext` 拒绝。
+  （容器默认值注入）、`Flag 人工复核` 开关的覆盖/重置与非法枚举、`scope.ssrf_markers`
+  的覆盖/重置与非法枚举、`protected_hosts` 被白名单挡在运行期之外、`validateNext` 拒绝。
 - `apps/cairn/src/http/api.settings-runtime.test.ts`：GET/PUT/DELETE、409、400（未知键 /
   越界 / 非法 JSON / 非法执行模式）、413、operator token、跨源拒绝、错误不落库、执行模式
-  切换与 `validateNext` 400、`verification.flag_review` 的读写与落库、
+  切换与 `validateNext` 400、`verification.flag_review` 的读写与落库、`scope.ssrf_markers`
+  的读写落库与 `protected_hosts` 的 400、
   `POST /settings/runtime/test` 的参数与结果透传。
 - `apps/cairn/src/runtime/probe.test.ts`：本地模式检查 Bun 与工作区写入、工作区不可创建、
   Docker 守护进程/镜像/试启动、镜像缺失时停止并给出构建命令、无 `container:` 段时的镜像
