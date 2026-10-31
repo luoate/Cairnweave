@@ -7555,6 +7555,7 @@ function cairnApp() {
         if (cursor === null || typeof cursor !== 'object') return null;
         cursor = cursor[part];
       }
+      if (field.type === 'bool' && field.on !== undefined) return cursor === field.on;
       return cursor === undefined ? null : cursor;
     },
 
@@ -7564,8 +7565,9 @@ function cairnApp() {
         this.runtimeTest = { running: false, execution: '', ok: null, checks: [], error: '' };
       }
       let value = raw;
-      if (field.type === 'bool') value = Boolean(raw);
-      else if (field.type === 'number') {
+      if (field.type === 'bool') {
+        value = field.on !== undefined ? (raw ? field.on : field.off) : Boolean(raw);
+      } else if (field.type === 'number') {
         const parsed = Number(raw);
         if (raw === '' || raw === null || !Number.isFinite(parsed)) return;
         value = parsed;
@@ -7627,7 +7629,7 @@ function cairnApp() {
     runtimeGroups() {
       if (!this.runtimeForm || !this.runtimeConfig.view) return [];
       const number = (path, label, extra = {}) => ({ path, label, type: 'number', ...extra });
-      const bool = (path, label) => ({ path, label, type: 'bool' });
+      const bool = (path, label, extra = {}) => ({ path, label, type: 'bool', ...extra });
       const select = (path, label, options) => ({ path, label, type: 'select', options });
       const multi = (path, label, options) => ({ path, label, type: 'multi', options });
       return [
@@ -7664,7 +7666,8 @@ function cairnApp() {
           ],
         },
         {
-          title: '图切片与证据',
+          title: '图切片与校验',
+          hint: 'Flag 人工复核默认开启，关闭后不再登记新复核',
           fields: [
             bool('tasks.graph_slice.enabled', '启用图切片'),
             number('tasks.graph_slice.max_facts', '切片事实数', { min: 2 }),
@@ -7674,6 +7677,7 @@ function cairnApp() {
               { value: 'completion', label: '阻断完成' },
               { value: 'off', label: '关闭' },
             ]),
+            bool('verification.flag_review', 'Flag 人工复核', { on: 'manual', off: 'off' }),
           ],
         },
         {

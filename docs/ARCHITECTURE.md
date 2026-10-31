@@ -190,7 +190,9 @@ explore / conclude / reason / bootstrap 照常派发，但项目的完成声明�
 项目已结束时只记录判定）、`fake`（假：记录为 rejected，项目仍 active 时追加一条
 operator Hint，继续探索）。判定后 Hint 触发下一次 reason，被推迟的完成声明重新生效。
 判定是终态，同一值不会二次入队；`/flag` 与 Writeup 的扫描会
-排除 rejected 值，并把已确认值排在第一位。
+排除 rejected 值，并把已确认值排在第一位。M32c 把开关接进运行配置：设置弹窗
+「图切片与校验」里的「Flag 人工复核」checkbox 勾选写 `manual`、取消写 `off`，
+保存为 SQLite 运行配置覆盖，调度器在下一次结果落图时按新值决定是否登记。
 M29 收掉两处后端热点，两处都先量后改。其一，`facts` 的主键是 `(id, project_id)`，所以项目列表里
 `(SELECT COUNT(*) FROM facts WHERE project_id = p.id)` 与 `GET /projects/{id}` 的按项目读 Fact
 都用不上主键，只能整表扫描；`packages/graph/src/db.ts` 增加
@@ -919,7 +921,8 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
   并刷新图；`real_done` 在 active 项目上使其变为 completed，`real_more` / `fake` 后横幅
   消失（Hint 触发下一次 reason，被推迟的完成声明重新生效）。
   项目若在判定前已结束，判定只记录结果，Toast 会注明“项目已结束”。M32 起的绿色 Flag
-  横幅展示的是过滤掉已判假后的值。
+  横幅展示的是过滤掉已判假后的值。M32c 起设置弹窗的「运行与执行 → 图切片与校验」提供
+  「Flag 人工复核」开关（默认开），取消后不再登记新复核。
 - `Writeup`（M19a/M19b/M20a/M20b/M21）读取 `GET /projects/{id}/writeup`，用 `<pre>` 原样展示中文
   Markdown 正文，标题行、状态摘要与操作条分三段纵向排列（操作条自身 `flex-wrap`，不与标题争
   宽度），标注“中文草稿”或“模型撰写”及所用模型与生成时间；状态摘要含 Flag 是否记录（M21 起区分

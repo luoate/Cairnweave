@@ -214,6 +214,7 @@ retention:
 # and the Agent-Token must never appear in this file, task.json, result.json or logs.
 # verification:
 #   evidence_enforcement: completion   # completion | off
+#   flag_review: manual                # manual | off (default manual; also a runtime switch in the settings dialog)
 #   challenge:
 #     base_url_env: TCH_CHALLENGE_API_BASE_URL
 #     agent_token_env: TCH_CHALLENGE_AGENT_TOKEN

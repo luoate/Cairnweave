@@ -168,7 +168,7 @@ curl -X PUT http://127.0.0.1:8000/settings/runtime \
 | 键 | 默认 | 说明 |
 | --- | --- | --- |
 | `evidence_enforcement` | completion | `completion` 阻断无证据完成，`off` 关闭；对新建项目与无策略行的项目生效 |
-| `flag_review` | manual | `manual` 把抓到 flag 形状的值登记为后台复核（派发不暂停，完成声明等判定；操作员判定真·还有更多 / 真·停止 / 假·继续探索）；`off` 关闭复核 |
+| `flag_review` | manual | `manual` 把抓到 flag 形状的值登记为后台复核（派发不暂停，完成声明等判定；操作员判定真·还有更多 / 真·停止 / 假·继续探索）；`off` 关闭复核。运行配置弹窗的「Flag 人工复核」开关直接切换这两个值，默认打开 |
 
 ### 预算 `budget`
 
@@ -231,10 +231,11 @@ curl -X PUT http://127.0.0.1:8000/settings/runtime \
   左侧由 `skillDetailTree()` 把扁平路径还原成目录 + 文件两级视图并显示大小，右侧
   `<pre>` 原样渲染正文；打开即自动预览排序后的第一个文件。已删除的内置没有文件，行内
   不出现「预览」；启停按钮在详情头部，成功后按最新列表刷新徽标；启停写入期间不允许关闭。
-- 运行配置字段按「执行环境 / 调度 / 任务超时 / 图切片与证据 / Worker 与选择 / 保留与预算 /
+- 运行配置字段按「执行环境 / 调度 / 任务超时 / 图切片与校验 / Worker 与选择 / 保留与预算 /
   策略触发 / 提案」分组；数字、开关、下拉与多选（`allow_kinds`）四种控件。执行环境组放
   local / container 下拉与「测试有效性」按钮；测试结果在组内逐项列出（✓/✗ + 说明），
-  切换执行模式后清空旧结果，写入进行中时按钮禁用。
+  切换执行模式后清空旧结果，写入进行中时按钮禁用。「图切片与校验」里的「Flag 人工复核」
+  是 checkbox 开关，勾选写入 `manual`、取消写入 `off`，默认勾选。
 - 与 `defaults` 不同的字段显示琥珀色「已覆盖」，顶部显示覆盖项数量与更新时间。
 - 「保存并生效」发送最小 patch；服务端拒绝时把具体约束错误显示在弹窗里。
 - 「恢复 dispatch.yaml 默认值」需要连续点击两次（4 秒内），然后发 `DELETE`。
@@ -244,10 +245,11 @@ curl -X PUT http://127.0.0.1:8000/settings/runtime \
 
 - `apps/cairn/src/config-overrides.test.ts`：键白名单、深合并、视图形状、原地同步保持
   引用、持久化与重启重放、非法值不改配置、跨字段冲突、重置、坏数据清理、执行模式切换
-  （容器默认值注入）与 `validateNext` 拒绝。
+  （容器默认值注入）、`Flag 人工复核` 开关的覆盖/重置与非法枚举、`validateNext` 拒绝。
 - `apps/cairn/src/http/api.settings-runtime.test.ts`：GET/PUT/DELETE、409、400（未知键 /
   越界 / 非法 JSON / 非法执行模式）、413、operator token、跨源拒绝、错误不落库、执行模式
-  切换与 `validateNext` 400、`POST /settings/runtime/test` 的参数与结果透传。
+  切换与 `validateNext` 400、`verification.flag_review` 的读写与落库、
+  `POST /settings/runtime/test` 的参数与结果透传。
 - `apps/cairn/src/runtime/probe.test.ts`：本地模式检查 Bun 与工作区写入、工作区不可创建、
   Docker 守护进程/镜像/试启动、镜像缺失时停止并给出构建命令、无 `container:` 段时的镜像
   回退。

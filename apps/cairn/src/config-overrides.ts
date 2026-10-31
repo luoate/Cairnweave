@@ -23,6 +23,7 @@ import {
   type DispatchConfig,
   type EvidenceEnforcement,
   type ExecutionMode,
+  type FlagReviewMode,
   type ProposalKindConfig,
   type ProposalMode,
   type RuntimeOverridePatch,
@@ -57,7 +58,10 @@ export interface EditableRuntimeConfig {
     sweep_interval_seconds: number;
     refresh_artifacts: boolean;
   };
-  verification: { evidence_enforcement: EvidenceEnforcement };
+  verification: {
+    evidence_enforcement: EvidenceEnforcement;
+    flag_review: FlagReviewMode;
+  };
   proposals: {
     enabled: boolean;
     mode: ProposalMode;
@@ -354,7 +358,10 @@ function editableView(config: DispatchConfig): EditableRuntimeConfig {
       sweep_interval_seconds: config.retention.sweepIntervalSeconds,
       refresh_artifacts: config.retention.refreshArtifacts,
     },
-    verification: { evidence_enforcement: config.verification.evidenceEnforcement },
+    verification: {
+      evidence_enforcement: config.verification.evidenceEnforcement,
+      flag_review: config.verification.flagReview,
+    },
     proposals: {
       enabled: config.proposals.enabled,
       mode: config.proposals.mode,

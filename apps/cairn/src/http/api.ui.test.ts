@@ -1811,7 +1811,7 @@ describe("runtime settings modal", () => {
         sweep_interval_seconds: 3600,
         refresh_artifacts: false,
       },
-      verification: { evidence_enforcement: "completion" },
+      verification: { evidence_enforcement: "completion", flag_review: "manual" },
       proposals: {
         enabled: false,
         mode: "off",
@@ -1957,6 +1957,27 @@ describe("runtime settings modal", () => {
     app.setRuntimeFieldValue(execution, "container");
     expect(app.runtimePatch()).toEqual({ runtime: { execution: "container" } });
     app.setRuntimeFieldValue(execution, "local");
+    expect(app.runtimePatch()).toEqual({});
+  });
+
+  test("toggles flag review through the runtime switch", () => {
+    const app = loadState();
+    app.runtimeConfig.view = viewFixture();
+    app.runtimeForm = app.cloneData(app.runtimeConfig.view.editable);
+    const review = fieldsOf(app).find(
+      (field: any) => field.path === "verification.flag_review",
+    );
+
+    expect(review.type).toBe("bool");
+    expect([review.on, review.off]).toEqual(["manual", "off"]);
+    expect(app.runtimeFieldValue(review)).toBe(true);
+
+    app.setRuntimeFieldValue(review, false);
+    expect(app.runtimeFieldValue(review)).toBe(false);
+    expect(app.runtimePatch()).toEqual({ verification: { flag_review: "off" } });
+
+    app.setRuntimeFieldValue(review, true);
+    expect(app.runtimeFieldValue(review)).toBe(true);
     expect(app.runtimePatch()).toEqual({});
   });
 

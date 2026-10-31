@@ -78,8 +78,9 @@ solver-session 日志（只返回 flag 值与路径，不返回日志内容）�
 
 M32 把“抓到的 flag 值是否可信”交给操作员，而不是模型自判。开关
 `verification.flag_review`（默认 `manual`，`off` 关闭）只控制是否登记复核，与完成策略
-无关。M32b 收起暂停语义：复核在后台进行，项目边跑边等判定；派发不停，但在判定前
-项目不会被完成声明结束。
+无关；设置弹窗「运行与执行 → 图切片与校验 → Flag 人工复核」就是这个开关，默认勾选，
+保存后写回运行配置覆盖，无需重启。M32b 收起暂停语义：复核在后台进行，项目边跑边等
+判定；派发不停，但在判定前项目不会被完成声明结束。
 
 - **检测**：任务结果落图后，用与 `/flag` 相同的分类器（`apps/cairn/src/flags.ts`；
   前缀为 `flag` / `*flag` / 含 `ctf`，且不是 `[REDACTED]`、`...`、`<...>` 等掩码）
@@ -133,8 +134,9 @@ verification:
 （`completion` → `evidence`，`off` → `off`）。`POST /projects` 未显式给出
 `verification` 时，控制面按上一节的自动规则落库。
 
-`flag_review` 是服务端配置（不写入 `project_verification`），改配置后在下一个调度
-tick 生效；`off` 只跳过复核，不影响已有的 `flag_reviews` 行与展示过滤。
+`flag_review` 是服务端配置（不写入 `project_verification`），在设置弹窗里用
+「Flag 人工复核」开关切换，保存后作为运行配置覆盖持久化到 SQLite，下一个任务结果落图时
+生效；`off` 只跳过新复核的登记，不影响已有的 `flag_reviews` 行与展示过滤。
 
 ## 5. HTTP
 

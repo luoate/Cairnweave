@@ -169,6 +169,26 @@ describe("RuntimeConfigStore", () => {
     expect(stored.updatedAt).toBe(view.updated_at);
   });
 
+  test("toggles the flag review switch and restores it on reset", () => {
+    const store = newStore();
+    expect(config.verification.flagReview).toBe("manual");
+    expect(store.view().editable.verification.flag_review).toBe("manual");
+
+    const view = store.apply({ verification: { flag_review: "off" } });
+    expect(config.verification.flagReview).toBe("off");
+    expect(view.editable.verification).toEqual({
+      evidence_enforcement: "completion",
+      flag_review: "off",
+    });
+    expect(view.overrides).toEqual(["verification.flag_review"]);
+    expect(
+      JSON.parse(db.withConn((conn) => getRuntimeConfigOverrides(conn)).overrides),
+    ).toEqual({ verification: { flag_review: "off" } });
+
+    expect(store.reset().editable.verification.flag_review).toBe("manual");
+    expect(config.verification.flagReview).toBe("manual");
+  });
+
   test("replays stored overrides on a fresh config after restart", () => {
     newStore().apply({ retention: { session_keep_per_project: 7 } });
 
@@ -196,6 +216,9 @@ describe("RuntimeConfigStore", () => {
     );
     expect(() => store.apply({ proposals: { mode: "sometimes" } })).toThrow(
       "proposals.mode must be one of",
+    );
+    expect(() => store.apply({ verification: { flag_review: "sometimes" } })).toThrow(
+      "verification.flag_review must be one of: manual, off",
     );
 
     expect(config.budget.maxProjectTokens).toBe(5);

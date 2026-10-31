@@ -94,12 +94,16 @@ describe("GET /settings/runtime", () => {
     expect(response.status).toBe(200);
     const view = (await response.json()) as {
       defaults: { budget: { max_project_tokens: number } };
-      editable: { runtime: { max_workers: number; execution: string } };
+      editable: {
+        runtime: { max_workers: number; execution: string };
+        verification: { flag_review: string };
+      };
       overrides: string[];
       updated_at: string | null;
       read_only: { runtime: Record<string, unknown>; observer: { enabled: boolean } };
     };
     expect(view.defaults.budget.max_project_tokens).toBe(1000);
+    expect(view.editable.verification.flag_review).toBe("manual");
     expect(view.editable.runtime.max_workers).toBe(4);
     expect(view.editable.runtime.execution).toBe("local");
     expect(view.overrides).toEqual([]);
@@ -149,6 +153,24 @@ describe("PUT /settings/runtime", () => {
       budget: { max_project_tokens: 50 },
       tasks: { graph_slice: { enabled: true, max_facts: 40 } },
     });
+  });
+
+  test("toggles flag review through the runtime patch", async () => {
+    const response = await call(makeApi(), "PUT", "/settings/runtime", {
+      verification: { flag_review: "off" },
+    });
+
+    expect(response.status).toBe(200);
+    const view = (await response.json()) as {
+      editable: { verification: { flag_review: string } };
+      overrides: string[];
+    };
+    expect(view.editable.verification.flag_review).toBe("off");
+    expect(view.overrides).toEqual(["verification.flag_review"]);
+    expect(config.verification.flagReview).toBe("off");
+    expect(
+      JSON.parse(db.withConn((conn) => getRuntimeConfigOverrides(conn)).overrides),
+    ).toEqual({ verification: { flag_review: "off" } });
   });
 
   test("switches execution to container and persists the override", async () => {

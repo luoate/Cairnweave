@@ -503,7 +503,7 @@ const EDITABLE_OVERRIDE_KEYS: Record<string, readonly string[]> = {
     "sweep_interval_seconds",
     "refresh_artifacts",
   ],
-  verification: ["evidence_enforcement"],
+  verification: ["evidence_enforcement", "flag_review"],
   proposals: [
     "enabled",
     "mode",
