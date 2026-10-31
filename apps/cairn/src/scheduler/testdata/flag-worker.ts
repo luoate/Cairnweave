@@ -1,7 +1,7 @@
 /**
  * Test fixture: explores always report one flag-shaped value, and reason stops after two
  * facts with a completion claim that repeats the same value. That lets the flag-review
- * tests exercise the pause gate, the decoy dedupe and the operator override.
+ * tests exercise completion deferral, the decoy dedupe and the operator override.
  */
 
 import { mkdirSync, writeFileSync } from "node:fs";

@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import {
   configureDatabase,
+  createHint,
   createProject,
   decideFlagReview,
   getProjectDetail,
@@ -66,21 +67,28 @@ afterEach(() => {
   rmSync(directory, { recursive: true, force: true });
 });
 
-function createRow(): ProjectDetail {
+function createRow(
+  bootstrapEnabled = false,
+  verification: { kind: "evidence" | "off" } = { kind: "evidence" },
+): ProjectDetail {
   return db.withConn((conn) =>
     createProject(conn, {
       title: "flag review",
       origin: "start here",
       goal: "reach the end",
-      bootstrap_enabled: false,
+      bootstrap_enabled: bootstrapEnabled,
       hints: null,
       scope: { targets: ["127.0.0.1:8080"] },
+      verification,
     }),
   );
 }
 
-function scheduler(flagReview: "manual" | "off" = "manual"): Scheduler {
-  const fixture = join(import.meta.dir, "testdata", "flag-worker.ts");
+function scheduler(
+  flagReview: "manual" | "off" = "manual",
+  worker = "flag-worker.ts",
+): Scheduler {
+  const fixture = join(import.meta.dir, "testdata", worker);
   const config =
     flagReview === "off"
       ? parseDispatchConfig({ ...CONFIG, verification: { flag_review: "off" } })
@@ -137,7 +145,7 @@ async function capture(loop: Scheduler, projectId: string): Promise<FlagReview> 
 
 describe("scheduler flag review capture", () => {
   test(
-    "captures a flag but keeps dispatching while the review is pending",
+    "keeps dispatching while the review is pending but holds the completion claim",
     async () => {
       const project = createRow();
       const projectId = project.project.id;
@@ -157,21 +165,25 @@ describe("scheduler flag review capture", () => {
       const before = runCount(projectId);
       await loop.runUntilIdle();
 
+      // Work continued after the capture, yet the model's completion claim waits for the
+      // operator: an unjudged value must not close the project.
       expect(runCount(projectId)).toBeGreaterThan(before);
-      expect(load(projectId).project.status).toBe("completed");
-      // The automated completion claim is not an operator verdict.
+      expect(load(projectId).project.status).toBe("active");
       expect(summary(projectId).pending).toHaveLength(1);
       expect(reviews(projectId)).toHaveLength(1);
-      expect(logs.some((line) => line.includes("flag review is pending"))).toBe(false);
       expect(
-        logs.some((line) => line.includes("deferred") && line.includes("flag review")),
-      ).toBe(false);
+        logs.some(
+          (line) =>
+            line.includes("completion deferred") &&
+            line.includes("operator flag review pending"),
+        ),
+      ).toBe(true);
     },
     60_000,
   );
 
   test(
-    "a rejected decoy is recorded once and later sightings stay decided",
+    "a rejected decoy is recorded once and the project finishes after the verdict",
     async () => {
       const project = createRow();
       const projectId = project.project.id;
@@ -193,7 +205,7 @@ describe("scheduler flag review capture", () => {
   );
 
   test(
-    "an accepted flag leaves the project free to finish on its own",
+    "an accepted flag releases the held completion claim",
     async () => {
       const project = createRow();
       const projectId = project.project.id;
@@ -206,6 +218,52 @@ describe("scheduler flag review capture", () => {
 
       expect(load(projectId).project.status).toBe("completed");
       expect(summary(projectId).counts).toMatchObject({ real_more: 1, pending: 0 });
+    },
+    60_000,
+  );
+
+  test(
+    "a bootstrap claim on a captured flag cannot close the project before the verdict",
+    async () => {
+      const project = createRow(true, { kind: "off" });
+      const projectId = project.project.id;
+      const loop = scheduler("manual", "flag-bootstrap-worker.ts");
+
+      const pending = await capture(loop, projectId);
+
+      expect(pending.flag).toBe("flag{bootstrap_value}");
+      expect(load(projectId).project.status).toBe("active");
+      await loop.runUntilIdle();
+
+      expect(load(projectId).project.status).toBe("active");
+      expect(summary(projectId).pending).toHaveLength(1);
+      expect(
+        logs.some(
+          (line) =>
+            line.includes("bootstrap completion deferred") &&
+            line.includes("flag review pending"),
+        ),
+      ).toBe(true);
+      // The following reason turn is held for the same reason.
+      expect(
+        logs.some(
+          (line) =>
+            line.includes("completion deferred") &&
+            line.includes("operator flag review pending"),
+        ),
+      ).toBe(true);
+
+      db.withConn((conn) => {
+        decideFlagReview(conn, projectId, pending.id, "fake");
+        createHint(conn, projectId, {
+          content: "操作员判定该值是假 Flag，不要把它当作有效 Flag，继续探索。",
+          creator: "operator",
+        });
+      });
+      await loop.runUntilIdle();
+
+      expect(load(projectId).project.status).toBe("completed");
+      expect(summary(projectId).counts).toMatchObject({ fake: 1, pending: 0 });
     },
     60_000,
   );

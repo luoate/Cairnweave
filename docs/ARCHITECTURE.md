@@ -182,11 +182,14 @@ M32 把 Flag 的“真 / 假”判定交还操作员：`verification.flag_review
 `off`）开启后，调度器用与 `/flag` 同一套分类器（`apps/cairn/src/flags.ts`）检查 reason
 完成声明、explore/conclude 产出与 bootstrap 的 Fact 描述。每个项目每个不同的值只记一行
 `flag_reviews`（`pending`）。M32b 把复核改成后台进行：`pending` 不进入 `tryDispatch` 门禁，
-也不推迟 reason / bootstrap 的完成声明，项目边跑边等判定。操作员在项目页的琥珀色
+explore / conclude / reason / bootstrap 照常派发，但项目的完成声明要等判定——bootstrap
+保留已产出的 Fact，reason 释放租约并留待下一次 reason，因此未判定的值（可能是假 Flag）
+不会自己结束项目。操作员在项目页的琥珀色
 「Flag 复核」条选择三种判定：`real_more`（真，还有别的 Flag，继续）、`real_done`（真，
 停止：项目仍 active 时以 operator 身份写入完成并关项目，其余 pending 置 `dismissed`；
 项目已结束时只记录判定）、`fake`（假：记录为 rejected，项目仍 active 时追加一条
-operator Hint，继续探索）。判定是终态，同一值不会二次入队；`/flag` 与 Writeup 的扫描会
+operator Hint，继续探索）。判定后 Hint 触发下一次 reason，被推迟的完成声明重新生效。
+判定是终态，同一值不会二次入队；`/flag` 与 Writeup 的扫描会
 排除 rejected 值，并把已确认值排在第一位。
 M29 收掉两处后端热点，两处都先量后改。其一，`facts` 的主键是 `(id, project_id)`，所以项目列表里
 `(SELECT COUNT(*) FROM facts WHERE project_id = p.id)` 与 `GET /projects/{id}` 的按项目读 Fact
@@ -911,9 +914,10 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
   `placeholder_suspect` 为真时于其下方显示琥珀色「FLAG 可疑」条，逐字列出被拒的 flag 形状
   文本（该条不给复制按钮，避免把掩码当答案提交）。它不进入报告页，避免把工件内容带进可分享快照。
 - `Flag 复核`（M32/M32b）读取 `GET /projects/{id}` 的 `flag_reviews`，在页头显示琥珀色
-  复核条（“项目继续运行”）：每个 pending 值一行，带「真 · 还有更多 / 真 · 停止 / 假 ·
-  继续探索」按钮。提交期间所有按钮禁用，POST 成功后重载项目与 `/flag` 并刷新图；
-  `real_done` 在 active 项目上使其变为 completed，`real_more` / `fake` 后横幅消失。
+  复核条（“项目继续探索，判定前不会结束”）：每个 pending 值一行，带「真 · 还有更多 /
+  真 · 停止 / 假 · 继续探索」按钮。提交期间所有按钮禁用，POST 成功后重载项目与 `/flag`
+  并刷新图；`real_done` 在 active 项目上使其变为 completed，`real_more` / `fake` 后横幅
+  消失（Hint 触发下一次 reason，被推迟的完成声明重新生效）。
   项目若在判定前已结束，判定只记录结果，Toast 会注明“项目已结束”。M32 起的绿色 Flag
   横幅展示的是过滤掉已判假后的值。
 - `Writeup`（M19a/M19b/M20a/M20b/M21）读取 `GET /projects/{id}/writeup`，用 `<pre>` 原样展示中文

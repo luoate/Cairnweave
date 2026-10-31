@@ -78,15 +78,23 @@ solver-session 日志（只返回 flag 值与路径，不返回日志内容）�
 
 M32 把“抓到的 flag 值是否可信”交给操作员，而不是模型自判。开关
 `verification.flag_review`（默认 `manual`，`off` 关闭）只控制是否登记复核，与完成策略
-无关。M32b 收起暂停语义：复核在后台进行，项目边跑边等判定。
+无关。M32b 收起暂停语义：复核在后台进行，项目边跑边等判定；派发不停，但在判定前
+项目不会被完成声明结束。
 
 - **检测**：任务结果落图后，用与 `/flag` 相同的分类器（`apps/cairn/src/flags.ts`；
   前缀为 `flag` / `*flag` / 含 `ctf`，且不是 `[REDACTED]`、`...`、`<...>` 等掩码）
   扫描 explore / conclude 的 Fact 描述、bootstrap 的 Fact 与完成描述、reason 的完成
   描述。每个命中值按项目登记一行 `pending`；同一值只登记一次。
-- **不暂停**：`pending` 行不进入调度门禁，也不推迟任何完成声明；explore / conclude /
-  reason / bootstrap 照常派发，项目可以带着未判定的复核直接完成。项目页头的琥珀色
-  「Flag 复核」条提示“项目继续运行”，列出待判定值与三枚按钮，操作员随时可以作答。
+- **不暂停派发，只推迟完成**：`pending` 行不进入调度门禁，explore / conclude / reason /
+  bootstrap 照常派发；但项目的任何完成声明在判定前都不落地——bootstrap 保留已产出的
+  Fact，reason 的完成声明释放租约并留待下一次 reason，日志分别是
+  `bootstrap completion deferred … flag review pending` 与
+  `completion deferred … operator flag review pending`。这样未判定的值（可能是假 Flag）
+  不会直接结束项目。项目页头的琥珀色「Flag 复核」条提示“项目继续探索，判定前不会结束”，
+  列出待判定值与三枚按钮，操作员随时可以作答。
+- **判定后恢复**：`real_more` / `fake` 写 Hint 并驱动下一次 reason，完成声明重新生效；
+  `real_done` 直接结束项目。判定前若项目已自行完成（例如旧复核行），判定只记录结果，
+  不会重复写入完成 Intent。
 - **三种判定**：
   - `real_more`：值记入 `verified`；项目仍为 active 时写一条去重 Hint（“操作员确认 …
     为真且还有其他 Flag，继续探索。”）。
@@ -106,7 +114,8 @@ verification:
   # completion：完成时必须满足证据规则（默认）；off：旧项目/离线测试的逃生口。
   # 该值在创建项目时写入 project_verification，之后改配置不会改变已有项目。
   evidence_enforcement: completion
-  # manual：登记抓到 flag 形状的值供操作员后台复核（不暂停项目）；off 关闭复核。
+  # manual：登记抓到 flag 形状的值供操作员后台复核（派发不停，完成声明等判定）；
+  # off 关闭复核。
   flag_review: manual
   challenge:
     base_url_env: TCH_CHALLENGE_API_BASE_URL
@@ -183,8 +192,8 @@ tick 生效；`off` 只跳过复核，不影响已有的 `flag_reviews` 行与�
 - 验证过程抛错（例如实现缺陷）：任务按失败处理，项目保持 active，日志记录
   `verification error`。
 - `off` 策略直接通过，不读取任何 Fact 或网络。
-- flag 复核 pending 时任务照常结束并落图，项目继续派发甚至完成；判定失败（400 /
-  404 / 409）不改项目状态，复核行保持 `pending`。
+- flag 复核 pending 时任务照常结束并落图、项目继续派发，但完成声明推迟到判定之后；
+  判定失败（400 / 404 / 409）不改项目状态，复核行保持 `pending`。
 
 ## 8. 已知边界
 
@@ -200,7 +209,8 @@ tick 生效；`off` 只跳过复核，不影响已有的 `flag_reviews` 行与�
 - flag 复核按文本形状识别候选，不证明真伪；`real_more` / `fake` 判定后，若模型在
   没有新 flag 的情况下提出完成，`evidence` / `off` 策略仍可能放行——复核只提示“抓到
   flag”，不替代完成 oracle。
-- 复核不阻塞项目，因此项目可能在判定前就已完成；此时 `real_more` / `fake` 只记录
-  判定、不再追加探索 Hint，`real_done` 只记录判定而不新增完成 Intent。`real_done`
-  以该复核行关联的 Fact 作为完成来源，若项目仍为 active 且任务没有留下 Fact 就只能
-  改选另外两种判定。
+- 复核不暂停派发，因此项目在判定前可以继续探索并落更多 Fact；唯一被推迟的是完成
+  声明。若复核行在项目结束后才被判定（旧数据或手工结束），`real_more` / `fake` 只
+  记录判定、不再追加探索 Hint，`real_done` 只记录判定而不新增完成 Intent。
+  `real_done` 以该复核行关联的 Fact 作为完成来源，若项目仍为 active 且任务没有留下
+  Fact 就只能改选另外两种判定。

@@ -39,6 +39,7 @@ import {
   getProjectUsage,
   getStrategistState,
   hasPendingConclude,
+  hasPendingFlagReviews,
   heartbeatIntent,
   isPendingConcludeSession,
   buildProfileRunStats,
@@ -1285,9 +1286,16 @@ export class Scheduler {
       case "complete": {
         const from = requireFactIds(validated.data["from"]);
         const description = requireText(validated.data["description"]);
-        // Capture any flag in the completion claim for review; the operator answers in the
-        // background and the claim itself still closes the project.
-        this.reviewCapturedFlags(conn, running, [description], from[0] ?? null);
+        // Dispatch keeps running while a flag awaits the operator, but the completion claim
+        // must wait: an unconfirmed (possibly decoy) flag is not a reason to stop the project.
+        // The claim is retried after the verdict; the fact itself is already in the graph.
+        if (this.reviewCapturedFlags(conn, running, [description], from[0] ?? null)) {
+          releaseReason(conn, running.projectId, WORKER_NAME);
+          this.log(
+            `completion deferred project=${running.projectId}: operator flag review pending`,
+          );
+          return "success";
+        }
         // `completionClaim` verified the same fact set before the transaction. A missing
         // outcome here means the claim shape changed under us; fail closed.
         if (verification === null || !verification.ok) {
@@ -1466,13 +1474,20 @@ export class Scheduler {
       },
     );
     // The bootstrap fact is worth keeping even when verification fails; the project stays
-    // active and a later reason turn can close it once the oracle agrees.
-    this.reviewCapturedFlags(
-      conn,
-      running,
-      [validated.data.factDescription, validated.data.completeDescription],
-      conclude.fact.id,
-    );
+    // active and a later reason turn can close it once the oracle agrees. The same holds
+    // while a captured flag awaits the operator: bootstrapping may not end the project on
+    // its own claim, or a decoy would close it before the operator can answer.
+    if (
+      this.reviewCapturedFlags(
+        conn,
+        running,
+        [validated.data.factDescription, validated.data.completeDescription],
+        conclude.fact.id,
+      )
+    ) {
+      this.log(`bootstrap completion deferred project=${running.projectId}: flag review pending`);
+      return "success";
+    }
     if (verification === null || !verification.ok) {
       this.log(
         `bootstrap completion deferred project=${running.projectId}: ${verification?.detail ?? "no verification result"}`,
@@ -2178,17 +2193,20 @@ export class Scheduler {
   }
 
   /**
-   * Records one pending review per distinct flag-shaped value in `texts`. Reviews never
-   * block dispatch: the operator answers while the project keeps working, and a value the
-   * operator already accepted or rejected is never queued again.
+   * Records one pending review per distinct flag-shaped value in `texts`.
+   *
+   * Returns whether a review for the project is still pending after the write. Dispatch
+   * never waits on the answer, but completion claims do: the caller must not close the
+   * project on a value the operator has not judged yet. A review we failed to record is
+   * reported as pending (fail closed) so an unrecorded claim cannot end the project either.
    */
   private reviewCapturedFlags(
     conn: Database,
     running: RunningTask,
     texts: readonly string[],
     factId: string | null,
-  ): void {
-    if (this.config.verification.flagReview !== "manual") return;
+  ): boolean {
+    if (this.config.verification.flagReview !== "manual") return false;
     const seen = new Set<string>();
     for (const text of texts) {
       if (typeof text !== "string" || text === "") continue;
@@ -2203,9 +2221,11 @@ export class Scheduler {
           });
         } catch (error) {
           this.log(`flag review record failed project=${running.projectId}: ${describe(error)}`);
+          return true;
         }
       }
     }
+    return hasPendingFlagReviews(conn, running.projectId);
   }
 
   private logOnce(key: string, message: string): void {
