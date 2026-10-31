@@ -44,6 +44,7 @@ import {
   isPendingConcludeSession,
   buildProfileRunStats,
   listAllPendingConcludes,
+  listProjectAttachments,
   listProjectIntentMeta,
   listProjects,
   listRecentStrategistRuns,
@@ -897,13 +898,15 @@ export class Scheduler {
           buildProfileRunStats(conn),
           pending?.workerProfile,
         );
+        // Challenge files the operator uploaded; the prompt lists them so the worker knows
+        // what to read before it proposes a direction.
+        const attachments = listProjectAttachments(conn, projectId);
         const prepared = prepareTask({
           config: this.config,
           project,
           exportYaml,
           kind,
-          ...(intent === undefined ? {} : { intent }),
-          ...(profile === null ? {} : { workerProfile: profile }),
+          ...(intent === undefined ? {} : { intent }),          ...(profile === null ? {} : { workerProfile: profile }),
           ...(pending === undefined
             ? {}
             : {
@@ -913,6 +916,7 @@ export class Scheduler {
           ...(intentBudget === null ? {} : { budget: intentBudget }),
           ...(openIntentMeta === undefined ? {} : { intentMeta: openIntentMeta }),
           ...(projectBudget === undefined ? {} : { projectBudget }),
+          ...(attachments.length === 0 ? {} : { attachments }),
           scope,
           workspaceRoot: this.workspaceRoot,
           pathMapper: (hostPath) => this.runtime.mapPath(hostPath),

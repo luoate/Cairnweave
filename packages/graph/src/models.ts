@@ -557,6 +557,18 @@ export interface FlagReviewSummary {
   counts: Record<FlagReviewStatus, number>;
 }
 
+/** A challenge file uploaded into the project workspace. `path` is workspace-relative. */
+export interface ProjectAttachment {
+  id: number;
+  project_id: string;
+  name: string;
+  path: string;
+  size: number;
+  sha256: string;
+  creator: string;
+  created_at: string;
+}
+
 export interface CreateProjectRequest {
   title: string;
   origin: string;

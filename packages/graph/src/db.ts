@@ -140,6 +140,25 @@ CREATE TABLE IF NOT EXISTS project_writeups (
     created_at TEXT NOT NULL
 );
 
+-- Challenge files an operator uploaded for the project. Bytes live in the project workspace
+-- under attachments/ so the worker can read them; this row is the ledger (name, size, digest).
+CREATE TABLE IF NOT EXISTS project_attachments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    path TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    sha256 TEXT NOT NULL,
+    creator TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS project_attachments_project_name
+    ON project_attachments(project_id, name);
+
+CREATE INDEX IF NOT EXISTS project_attachments_project_created
+    ON project_attachments(project_id, created_at, id);
+
 CREATE TABLE IF NOT EXISTS runs (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,

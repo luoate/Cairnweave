@@ -41,6 +41,7 @@ describe("static operations UI", () => {
     expect(html).toContain("selectSideTab('stats')");
     expect(html).toContain("selectSideTab('report')");
     expect(html).toContain("selectSideTab('writeup')");
+    expect(html).toContain("selectSideTab('attachments')");
 
     const favicon = await api.handle(new Request("http://cairn.test/static/favicon.svg"));
     expect(favicon.status).toBe(200);
@@ -69,6 +70,7 @@ describe("static operations UI", () => {
       "loadStats",
       "loadReport",
       "loadProjectFlag",
+      "loadAttachments",
     ]) {
       const start = appScript.indexOf(`async ${method}(`);
       expect(start).toBeGreaterThan(-1);
@@ -102,6 +104,7 @@ describe("static operations UI", () => {
     expect(appScript).toContain("/report`");
     expect(appScript).toContain("format=markdown");
     expect(appScript).toContain("/flag`");
+    expect(appScript).toContain("/attachments`");
     expect(html).toContain("慢层");
     expect(html).toContain("单项目预算");
     expect(html).toContain("推理历史");
@@ -262,6 +265,115 @@ describe("static operations UI", () => {
       data: { flag: { value: "CTF2{real_one}", alternatives: ["flag{second}"] }, flag_suspects: [] },
     };
     expect(app.writeupSummary()).toContain("已记录 Flag（另有 1 个候选）");
+  });
+
+  test("wires the challenge attachment tab with upload, download and armed delete", async () => {
+    const html = readFileSync(INDEX_PATH, "utf8");
+    const appScript = html.match(/<script>\s*(function cairnApp\(\)[\s\S]*?)<\/script>/)![1]!;
+
+    // Listing is read-only; the only writes are the upload POST and the delete DELETE.
+    const loadStart = appScript.indexOf("async loadAttachments(");
+    expect(loadStart).toBeGreaterThan(-1);
+    const loadBody = appScript.slice(loadStart, appScript.indexOf("\n    },", loadStart));
+    expect(loadBody).toContain("this.api('GET'");
+    expect(loadBody).not.toMatch(/this\.api\('(POST|PUT|DELETE)'/);
+
+    // The route takes the raw bytes as the body, so a buffered multipart form is not used.
+    const uploadStart = appScript.indexOf("async uploadAttachment(");
+    expect(uploadStart).toBeGreaterThan(-1);
+    const uploadBody = appScript.slice(uploadStart, appScript.indexOf("\n    },", uploadStart));
+    expect(uploadBody).toContain("?name=${encodeURIComponent(file.name)}");
+    expect(uploadBody).toContain("{ method: 'POST', body: file }");
+
+    const deleteStart = appScript.indexOf("async deleteAttachment(");
+    expect(deleteStart).toBeGreaterThan(-1);
+    const deleteBody = appScript.slice(deleteStart, appScript.indexOf("\n    },", deleteStart));
+    expect(deleteBody).toContain("this.api('DELETE'");
+
+    const panelStart = html.indexOf(`x-show="sideTab === 'attachments'"`);
+    expect(panelStart).toBeGreaterThan(-1);
+    const panel = html.slice(panelStart, html.indexOf("\n    </div>\n  </div>", panelStart));
+    expect(panel).toContain('type="file" multiple');
+    expect(panel).toContain('@change="uploadPickedAttachments($event)"');
+    expect(panel).toContain('@click="downloadAttachment(attachment)"');
+    expect(panel).toContain('@click="requestDeleteAttachment(attachment)"');
+    expect(panel).toContain("再次点击确认删除");
+    // The label and the rose colour must read the same armed field; a stale second field
+    // name leaves the row armed while still looking idle.
+    expect(panel).toContain("attachmentsPanel.armedAttachment === attachment");
+    expect(panel).not.toContain("armedId");
+    expect(panel).toContain("attachmentsPanel.available");
+    expect(panel).toContain("attachmentsPanel.error");
+
+    const app = loadState();
+    expect(app.opsTabs()).toContain("attachments");
+    app.selectedProjectId = "proj_009";
+    expect(app.attachmentHref({ id: 7 })).toBe("/projects/proj_009/attachments/7");
+    app.selectedProjectId = null;
+    expect(app.attachmentHref({ id: 7 })).toBe("#");
+
+    // The budget copy comes from the server, so the UI cannot drift from the route limits.
+    expect(app.attachmentsSummaryLabel()).toContain("Worker 用文件工具直接读取");
+    expect(app.attachmentsPolicyLabel()).toContain("只读输入");
+    app.attachmentsPanel.loadedFor = "proj_009";
+    app.applyAttachmentView({
+      attachments: [
+        {
+          id: 7,
+          name: "challenge.bin",
+          path: "attachments/challenge.bin",
+          size: 4096,
+          sha256: "a".repeat(64),
+          creator: "operator",
+          created_at: "2026-10-31T00:00:00Z",
+        },
+      ],
+      total_bytes: 4096,
+      limits: { file_bytes: 32 * 1024 * 1024, project_bytes: 256 * 1024 * 1024 },
+      available: true,
+    });
+    expect(app.attachmentsPanel.items).toHaveLength(1);
+    expect(app.attachmentsSummaryLabel()).toBe("1 个附件 · 共 4.0 KiB");
+    expect(app.attachmentWorkspaceLabel()).toBe("工作区 attachments/");
+    expect(app.attachmentsPolicyLabel()).toContain("单个文件上限 32.0 MiB");
+    expect(app.attachmentsPolicyLabel()).toContain("每个项目上限 256.0 MiB");
+    expect(app.attachmentsPolicyLabel()).toContain("同名文件换内容会被拒绝");
+
+    // A server without a mounted workspace stores nothing; the control says so instead of failing on click.
+    app.applyAttachmentView({
+      attachments: [],
+      total_bytes: 0,
+      limits: { file_bytes: 32 * 1024 * 1024, project_bytes: 256 * 1024 * 1024 },
+      available: false,
+    });
+    expect(app.attachmentsPanel.available).toBe(false);
+    expect(app.attachmentWorkspaceLabel()).toBe("工作区未挂载");
+    expect(app.attachmentUploadLabel()).toContain("工作区未挂载，无法上传");
+    expect(app.attachmentsSummaryLabel()).toBe("还没有上传附件。");
+
+    // The first delete click only arms the row; the file is removed on the second click.
+    const deleted: number[] = [];
+    app.deleteAttachment = async (attachment: { id: number }) => {
+      deleted.push(attachment.id);
+    };
+    const row = { id: 12, name: "pcap.bin" };
+    const other = { id: 13, name: "other.bin" };
+    app.requestDeleteAttachment(row);
+    expect(deleted).toEqual([]);
+    expect(app.attachmentsPanel.armedAttachment).toEqual(row);
+    // Moving the arm to another row never deletes the first one.
+    app.requestDeleteAttachment(other);
+    expect(deleted).toEqual([]);
+    expect(app.attachmentsPanel.armedAttachment).toEqual(other);
+    app.requestDeleteAttachment(other);
+    expect(deleted).toEqual([13]);
+    expect(app.attachmentsPanel.armedAttachment).toBeNull();
+
+    // A reload drops the arm: the row it pointed at may already be gone.
+    app.requestDeleteAttachment(row);
+    expect(app.attachmentsPanel.armedAttachment).toEqual(row);
+    app.applyAttachmentView({ attachments: [], total_bytes: 0, limits: null, available: true });
+    expect(app.attachmentsPanel.armedAttachment).toBeNull();
   });
 
   test("wires the read-only Observer board tab", async () => {

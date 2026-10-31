@@ -358,7 +358,7 @@ scheduler 与 HTTP API 共用 `packages/graph/src/commands.ts` 的命令，不�
 | 数据 | 写入者 | 读取者 | 位置 |
 | --- | --- | --- | --- |
 | SQLite（projects/facts/intents/hints/settings/project_scopes/project_artifacts） | 控制面 | 控制面 | 控制面主机 |
-| SQLite 旁路表（`runs` / `fact_meta` / `fact_evidence` / `pending_concludes` / `audit_events` / `audit_stream_lost` / `proposals` / `intent_meta` / `strategist_state` / `project_verification` / `verification_checks` / `project_writeups`） | 控制面（不进入图模型与 YAML） | 控制面 | 控制面主机 |
+| SQLite 旁路表（`runs` / `fact_meta` / `fact_evidence` / `pending_concludes` / `audit_events` / `audit_stream_lost` / `proposals` / `intent_meta` / `strategist_state` / `project_verification` / `verification_checks` / `project_writeups` / `project_attachments`） | 控制面（不进入图模型与 YAML） | 控制面 | 控制面主机 |
 | `graph.yaml` 快照 | 控制面 | worker | 项目工作区/容器内绝对路径 |
 | `task.json` | 控制面 | worker | `sessionDir` |
 | `result.json` | worker（临时文件 + rename 原子写） | 控制面 | `sessionDir` |
@@ -660,9 +660,13 @@ stderr 归档到 `sessionDir/{stdout,stderr}.log`。需要 UI 实时进度时再
 - **HTTP**：`GET /projects/{id}/artifacts` 返回
   `[{path,size,sha256,task_id,created_at}]`，按路径排序；未知项目 404。响应与既有 API
   一样由控制面从 SQLite 读取。
+- **输入目录（M35）**：`<workspace>/attachments/**` 是操作员上传的题目文件，方向与
+  `artifacts/` 相反——它是 worker 的只读输入，不是任务产出。附件不进 artifact 索引、不进
+  Writeup 附件包，`attachments/` 不会被重建或清理；每个任务的 prompt 末尾列出该目录下的
+  文件清单（名称、字节数、`sha256` 前 12 位）并声明它们只读。
 - 索引失败只记日志，不影响任务结果；下一次扫描会重建。
 
-### 5.6 旁路表：runs、fact_meta、fact_evidence、pending_concludes、audit_events、audit_stream_lost、intent_meta、strategist_state、verification 与 project_writeups
+### 5.6 旁路表：runs、fact_meta、fact_evidence、pending_concludes、audit_events、audit_stream_lost、intent_meta、strategist_state、verification、project_writeups 与 project_attachments
 
 这些表都在 `packages/graph/src/db.ts` 中创建，既不属于图导出，也不参与任何既有命令：
 
@@ -728,6 +732,13 @@ stderr 归档到 `sessionDir/{stdout,stderr}.log`。需要 UI 实时进度时再
   `project_id`，外键指向项目并级联删除。只在 `POST /projects/{id}/writeup` 成功后
   upsert 一行，`DELETE` 清除；中文草稿不落库，始终由图数据现算。表不进入图模型、
   YAML 导出或 worker 契约。
+- `project_attachments(id, project_id, name, path, size, sha256, creator, created_at)`（M35），
+  外键指向项目并级联删除，`UNIQUE(project_id, name)`。字节存在项目工作区的
+  `attachments/<name>`，这一行只是账本（名称、大小、摘要、上传者、时间），供「附件」页签展示
+  和 worker 提示列清单。`sanitizeAttachmentName()` 把客户端文件名收敛成单个安全路径段（取叶子、
+  去控制字符、`<>:"/|?*` 换成 `_`、拒绝 Windows 保留名、上限 120 字符）；同一摘要重放幂等，
+  同名换内容拒绝，为的是 Worker 读过的文件不会在脚下被换掉。表不进入图模型、YAML 导出，
+  worker 契约也不新增字段——附件只以提示词段落的形式交接。
 - `runtime_config_overrides(id, overrides, updated_at)`（M22），单行 `id = 1`，
   `overrides` 是 snake_case JSON patch，`updated_at` 是最后一次成功写入的 ISO 时间。
   由 `RuntimeConfigStore` 读写，不进入图导出、worker 契约或项目数据；`DELETE
@@ -807,6 +818,20 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
   三个 writeup 视图的 JSON 都多带 `payloads`（M20a，`total/count/inlined/binary/unread/
   truncated` 与 `files[]`）和 `archive:{available,files}`（M20b），侧栏据此显示载荷摘要与
   下载按钮。
+- `GET /projects/{id}/attachments`（M35，只读）、`POST /projects/{id}/attachments?name=<文件名>`、
+  `GET|DELETE /projects/{id}/attachments/{attachment_id}` → 题目附件。列表返回
+  `{attachments:[{id,project_id,name,path,size,sha256,creator,created_at}], total_bytes,
+  limits:{file_bytes,project_bytes}, available}`，未知项目 404。POST 一次一个文件，请求体
+  是**原始字节**（不是 multipart，浏览器侧 `fetch(url, {method:'POST', body: file})`，curl 侧
+  `curl -T file`），文件名走 `?name=`；先写 `project_attachments` 账本再写工作区
+  `attachments/<name>`，字节写失败只回滚本次新建的账本行。同一摘要重放返回 200 且
+  `created:false`（字节照样重写，账本不会指向缺失文件），同名换内容 409，单文件超限 413
+  且此时什么都不落，超项目总量 409。单个 GET 以 `application/octet-stream` +
+  `content-disposition` 回字节，符号链接、越界或缺失一律 409。DELETE 先删字节再删行；
+  Windows 上文件被 worker 占用时 409 并保留行，操作员可重试。写操作需 operator token
+  （配置时）并拒绝跨源写；未挂载 workspace root 时列表 `available:false`、POST/DELETE 409。
+  两个上限是常量（`MAX_ATTACHMENT_FILE_BYTES` 32 MiB、`MAX_ATTACHMENT_PROJECT_BYTES`
+  256 MiB），不进 dispatch.yaml。
 - `GET /projects/{id}/strategist?limit=20`（M12c，只读）→
   `{state, budget, intents, reason_runs}`。`state` 为 `strategist_state` 或 `null`；
   `budget` 含 `used_tokens` / `used_cost_usd` / `running_tasks`、配置上限（纯 HTTP
@@ -952,6 +977,16 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
   （POST，生成期间禁用）与仅在模型版下出现的`恢复草稿`（DELETE）。页签同样按项目记在
   `localStorage`，只在激活时加载，失败给行内错误与重试。前端不自行拼接正文，也不把
   Writeup 混入报告快照。
+- `附件`（M35）读取 `GET /projects/{id}/attachments`，逐行列出名称、大小、`sha256` 前 12 位、
+  上传时间与上传者，并在下方给出工作区相对路径 `attachments/<name>`；顶部提供多选上传
+  （`<input type="file" multiple>`）与刷新。上传按文件逐个 POST（`?name=` + 原始字节正文），
+  单个失败不撤销已存的文件，进度显示为 `上传中 n/N…`，结束后重拉列表，失败只把首条原因
+  放进 toast。每行有 `下载`（同源 GET 加 `<a download>`，不经 fetch/buffer）与 `删除`；
+  删除沿用 M17c 的二次确认：第一次点击只把该行武装（按钮转玫红、文案变`再次点击确认删除`，
+  4 秒后或改点别行自动解除），第二次点击才发 DELETE，任何一次列表刷新都会解除武装——那一行
+  可能已经不在了。未挂载工作区时 `available:false`，上传控件直接写明不能上传；上限数字与
+  「同名换内容会被拒绝」的说明取服务端 `limits`，前端不写死。页签同样按项目记在
+  `localStorage`，只在激活时加载。
 - Fact 详情（M15d）在 `GET /facts/{id}/meta` 返回 `superseded_by` 或非空 `supersedes`
   时额外显示“取代关系”：点取代者可跳到新 Fact，点旧 Fact 可回到被取代项。
 - `Cost`（成本，M13b）读取 `GET /projects/{id}/cost`，显示项目总量与归因完整性、

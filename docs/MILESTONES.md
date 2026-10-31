@@ -1,12 +1,12 @@
 # 里程碑与验证记录
 
-本文件保留 M1–M34 的实现记录、测试与浏览器验证清单、与 Python Cairn 的已知差异、
+本文件保留 M1–M35 的实现记录、测试与浏览器验证清单、与 Python Cairn 的已知差异、
 里程碑表以及与 Phase 0 的关系。产品概览、快速开始与 API 概览见 [README](../README.md)。
 
 ## 实现记录
 
-状态：**M34（完成声明引用操作员已判假的 Flag 值即被拒绝，reason 车道不因此退避）**；M0–M4、M5a–M5c、
-M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M16b、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e、M18f、M18g、M19a、M19b、M20a、M20b、M21、M22、M23、M24、M24b、M25、M26、M26b、M27、M28、M29、M30、M31、M32、M32b、M32c、M32f、M33a、M33b、M33c、M33d、M34 的计划项全部完成。Phase 1 的
+状态：**M35（题目附件：操作员上传题目文件到项目工作区 `attachments/`，Worker 在任务提示里看到文件清单）**；M0–M4、M5a–M5c、
+M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M16b、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e、M18f、M18g、M19a、M19b、M20a、M20b、M21、M22、M23、M24、M24b、M25、M26、M26b、M27、M28、M29、M30、M31、M32、M32b、M32c、M32f、M33a、M33b、M33c、M33d、M34、M35 的计划项全部完成。Phase 1 的
 “本地看板 + Observer 提案 + 证据门 + 单一写图者”闭环已具备；Observer 复盘自 M22 起默认
 开启（只读复盘，不改任务结果），提案自 M23 起默认 `dry_run`（完整校验并记录，不写图）。
 Phase 2 的触发持久化、意图优先级/预算、单项目 token/成本与并发配额、只读慢层观测、逐 Fact
@@ -1380,6 +1380,25 @@ M16b 增加（第二个模型接入与真实 A/B）：
   了 proj_023 真实保留的 reason 结果：声明确实引用了被判假的那条值（交集 1），过门禁后项目
   保持 `active`、goal 边 0 条、拒绝 Hint 恰好 1 条、日志给出
   `completion deferred project=…: cites an operator-rejected flag`，explore 车道继续派发。
+- **题目附件上传与 Worker 提示清单（M35）**：CTF 题目常附带二进制、pcap 或源码包，之前
+  worker 只能自己在授权范围里找，操作员把文件放进工作区也不会有人告诉它。M35 增加一条
+  控制面交接：字节存进项目工作区 `attachments/<name>`，旁边一张 `project_attachments`
+  旁路表（`UNIQUE(project_id, name)`，外键级联删除）记录名称、大小、SHA-256、上传者与时间；
+  `sanitizeAttachmentName()` 把客户端文件名收敛成单个安全路径段（取叶子、去控制字符、
+  非法字符换 `_`、拒绝 Windows 保留名、上限 120 字符）。HTTP 上 `POST
+  /projects/{id}/attachments?name=<文件名>` 一次一个文件、请求体是原始字节（不引入
+  multipart，边读边数，超 32 MiB 立刻 413 且什么都不落），项目总量上限 256 MiB；先落账本
+  再写字节，写失败只回滚本次新建的行，同一摘要重放幂等（200 `created:false`，字节仍重写，
+  账本不会指向缺失文件），同名换内容 409——Worker 读过的文件不能在脚下被换掉。`GET
+  .../{attachment_id}` 只发普通文件（符号链接/越界/缺失 409），`DELETE` 先删字节再删行，
+  Windows 上被 worker 占用时 409 并保留行。scheduler 在 `prepareTask` 里追加
+  `# Challenge Attachments` 段（排在 Artifact Policy 之后、Completion Verification 之前），
+  列名称、字节数与 `sha256` 前 12 位，并写明这些文件只读、产出仍写 artifact 目录；任务
+  JSON 契约没有新字段，Python golden 不变。UI 新增「附件」页签：多选上传（逐个顺序 POST，
+  单个失败不撤销已存文件）、逐行下载（同源 GET + `<a download>`）与删除（第一次点击只
+  武装、第二次才删，4 秒或刷新自动解除），上限说明取服务端 `limits`。已知边界：附件不进
+  Writeup 附件包、没有版本替换语义（要换内容先删再传）、不会清理 `attachments/` 下的
+  多余文件。
 
 golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定时钟、`TZ=UTC`）。
 重新生成方法与约束见 `docs/PORTING.md`。
@@ -1477,6 +1496,7 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M33c ✅ | 配置、传输与开关：dispatch.yaml 新增 `scope` 段（`ssrf_markers` 默认 **observe**、`protected_hosts` 只接受裸主机名且只读）；`EDITABLE_OVERRIDE_KEYS.scope` 只放 `ssrf_markers`，`editable.scope` 出现在 `GET /settings/runtime`；scheduler `startProcess` 用 `CAIRN_SSRF_POLICY` / `CAIRN_SSRF_PROTECTED_HOSTS` 传递，solver 的 `ssrfMarkerFields` 折进 `CAIRN_SCOPE_POLICY`（任务 JSON 契约与 Python golden 不变，未识别的模式原样交给策略解析器，会话拒绝启动）；worker-extension 校验两字段。设置弹窗新增「SSRF 标记」组：`observe`（只记录，默认）/ `block`（拦截并拒绝）/ `off`（忽略）三档下拉，组内 `notes` 逐条解释携带目标定义、三档差别、硬底线以及 `off` 是相对旧行为的放宽；「审计」页签给 `ssrf_candidate` 行加琥珀色「SSRF 标记」徽标，理由按记录（琥珀）与拒绝（玫红）分色 | `api.ui.test.ts` 新增 3 例（开关最小 patch、三种模式说明文案都在 DOM 里、审计行徽标与理由配色）、`api.settings-runtime.test.ts` 1 例（PUT 读写 + `protected_hosts` 400）、`config-overrides.test.ts` 2 例、`config.test.ts` 7 例、`breachweave.test.ts` 3 例；`runtimeGroups()` 的组新增 `notes`，渲染器加一个 `x-show="group.notes"` 列表，`bun run ui:css` 无产物变化（新样式已在既有的预编译产物里） |
 | M33d ✅ | 收尾：调度器→worker 那一跳补集成测试（`scheduler/testdata/ssrf-env-worker.ts` 把收到的 `CAIRN_SSRF_POLICY` / `CAIRN_SSRF_PROTECTED_HOSTS` 写成一行 `ssrf_candidate` 审计，再委托真实 worker，测试从控制面账本里读回该值，钉住环境变量名与 `protectedTargetHosts` 的小写+排序结果）；README 安全模型、`docs/ARCHITECTURE.md`（端点来源与 SSRF 标记、审计、§12 边界）、`docs/CONFIG.md`（`scope` 段、生效时机、只读项、前端行为）、`docs/CONTRACT.md`（§5 示例行与摄入规则）、`docs/OPERATIONS.md`（Host Bridge 子项与「只影响下一个 worker」）同步；版本 `0.55.0-m33` | 931 passed / 85 files（2026-10-31）；`bun run check`（tsc + 全量）通过（本轮唯一新增的 tsc 失败是 `config.test.ts` 里 `"block"\|"observe"\|"off"` 数组需要 `as const`）；浏览器实测临时 DB + 临时 dispatch.yaml 起 `serve --config <临时配置> --port 8036`（工作区也指向临时目录；项目建成无 scope，日志如实 `[scheduler] skip project=proj_001 because it has no authorized scope`，全程不派发任何任务）：「SSRF 标记」组的下拉为 `observe,block,off` 且默认 `observe`，五条说明逐项可见；切到 `block` 后 `runtimePatch()` 只有 `{"scope":{"ssrf_markers":"block"}}`，点「保存并生效」后 `editable.scope.ssrf_markers` 为 `block`、`overrides:["scope.ssrf_markers"]`、「标记模式」出现可见「已覆盖」徽标；改回 `observe` 保存后覆盖清空、徽标消失；PUT 非法模式 400、`scope.protected_hosts` 400 且 detail 为 `overrides.scope has unsupported key: protected_hosts`；写 `block` 后重启服务，覆盖仍重放且 SQLite `runtime_config_overrides.overrides` 为 `{"scope":{"ssrf_markers":"block"}}`；「审计」页签在种入的一行普通决策 + 一行 `observe` 记录 + 一行硬底线拒绝上，渲染 2 枚琥珀「SSRF 标记」徽标，理由分别是 `text-amber-700`（记录）与 `text-rose-600`（拒绝），控制台无消息（应用内浏览器仍为隐藏态，用页面内 DOM 查询与 `.click()` 验证）；未验证的一跳：真实 Solver 进程内的 Bridge 只由 `bridge.test.ts` 的环境驱动用例覆盖，没有跑真实模型 |
 | M34 ✅ | 引用已判假 Flag 的完成声明一律拒绝：`flag_reviews` 是 `UNIQUE(project_id, flag)` + 判定终态，判过的值不再入队，所以 M32b 的「等判定」hold 在判定落地时就消失了；下一轮 reason 把同一个被判假的值写进完成描述，`verification.mode: off` 直接放行，`completeProject` 落图，项目自己 completed 并停止探索。scheduler 在 reason 的 `complete` 分支与 bootstrap 的完成分支各加一道 `citesRejectedFlag`：用共享分类器 `findFlags` 扫声明文本，命中该项目 `status='fake'` 的值即拒绝——`releaseReason` 放租约、按 `success` 记账（`rejected` 会计入慢层失败并触发 `failure_backoff`，把操作员要求继续跑的 reason 车道退避掉）、`recordRejectedCitationHint` 按内容去重写一条控制面 Hint 解释原因并提示下一轮该给什么、日志记 `completion deferred …: cites an operator-rejected flag`；bootstrap 分支保留已产出的 Fact 并保持 active。该门禁不看 `verification.flag_review`，与 `/flag` 的展示过滤同属独立判断；校验语义（evidence / challenge / oracle）与 `flag_reviews` 写入路径都不变 | 934 passed / 85 files（2026-10-31）；`bun run check`（tsc + 全量）通过；`scheduler/flag-review.test.ts` 8/8：原「判定后完成」用例翻转为「判定后仍被拒绝」（断言 active、无 `to=goal` Intent、日志含拒绝行），新增重复拒绝只写一条 Hint、`off` 模式下判定与拒绝仍然生效、`flag-bootstrap-worker.ts` 的 bootstrap 自我声明引用判假值时被拒（夹具改为在 bootstrap 完成描述里带上 flag 值，同时复现未判定即自封与引用判假值两种形状）；lab 库副本上回放 proj_023 真实保留的 reason `result.json`（`from: ["f001"]`，声明文本里恰好 1 处引用被判假的值）：过门禁后 `status=active`、goal 边 0、拒绝 Hint 恰好 1、reason 派发 1 次并留下拒绝日志，explore 车道继续派发；临时脚本与副本库已删除，未改动 lab 的 `runs/demo/cairn.db` |
+| M35 ✅ | 题目附件：新增旁路表 `project_attachments(id, project_id, name, path, size, sha256, creator, created_at)`，字节存项目工作区 `attachments/<name>`，表只作账本、不进图模型/YAML/worker 契约；名称按单段清洗（取叶名、去控制字符与 `< > : " / \| ? *`、去首尾点/空格、Windows 保留名拒绝、120 字符上限并保留短扩展名），`UNIQUE(project_id, name)`，同摘要重传幂等（`created:false`），同名不同字节 409，文件被占用删不掉时保留行并 409；额度单文件 32 MiB（流式读满即断）/ 每项目 256 MiB（重放不占）；路由 `POST/GET /projects/{id}/attachments`、`GET/DELETE /projects/{id}/attachments/{attachment_id}`，上传为裸 body + `?name=`、下载带 `content-disposition`（含 RFC 5987 `filename*`），`available:false` 表示控制面没有挂载工作区；任务提示里列出附件清单（路径/大小/摘要），worker 按只读输入对待，附件不索引、不进 Writeup zip；项目详情新增「附件」侧栏页签（多选上传逐个 POST 带进度、刷新、下载、二次点击删除 4 s 自动解除且刷新即解除、页签记忆沿用 localStorage、额度文案取服务端 limits）；版本 `0.57.0-m35` | 966 passed / 87 files / 3915 expects（2026-10-31）；`bun run check`（tsc + 全量）通过；`ui:css` 重生成与工作区逐字节一致；`api.attachments.test.ts` 覆盖清洗边界、幂等/冲突、两项额度、流式超限、下载头、删除与占用；`api.ui.test.ts` 钉住页签、GET-only 加载器、上传 body/查询串、armed 删除序列与 `armedAttachment` 类绑定（回归 `armedId`）；`tasks.test.ts` 断言任务契约不含 attachments；实起 `serve --config` 临时配置（端口 8037、临时库与工作区）：curl 上传 21 B `challenge.bin` 与 12 B `notes.txt` 均 `created:true`，重放 200 `created:false`、换字节 409，下载头 `application/octet-stream` + `attachment; filename="challenge.bin"; filename*=UTF-8''challenge.bin` 且字节一致，`available:true`、`limits {file_bytes:33554432, project_bytes:268435456}`；应用内浏览器（隐藏态，截图不可用，用 DOM 查询与 `.click()`）面板显示「2 个附件 · 共 33 B」与摘要前缀/时间/上传者/路径，经真实 `<input type=file>` 上传 16 B 文件后为「3 个附件 · 共 49 B」且磁盘字节一致，二次点击删除出 toast「已删除 ui-upload.txt」并回到「2 个附件 · 共 33 B」、磁盘文件消失；实测发现删除按钮 armed 后不变色（`:class` 绑到不存在的 `armedId`），修复为 `armedAttachment` 并补回归断言，重载后 armed 得 `{label:"再次点击确认删除", rose:true}`、点刷新回到 `{label:"删除", rose:false}` |
 
 ## 与 Phase 0 的关系
 

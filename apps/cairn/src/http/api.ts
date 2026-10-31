@@ -101,6 +101,10 @@ import {
   readProjectBoard,
 } from "./project-board";
 import {
+  registerAttachmentRoutes,
+  type AttachmentRouteOptions,
+} from "./project-attachments";
+import {
   collectProjectFlag,
   emptyFlagResult,
   operatorFlagResult,
@@ -166,6 +170,10 @@ export interface ApiOptions {
   runtimeConfig?: RuntimeConfigStore;
   /** Test seam for `POST /settings/runtime/test`; defaults to the real probe. */
   runtimeProbe?: ExecutionProbe;
+  /** Test seam for the per-file attachment upload cap; defaults to 32 MiB. */
+  attachmentFileBytes?: number;
+  /** Test seam for the per-project attachment budget; defaults to 256 MiB. */
+  attachmentProjectBytes?: number;
 }
 
 export interface Api {
@@ -383,6 +391,14 @@ export function createApi(options: ApiOptions): Api {
     },
     options.runtimeConfig ?? null,
     options.runtimeProbe,
+    {
+      ...(options.attachmentFileBytes === undefined
+        ? {}
+        : { maxFileBytes: options.attachmentFileBytes }),
+      ...(options.attachmentProjectBytes === undefined
+        ? {}
+        : { maxProjectBytes: options.attachmentProjectBytes }),
+    },
   );
 
   async function handle(request: Request): Promise<Response> {
@@ -488,6 +504,10 @@ function buildRoutes(
   writeup: Pick<WriteupRouteOptions, "generator" | "timeoutMs" | "modelPref"> = {},
   runtimeConfig: RuntimeConfigStore | null = null,
   runtimeProbe?: ExecutionProbe,
+  attachments: Pick<
+    AttachmentRouteOptions,
+    "maxFileBytes" | "maxProjectBytes"
+  > = {},
 ): Route[] {
   const routes: Route[] = [];
   const workspaceRoot = (): string | undefined =>
@@ -517,6 +537,12 @@ function buildRoutes(
     ...(operatorToken === undefined ? {} : { operatorToken }),
     agentConfig,
     ...writeup,
+  });
+  registerAttachmentRoutes(route, {
+    db,
+    ...(workspaceRootOption === undefined ? {} : { workspaceRoot: workspaceRootOption }),
+    ...(operatorToken === undefined ? {} : { operatorToken }),
+    ...attachments,
   });
 
   route("GET", "/settings", () =>

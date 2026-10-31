@@ -15,6 +15,7 @@ import type {
   Intent,
   IntentBudget,
   IntentMeta,
+  ProjectAttachment,
   ProjectDetail,
   ProjectScope,
 } from "@cairn/graph";
@@ -103,6 +104,8 @@ export interface PrepareTaskInput {
   intentMeta?: readonly IntentMeta[];
   /** Reason only: finished-run usage and the configured per-project limits. */
   projectBudget?: ProjectBudgetSnapshot;
+  /** Challenge files the operator uploaded, listed so the worker knows what to read. */
+  attachments?: readonly ProjectAttachment[];
   /** Profile selected for this dispatch; absent in prompt-mode deployments. */
   workerProfile?: PreparedWorkerProfile;
   /** Test hook; otherwise resolved from config.local/container.workspace_root or cwd. */
@@ -202,10 +205,14 @@ export function prepareTask(input: PrepareTaskInput): PreparedTask {
     }),
     ...(input.projectBudget === undefined ? {} : { projectBudget: input.projectBudget }),
   }, concludeOf);
+  const attachmentPrompt =
+    input.attachments === undefined || input.attachments.length === 0
+      ? basePrompt
+      : withAttachmentPolicy(basePrompt, input.attachments);
   const prompt = withCompletionPolicy(
     artifactDir === undefined
-      ? basePrompt
-      : withArtifactPolicy(basePrompt, artifactDir),
+      ? attachmentPrompt
+      : withArtifactPolicy(attachmentPrompt, artifactDir),
   );
 
   const mapScopePath = (hostPath: string): string | null => {
@@ -494,6 +501,23 @@ function withArtifactPolicy(prompt: string, artifactDir: string): string {
 
 # Artifact Policy
 This project may run multiple tasks at the same time. Write every durable artifact (logs, scripts, payloads, captured output) under \`${artifactDir}/\` relative to the workspace. Do not write to the \`artifacts/\` root or another task's directory; reads elsewhere in the workspace remain allowed. Reference these files in \`evidence_refs\` as \`${artifactDir}/...\`.
+`;
+}
+
+function withAttachmentPolicy(
+  prompt: string,
+  attachments: readonly ProjectAttachment[],
+): string {
+  const lines = attachments.map(
+    (attachment) =>
+      `- \`attachments/${attachment.name}\` (${attachment.size} bytes, sha256 \`${attachment.sha256.slice(0, 12)}\`)`,
+  );
+  return `${prompt.trimEnd()}
+
+# Challenge Attachments
+The operator uploaded these task files into the project workspace:
+${lines.join("\n")}
+Read them with your file tools. They are read-only inputs: never write into \`attachments/\`, and put your own work under the artifact directory.
 `;
 }
 

@@ -50,6 +50,7 @@ export {
   type FlagReviewDecision,
   type FlagReviewStatus,
   type FlagReviewSummary,
+  type ProjectAttachment,
   type ProjectSupersedeSummary,
   type ProjectScopeInput,
   type HeartbeatRequest,
@@ -288,6 +289,19 @@ export {
   summarizeFlagReviews,
   type RecordFlagReviewInput,
 } from "./flag-reviews";
+
+export {
+  addProjectAttachment,
+  attachmentRelativePath,
+  ATTACHMENT_DIRECTORY,
+  getProjectAttachment,
+  listProjectAttachments,
+  MAX_ATTACHMENT_NAME_CHARS,
+  removeProjectAttachment,
+  sanitizeAttachmentName,
+  sumProjectAttachmentBytes,
+  type AddProjectAttachmentInput,
+} from "./attachments";
 
 export {
   buildProjectReport,

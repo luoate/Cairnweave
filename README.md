@@ -45,10 +45,11 @@ worker 在项目沙箱里跑真实模型，每个任务启动一次进程，只�
 | Observer sidecar | 真实 Solver 旁的独立复盘会话，只维护项目级看板（ideas / memory），主 Solver 仅拿到只读工具；失败、超时都不影响任务结果 |
 | 图提案 | Observer 只能写候选文件，控制面是唯一审核者与写图者；默认 `dry_run`（完整校验、记录结果、不写图），改 `apply` 才落图 |
 | 中文 Writeup | 从图中数据确定性渲染中文 Markdown 草稿，可由模型重写；附带载荷（payload）章节、附件 zip 打包与「AI 撰写 / 恢复草稿」 |
+| 题目附件 | 操作员把题目给的二进制 / pcap / 源码包上传进项目工作区 `attachments/`（单文件 32 MiB、每项目 256 MiB），Worker 的任务提示直接列出文件清单，按只读输入读取；「附件」页签负责上传、下载与二次确认删除 |
 | Flag 与校验 | `/flag` 从已索引工件与会话工具输出中提取真实 flag，拒绝占位符与掩码；会话兜底遍历有目录/条目上界，结果按工作区短缓存；challenge 项目按外部计分校验 |
 | 人工 Flag 复核 | `verification.flag_review: manual`（默认）时，worker 写回的 flag 形状值会登记为后台复核，项目照常探索但不会在判定前结束，由操作员随时判定「真·还有更多 / 真·停止 / 假·继续」；判定写旁路表、驱动完成或提示，假 flag 不会二次入队、也不能成为结束项目的理由（引用它的完成声明会被拒绝，reason 继续跑）；设置里「运行与执行 → 图切片与校验」有「Flag 人工复核」开关（默认开），关闭即不再登记新复核 |
 | 成本与预算 | `runs` 记录模型 / Token / 成本；意图级 priority 与预算、单项目 token/成本配额、逐 Fact 与逐意图的成本归因与因果边 |
-| 只读运维视图 | 运行、慢层、审计、证据、提案、看板、成本、统计、报告、Writeup 十个侧栏页签，全部只发 GET（人工重规划除外） |
+| 只读运维视图 | 运行、慢层、审计、证据、提案、看板、成本、统计、报告、Writeup、附件十一个侧栏页签，除人工重规划与附件上传/删除外全部只发 GET |
 | 运行期配置 | Observer、并发、超时、证据门、预算、策略阈值、提案参数等可在页头「设置 → 运行与执行」里热调，覆盖存 SQLite，重启不丢 |
 | 两种执行模式 | `runtime.execution: local` 本地子进程；`container` 每项目一个长期容器、每任务一次 `docker exec`，配置只读挂载、不挂 Docker socket；调度器空闲时可在「设置」里在线切换，并用「测试有效性」先检查 Bun / Docker / 镜像 / 试启动 / 工作区 |
 | 技能管理 | 页头「设置 → 技能」里新增、删除、启停与恢复技能；「预览」打开独立详情弹窗，左树右正文地浏览技能目录里的 `SKILL.md`、`references/`、`scripts/`；内置 17 个，仅写入 `cairn-worker` prompt 白名单的才生效；删除内置技能会在 `.deleted-builtins.json` 里留痕，重启不回填，可一键恢复 |
@@ -183,6 +184,8 @@ proposals:                    # 默认开启，但只演练
 | GET | `/projects/{id}/supersedes` | Fact 取代链计数与边 |
 | GET/POST/DELETE | `/projects/{id}/writeup` | 中文草稿 / 模型撰写版 / 恢复草稿 |
 | GET | `/projects/{id}/writeup/archive` | 正文与全部附件的 zip 包 |
+| GET/POST | `/projects/{id}/attachments` | 题目附件列表 / 上传（`?name=` + 原始字节正文，一次一个文件） |
+| GET/DELETE | `/projects/{id}/attachments/{attachment_id}` | 下载附件字节 / 删除附件 |
 | GET/PUT/DELETE | `/settings/runtime` | 运行配置覆盖（仅 `--config` 模式） |
 | GET/POST/PUT/DELETE | `/settings/agent*` | 模型与密钥管理，详见 [docs/MODELS.md](docs/MODELS.md) |
 | GET/POST/PUT/DELETE | `/settings/agent/skills*` | 技能列表、新增、删除、启停、内置恢复，以及只读的文件树 `/skills/{name}/files` 与单文件预览 `/skills/{name}/file?path=` |
@@ -205,7 +208,7 @@ CI 重新生成后 `git diff --exit-code` 校验它没有漂移。
   `sans`，导致 94 处 `.font-mono` 生成不出任何规则）。密度保持紧凑仪表盘：只抬小字号，不加间距。
 - 列表：搜索、状态筛选、三种排序、按项目记忆视图；页面隐藏时暂停轮询，失败 5s→60s 退避。
 - 项目页：图视图、Fact 详情、Flag 横幅、授权范围、运行 / 慢层 / 审计 / 证据 / 提案 /
-  看板 / 成本 / 统计 / 报告 / Writeup 页签。
+  看板 / 成本 / 统计 / 报告 / Writeup / 附件页签。
 - 页头：设置、停止全部；浏览器标题跟随当前项目名；13 个弹窗共用一套模态栈（Esc 只关最上层、
   Tab 焦点陷阱、关闭回焦），写操作期间禁用并在失败时就地报错。
 - 「设置」是一个带五个页签的弹窗：运行与执行（含 local/container 切换、运行期覆盖与

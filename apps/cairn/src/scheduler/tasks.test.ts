@@ -159,8 +159,59 @@ describe("intent budgets", () => {
     expect(prepared.task.prompt).toContain("never redact, mask or shorten");
   });
 
-  test("never extends the configured task timeout", () => {
+  test("lists uploaded challenge files for the worker to read", () => {
     const project = projectFixture();
+    const prepared = prepareTask({
+      config: parseDispatchConfig(CONFIG),
+      project,
+      exportYaml: "project: p1\n",
+      kind: "explore",
+      intent: project.intents[0]!,
+      scope: { targets: ["127.0.0.1:8080"] },
+      workspaceRoot: directory,
+      attachments: [
+        {
+          id: 1,
+          project_id: project.project.id,
+          name: "challenge.pcap",
+          path: "attachments/challenge.pcap",
+          size: 4096,
+          sha256: "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+          creator: "operator",
+          created_at: "2026-10-31T00:00:00Z",
+        },
+      ],
+    });
+
+    const prompt = prepared.task.prompt;
+    expect(prompt).toContain("# Challenge Attachments");
+    expect(prompt).toContain("- `attachments/challenge.pcap` (4096 bytes, sha256 `1234567890ab`)");
+    expect(prompt).toContain("never write into `attachments/`");
+    // The operator's files are listed before the task's own output rules.
+    expect(prompt.indexOf("# Challenge Attachments")).toBeLessThan(
+      prompt.indexOf("# Completion Verification"),
+    );
+    // Listing them in the prompt is the whole handoff: the task contract is unchanged.
+    expect(prepared.task as unknown as Record<string, unknown>).not.toHaveProperty("attachments");
+  });
+
+  test("omits the attachment section when the project has none", () => {
+    const project = projectFixture();
+    const prepared = prepareTask({
+      config: parseDispatchConfig(CONFIG),
+      project,
+      exportYaml: "project: p1\n",
+      kind: "explore",
+      intent: project.intents[0]!,
+      scope: { targets: ["127.0.0.1:8080"] },
+      workspaceRoot: directory,
+      attachments: [],
+    });
+
+    expect(prepared.task.prompt).not.toContain("# Challenge Attachments");
+  });
+
+  test("never extends the configured task timeout", () => {    const project = projectFixture();
     const prepared = prepareTask({
       config: parseDispatchConfig(CONFIG),
       project,
