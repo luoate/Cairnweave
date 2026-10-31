@@ -2073,6 +2073,7 @@ describe("runtime settings modal", () => {
           prompt_group: "default",
           healthcheck_timeout: 30,
           worker_healthcheck: "startup_and_task",
+          strategy_context: "on",
         },
         observer: {
           enabled: true,
@@ -2111,6 +2112,7 @@ describe("runtime settings modal", () => {
     expect(html).toContain("runtimeGroups()");
     expect(html).toContain("data-runtime-test");
     expect(html).toContain('@click="testRuntimeExecution()"');
+    expect(html).toContain("策略上下文");
     expect(html.match(/@click="openSettings\(\)"/g)?.length).toBe(2);
   });
 

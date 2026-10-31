@@ -16,6 +16,7 @@ export type ExecutionMode = "container" | "local";
 export type WorkerHealthcheckMode = "startup_and_task" | "startup_only" | "disabled";
 export type CompletedAction = "remove" | "stop";
 export type LocalCompletedAction = "keep" | "remove";
+export type StrategyContextMode = "off" | "on";
 
 export interface RuntimeConfig {
   maxWorkers: number;
@@ -26,6 +27,11 @@ export interface RuntimeConfig {
   workerHealthcheck: WorkerHealthcheckMode;
   execution: ExecutionMode;
   promptGroup: string;
+  /**
+   * M36: write `agent-context.yaml` next to `graph.yaml` and point reason/explore at it.
+   * `off` keeps the pre-M36 behavior exactly (no file, no prompt section).
+   */
+  strategyContext: StrategyContextMode;
 }
 
 export interface BootstrapTaskConfig {
@@ -729,6 +735,12 @@ function parseRuntime(value: unknown): RuntimeConfig {
       ? oneOf(runtime["execution"], "runtime.execution", ["container", "local"] as const)
       : "container",
     promptGroup: requiredString(runtime, "prompt_group", "runtime"),
+    strategyContext: has(runtime, "strategy_context")
+      ? oneOf(runtime["strategy_context"], "runtime.strategy_context", [
+          "off",
+          "on",
+        ] as const)
+      : "on",
   };
 }
 

@@ -28,6 +28,7 @@ import {
   type ProposalMode,
   type RuntimeOverridePatch,
   type SsrfMarkerMode,
+  type StrategyContextMode,
   type WorkerHealthcheckMode,
   type WorkerSelectionMode,
 } from "./config";
@@ -108,6 +109,7 @@ export interface ReadOnlyRuntimeConfig {
     prompt_group: string;
     healthcheck_timeout: number;
     worker_healthcheck: WorkerHealthcheckMode;
+    strategy_context: StrategyContextMode;
   };
   observer: {
     enabled: boolean;
@@ -416,6 +418,7 @@ function readOnlyView(config: DispatchConfig): ReadOnlyRuntimeConfig {
       prompt_group: config.runtime.promptGroup,
       healthcheck_timeout: config.runtime.healthcheckTimeout,
       worker_healthcheck: config.runtime.workerHealthcheck,
+      strategy_context: config.runtime.strategyContext,
     },
     observer: {
       enabled: config.observer.enabled,

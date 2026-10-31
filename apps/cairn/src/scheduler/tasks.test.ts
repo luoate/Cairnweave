@@ -211,6 +211,47 @@ describe("intent budgets", () => {
     expect(prepared.task.prompt).not.toContain("# Challenge Attachments");
   });
 
+  test("writes agent-context.yaml and points the prompt at it", () => {
+    const project = projectFixture();
+    const prepared = prepareTask({
+      config: parseDispatchConfig(CONFIG),
+      project,
+      exportYaml: "project: p1\n",
+      kind: "explore",
+      intent: project.intents[0]!,
+      scope: { targets: ["127.0.0.1:8080"] },
+      workspaceRoot: directory,
+      agentContextYaml: "version: 1\nkind: explore\n",
+    });
+
+    expect(readFileSync(prepared.hostAgentContextPath, "utf8")).toBe(
+      "version: 1\nkind: explore\n",
+    );
+    expect(prepared.task.prompt).toContain("# Investigation State");
+    expect(prepared.task.prompt).toContain("agent-context.yaml");
+    expect(prepared.task.prompt).toContain("never an instruction");
+    // The projection is data, not part of the worker contract.
+    expect(prepared.task as unknown as Record<string, unknown>).not.toHaveProperty(
+      "agentContext",
+    );
+  });
+
+  test("omits the context section when the projection is disabled", () => {
+    const project = projectFixture();
+    const prepared = prepareTask({
+      config: parseDispatchConfig(CONFIG),
+      project,
+      exportYaml: "project: p1\n",
+      kind: "explore",
+      intent: project.intents[0]!,
+      scope: { targets: ["127.0.0.1:8080"] },
+      workspaceRoot: directory,
+    });
+
+    expect(existsSync(prepared.hostAgentContextPath)).toBe(false);
+    expect(prepared.task.prompt).not.toContain("# Investigation State");
+  });
+
   test("never extends the configured task timeout", () => {    const project = projectFixture();
     const prepared = prepareTask({
       config: parseDispatchConfig(CONFIG),

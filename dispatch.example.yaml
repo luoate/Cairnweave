@@ -36,6 +36,9 @@ runtime:
   worker_healthcheck: disabled
   # Prompt set under apps/cairn/src/prompts/.
   prompt_group: "default"
+  # M36: write agent-context.yaml next to graph.yaml and point reason/explore at it.
+  # "off" restores the pre-M36 prompt and files exactly.
+  strategy_context: on
 
 tasks:
   bootstrap:

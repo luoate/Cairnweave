@@ -121,6 +121,7 @@ describe("RuntimeConfigStore", () => {
     expect(view.updated_at).toBeNull();
     expect(view.editable.runtime.execution).toBe("local");
     expect(view.read_only.runtime).not.toHaveProperty("execution");
+    expect(view.read_only.runtime.strategy_context).toBe("on");
     expect(view.read_only.observer.enabled).toBe(true);
   });
 

@@ -135,7 +135,9 @@ Host Bridge 每做一次工具决策就追加一行 JSON：
 
 - 目录：`<workspace_root>/<project_id>/.cairn/sessions/<taskId>/`。
 - worker 写：`result.json`（临时文件 + `rename`）、`usage.json`、`audit.jsonl`、
-  `solver-session/**`；控制面写：`task.json`、`graph.yaml`、`stdout.log`、`stderr.log`。
+  `solver-session/**`；控制面写：`task.json`、`graph.yaml`、`agent-context.yaml`（M36，
+  `runtime.strategy_context: on` 时）、`stdout.log`、`stderr.log`。`agent-context.yaml`
+  只在提示词里被引用，不是 `task.json` 字段。
 - 控制面在 `worker.result_grace_seconds` 内轮询 `resultPath`；任务文件默认保留，
   `worker.retain_task_files: false` 可关闭。
 - worker 的**所有**输出都按不可信输入处理：JSON 必须过本文件的校验后才写图，路径必须在

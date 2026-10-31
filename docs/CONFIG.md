@@ -94,6 +94,7 @@ curl -X PUT http://127.0.0.1:8000/settings/runtime \
 | `max_running_projects` | 2 | 同时调度的项目数，正整数 |
 | `max_project_workers` | 1 | 单项目并发任务，正整数且 ≤ `max_workers` |
 | `interval` | 3 | 调度 tick 秒数，正整数；改动会重挂定时器 |
+| `strategy_context` | on | M36：写 `agent-context.yaml` 并在 reason/explore 提示里引用；`off` 回到 M36 之前的行为（只读项） |
 
 ### 执行模式切换
 
@@ -220,7 +221,8 @@ ARCHITECTURE 的 Host Bridge 一节。
 展示：
 
 - `server`
-- `runtime.prompt_group`、`runtime.healthcheck_timeout`、`runtime.worker_healthcheck`
+- `runtime.prompt_group`、`runtime.healthcheck_timeout`、`runtime.worker_healthcheck`、
+  `runtime.strategy_context`
 - `common_env`（只显示键名，不显示值）
 - container / local 的 `workspace_root` 与 `completed_action`
 - container 的 `image` / `network_mode` / `worker_argv` / `cap_add`

@@ -2878,6 +2878,7 @@
             </div>
             <div class="grid grid-cols-2 md:grid-cols-3 gap-x-3 gap-y-1.5 mt-2 text-2xs text-slate-500">
               <div>Prompt 组：<span class="text-slate-700" x-text="runtimeConfig.view.read_only.runtime.prompt_group"></span></div>
+              <div>策略上下文：<span class="text-slate-700" x-text="runtimeConfig.view.read_only.runtime.strategy_context === 'on' ? '开启（agent-context.yaml）' : '关闭'"></span></div>
               <div>健康检查：<span class="text-slate-700" x-text="runtimeConfig.view.read_only.runtime.worker_healthcheck + ' / ' + runtimeConfig.view.read_only.runtime.healthcheck_timeout + 's'"></span></div>
               <div>Observer：<span class="text-slate-700" x-text="runtimeConfig.view.read_only.observer.enabled ? '开启' : '关闭'"></span></div>
               <div>复盘模型：<span class="text-slate-700" x-text="runtimeConfig.view.read_only.observer.model || '跟随任务模型'"></span></div>

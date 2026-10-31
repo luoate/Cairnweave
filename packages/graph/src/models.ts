@@ -442,6 +442,95 @@ export interface ProjectReport {
   artifacts: { count: number; bytes: number };
 }
 
+/** Task kinds that receive a control-plane `agent-context.yaml` snapshot (M36). */
+export type AgentContextKind = "reason" | "explore" | "conclude";
+
+/** Sidecar status of one fact as seen by the agent, not a new graph field. */
+export interface AgentContextFact {
+  id: string;
+  description: string;
+  status: "current" | "superseded";
+  superseded_by: string | null;
+  evidence: {
+    status: EvidenceStatus;
+    run_id: string | null;
+    refs: number;
+  };
+}
+
+/** One intent with its attempt history aggregated from `runs` (M36). */
+export interface AgentContextIntent {
+  id: string;
+  description: string;
+  from: string[];
+  /** `concluded` is derived from `to`; otherwise the intent is open. */
+  status: "open" | "concluded";
+  attempts: number;
+  last_outcome: RunOutcome | null;
+  last_error: string | null;
+  /** Null means the configured default priority. */
+  priority: number | null;
+}
+
+/** One finished run, with a bounded detail summary. */
+export interface AgentContextAttempt {
+  run_id: string;
+  kind: string;
+  intent_id: string | null;
+  outcome: RunOutcome;
+  started_at: string;
+  duration_ms: number | null;
+  tokens: number;
+  detail: string | null;
+}
+
+export interface AgentContextVerification {
+  kind: VerificationKind;
+  challenge_code: string | null;
+  progress: {
+    found: number | null;
+    total: number | null;
+    last_checked_at: string | null;
+  };
+  checks: { total: number; passed: number; failed: number };
+  latest: { ok: boolean; detail: string; checked_at: string } | null;
+}
+
+/** Graph changes since the last successful reason turn; reason-only. */
+export interface AgentContextDelta {
+  since: string;
+  new_facts: string[];
+  concluded_intents: string[];
+  new_hints: number;
+  failed_attempts: number;
+}
+
+export interface AgentContextBudget {
+  used_tokens: number;
+  limit_tokens: number;
+  used_cost_usd: number;
+  limit_cost_usd: number;
+  running_tasks: number;
+}
+
+/**
+ * Read-only projection of graph + sidecars for one task (M36). It is a derived snapshot;
+ * the graph stays the source of truth and the Cairn-compatible export is unchanged.
+ */
+export interface AgentContext {
+  version: 1;
+  kind: AgentContextKind;
+  generated_at: string;
+  project: { id: string; title: string; status: ProjectStatus };
+  goal: { description: string; verification: AgentContextVerification };
+  facts: AgentContextFact[];
+  intents: AgentContextIntent[];
+  recent_attempts: AgentContextAttempt[];
+  delta: AgentContextDelta | null;
+  budget: AgentContextBudget | null;
+  truncated: boolean;
+  truncated_sections: string[];
+}
 export type ProposalKind = "fact" | "intent" | "hint";
 export type ProposalStatus = "pending" | "applied" | "rejected" | "duplicate" | "dry_run";
 export type ProposalSource = "observer" | "strategist" | "human";

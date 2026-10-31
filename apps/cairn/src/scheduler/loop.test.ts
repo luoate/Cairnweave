@@ -694,6 +694,88 @@ describe("scheduler with the fake solver", () => {
   );
 
   test(
+    "writes an agent-context snapshot for reason and explore tasks",
+    async () => {
+      const project = createProjectRow(false);
+      const loop = scheduler();
+      await loop.runUntilIdle();
+
+      const sessions = join(
+        directory,
+        "workspace",
+        project.project.id,
+        ".cairn",
+        "sessions",
+      );
+      const dirs = readdirSync(sessions);
+      const reasonDirs = dirs.filter((name) => name.startsWith("reason-"));
+      const exploreDirs = dirs.filter((name) => name.startsWith("explore-"));
+      expect(reasonDirs.length).toBeGreaterThan(0);
+      expect(exploreDirs.length).toBeGreaterThan(0);
+
+      const reason = readFileSync(
+        join(sessions, reasonDirs[0]!, "agent-context.yaml"),
+        "utf8",
+      );
+      expect(reason).toContain("version: 1");
+      expect(reason).toContain("kind: reason");
+      expect(reason).toContain("truncated:");
+      expect(reason).toContain("verification:");
+
+      const explore = readFileSync(
+        join(sessions, exploreDirs[0]!, "agent-context.yaml"),
+        "utf8",
+      );
+      expect(explore).toContain("kind: explore");
+      expect(explore).toContain("status: open");
+      expect(explore).toContain("attempts:");
+
+      const task = JSON.parse(
+        readFileSync(join(sessions, reasonDirs[0]!, "task.json"), "utf8"),
+      ) as { prompt: string };
+      expect(task.prompt).toContain("# Investigation State");
+      expect(task.prompt).toContain("agent-context.yaml");
+    },
+    30_000,
+  );
+
+  test(
+    "omits agent-context when strategy_context is off",
+    async () => {
+      const project = createProjectRow(false);
+      const loop = new Scheduler({
+        db,
+        config: parseDispatchConfig({
+          ...CONFIG,
+          runtime: { ...CONFIG.runtime, strategy_context: "off" },
+        }),
+        workspaceRoot: join(directory, "workspace"),
+        log: (message) => logs.push(message),
+        leaseIntervalMs: 500,
+      });
+      await loop.runUntilIdle();
+
+      const sessions = join(
+        directory,
+        "workspace",
+        project.project.id,
+        ".cairn",
+        "sessions",
+      );
+      const dirs = readdirSync(sessions);
+      expect(dirs.length).toBeGreaterThan(0);
+      for (const name of dirs) {
+        expect(existsSync(join(sessions, name, "agent-context.yaml"))).toBe(false);
+        const task = JSON.parse(
+          readFileSync(join(sessions, name, "task.json"), "utf8"),
+        ) as { prompt: string };
+        expect(task.prompt).not.toContain("# Investigation State");
+      }
+    },
+    30_000,
+  );
+
+  test(
     "drops the failed and conclude session directories when retention is off",
     async () => {
       const project = createProjectRow(false);

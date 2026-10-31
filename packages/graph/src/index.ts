@@ -36,6 +36,14 @@ export {
   type CompleteRequest,
   type ConcludeRequest,
   type ConcludeResponse,
+  type AgentContext,
+  type AgentContextAttempt,
+  type AgentContextBudget,
+  type AgentContextDelta,
+  type AgentContextFact,
+  type AgentContextIntent,
+  type AgentContextKind,
+  type AgentContextVerification,
   type CreateHintInline,
   type CreateHintRequest,
   type CreateIntentRequest,
@@ -308,6 +316,15 @@ export {
   renderProjectReportMarkdown,
   type BuildProjectReportOptions,
 } from "./report";
+
+export {
+  DEFAULT_AGENT_CONTEXT_LIMITS,
+  buildAgentContext,
+  renderAgentContextYaml,
+  type AgentContextBudgetInput,
+  type AgentContextLimits,
+  type BuildAgentContextOptions,
+} from "./agent-context";
 
 export {
   buildProjectWriteup,

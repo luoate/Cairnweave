@@ -1293,6 +1293,17 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
   `tasks.graph_slice` 开关。实现与 M4b 切片分开：M4b 是「focus intent + 全部未结束 Intent +
   provenance 闭包」，M30 是有跳数上限的 BFS；两者共享 `loadProjectData`、YAML 渲染辅助与
   `slice:` 段风格。`around` 同时接受 Fact 与 Intent，类型由项目图判定。
+- **AgentContext（M36，默认开启）**：`runtime.strategy_context: on` 时，scheduler 在
+  `prepareTask` 的同一事务里用 `buildAgentContext` 从图与旁路投影出一份
+  `agent-context.yaml`，与 `graph.yaml` 并列写入任务 session 目录。内容包括：每个 Fact 的
+  `current | superseded`、`superseded_by`、证据状态与 run；意图的 `open | concluded`、由
+  `runs` 派生的 attempts / 最近 outcome / 最近错误；最近 finished run（detail 截断）；完成
+  验证的策略、计数与多 flag 进度；reason 还会拿到自上次成功 reason 以来的 delta 和既有的
+  预算数字。所有列表都有排序与上限，截断写入 `truncated_sections`。提示词只在末尾追加一段
+  `# Investigation State` 指向该文件（明确标注为数据而非指令），**不修改模板**，`graph.yaml`、
+  YAML 导出、HTTP golden 与 worker 契约不变。`off` 时不写文件也不加段落；bootstrap 与
+  bootstrap conclude 不生成投影。文件只含项目内已可见的数据，不含审计事件原文、证据内容、
+  附件字节或 flag 明文。
 - 替换按配置字典的插入顺序逐 token 执行；这与 Python `render_prompt` 在替换值含后续 token
   时的行为一致。
 - BreachWeave 的 `cairn-worker` 系统提示词位于

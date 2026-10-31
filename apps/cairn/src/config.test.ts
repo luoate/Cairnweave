@@ -45,6 +45,7 @@ describe("dispatcher config", () => {
       workerHealthcheck: "startup_only",
       execution: "local",
       promptGroup: "default",
+      strategyContext: "on",
     });
     expect(config.tasks.reason.maxIntents).toBe(3);
     expect(config.tasks.evidence).toEqual({ minBytes: 1 });
@@ -108,6 +109,22 @@ describe("dispatcher config", () => {
         timeoutMs: 5000,
       },
     });
+  });
+
+  test("parses the strategy context switch", () => {
+    const off = parse(
+      BASE.replace(
+        "  prompt_group: default",
+        "  prompt_group: default\n  strategy_context: off",
+      ),
+    );
+    expect(off.runtime.strategyContext).toBe("off");
+
+    const bad = BASE.replace(
+      "  prompt_group: default",
+      "  prompt_group: default\n  strategy_context: sometimes",
+    );
+    expect(() => parse(bad)).toThrow("runtime.strategy_context");
   });
 
   test("parses the challenge verifier environment names", () => {

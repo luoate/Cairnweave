@@ -20,6 +20,7 @@ import {
 } from "@cairn/contracts";
 import {
   HttpError,
+  buildAgentContext,
   claimReason,
   completeProject,
   concludeIntent,
@@ -57,6 +58,7 @@ import {
   recordStrategistSuccess,
   releaseIntent,
   releaseReason,
+  renderAgentContextYaml,
   recordProjectArtifacts,
   refreshProjectArtifacts,
   renewIntentLease,
@@ -892,6 +894,21 @@ export class Scheduler {
                 };
               })()
             : undefined;
+        // M36: project sidecar truth into the task's session directory. Reason and explore
+        // read it next to graph.yaml; a bootstrap conclude has no graph to project.
+        const agentContextYaml =
+          this.config.runtime.strategyContext === "on" &&
+          kind !== "bootstrap" &&
+          !(kind === "conclude" && pending?.of === "bootstrap")
+            ? renderAgentContextYaml(
+                buildAgentContext(conn, projectId, {
+                  kind,
+                  ...(intent === undefined ? {} : { focusIntentId: intent.id }),
+                  verificationFallback: this.verification.defaultKind,
+                  ...(projectBudget === undefined ? {} : { budget: projectBudget }),
+                }),
+              )
+            : undefined;
         const profile = selectWorkerProfile(
           this.config.workerProfiles,
           this.config.workerSelection,
@@ -915,6 +932,7 @@ export class Scheduler {
               }),
           ...(intentBudget === null ? {} : { budget: intentBudget }),
           ...(openIntentMeta === undefined ? {} : { intentMeta: openIntentMeta }),
+          ...(agentContextYaml === undefined ? {} : { agentContextYaml }),
           ...(projectBudget === undefined ? {} : { projectBudget }),
           ...(attachments.length === 0 ? {} : { attachments }),
           scope,
