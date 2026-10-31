@@ -272,6 +272,7 @@ gate 放在 `tools/gate/`，手动执行、不计入 CI，命令与环境变量�
 | 文档 | 内容 |
 | --- | --- |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | 角色、数据所有权、时序、沙箱与失败语义 |
+| [DESIGN.md](docs/DESIGN.md) | 设计草案：AgentContext 投影层、意图生命周期、调度真相与完成契约 |
 | [CONFIG.md](docs/CONFIG.md) | 运行配置字段、SQLite 覆盖、热生效范围与只读项 |
 | [OPERATIONS.md](docs/OPERATIONS.md) | 容器模式、Host Bridge、artifacts、证据、切片、Observer、提案、预算、真实模型 gate |
 | [CONTRACT.md](docs/CONTRACT.md) | worker 契约：task / result / usage / audit、退出码与校验边界 |
