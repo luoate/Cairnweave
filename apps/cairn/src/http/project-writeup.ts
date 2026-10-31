@@ -20,6 +20,8 @@ import {
   clearProjectWriteup,
   getProjectWriteup,
   listProjectArtifacts,
+  listRejectedFlags,
+  listVerifiedFlags,
   renderProjectWriteupMarkdown,
   renderProjectWriteupPrompt,
   saveProjectWriteup,
@@ -347,7 +349,12 @@ export function registerWriteupRoutes(
     const flag =
       workspace === null
         ? null
-        : collectProjectFlag({ workspace, artifacts });
+        : collectProjectFlag({
+            workspace,
+            artifacts,
+            rejectedFlags: listRejectedFlags(conn, projectId),
+            verifiedFlags: listVerifiedFlags(conn, projectId),
+          });
     const suspects =
       flag === null ? [] : flag.candidates.filter((c) => c.placeholder).map((c) => c.value);
     const flagView: FlagView | null =

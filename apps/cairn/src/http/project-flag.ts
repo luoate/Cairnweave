@@ -23,10 +23,13 @@
 import { lstatSync, readFileSync, readdirSync, realpathSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 
+import { MAX_FLAG_LINE_LENGTH, classifyFlags } from "../flags";
+
+export { findFlags } from "../flags";
+
 const MAX_FILES = 200;
 const MAX_FILE_BYTES = 256 * 1024;
 const MAX_TOTAL_BYTES = 8 * 1024 * 1024;
-const MAX_LINE_LENGTH = 8 * 1024;
 const SESSION_MAX_FILES = 64;
 const SESSION_MAX_FILE_BYTES = 2 * 1024 * 1024;
 const SESSION_MAX_TOTAL_BYTES = 8 * 1024 * 1024;
@@ -39,22 +42,6 @@ const SESSION_MAX_DIRECTORIES = 1000;
 const SESSION_MAX_ENTRIES = 4000;
 const CACHE_TTL_MS = 10_000;
 const CACHE_MAX_ENTRIES = 32;
-const FLAG_PATTERN = /([A-Za-z0-9_-]{1,64})\{([^{}\s]{4,200})\}/g;
-const PLACEHOLDER_BODIES = new Set([
-  "flag",
-  "example",
-  "placeholder",
-  "redacted",
-  "todo",
-  "your_flag",
-  "flag_here",
-  "changeme",
-]);
-/** Marks a model uses when it abbreviates a value: `c8...`, `c8…`, `c8xxx`, `**`. */
-const MASK_MARK = /(\.{2,}|…|\*{2,}|x{3,})/i;
-/** Stand-in words for a value, matched on segments so `fragmented` stays a real word. */
-const MASK_WORD =
-  /(^|[^a-z])(uuid|guid|frag|partial|truncat\w*|sample|dummy|tbd|unknown|missing)([^a-z]|$)/;
 const MAX_CANDIDATES = 3;
 
 export interface FlagArtifact {
@@ -86,6 +73,15 @@ export interface SessionFlagScanOptions {
 /** Both scans plus the clock used for cache expiry, which tests override. */
 export interface CollectFlagOptions extends FlagScanOptions, SessionFlagScanOptions {
   now?: () => number;
+  /** Values the operator rejected as decoys; never reported as the project flag. */
+  rejectedFlags?: readonly string[];
+  /** Values the operator confirmed; the first one outranks the scanner's own ranking. */
+  verifiedFlags?: readonly string[];
+}
+
+interface FlagFilter {
+  rejected: ReadonlySet<string>;
+  verified: readonly string[];
 }
 
 interface FlagCacheEntry {
@@ -142,6 +138,10 @@ export function emptyFlagResult(): ProjectFlagResult {
 }
 
 export function scanProjectFlag(options: FlagScanOptions): ProjectFlagResult {
+  return scanArtifacts(options, undefined);
+}
+
+function scanArtifacts(options: FlagScanOptions, filter: FlagFilter | undefined): ProjectFlagResult {
   const maxFiles = options.maxFiles ?? MAX_FILES;
   const maxFileBytes = options.maxFileBytes ?? MAX_FILE_BYTES;
   const maxTotalBytes = options.maxTotalBytes ?? MAX_TOTAL_BYTES;
@@ -172,7 +172,18 @@ export function scanProjectFlag(options: FlagScanOptions): ProjectFlagResult {
     recordFlags(groups, content, normalizePath(artifact.path));
   }
 
-  return rankMatches(groups, scannedFiles, truncated);
+  return rankMatches(groups, scannedFiles, truncated, filter);
+}
+
+/** A confirmed operator verdict, independent of any workspace scan. */
+export function operatorFlagResult(
+  verified: readonly string[],
+  rejected: readonly string[] = [],
+): ProjectFlagResult {
+  return rankMatches(newFlagGroups(), 0, false, {
+    rejected: new Set(rejected),
+    verified,
+  });
 }
 
 /**
@@ -183,6 +194,13 @@ export function scanProjectFlag(options: FlagScanOptions): ProjectFlagResult {
  * truncated guesses, and those must not compete with what a tool really printed.
  */
 export function scanSolverSessionFlags(options: SessionFlagScanOptions): ProjectFlagResult {
+  return scanSolverSession(options, undefined);
+}
+
+function scanSolverSession(
+  options: SessionFlagScanOptions,
+  filter: FlagFilter | undefined,
+): ProjectFlagResult {
   const maxFiles = options.maxFiles ?? SESSION_MAX_FILES;
   const maxFileBytes = options.maxFileBytes ?? SESSION_MAX_FILE_BYTES;
   const maxTotalBytes = options.maxTotalBytes ?? SESSION_MAX_TOTAL_BYTES;
@@ -313,7 +331,7 @@ export function scanSolverSessionFlags(options: SessionFlagScanOptions): Project
     }
   }
 
-  return rankMatches(groups, scannedFiles, truncated);
+  return rankMatches(groups, scannedFiles, truncated, filter);
 }
 
 /**
@@ -338,7 +356,10 @@ export function collectProjectFlag(options: CollectFlagOptions): ProjectFlagResu
     return cloneFlagResult(cached.result);
   }
 
-  const result = combineFlagScans(options);
+  const result = combineFlagScans(options, {
+    rejected: new Set(options.rejectedFlags ?? []),
+    verified: options.verifiedFlags ?? [],
+  });
   flagCache.delete(key);
   flagCache.set(key, { at, fingerprint, result: cloneFlagResult(result) });
   while (flagCache.size > CACHE_MAX_ENTRIES) {
@@ -354,10 +375,13 @@ export function clearFlagCache(): void {
   flagCache.clear();
 }
 
-function combineFlagScans(options: FlagScanOptions & SessionFlagScanOptions): ProjectFlagResult {
-  const artifactResult = scanProjectFlag(options);
+function combineFlagScans(
+  options: FlagScanOptions & SessionFlagScanOptions,
+  filter: FlagFilter,
+): ProjectFlagResult {
+  const artifactResult = scanArtifacts(options, filter);
   if (artifactResult.found) return artifactResult;
-  const sessionResult = scanSolverSessionFlags(options);
+  const sessionResult = scanSolverSession(options, filter);
   const combined: ProjectFlagResult = {
     ...sessionResult,
     scanned_files: artifactResult.scanned_files + sessionResult.scanned_files,
@@ -366,10 +390,24 @@ function combineFlagScans(options: FlagScanOptions & SessionFlagScanOptions): Pr
   if (combined.found) return combined;
   // Nothing trustworthy anywhere: report the masks both scans saw, artifacts first.
   const candidates = mergeCandidates(artifactResult.candidates, sessionResult.candidates);
+  // An operator-confirmed value is valid even when the workspace (and so both scans) is
+  // missing; the verdict outlives the files it came from.
+  if (filter.verified.length > 0) {
+    const synthesized = rankMatches(
+      newFlagGroups(),
+      combined.scanned_files,
+      combined.truncated,
+      filter,
+    );
+    return {
+      ...synthesized,
+      candidates: mergeCandidates(synthesized.candidates, candidates).slice(0, MAX_CANDIDATES),
+    };
+  }
   return { ...combined, candidates, placeholder_suspect: candidates.length > 0 };
 }
 
-function flagCacheKey(options: FlagScanOptions & SessionFlagScanOptions): string {
+function flagCacheKey(options: CollectFlagOptions): string {
   return [
     resolve(options.workspace),
     options.maxFiles ?? "",
@@ -377,6 +415,8 @@ function flagCacheKey(options: FlagScanOptions & SessionFlagScanOptions): string
     options.maxTotalBytes ?? "",
     options.maxDirectories ?? "",
     options.maxEntries ?? "",
+    [...(options.rejectedFlags ?? [])].sort().join("\u0001"),
+    [...(options.verifiedFlags ?? [])].join("\u0001"),
   ].join("\u0000");
 }
 
@@ -456,13 +496,28 @@ function rankMatches(
   groups: FlagGroups,
   scannedFiles: number,
   truncated: boolean,
+  filter?: FlagFilter,
 ): ProjectFlagResult {
-  const accepted = rankList(groups.accepted);
-  const suspects = rankList(groups.suspects);
-  const best = accepted[0] ?? null;
-  const candidates = (accepted.length > 0 ? accepted : suspects)
+  const rejected = filter?.rejected ?? new Set<string>();
+  const verified = filter?.verified ?? [];
+  const accepted = rankList(groups.accepted).filter((match) => !rejected.has(match.flag));
+  const suspects = rankList(groups.suspects).filter((match) => !rejected.has(match.flag));
+
+  let best = accepted[0] ?? null;
+  const confirmed =
+    verified.length > 0 ? accepted.find((match) => match.flag === verified[0]) : undefined;
+  if (confirmed !== undefined) {
+    best = confirmed;
+  } else if (verified.length > 0) {
+    // The operator confirmed a value the scanner never saw (for example a flag pasted
+    // into a fact description). It still outranks anything the heuristic ranked.
+    best = { flag: verified[0]!, source: "operator review", occurrences: 0, sources: [] };
+  }
+  const pool =
+    best !== null && !accepted.includes(best) ? [best, ...accepted] : accepted;
+  const candidates = (pool.length > 0 ? pool : suspects)
     .slice(0, MAX_CANDIDATES)
-    .map((match) => toCandidate(match, accepted.length === 0));
+    .map((match) => toCandidate(match, pool.length === 0));
   return {
     found: best !== null,
     flag: best === null ? null : best.flag,
@@ -512,41 +567,6 @@ function mergeCandidates(left: FlagCandidate[], right: FlagCandidate[]): FlagCan
         b.sources - a.sources || b.occurrences - a.occurrences || a.value.localeCompare(b.value),
     )
     .slice(0, MAX_CANDIDATES);
-}
-
-export function findFlags(content: string, maxLineLength: number = MAX_LINE_LENGTH): string[] {
-  return classifyFlags(content, maxLineLength)
-    .filter((sighting) => !sighting.placeholder)
-    .map((sighting) => sighting.flag);
-}
-
-/** Every flag-shaped string in `content`, marked as a mask when it looks redacted or truncated. */
-function classifyFlags(
-  content: string,
-  maxLineLength: number = MAX_LINE_LENGTH,
-): Array<{ flag: string; placeholder: boolean }> {
-  const found: Array<{ flag: string; placeholder: boolean }> = [];
-  for (const line of content.split(/\r?\n/)) {
-    const scoped = line.length > maxLineLength ? line.slice(0, maxLineLength) : line;
-    for (const match of scoped.matchAll(FLAG_PATTERN)) {
-      const prefix = match[1]!.toLowerCase();
-      if (prefix !== "flag" && !prefix.endsWith("flag") && !prefix.includes("ctf")) continue;
-      const body = match[2]!;
-      found.push({ flag: `${match[1]}{${body}}`, placeholder: isPlaceholder(body) });
-    }
-  }
-  return found;
-}
-
-function isPlaceholder(body: string): boolean {
-  const lower = body.toLowerCase();
-  if (PLACEHOLDER_BODIES.has(lower)) return true;
-  if (lower.includes("redact") || lower.includes("masked") || lower.includes("hidden")) return true;
-  if (MASK_MARK.test(body)) return true;
-  if (MASK_WORD.test(lower)) return true;
-  if (/^[._-]+$/.test(body)) return true;
-  if (/^\[.*\]$/.test(body)) return true;
-  return body.includes("<") || body.includes(">");
 }
 
 /** Realpath of `<workspace>/artifacts`; null when it is absent, symlinked or not a directory. */

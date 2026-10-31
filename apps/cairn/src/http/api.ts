@@ -14,12 +14,15 @@ import {
   clearProjectReason,
   completeProject,
   concludeIntent,
+  createHint,
   createIntent,
   createProject,
+  decideFlagReview,
   expireReasonLeases,
   exportProjectSubgraphYaml,
   exportProjectTimeline,
   exportProjectYaml,
+  findHintByContent,
   getAuditStreamLoss,
   getCompletionIntentOr409,
   getFactMeta,
@@ -41,6 +44,8 @@ import {
   listProjectProposals,
   listProjectRuns,
   listProjects,
+  listRejectedFlags,
+  listVerifiedFlags,
   nextFactId,
   nextHintId,
   nextIntentId,
@@ -69,9 +74,11 @@ import {
   SUBGRAPH_DEFAULT_FACTS,
   SUBGRAPH_DEFAULT_INTENTS,
   SUBGRAPH_MAX_DEPTH,
+  summarizeFlagReviews,
   utcnow,
   type AuditEntry,
   type CairnDatabase,
+  type FlagReviewDecision,
   type IntentRow,
   type ProjectRow,
 } from "@cairn/graph";
@@ -95,6 +102,7 @@ import {
 import {
   collectProjectFlag,
   emptyFlagResult,
+  operatorFlagResult,
   type ProjectFlagResult,
 } from "./project-flag";
 import {
@@ -207,6 +215,28 @@ function parseVerifyFacts(value: unknown): string[] | undefined {
     }
     return fact.trim();
   });
+}
+
+function parseFlagReviewDecision(value: unknown): {
+  decision: FlagReviewDecision;
+  note: string | null;
+} {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new HttpError(400, "flag review body must be a JSON object");
+  }
+  const body = value as Record<string, unknown>;
+  const decision = body["decision"];
+  if (decision !== "real_more" && decision !== "real_done" && decision !== "fake") {
+    throw new HttpError(400, "decision must be real_more, real_done or fake");
+  }
+  const note = body["note"];
+  if (note !== undefined && note !== null && typeof note !== "string") {
+    throw new HttpError(400, "note must be a string");
+  }
+  if (typeof note === "string" && note.length > 500) {
+    throw new HttpError(400, "note must be at most 500 characters");
+  }
+  return { decision, note: typeof note === "string" ? note.trim() || null : null };
 }
 
 async function readBody(request: Request, maxBytes?: number): Promise<unknown> {
@@ -527,7 +557,13 @@ function buildRoutes(
   });
 
   route("GET", "/projects/{project_id}", ({ params }) =>
-    db.withConn((conn) => json(getProjectDetail(conn, params["project_id"]!))),
+    db.withConn((conn) => {
+      const projectId = params["project_id"]!;
+      return json({
+        ...getProjectDetail(conn, projectId),
+        flag_reviews: summarizeFlagReviews(conn, projectId),
+      });
+    }),
   );
 
   // Authorized scope is a separate resource so an existing project can be repaired
@@ -571,19 +607,77 @@ function buildRoutes(
           policy: getProjectVerification(conn, projectId, oracle.defaultKind),
           latest: getLatestVerificationCheck(conn, projectId),
         },
+        reviews: summarizeFlagReviews(conn, projectId),
       });
       const root = workspaceRoot();
-      if (root === undefined) return json(withVerification(emptyFlagResult()));
+      const rejectedFlags = listRejectedFlags(conn, projectId);
+      const verifiedFlags = listVerifiedFlags(conn, projectId);
+      if (root === undefined) {
+        const result =
+          verifiedFlags.length > 0
+            ? operatorFlagResult(verifiedFlags, rejectedFlags)
+            : emptyFlagResult();
+        return json(withVerification(result));
+      }
       const workspace = projectWorkspace(root, projectId);
       return json(
         withVerification(
           collectProjectFlag({
             workspace,
             artifacts: listProjectArtifacts(conn, projectId),
+            rejectedFlags,
+            verifiedFlags,
           }),
         ),
       );
     }),
+  );
+
+  route("GET", "/projects/{project_id}/flag-reviews", ({ params }) =>
+    db.withConn((conn) => json(summarizeFlagReviews(conn, params["project_id"]!))),
+  );
+
+  // Operator verdict on one captured flag. The three cases are deliberate:
+  // `real_more` resumes exploration, `real_done` stops and completes the project, and
+  // `fake` records the decoy (plus a hint) so exploration continues without it.
+  route(
+    "POST",
+    "/projects/{project_id}/flag-reviews/{review_id}/decision",
+    async ({ params, request }) => {
+      requireOperator(request, operatorToken);
+      const body = parseFlagReviewDecision(await readBody(request));
+      return db.withConn((conn) => {
+        const projectId = params["project_id"]!;
+        const reviewId = Number(params["review_id"]);
+        if (!Number.isInteger(reviewId) || reviewId <= 0) {
+          throw new HttpError(400, "flag review id must be a positive integer");
+        }
+        const outcome = decideFlagReview(conn, projectId, reviewId, body.decision, body.note);
+        if (body.decision === "real_done") {
+          if (outcome.review.fact_id === null) {
+            throw new HttpError(409, "flag review has no fact to complete from");
+          }
+          completeProject(conn, projectId, {
+            from: [outcome.review.fact_id],
+            description: `Operator confirmed ${outcome.review.flag} and stopped the project.`,
+            worker: "operator",
+          });
+        } else {
+          const hint =
+            body.decision === "fake"
+              ? `操作员判定 ${outcome.review.flag} 是假 Flag，不要把它当作有效 Flag，继续探索。`
+              : `操作员确认 ${outcome.review.flag} 为真且还有其他 Flag，继续探索。`;
+          if (findHintByContent(conn, projectId, hint) === null) {
+            createHint(conn, projectId, { content: hint, creator: "operator" });
+          }
+        }
+        return json({
+          review: outcome.review,
+          dismissed: outcome.dismissed,
+          reviews: summarizeFlagReviews(conn, projectId),
+        });
+      });
+    },
   );
 
   route("GET", "/projects/{project_id}/runs", ({ params }) =>

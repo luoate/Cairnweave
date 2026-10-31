@@ -99,6 +99,7 @@ describe("dispatcher config", () => {
     });
     expect(config.verification).toEqual({
       evidenceEnforcement: "completion",
+      flagReview: "manual",
       challenge: {
         baseUrlEnv: "TCH_CHALLENGE_API_BASE_URL",
         agentTokenEnv: "TCH_CHALLENGE_AGENT_TOKEN",

@@ -161,11 +161,13 @@ export const DEFAULT_AUDIT_STREAM: AuditStreamConfig = {
  * time and never stored here.
  */
 export type EvidenceEnforcement = "completion" | "off";
+export type FlagReviewMode = "manual" | "off";
 
 export const EVIDENCE_ENFORCEMENT_MODES: readonly EvidenceEnforcement[] = [
   "completion",
   "off",
 ];
+export const FLAG_REVIEW_MODES: readonly FlagReviewMode[] = ["manual", "off"];
 
 export interface ChallengeVerifierConfig {
   baseUrlEnv: string;
@@ -178,11 +180,17 @@ export interface ChallengeVerifierConfig {
 export interface VerificationConfig {
   /** `completion` requires evidence before a project may close; `off` disables it. */
   evidenceEnforcement: EvidenceEnforcement;
+  /**
+   * `manual` pauses a project when a worker captures a flag-shaped value and waits for an
+   * operator decision; `off` keeps dispatch and completion fully automatic.
+   */
+  flagReview: FlagReviewMode;
   challenge: ChallengeVerifierConfig;
 }
 
 export const DEFAULT_VERIFICATION: VerificationConfig = {
   evidenceEnforcement: "completion",
+  flagReview: "manual",
   challenge: {
     baseUrlEnv: "TCH_CHALLENGE_API_BASE_URL",
     agentTokenEnv: "TCH_CHALLENGE_AGENT_TOKEN",
@@ -860,12 +868,16 @@ function parseVerification(value: unknown): VerificationConfig {
         EVIDENCE_ENFORCEMENT_MODES,
       )
     : DEFAULT_VERIFICATION.evidenceEnforcement;
+  const flagReview = has(root, "flag_review")
+    ? oneOf(root["flag_review"], "verification.flag_review", FLAG_REVIEW_MODES)
+    : DEFAULT_VERIFICATION.flagReview;
   if (!has(root, "challenge")) {
-    return { evidenceEnforcement, challenge: { ...defaults } };
+    return { evidenceEnforcement, flagReview, challenge: { ...defaults } };
   }
   const challenge = recordAt(root["challenge"], "verification.challenge");
   return {
     evidenceEnforcement,
+    flagReview,
     challenge: {
       baseUrlEnv: has(challenge, "base_url_env")
         ? requiredString(challenge, "base_url_env", "verification.challenge")
@@ -1175,6 +1187,7 @@ export function parseDispatchConfig(value: unknown, options: ConfigOptions = {})
     ? parseVerification(root["verification"])
     : {
         evidenceEnforcement: DEFAULT_VERIFICATION.evidenceEnforcement,
+        flagReview: DEFAULT_VERIFICATION.flagReview,
         challenge: { ...DEFAULT_VERIFICATION.challenge },
       };
 

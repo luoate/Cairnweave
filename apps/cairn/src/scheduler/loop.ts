@@ -39,6 +39,7 @@ import {
   getProjectUsage,
   getStrategistState,
   hasPendingConclude,
+  hasPendingFlagReviews,
   heartbeatIntent,
   isPendingConcludeSession,
   buildProfileRunStats,
@@ -47,6 +48,7 @@ import {
   listProjects,
   listRecentStrategistRuns,
   nextRunId,
+  recordFlagReview,
   recordIntentMeta,
   recordPendingConclude,
   recordStrategistFailure,
@@ -74,6 +76,7 @@ import { join, relative, sep } from "node:path";
 
 import type { AuditTokenRegistry } from "../audit-stream/tokens";
 import type { DispatchConfig, ExecutionMode } from "../config";
+import { findFlags } from "../flags";
 import {
   VerificationService,
   type VerificationOptions,
@@ -679,6 +682,17 @@ export class Scheduler {
     }
     if (project.project.status !== "active") return false;
 
+    // A captured flag pauses the project until an operator says whether it is real and
+    // whether more remain. Every task kind waits, including the salvage conclude.
+    if (this.flagReviewPending(summary.id)) {
+      this.logOnce(
+        `flag-review:${summary.id}`,
+        `skip project=${summary.id} because an operator flag review is pending`,
+      );
+      return false;
+    }
+    this.loggedSkips.delete(`flag-review:${summary.id}`);
+
     // A queued conclude has priority over new work: it holds the failed task's lease and
     // must either write the salvaged fact or release the intent before explore retries.
     const pending = this.pendingConcludeFor(summary.id);
@@ -1283,6 +1297,14 @@ export class Scheduler {
       case "complete": {
         const from = requireFactIds(validated.data["from"]);
         const description = requireText(validated.data["description"]);
+        // A completion claim that carries a flag, or arrives while another flag awaits an
+        // operator, must not close the project. The flag fact is already written; resume
+        // after the operator decides real_more/fake, or let real_done close it explicitly.
+        if (this.reviewCapturedFlags(conn, running, [description], from[0] ?? null)) {
+          releaseReason(conn, running.projectId, WORKER_NAME);
+          this.log(`completion deferred project=${running.projectId}: operator flag review pending`);
+          return "rejected";
+        }
         // `completionClaim` verified the same fact set before the transaction. A missing
         // outcome here means the claim shape changed under us; fail closed.
         if (verification === null || !verification.ok) {
@@ -1377,7 +1399,7 @@ export class Scheduler {
       releaseIntent(conn, running.projectId, running.intentId, WORKER_NAME);
       return "rejected";
     }
-    concludeIntent(
+    const conclude = concludeIntent(
       conn,
       running.projectId,
       running.intentId,
@@ -1390,6 +1412,7 @@ export class Scheduler {
         evidenceFiles: evidence.files,
       },
     );
+    this.reviewCapturedFlags(conn, running, [validated.data], conclude.fact.id);
     return "success";
   }
 
@@ -1415,7 +1438,7 @@ export class Scheduler {
       releaseIntent(conn, running.projectId, running.intentId, WORKER_NAME);
       return "rejected";
     }
-    concludeIntent(
+    const conclude = concludeIntent(
       conn,
       running.projectId,
       running.intentId,
@@ -1428,6 +1451,7 @@ export class Scheduler {
         evidenceFiles: evidence.files,
       },
     );
+    this.reviewCapturedFlags(conn, running, [validated.data], conclude.fact.id);
     return "success";
   }
 
@@ -1460,6 +1484,17 @@ export class Scheduler {
     );
     // The bootstrap fact is worth keeping even when verification fails; the project stays
     // active and a later reason turn can close it once the oracle agrees.
+    if (
+      this.reviewCapturedFlags(
+        conn,
+        running,
+        [validated.data.factDescription, validated.data.completeDescription],
+        conclude.fact.id,
+      )
+    ) {
+      this.log(`bootstrap completion deferred project=${running.projectId}: flag review pending`);
+      return "success";
+    }
     if (verification === null || !verification.ok) {
       this.log(
         `bootstrap completion deferred project=${running.projectId}: ${verification?.detail ?? "no verification result"}`,
@@ -2162,6 +2197,50 @@ export class Scheduler {
       if (task.projectId === projectId && task.kind === "bootstrap") return true;
     }
     return false;
+  }
+
+  /** Dispatch gate: true when an operator decision is still outstanding. */
+  private flagReviewPending(projectId: string): boolean {
+    try {
+      return this.db.withConn((conn) => hasPendingFlagReviews(conn, projectId));
+    } catch (error) {
+      // Fail closed: a broken sidecar lookup must not release a paused project.
+      this.log(`flag review lookup failed project=${projectId}: ${describe(error)}`);
+      return true;
+    }
+  }
+
+  /**
+   * Records one pending review per distinct flag-shaped value in `texts` and returns true
+   * while any review remains undecided. Values the operator already accepted or rejected
+   * never re-queue, so a decoy cannot pause the same project twice.
+   */
+  private reviewCapturedFlags(
+    conn: Database,
+    running: RunningTask,
+    texts: readonly string[],
+    factId: string | null,
+  ): boolean {
+    if (this.config.verification.flagReview !== "manual") return false;
+    const seen = new Set<string>();
+    for (const text of texts) {
+      if (typeof text !== "string" || text === "") continue;
+      for (const flag of findFlags(text)) {
+        if (seen.has(flag)) continue;
+        seen.add(flag);
+        try {
+          recordFlagReview(conn, running.projectId, {
+            flag,
+            factId,
+            runId: running.runId,
+          });
+        } catch (error) {
+          this.log(`flag review record failed project=${running.projectId}: ${describe(error)}`);
+          return true;
+        }
+      }
+    }
+    return hasPendingFlagReviews(conn, running.projectId);
   }
 
   private logOnce(key: string, message: string): void {

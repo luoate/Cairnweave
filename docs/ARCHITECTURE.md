@@ -178,6 +178,15 @@ M21 把这条回退收紧成「只有工具输出算证据」：逐行只取 `me
 `sources`、`placeholder`；artifacts 与会话两路按值合并、次数相加）与 `placeholder_suspect`
 一起上报，UI 据此显示琥珀色「FLAG 可疑」条；Writeup 草稿的 `flag_suspects` 与 prompt 里
 「不得把占位串当成答案」的硬规则同源于此。
+M32 把 Flag 的“真 / 假”判定交还操作员：`verification.flag_review`（默认 `manual`，可设
+`off`）开启后，调度器用与 `/flag` 同一套分类器（`apps/cairn/src/flags.ts`）检查 reason
+完成声明、explore/conclude 产出与 bootstrap 的 Fact 描述。每个项目每个不同的值只记一行
+`flag_reviews`（`pending`）；有 pending 时 `tryDispatch` 直接跳过该项目（含 salvage
+conclude），reason 的 complete 也会被拒绝并释放租约，因此项目既不会继续派发也不会自关。
+操作员在项目页的琥珀色「Flag 复核」条选择三种判定：`real_more`（真，还有别的 Flag，继续）、
+`real_done`（真，停止：以 operator 身份写入完成并关项目，其余 pending 置 `dismissed`）、
+`fake`（假：记录为 rejected 并追加一条 operator Hint，继续探索）。判定是终态，同一值不会
+二次暂停；`/flag` 与 Writeup 的扫描会排除 rejected 值，并把已确认值排在第一位。
 M29 收掉两处后端热点，两处都先量后改。其一，`facts` 的主键是 `(id, project_id)`，所以项目列表里
 `(SELECT COUNT(*) FROM facts WHERE project_id = p.id)` 与 `GET /projects/{id}` 的按项目读 Fact
 都用不上主键，只能整表扫描；`packages/graph/src/db.ts` 增加
@@ -687,6 +696,12 @@ stderr 归档到 `sessionDir/{stdout,stderr}.log`。需要 UI 实时进度时再
   flag_got_count, evidence_refs, checked_at)`（M14a），按 `(project_id, checked_at)`
   建索引，项目删除时级联删除。每次 oracle 调用（含失败与 `off`）追加一行；
   `evidence_refs` 以 JSON 数组存储，`challenge_code` 是外部挑战的标识，不是 flag。
+- `flag_reviews(id, project_id, fact_id, run_id, flag, status, note, created_at,
+  decided_at)`（M32），`UNIQUE(project_id, flag)` 保证同一值只审一次，另有
+  `(project_id, status, created_at)` 索引，项目删除时级联删除。`status` 为
+  `pending | real_more | real_done | fake | dismissed`；`fact_id` 指向触发复核的 Fact
+  （缺失时为 `NULL`，此时 `real_done` 返回 409）。表是旁路数据，不进入图导出、
+  timeline 或 worker 契约。
 - `project_writeups(project_id, markdown, model, created_at)`（M19a），主键
   `project_id`，外键指向项目并级联删除。只在 `POST /projects/{id}/writeup` 成功后
   upsert 一行，`DELETE` 清除；中文草稿不落库，始终由图数据现算。表不进入图模型、
@@ -731,7 +746,20 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
   只返回 flag 值与路径，不返回日志内容。`candidates` 是最多 3 条的排名结果（命中时为通过筛选
   的值，否则为被拒的掩码），`placeholder_suspect` 表示「看到过 flag 形状文本，但一个都没采纳」。
   未命中返回 `found:false` 的 200；未知项目 404；只有 GET。`verification` 与
-  `/verification` 同源，供页头横幅显示校验状态。
+  `/verification` 同源，供页头横幅显示校验状态。M32 起响应还带
+  `reviews: {pending, verified, rejected, counts}`；扫描排除 `fake` 判定过的值，并把
+  `real_more` / `real_done` 确认的值排到第一位——即使扫描没看到该值，也以
+  `source: "operator review"` 返回。
+- `GET /projects/{id}/flag-reviews`（M32，只读）→
+  `{pending, verified, rejected, counts}`；`pending` 按 id 升序，`verified` / `rejected`
+  只含对应判定的值，`counts` 覆盖全部五种状态。未知项目 404；只有 GET。
+- `POST /projects/{id}/flag-reviews/{review_id}/decision`（M32）→ 请求体
+  `{decision: real_more|real_done|fake, note?}`（`note` ≤ 500 字符）。`real_done` 用该
+  review 的 Fact 写入 `worker: "operator"` 的完成意图并关项目，同时把其余 pending 置
+  `dismissed`；`real_more` / `fake` 追加一条去重的 operator Hint。响应
+  `{review, dismissed, reviews}`；判定与完成在同一事务，失败不会留下半完成的决定。
+  非 pending 409、未知项目/评审 404、非法 decision / note / id 400；配置
+  `CAIRN_OPERATOR_TOKEN` 时要求 `X-Cairn-Operator-Token`。
 - `GET /projects/{id}/subgraph?around=<fact|intent id>`（M30，只读）→
   `{project: {id, title}, focus: {kind, id}, depth, truncated, counts: {facts, intents},
   facts: [{id, description}], intents: [{id, from, to, description, worker, created_at,
@@ -880,6 +908,11 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
   而不是 `[REDACTED]` 占位符。M21 起横幅还会标注“另有 N 个候选”，并且在没有 Flag 但
   `placeholder_suspect` 为真时于其下方显示琥珀色「FLAG 可疑」条，逐字列出被拒的 flag 形状
   文本（该条不给复制按钮，避免把掩码当答案提交）。它不进入报告页，避免把工件内容带进可分享快照。
+- `Flag 复核`（M32）读取 `GET /projects/{id}` 的 `flag_reviews`，在页头显示琥珀色暂停条：
+  每个 pending 值一行，带「真 · 还有更多 / 真 · 停止 / 假 · 继续探索」按钮。提交期间所有
+  按钮禁用，POST 成功后重载项目与 `/flag` 并刷新图；`real_done` 后项目变为 completed，
+  `real_more` / `fake` 后横幅消失、调度恢复。M32 起的绿色 Flag 横幅展示的是过滤掉已判假
+  后的值。
 - `Writeup`（M19a/M19b/M20a/M20b/M21）读取 `GET /projects/{id}/writeup`，用 `<pre>` 原样展示中文
   Markdown 正文，标题行、状态摘要与操作条分三段纵向排列（操作条自身 `flex-wrap`，不与标题争
   宽度），标注“中文草稿”或“模型撰写”及所用模型与生成时间；状态摘要含 Flag 是否记录（M21 起区分

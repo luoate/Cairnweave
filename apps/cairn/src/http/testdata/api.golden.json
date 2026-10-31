@@ -121,7 +121,7 @@
       "path": "/projects/proj_001",
       "status": 200,
       "content_type": "application/json",
-      "body": "{\"project\":{\"id\":\"proj_001\",\"title\":\"test\",\"status\":\"active\",\"bootstrap_enabled\":true,\"created_at\":\"2026-01-02T03:04:05Z\",\"reason\":null},\"facts\":[{\"id\":\"origin\",\"description\":\"starting point\"},{\"id\":\"goal\",\"description\":\"finish\"}],\"intents\":[],\"hints\":[{\"id\":\"h001\",\"content\":\"initial clue\",\"creator\":\"human\",\"created_at\":\"2026-01-02T03:04:05Z\"}]}",
+      "body": "{\"project\":{\"id\":\"proj_001\",\"title\":\"test\",\"status\":\"active\",\"bootstrap_enabled\":true,\"created_at\":\"2026-01-02T03:04:05Z\",\"reason\":null},\"facts\":[{\"id\":\"origin\",\"description\":\"starting point\"},{\"id\":\"goal\",\"description\":\"finish\"}],\"intents\":[],\"hints\":[{\"id\":\"h001\",\"content\":\"initial clue\",\"creator\":\"human\",\"created_at\":\"2026-01-02T03:04:05Z\"}],\"flag_reviews\":{\"pending\":[],\"verified\":[],\"rejected\":[],\"counts\":{\"pending\":0,\"real_more\":0,\"real_done\":0,\"fake\":0,\"dismissed\":0}}}",
       "compare": "full"
     },
     {
@@ -294,7 +294,7 @@
       "path": "/projects/proj_001",
       "status": 200,
       "content_type": "application/json",
-      "body": "{\"project\":{\"id\":\"proj_001\",\"title\":\"renamed\",\"status\":\"active\",\"bootstrap_enabled\":true,\"created_at\":\"2026-01-02T03:04:05Z\",\"reason\":null},\"facts\":[{\"id\":\"origin\",\"description\":\"starting point\"},{\"id\":\"goal\",\"description\":\"finish\"},{\"id\":\"f001\",\"description\":\"new fact\"},{\"id\":\"f002\",\"description\":\"human correction\"}],\"intents\":[{\"id\":\"i001\",\"from\":[\"origin\"],\"to\":\"f001\",\"description\":\"investigate\",\"creator\":\"reasoner\",\"worker\":\"explorer\",\"last_heartbeat_at\":\"2026-01-02T03:17:05Z\",\"created_at\":\"2026-01-02T03:13:05Z\",\"concluded_at\":\"2026-01-02T03:17:05Z\"},{\"id\":\"i003\",\"from\":[\"f001\"],\"to\":\"f002\",\"description\":\"external_feedback\",\"creator\":\"human\",\"worker\":\"human\",\"last_heartbeat_at\":\"2026-01-02T03:22:05Z\",\"created_at\":\"2026-01-02T03:22:05Z\",\"concluded_at\":\"2026-01-02T03:22:05Z\"}],\"hints\":[{\"id\":\"h001\",\"content\":\"initial clue\",\"creator\":\"human\",\"created_at\":\"2026-01-02T03:04:05Z\"}]}",
+      "body": "{\"project\":{\"id\":\"proj_001\",\"title\":\"renamed\",\"status\":\"active\",\"bootstrap_enabled\":true,\"created_at\":\"2026-01-02T03:04:05Z\",\"reason\":null},\"facts\":[{\"id\":\"origin\",\"description\":\"starting point\"},{\"id\":\"goal\",\"description\":\"finish\"},{\"id\":\"f001\",\"description\":\"new fact\"},{\"id\":\"f002\",\"description\":\"human correction\"}],\"intents\":[{\"id\":\"i001\",\"from\":[\"origin\"],\"to\":\"f001\",\"description\":\"investigate\",\"creator\":\"reasoner\",\"worker\":\"explorer\",\"last_heartbeat_at\":\"2026-01-02T03:17:05Z\",\"created_at\":\"2026-01-02T03:13:05Z\",\"concluded_at\":\"2026-01-02T03:17:05Z\"},{\"id\":\"i003\",\"from\":[\"f001\"],\"to\":\"f002\",\"description\":\"external_feedback\",\"creator\":\"human\",\"worker\":\"human\",\"last_heartbeat_at\":\"2026-01-02T03:22:05Z\",\"created_at\":\"2026-01-02T03:22:05Z\",\"concluded_at\":\"2026-01-02T03:22:05Z\"}],\"hints\":[{\"id\":\"h001\",\"content\":\"initial clue\",\"creator\":\"human\",\"created_at\":\"2026-01-02T03:04:05Z\"}],\"flag_reviews\":{\"pending\":[],\"verified\":[],\"rejected\":[],\"counts\":{\"pending\":0,\"real_more\":0,\"real_done\":0,\"fake\":0,\"dismissed\":0}}}",
       "compare": "full"
     },
     {

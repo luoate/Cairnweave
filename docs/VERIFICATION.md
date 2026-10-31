@@ -1,4 +1,4 @@
-# 完成验证（M14a + M18f）
+# 完成验证（M14a + M18f + M32）
 
 M14a 把“项目完成”从模型自证改为控制面可验证。worker 返回的 `complete` 只是声明；
 scheduler 在关项目之前运行 oracle，并把每次判定写入旁路表。验证失败不会丢工作：
@@ -74,13 +74,42 @@ flag_count`）同样失败。以下情况一律失败（fail closed）：环境�
 展示证据中的真实 flag，只有证据里只剩 `[REDACTED]` 等占位符时才回退读取 worker 的
 solver-session 日志（只返回 flag 值与路径，不返回日志内容）。
 
-## 3. 配置
+## 3. 人工 Flag 复核（M32）
+
+M32 把“抓到的 flag 值是否可信”交给操作员，而不是模型自判。开关
+`verification.flag_review`（默认 `manual`，`off` 关闭）只控制暂停行为，与完成策略
+无关：`off` 策略的项目抓到 flag 值时同样会停下来等人判定。
+
+- **检测**：任务结果落图后，用与 `/flag` 相同的分类器（`apps/cairn/src/flags.ts`；
+  前缀为 `flag` / `*flag` / 含 `ctf`，且不是 `[REDACTED]`、`...`、`<...>` 等掩码）
+  扫描 explore / conclude 的 Fact 描述、bootstrap 的 Fact 与完成描述、reason 的完成
+  描述。每个命中值按项目登记一行 `pending`；同一值只登记一次。
+- **暂停**：项目存在 `pending` 行时，调度器不派发任何新任务（含 conclude 打捞），
+  reason 的完成声明也会被推迟并释放租约，日志为
+  `skip project=… because an operator flag review is pending` 或
+  `completion deferred project=…`。判定后下一次 tick 自动恢复。
+- **三种判定**：
+  - `real_more`：值记入 `verified`，写一条去重 Hint（“操作员确认 … 为真且还有其他
+    Flag，继续探索。”），恢复派发。
+  - `real_done`：值记入 `verified`，同项目其余 `pending` 置 `dismissed`，控制面直接
+    调用 `completeProject`（来源是该 flag 关联的 Fact）；该行没有 Fact 时返回 409 且
+    项目保持暂停。
+  - `fake`：值记入 `rejected`，写一条去重 Hint（“操作员判定 … 是假 Flag …”），
+    恢复派发。同一值不会再入 `pending`，`/flag`、Writeup 扫描与候选列表都会过滤它。
+
+判定是终态：再次提交同一行返回 409。项目页头在暂停时显示琥珀色复核条，列出待判定值
+与三枚按钮；设置 `CAIRN_OPERATOR_TOKEN` 后判定路由同样要求
+`X-Cairn-Operator-Token`（与 `/complete` 一致）。
+
+## 4. 配置
 
 ```yaml
 verification:
   # completion：完成时必须满足证据规则（默认）；off：旧项目/离线测试的逃生口。
   # 该值在创建项目时写入 project_verification，之后改配置不会改变已有项目。
   evidence_enforcement: completion
+  # manual：抓到 flag 值时暂停项目等待操作员判定；off 关闭复核。
+  flag_review: manual
   challenge:
     base_url_env: TCH_CHALLENGE_API_BASE_URL
     agent_token_env: TCH_CHALLENGE_AGENT_TOKEN
@@ -97,7 +126,10 @@ verification:
 （`completion` → `evidence`，`off` → `off`）。`POST /projects` 未显式给出
 `verification` 时，控制面按上一节的自动规则落库。
 
-## 4. HTTP
+`flag_review` 是服务端配置（不写入 `project_verification`），改配置后在下一个调度
+tick 生效；`off` 只跳过复核，不影响已有的 `flag_reviews` 行与展示过滤。
+
+## 5. HTTP
 
 - `POST /projects/{id}/verify`：body 可省略或为 `{}`；`{"facts": ["f001", ...]}` 可
   限定检查哪些 Fact。返回 `VerificationOutcome`：
@@ -115,22 +147,37 @@ verification:
 - 新建项目弹窗（M18f）提供“完成校验”选择：`auto`（默认，题目环境优先）、
   `challenge`（需填写题目编号）、`evidence`、`off`。选择只影响创建请求；已有项目的
   策略仍按 `project_verification` 固定，需要改策略时应新建项目。
+- `GET /projects/{id}/flag-reviews`（M32）：返回
+  `{pending, verified, rejected, counts}`；`pending` 带 `id` / `fact_id` / `run_id` /
+  `flag` / `created_at`，`verified` / `rejected` 是值列表，`counts` 覆盖五种状态。
+  `GET /projects/{id}` 的响应里同样附带这份 `flag_reviews` 摘要。
+- `POST /projects/{id}/flag-reviews/{review_id}/decision`（M32）：body
+  `{"decision": "real_more" | "real_done" | "fake", "note": "可选"}`（`note` ≤500
+  字符）。返回 `{review, dismissed, reviews}`；非法判定 400、已判定 409、未知项目或
+  复核行 404、`real_done` 没有关联 Fact 409。设置 `CAIRN_OPERATOR_TOKEN` 后要求
+  操作员凭据。
+- `GET /projects/{id}/flag` 的 M32 扩展：返回 `reviews` 摘要，并把 `fake` 值从
+  `found` / `candidates` 中剔除、把已确认的值排在前面；扫描器从未见过的已确认值会以
+  `source: "operator review"` 合成一条结果。Writeup 的 Flag 扫描用同一份过滤。
 - 手工 `POST /projects/{id}/complete` 不经过 oracle，仍是操作员显式覆盖；调度器不会
   调用它。设置 `CAIRN_OPERATOR_TOKEN` 后，该路由要求
   `X-Cairn-Operator-Token` 匹配，否则返回 401；未设置时保持旧行为，兼容本地单用户
   部署与 golden。
 
-## 5. 数据
+## 6. 数据
 
 - `project_verification(project_id, kind, challenge_code, created_at)`：主键
   `project_id`，项目删除时级联删除。
 - `verification_checks(id, project_id, kind, ok, detail, challenge_code, flag_count,
   flag_got_count, evidence_refs, checked_at)`：每次调用 oracle 追加一行（包括失败与
   `off`）。`evidence_refs` 为 JSON 数组，按项目时间倒序查询，默认 20、范围 1–100。
+- `flag_reviews(id, project_id, fact_id, run_id, flag, status, note, created_at,
+  decided_at)`（M32）：`UNIQUE(project_id, flag)`，`status` 为 `pending` /
+  `real_more` / `real_done` / `fake` / `dismissed`。项目删除时级联删除。
 
-这两张表都不参与图导出、timeline 或既有 HTTP golden 响应。
+这三张表都不参与图导出、timeline 或既有 HTTP golden 响应。
 
-## 6. 失败语义
+## 7. 失败语义
 
 - reason 完成声明未通过：不关项目；reason 租约正常释放，慢层可在后续 tick 重试。
 - bootstrap 完成声明未通过：Fact 已写入并保留；项目保持 active，下一个 reason 决定
@@ -138,8 +185,10 @@ verification:
 - 验证过程抛错（例如实现缺陷）：任务按失败处理，项目保持 active，日志记录
   `verification error`。
 - `off` 策略直接通过，不读取任何 Fact 或网络。
+- flag 复核 pending 时任务照常结束并落图，但调度器不派发后续任务；判定失败（400 /
+  404 / 409）不改状态，项目保持暂停。
 
-## 7. 已知边界
+## 8. 已知边界
 
 - evidence 只证明“完成声明引用的 Fact 来自一次 run 且有已记录的文件摘要”，不证明
   文件内容能推出 Fact 描述；人工复核仍需要看证据文件。
@@ -150,3 +199,9 @@ verification:
   evidence。
 - 手工 `/complete` 可绕过验证（配置 token 后至少要求操作员凭据），审计上仍需要把它
   当作操作员决策。
+- flag 复核按文本形状识别候选，不证明真伪；`real_more` / `fake` 判定后，若模型在
+  没有新 flag 的情况下提出完成，`evidence` / `off` 策略仍可能放行——复核只拦截“抓到
+  flag 未判定”这一刻，不替代完成 oracle。
+- pending 是项目级全局暂停，慢层（reason）与快层（explore/conclude）一起停；不区分
+  哪个任务先抓到 flag。`real_done` 以该复核行关联的 Fact 作为完成来源，若任务没有
+  留下 Fact 就只能改选另外两种判定。

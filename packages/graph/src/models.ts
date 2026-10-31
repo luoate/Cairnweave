@@ -527,6 +527,36 @@ export interface VerificationCheck {
   checked_at: string;
 }
 
+export type FlagReviewStatus = "pending" | "real_more" | "real_done" | "fake" | "dismissed";
+
+export type FlagReviewDecision = "real_more" | "real_done" | "fake";
+
+/**
+ * One operator decision about a captured flag-shaped value. `pending` pauses the project;
+ * the other statuses are terminal. `dismissed` marks sibling reviews closed because the
+ * operator stopped the project on another flag.
+ */
+export interface FlagReview {
+  id: number;
+  project_id: string;
+  fact_id: string | null;
+  run_id: string | null;
+  flag: string;
+  status: FlagReviewStatus;
+  note: string | null;
+  created_at: string;
+  decided_at: string | null;
+}
+
+export interface FlagReviewSummary {
+  pending: FlagReview[];
+  /** Operator-confirmed values (real_more and real_done). */
+  verified: string[];
+  /** Values the operator rejected as decoys. */
+  rejected: string[];
+  counts: Record<FlagReviewStatus, number>;
+}
+
 export interface CreateProjectRequest {
   title: string;
   origin: string;

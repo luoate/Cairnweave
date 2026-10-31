@@ -46,6 +46,10 @@ export {
   type FactEvidenceFile,
   type FactMeta,
   type FactSupersession,
+  type FlagReview,
+  type FlagReviewDecision,
+  type FlagReviewStatus,
+  type FlagReviewSummary,
   type ProjectSupersedeSummary,
   type ProjectScopeInput,
   type HeartbeatRequest,
@@ -270,6 +274,20 @@ export {
   type ProjectVerificationSummary,
   type RecordVerificationCheckInput,
 } from "./verification";
+
+export {
+  decideFlagReview,
+  dismissPendingFlagReviews,
+  getFlagReview,
+  hasPendingFlagReviews,
+  listFlagReviews,
+  listPendingFlagReviews,
+  listRejectedFlags,
+  listVerifiedFlags,
+  recordFlagReview,
+  summarizeFlagReviews,
+  type RecordFlagReviewInput,
+} from "./flag-reviews";
 
 export {
   buildProjectReport,

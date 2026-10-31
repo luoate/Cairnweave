@@ -168,6 +168,7 @@ curl -X PUT http://127.0.0.1:8000/settings/runtime \
 | 键 | 默认 | 说明 |
 | --- | --- | --- |
 | `evidence_enforcement` | completion | `completion` 阻断无证据完成，`off` 关闭；对新建项目与无策略行的项目生效 |
+| `flag_review` | manual | `manual` 抓到 flag 值时暂停项目等操作员判定（真·还有更多 / 真·停止 / 假·继续探索）；`off` 关闭复核 |
 
 ### 预算 `budget`
 
@@ -197,6 +198,7 @@ curl -X PUT http://127.0.0.1:8000/settings/runtime \
 | 并发、超时、切片、证据门、预算、策略阈值、提案、选择策略 | 下一个调度 tick / 下一次任务准备 |
 | `runtime.interval`、`retention.sweep_interval_seconds` | `Scheduler.reconfigure()` 重挂定时器 |
 | `verification.evidence_enforcement` | 下一次 `VerificationService.defaultKind` 读取（getter） |
+| `verification.flag_review` | 下一个调度 tick 的捕获检查与派发门禁 |
 | `worker.*` | 下一次 `prepareTask`；运行中的任务沿用已经写好的 `task.json` |
 
 正在运行的任务不会被改写或中断；新配置只影响之后的派发。

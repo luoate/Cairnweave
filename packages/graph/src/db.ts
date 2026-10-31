@@ -100,6 +100,27 @@ CREATE TABLE IF NOT EXISTS verification_checks (
 CREATE INDEX IF NOT EXISTS verification_checks_project
     ON verification_checks(project_id, checked_at);
 
+-- Operator review of captured flags. A pending row pauses dispatch for the project until
+-- an operator says whether the value is real (and whether more remain) or a decoy. One row
+-- per project and flag value, so repeated sightings never queue a second decision.
+CREATE TABLE IF NOT EXISTS flag_reviews (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    fact_id TEXT,
+    run_id TEXT,
+    flag TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    note TEXT,
+    created_at TEXT NOT NULL,
+    decided_at TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS flag_reviews_project_flag
+    ON flag_reviews(project_id, flag);
+
+CREATE INDEX IF NOT EXISTS flag_reviews_project_status
+    ON flag_reviews(project_id, status, created_at);
+
 CREATE TABLE IF NOT EXISTS project_artifacts (
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     path TEXT NOT NULL,
