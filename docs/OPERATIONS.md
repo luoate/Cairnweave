@@ -269,8 +269,10 @@ curl "http://127.0.0.1:8000/projects/<project_id>/strategist?limit=20"
 
 - 响应含 `state`（`strategist_state` 或 `null`）、`budget`、`intents` 与 `reason_runs`。
 - `budget.limits` 只在 `cairn serve --config` 时出现；纯 HTTP 模式返回 `null`，但仍显示
-  已记录用量。`budget.running_tasks` 统计 `runs.outcome IS NULL`，可能与调度器内存状态
-  因崩溃遗留而略有差异；`exhausted.tasks` 只在 `max_project_tasks > 0` 时判断。
+  已记录用量。`budget.running_tasks` 统计 `runs.outcome IS NULL`，因此与调度器内存中的在途
+  任务口径一致；M38 起控制面每次启动都会把上一进程遗留的这类行补写成 `inactive`（日志
+  `startup reconcile closed N orphan run(s)`），崩溃遗留的幽灵任务不再长期占住
+  `exhausted.tasks`。`exhausted.tasks` 只在 `max_project_tasks > 0` 时判断。
 - UI 的“慢层”页签显示同一数据；API 仍未认证，远程/容器部署需要网络层访问控制。
 
 ## 真实 Solver 与模型配置（M2c）

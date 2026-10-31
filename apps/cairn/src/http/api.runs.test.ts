@@ -10,6 +10,8 @@ import {
   createProject,
   finishRun,
   heartbeatIntent,
+  ORPHAN_RUN_DETAIL,
+  reconcileOrphanRuns,
   recordTaskAudit,
   startRun,
   type CairnDatabase,
@@ -186,6 +188,49 @@ describe("GET /projects/{id}/stats", () => {
       worker_profile: "alpha",
       runs: 1,
       success_rate: 1,
+    });
+  });
+
+  test("drops a reconciled orphan out of running after a control plane restart", async () => {
+    db.withConn((conn) => {
+      startRun(conn, {
+        id: "run_001",
+        projectId,
+        taskId: "explore-1",
+        kind: "explore",
+        worker: "cairn-worker",
+        startedAt: "2026-01-02T03:00:00Z",
+      });
+    });
+    const before = (await (await get(`/projects/${projectId}/stats`)).json()) as {
+      totals: Record<string, number>;
+    };
+    expect(before.totals).toMatchObject({ runs: 1, running: 1, finished: 0 });
+
+    db.withConn((conn) =>
+      reconcileOrphanRuns(conn, { finishedAt: "2026-01-03T00:00:00Z" }),
+    );
+
+    const after = (await (await get(`/projects/${projectId}/stats`)).json()) as {
+      totals: Record<string, number>;
+    };
+    expect(after.totals).toMatchObject({
+      runs: 1,
+      running: 0,
+      finished: 1,
+      inactive: 1,
+      success_rate: 0,
+    });
+
+    const runs = (await (await get(`/projects/${projectId}/runs`)).json()) as Array<
+      Record<string, unknown>
+    >;
+    expect(runs[0]).toMatchObject({
+      id: "run_001",
+      outcome: "inactive",
+      finished_at: "2026-01-03T00:00:00Z",
+      duration_ms: null,
+      detail: ORPHAN_RUN_DETAIL,
     });
   });
 

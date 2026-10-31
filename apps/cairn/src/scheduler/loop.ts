@@ -45,11 +45,13 @@ import {
   hasPendingConclude,
   hasPendingFlagReviews,
   heartbeatIntent,
+  heartbeatSchedulerInstance,
   intentToModel,
   isBootstrapIntent,
   isPendingConcludeSession,
   buildProfileRunStats,
   buildAgentContext,
+  listActiveSchedulerPeers,
   listAllPendingConcludes,
   listProjectAttachments,
   listProjectIntentMeta,
@@ -58,11 +60,14 @@ import {
   listRecentStrategistRuns,
   listRejectedFlags,
   nextRunId,
+  ORPHAN_RUN_DETAIL,
   recordFlagReview,
   recordIntentMeta,
   recordPendingConclude,
   recordStrategistFailure,
   recordStrategistSuccess,
+  reconcileOrphanRuns,
+  registerSchedulerInstance,
   releaseIntent,
   releaseReason,
   recordProjectArtifacts,
@@ -72,10 +77,12 @@ import {
   renewReasonLease,
   setIntentStatus,
   startRun,
+  stopSchedulerInstance,
   utcnow,
   type CairnDatabase,
   type Intent,
   type IntentMeta,
+  type OrphanRun,
   type PendingConcludeRow,
   type ProjectDetail,
   type ProjectScope,
@@ -83,6 +90,7 @@ import {
   type RunOutcome,
 } from "@cairn/graph";
 import type { Database } from "bun:sqlite";
+import { randomUUID } from "node:crypto";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 
@@ -224,6 +232,13 @@ export class Scheduler {
   private readonly processes = new Map<string, WorkerProcess>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private sweepTimer: ReturnType<typeof setInterval> | null = null;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  /**
+   * Boot id of the `scheduler_instances` row this process owns; null before `start()` and
+   * after `stop()`. Every start registers a fresh id so a restarted process never inherits a
+   * row its predecessor may still be heartbeating.
+   */
+  private instanceId: string | null = null;
   private projectCursor = 0;
 
   constructor(options: SchedulerOptions) {
@@ -286,6 +301,9 @@ export class Scheduler {
   /** Background mode used by `cairn serve --config`. */
   start(): void {
     if (this.timer !== null) return;
+    // Runs left by the previous process can only be closed here: from the first dispatch on,
+    // this scheduler's own task map holds in-flight work that must stay open.
+    this.reconcilePreviousBoot();
     // Reconcile persisted state before the first dispatch: rows left by a previous process
     // may point at concluded intents or deleted sessions.
     try {
@@ -368,6 +386,9 @@ export class Scheduler {
         this.log(`tick failed: ${describe(error)}`);
       }
     }, this.config.runtime.interval * 1000);
+    this.heartbeatTimer = setInterval(() => {
+      this.heartbeatInstance();
+    }, this.leaseIntervalMs);
   }
 
   private clearTimers(): void {
@@ -379,10 +400,15 @@ export class Scheduler {
       clearInterval(this.sweepTimer);
       this.sweepTimer = null;
     }
+    if (this.heartbeatTimer !== null) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
   }
 
   async stop(): Promise<void> {
     this.clearTimers();
+    this.markInstanceStopped();
     for (const task of this.running.values()) {
       this.cancel(task, "shutdown");
     }
@@ -432,6 +458,84 @@ export class Scheduler {
     if (this.config.retention.refreshArtifacts) {
       this.refreshArtifacts(summaries);
     }
+  }
+
+  /**
+   * Registers this boot and closes the runs the previous process left open. A `runs` row is
+   * written at dispatch time and only ever closed by the process that owns the task, so an
+   * unclean exit leaves rows that `/stats`, `/strategist` and the AgentContext budget keep
+   * counting as running with nothing left to finish them.
+   *
+   * A peer that still heartbeats owns those rows, so reconciliation is skipped while one is
+   * live. Two schedulers sharing a database is not a supported deployment either way — the
+   * heartbeat only keeps a restart from misreading a live control plane's in-flight tasks as
+   * orphans. Intent and reason leases are deliberately left alone: releasing them would
+   * crowd out a worker that is still running, and they expire on their own TTL.
+   */
+  private reconcilePreviousBoot(): void {
+    const instanceId = `boot-${randomUUID().replaceAll("-", "").slice(0, 12)}`;
+    this.instanceId = instanceId;
+    const at = this.instanceTimestamp();
+    const timeoutSeconds = Math.max(this.config.runtime.interval * 2, 30);
+    let closed: OrphanRun[] | null;
+    try {
+      closed = this.db.withConn((conn) => {
+        registerSchedulerInstance(conn, { id: instanceId, at });
+        if (listActiveSchedulerPeers(conn, instanceId, { now: at, timeoutSeconds }).length > 0) {
+          return null;
+        }
+        return reconcileOrphanRuns(conn, { finishedAt: at });
+      });
+    } catch (error) {
+      this.log(`startup reconcile failed: ${describe(error)}`);
+      return;
+    }
+    if (closed === null) {
+      this.log(
+        `startup reconcile skipped: another scheduler instance heartbeats within ${timeoutSeconds}s`,
+      );
+      return;
+    }
+    if (closed.length === 0) return;
+    for (const orphan of closed) {
+      this.log(
+        `orphan run closed run=${orphan.id} project=${orphan.project_id} ` +
+          `task=${orphan.task_id} kind=${orphan.kind} reason=${ORPHAN_RUN_DETAIL}`,
+      );
+    }
+    this.log(`startup reconcile closed ${closed.length} orphan run(s)`);
+  }
+
+  /** Keeps this boot's instance row fresh; a crashed process simply stops writing it. */
+  private heartbeatInstance(): void {
+    const instanceId = this.instanceId;
+    if (instanceId === null) return;
+    try {
+      this.db.withConn((conn) =>
+        heartbeatSchedulerInstance(conn, instanceId, this.instanceTimestamp()),
+      );
+    } catch (error) {
+      this.log(`instance heartbeat failed: ${describe(error)}`);
+    }
+  }
+
+  /** Terminal for this boot: the row stops counting as an active peer. */
+  private markInstanceStopped(): void {
+    const instanceId = this.instanceId;
+    if (instanceId === null) return;
+    this.instanceId = null;
+    try {
+      this.db.withConn((conn) =>
+        stopSchedulerInstance(conn, instanceId, this.instanceTimestamp()),
+      );
+    } catch (error) {
+      this.log(`instance stop failed: ${describe(error)}`);
+    }
+  }
+
+  /** `utcnow()`'s shape on the injectable clock, so tests can age a peer heartbeat. */
+  private instanceTimestamp(): string {
+    return this.now().toISOString().replace(/\.\d{3}Z$/, "Z");
   }
 
   /** Drops queued concludes that can no longer run, releasing a still-open intent. */

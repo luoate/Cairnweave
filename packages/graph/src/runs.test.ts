@@ -16,6 +16,8 @@ import {
   listFactEvidence,
   listProjectRuns,
   nextRunId,
+  ORPHAN_RUN_DETAIL,
+  reconcileOrphanRuns,
   recordFactMeta,
   startRun,
   type CairnDatabase,
@@ -254,6 +256,85 @@ describe("runs", () => {
     expect(() => db.withConn((conn) => listProjectRuns(conn, "proj_999"))).toThrow(
       HttpError,
     );
+  });
+});
+
+describe("orphan run reconciliation", () => {
+  test("closes open runs and leaves finished rows alone", () => {
+    start({ id: "run_001", taskId: "task-a", startedAt: "2026-01-02T03:00:00Z" });
+    start({ id: "run_002", taskId: "task-b", startedAt: "2026-01-02T03:00:01Z" });
+    start({ id: "run_003", taskId: "task-c", startedAt: "2026-01-02T03:00:02Z" });
+    db.withConn((conn) =>
+      finishRun(conn, "run_003", {
+        outcome: "success",
+        finishedAt: "2026-01-02T03:00:09Z",
+        durationMs: 7000,
+        exitCode: 0,
+        evidenceCount: 2,
+        detail: "solved",
+        usage: { totalTokens: 120, costUsd: 0.5 },
+      }),
+    );
+
+    const closed = db.withConn((conn) =>
+      reconcileOrphanRuns(conn, { finishedAt: "2026-01-03T00:00:00Z" }),
+    );
+    expect(closed).toEqual([
+      {
+        id: "run_001",
+        project_id: projectId,
+        task_id: "task-a",
+        kind: "explore",
+        started_at: "2026-01-02T03:00:00Z",
+      },
+      {
+        id: "run_002",
+        project_id: projectId,
+        task_id: "task-b",
+        kind: "explore",
+        started_at: "2026-01-02T03:00:01Z",
+      },
+    ]);
+
+    const runs = db.withConn((conn) => listProjectRuns(conn, projectId));
+    for (const run of runs.slice(0, 2)) {
+      // The real end time is unknown, so duration stays null while finished_at moves the
+      // row out of the running view the read models derive.
+      expect(run).toMatchObject({
+        outcome: "inactive",
+        finished_at: "2026-01-03T00:00:00Z",
+        duration_ms: null,
+        detail: ORPHAN_RUN_DETAIL,
+        exit_code: null,
+      });
+    }
+    expect(runs[2]).toMatchObject({
+      id: "run_003",
+      outcome: "success",
+      finished_at: "2026-01-02T03:00:09Z",
+      duration_ms: 7000,
+      evidence_count: 2,
+      detail: "solved",
+      total_tokens: 120,
+      cost_usd: 0.5,
+    });
+  });
+
+  test("closes nothing on a second pass", () => {
+    start();
+    expect(db.withConn((conn) => reconcileOrphanRuns(conn))).toHaveLength(1);
+    const stampedAt = db.withConn(
+      (conn) => listProjectRuns(conn, projectId)[0]?.finished_at,
+    );
+    expect(stampedAt).not.toBeNull();
+
+    expect(db.withConn((conn) => reconcileOrphanRuns(conn))).toEqual([]);
+    expect(db.withConn((conn) => listProjectRuns(conn, projectId))[0]).toMatchObject({
+      outcome: "inactive",
+      finished_at: stampedAt,
+      duration_ms: null,
+      detail: ORPHAN_RUN_DETAIL,
+    });
   });
 });
 

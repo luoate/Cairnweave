@@ -94,6 +94,48 @@ export function finishRun(conn: Database, runId: string, input: FinishRunInput):
   );
 }
 
+/** Written into `detail` for every run closed by startup reconciliation (M38). */
+export const ORPHAN_RUN_DETAIL = "control plane restarted before finish";
+
+export interface OrphanRun {
+  id: string;
+  project_id: string;
+  task_id: string;
+  kind: string;
+  started_at: string;
+}
+
+/**
+ * Closes the runs a previous control plane left open (`outcome IS NULL`) and returns the
+ * rows it closed. Only the process that dispatched a task can finish it, and its in-memory
+ * task map died with it, so these rows would otherwise count as running forever. `duration_ms`
+ * stays null because the real end time is unknown; `finished_at` is the reconcile moment, which
+ * is what the read models need. Usage columns keep whatever the crashed task reported.
+ * Idempotent: a second pass finds nothing open and closes nothing.
+ */
+export function reconcileOrphanRuns(
+  conn: Database,
+  input: { finishedAt?: string; detail?: string } = {},
+): OrphanRun[] {
+  const open = all<OrphanRun>(
+    conn,
+    `SELECT id, project_id, task_id, kind, started_at
+     FROM runs
+     WHERE outcome IS NULL
+     ORDER BY started_at, id`,
+  );
+  if (open.length === 0) return [];
+  runSql(
+    conn,
+    `UPDATE runs
+     SET outcome = 'inactive', finished_at = ?, duration_ms = NULL, detail = ?
+     WHERE outcome IS NULL`,
+    input.finishedAt ?? utcnow(),
+    input.detail ?? ORPHAN_RUN_DETAIL,
+  );
+  return open;
+}
+
 export interface ProjectUsage {
   tokens: number;
   cost_usd: number;

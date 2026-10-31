@@ -10,6 +10,7 @@ import {
   configureDatabase,
   createProject,
   finishRun,
+  reconcileOrphanRuns,
   startRun,
   type CairnDatabase,
   type RunOutcome,
@@ -226,6 +227,57 @@ describe("project run statistics", () => {
       rejected: 1,
       success_rate: 0,
       tokens: 5,
+    });
+  });
+
+  test("moves a reconciled orphan out of running and into finished", () => {
+    record({
+      id: "run_001",
+      worker: "cairn-worker",
+      model: null,
+      startedAt: "2026-01-02T03:00:00Z",
+      outcome: null,
+    });
+    record({
+      id: "run_002",
+      worker: "cairn-worker",
+      model: null,
+      startedAt: "2026-01-02T03:01:00Z",
+      outcome: "success",
+      durationMs: 5000,
+      tokens: 100,
+      costUsd: 0.5,
+    });
+
+    const before = db.withConn((conn) => buildProjectRunStats(conn, projectId));
+    expect(before.totals).toMatchObject({
+      runs: 2,
+      running: 1,
+      finished: 1,
+      inactive: 0,
+      success_rate: 1,
+    });
+
+    db.withConn((conn) => reconcileOrphanRuns(conn, { finishedAt: "2026-01-03T00:00:00Z" }));
+
+    const after = db.withConn((conn) => buildProjectRunStats(conn, projectId));
+    expect(after.totals).toMatchObject({
+      runs: 2,
+      running: 0,
+      finished: 2,
+      succeeded: 1,
+      inactive: 1,
+      success_rate: 0.5,
+      tokens: 100,
+      cost_usd: 0.5,
+      // A closed orphan never reported a duration, so the average stays the real one.
+      avg_duration_ms: 5000,
+    });
+    expect(after.by_worker[0]).toMatchObject({
+      worker: "cairn-worker",
+      running: 0,
+      finished: 2,
+      inactive: 1,
     });
   });
 

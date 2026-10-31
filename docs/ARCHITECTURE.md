@@ -358,7 +358,7 @@ scheduler 与 HTTP API 共用 `packages/graph/src/commands.ts` 的命令，不�
 | 数据 | 写入者 | 读取者 | 位置 |
 | --- | --- | --- | --- |
 | SQLite（projects/facts/intents/hints/settings/project_scopes/project_artifacts） | 控制面 | 控制面 | 控制面主机 |
-| SQLite 旁路表（`runs` / `fact_meta` / `fact_evidence` / `pending_concludes` / `audit_events` / `audit_stream_lost` / `proposals` / `intent_meta` / `strategist_state` / `project_verification` / `verification_checks` / `project_writeups` / `project_attachments`） | 控制面（不进入图模型与 YAML） | 控制面 | 控制面主机 |
+| SQLite 旁路表（`runs` / `fact_meta` / `fact_evidence` / `pending_concludes` / `audit_events` / `audit_stream_lost` / `proposals` / `intent_meta` / `strategist_state` / `project_verification` / `verification_checks` / `project_writeups` / `project_attachments` / `scheduler_instances`） | 控制面（不进入图模型与 YAML） | 控制面 | 控制面主机 |
 | `graph.yaml` 快照 | 控制面 | worker | 项目工作区/容器内绝对路径 |
 | `task.json` | 控制面 | worker | `sessionDir` |
 | `result.json` | worker（临时文件 + rename 原子写） | 控制面 | `sessionDir` |
@@ -526,7 +526,9 @@ M5a/M5b 只增加旁路数据，不改图模型、YAML 导出和既有 HTTP 响�
   也不能改写已有 run。run 记录项目、任务、kind、intent、worker、trigger、会话路径、
   开始/结束时间、outcome（`success | failed | rejected | cancelled | unhealthy |
   inactive`）、退出码、证据数与 detail。取消与 lease 丢失分别记为 `cancelled` /
-  `failed`，并在 detail 中说明原因。
+  `failed`，并在 detail 中说明原因。M38 起控制面重启时把上一进程遗留的 `outcome IS NULL`
+  行补写成 `inactive`（`duration_ms` 保持 `NULL`，detail 为
+  `control plane restarted before finish`），run 行因此不再无限停留在“运行中”。
 - **证据引用在结果根级**：worker 可以在 `result.json` 顶层写
   `evidence_refs: ["artifacts/report.txt", ...]`。它不进入 Cairn payload（`data`），
   因此现有 payload 校验器和 golden 响应不受影响；宽容解析器也会把裸 payload 里的
@@ -666,7 +668,7 @@ stderr 归档到 `sessionDir/{stdout,stderr}.log`。需要 UI 实时进度时再
   文件清单（名称、字节数、`sha256` 前 12 位）并声明它们只读。
 - 索引失败只记日志，不影响任务结果；下一次扫描会重建。
 
-### 5.6 旁路表：runs、fact_meta、fact_evidence、pending_concludes、audit_events、audit_stream_lost、intent_meta、strategist_state、verification、project_writeups 与 project_attachments
+### 5.6 旁路表：runs、fact_meta、fact_evidence、pending_concludes、audit_events、audit_stream_lost、intent_meta、strategist_state、verification、project_writeups、project_attachments 与 scheduler_instances
 
 这些表都在 `packages/graph/src/db.ts` 中创建，既不属于图导出，也不参与任何既有命令：
 
@@ -741,6 +743,13 @@ stderr 归档到 `sessionDir/{stdout,stderr}.log`。需要 UI 实时进度时再
   去控制字符、`<>:"/|?*` 换成 `_`、拒绝 Windows 保留名、上限 120 字符）；同一摘要重放幂等，
   同名换内容拒绝，为的是 Worker 读过的文件不会在脚下被换掉。表不进入图模型、YAML 导出，
   worker 契约也不新增字段——附件只以提示词段落的形式交接。
+- `scheduler_instances(id, started_at, heartbeat_at, stopped_at)`（M38），主键 `id`，**不带
+  `project_id`、也不级联**：一行代表一次控制面启动（`boot-<12 hex>`），跨项目共享。
+  `Scheduler.start()` 在同一个事务里注册本进程、查活跃同伴、必要时对账；`armTimers()` 挂的
+  心跳定时器按 `leaseIntervalMs` 刷 `heartbeat_at`；`stop()` 写 `stopped_at`。注册重复执行只刷
+  心跳、保留 `started_at`，心跳与停止的 SQL 都带 `stopped_at IS NULL`，已结束的 boot 不会复活。
+  表不进入图模型、YAML 导出、HTTP 图响应或 worker 契约。
+
 - `runtime_config_overrides(id, overrides, updated_at)`（M22），单行 `id = 1`，
   `overrides` 是 snake_case JSON patch，`updated_at` 是最后一次成功写入的 ISO 时间。
   由 `RuntimeConfigStore` 读写，不进入图导出、worker 契约或项目数据；`DELETE
@@ -1120,12 +1129,13 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
   直接指向 `?format=markdown`；Fact 详情的“取代关系”只读取 fact meta。两者都不写图、
   不写旁路，也不改变调度；UI 的唯一写操作仍是慢层的人工重规划。
 
-### 5.9 session 保留与启动对账（M6）
+### 5.9 session 保留与启动对账（M6/M38）
 
 scheduler 的 housekeeping sweep 由 `scheduler/retention.ts` 与 `loop.ts` 共同实现：
 
-- **运行时机**：`start()` 在第一次 tick 前同步跑一次；`retention.sweep_interval_seconds`
-  非 0 时再用独立定时器周期执行。sweep 与 tick 解耦，失败只记日志，不影响派发。
+- **运行时机**：`start()` 先做一次 M38 的 boot 注册与孤儿 run 对账，再在第一次 tick 前同步跑
+  一次 sweep；`retention.sweep_interval_seconds` 非 0 时再用独立定时器周期执行。sweep 与 tick
+  解耦，失败只记日志，不影响派发。
 - **扫描范围**：只枚举 `<workspace>/.cairn/sessions` 的直接子目录（`lstat`，跳过符号
   链接与非目录）。Observer 看板、artifacts 和项目根目录下的其它文件不在清理范围内。
 - **保护集合**：当前 `running` 任务的 `sessionDir` / `resumeSessionDir`，以及所有
@@ -1138,8 +1148,26 @@ scheduler 的 housekeeping sweep 由 `scheduler/retention.ts` 与 `loop.ts` 共�
   会话目录中是否仍有 `solver-session/*.jsonl`。任一不满足就删除该行；若仅会话缺失而
   intent 仍开放，还会释放该 intent 的租约，让 explore 正常重试。正在本进程运行的任务
   不参与对账。
+- **孤儿 run 对账（M38，Phase C1）**：run 行在派发时写入（`outcome` 为 `NULL`），只有拥有该
+  任务的进程会收尾，因此崩溃会把行永久留在“运行中”。`start()` 在 sweep 之前先
+  `reconcilePreviousBoot()`：在同一个事务里注册本进程的 `scheduler_instances` boot 行 →
+  查是否存在**其它**活跃同伴（`stopped_at IS NULL` 且心跳在 `max(2 × runtime.interval, 30s)`
+  内）→ 没有同伴时把全部 `runs.outcome IS NULL` 写成 `inactive`、`finished_at = now`、
+  `duration_ms = NULL`、detail `control plane restarted before finish`，逐条记日志并汇总计数；
+  有同伴时跳过并记 `startup reconcile skipped`。操作幂等，第二次执行没有行可改。只由
+  `start()` 触发，`runUntilIdle()` 与其它 sweep 入口不触发，因此既有测试保留的 NULL run 不受影响。
+- **实例心跳与停止**：`armTimers()` 额外挂一个只刷 `heartbeat_at` 的定时器（间隔
+  `leaseIntervalMs`，与 tick 回调分开，一次慢 tick 不会让本进程被判为死亡；`reconfigure()`
+  重挂时一并重建）；`stop()` 先清定时器再写 `stopped_at`。崩溃不写 `stopped_at`，下一次启动
+  只能靠心跳过期判定同伴是否还活着。
+- **对账边界**：不改派发路径、不迁移快层 claim、不释放意图 / reason 租约（仍按各自心跳 TTL
+  过期），避免刚重启就挤掉仍在运行的 worker。容器模式下旧 worker 可能比控制面活得久：session
+  保留但 run 已是 `inactive`，它之后写出的 result 不会被导入。两个 scheduler 共用一个库本来
+  就不受支持，心跳只防误杀仍在心跳的同伴。
 - **效果**：上一控制面崩溃遗留的无效队列项不会阻塞新工作；有效项在首次 tick 前保留，
   由正常派发分支优先执行。清理与对账都不要求图可写，也不修改 Fact / intent 历史。
+  `/stats`、`/report`、`/strategist` 与 `AgentContext.budget.running_tasks` 因此不需要改动：
+  它们过滤 `outcome IS NULL`，对账后幽灵任务自然归零，Token 与成本不变。
 
 ### 5.10 项目 Writeup 生成（M19a/M20a/M20b）
 

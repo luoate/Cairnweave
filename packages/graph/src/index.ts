@@ -174,8 +174,11 @@ export {
   getProjectUsage,
   listProjectRuns,
   recordFactMeta,
+  reconcileOrphanRuns,
   startRun,
+  ORPHAN_RUN_DETAIL,
   type FinishRunInput,
+  type OrphanRun,
   type ProjectUsage,
   type RecordFactMetaInput,
   type RunUsage,
@@ -213,6 +216,15 @@ export {
   type PendingConcludeRow,
   type RecordPendingConcludeInput,
 } from "./pending-concludes";
+
+export {
+  heartbeatSchedulerInstance,
+  listActiveSchedulerPeers,
+  registerSchedulerInstance,
+  stopSchedulerInstance,
+  type RegisterSchedulerInstanceInput,
+  type SchedulerInstanceRow,
+} from "./scheduler-instances";
 
 export {
   createProposal,

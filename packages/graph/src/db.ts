@@ -187,6 +187,17 @@ CREATE TABLE IF NOT EXISTS runs (
 
 CREATE INDEX IF NOT EXISTS runs_project_started ON runs(project_id, started_at);
 
+-- One row per scheduler boot. A runs row is opened at dispatch time and only closed by the
+-- process that owns the task, so a restart strands rows nobody can finish. The heartbeat
+-- makes process liveness visible in the database: a new boot reconciles those rows only when
+-- no other instance is still beating.
+CREATE TABLE IF NOT EXISTS scheduler_instances (
+    id TEXT PRIMARY KEY,
+    started_at TEXT NOT NULL,
+    heartbeat_at TEXT NOT NULL,
+    stopped_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS fact_meta (
     fact_id TEXT NOT NULL,
     project_id TEXT NOT NULL,

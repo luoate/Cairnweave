@@ -1,12 +1,12 @@
 # 里程碑与验证记录
 
-本文件保留 M1–M37 的实现记录、测试与浏览器验证清单、与 Python Cairn 的已知差异、
+本文件保留 M1–M38 的实现记录、测试与浏览器验证清单、与 Python Cairn 的已知差异、
 里程碑表以及与 Phase 0 的关系。产品概览、快速开始与 API 概览见 [README](../README.md)。
 
 ## 实现记录
 
-状态：**M37（意图生命周期：操作员或 reason 可以放弃已经失败且从未成功的 open 意图；旁路状态进入派发、提示、水位、AgentContext 与 UI）**；M0–M4、M5a–M5c、
-M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M16b、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e、M18f、M18g、M19a、M19b、M20a、M20b、M21、M22、M23、M24、M24b、M25、M26、M26b、M27、M28、M29、M30、M31、M32、M32b、M32c、M32f、M33a、M33b、M33c、M33d、M34、M35、M35f、M36、M37 的计划项全部完成。Phase 1 的
+状态：**M38（启动对账：`scheduler_instances` 心跳 + 无活跃同伴时把遗留 `runs.outcome = NULL` 补成 `inactive`，`/stats`、`/report`、`/strategist` 与预算的 running 计数自然归零；不改派发路径、不动租约）**；M0–M4、M5a–M5c、
+M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M16b、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e、M18f、M18g、M19a、M19b、M20a、M20b、M21、M22、M23、M24、M24b、M25、M26、M26b、M27、M28、M29、M30、M31、M32、M32b、M32c、M32f、M33a、M33b、M33c、M33d、M34、M35、M35f、M36、M37、M38 的计划项全部完成。Phase 1 的
 “本地看板 + Observer 提案 + 证据门 + 单一写图者”闭环已具备；Observer 复盘自 M22 起默认
 开启（只读复盘，不改任务结果），提案自 M23 起默认 `dry_run`（完整校验并记录，不写图）。
 Phase 2 的触发持久化、意图优先级/预算、单项目 token/成本与并发配额、只读慢层观测、逐 Fact
@@ -1429,6 +1429,26 @@ M16b 增加（第二个模型接入与真实 A/B）：
   `GET /projects/{id}/intents/lifecycle` 给 UI 合并状态，节点详情显示「放弃原因」，慢层
   页签提供原因输入与二次点击确认；图、YAML 与 HTTP 图响应仍把意图视为 open（旁路语义，
   已知边界）。
+- **启动对账：重启后不再有待运行的幽灵任务（M38，Phase C1）**：`runs` 行在派发时写入
+  （`outcome = NULL`），只有拥有该任务的进程会收尾；进程一停，内存 `running` map 就没了，
+  而 `/stats`、`/report`、`/strategist` 与 `AgentContext.budget.running_tasks` 都按
+  `outcome IS NULL` 统计，于是重启后的控制面仍把这些行算成“运行中”，`budget.exhausted.tasks`
+  还会长期卡住派发。M38 只修读模型与进程生命周期：新增全局旁路表
+  `scheduler_instances(id, started_at, heartbeat_at, stopped_at)`（不带 `project_id`、不级联），
+  `Scheduler.start()` 在一个事务里注册 `boot-<12 hex>` 行 → 用
+  `listActiveSchedulerPeers()` 查是否有其它同伴（`stopped_at IS NULL` 且心跳在
+  `max(2 × runtime.interval, 30s)` 内）→ 没有同伴时 `reconcileOrphanRuns()` 把所有
+  `outcome IS NULL` 写成 `inactive`、`finished_at = now`、`duration_ms = NULL`、detail
+  `control plane restarted before finish`，逐条记日志并汇总计数；有同伴时只记
+  `startup reconcile skipped`。心跳由 `armTimers()` 里独立的定时器按 `leaseIntervalMs` 刷新
+  （不搭 tick 回调，一次慢 tick 不会让本进程被判死），`stop()` 写 `stopped_at`；崩溃不写，
+  只能靠心跳过期判定。注册/心跳/停止幂等：重复注册只刷心跳并保留 `started_at`，已停止的 boot
+  不会被心跳或 stop 复活。不改派发路径、不迁移快层 claim、不释放意图 / reason 租约（仍按各自
+  TTL 过期），`runs` 列不变、`inactive` 早就是合法 outcome，因此四个读模型自然收敛、UI 与报告
+  无需改动；也不新增写路由。`/strategist` 的 recent-runs 视图按 `finished_at IS NOT NULL`
+  过滤，对账后这些孤儿 run 第一次出现在视图里（预期的可见性变化）。已知边界：容器模式下旧
+  worker 可能比控制面活得久，session 保留但它之后写出的 result 不会被导入；两个 scheduler
+  共用一个库本就不受支持，心跳只防误杀仍在心跳的同伴。
 
 golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定时钟、`TZ=UTC`）。
 重新生成方法与约束见 `docs/PORTING.md`。
@@ -1529,7 +1549,7 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M35 ✅ | 题目附件：新增旁路表 `project_attachments(id, project_id, name, path, size, sha256, creator, created_at)`，字节存项目工作区 `attachments/<name>`，表只作账本、不进图模型/YAML/worker 契约；名称按单段清洗（取叶名、去控制字符与 `< > : " / \| ? *`、去首尾点/空格、Windows 保留名拒绝、120 字符上限并保留短扩展名），`UNIQUE(project_id, name)`，同摘要重传幂等（`created:false`），同名不同字节 409，文件被占用删不掉时保留行并 409；额度单文件 32 MiB（流式读满即断）/ 每项目 256 MiB（重放不占）；路由 `POST/GET /projects/{id}/attachments`、`GET/DELETE /projects/{id}/attachments/{attachment_id}`，上传为裸 body + `?name=`、下载带 `content-disposition`（含 RFC 5987 `filename*`），`available:false` 表示控制面没有挂载工作区；任务提示里列出附件清单（路径/大小/摘要），worker 按只读输入对待，附件不索引、不进 Writeup zip；项目详情新增「附件」侧栏页签（多选上传逐个 POST 带进度、刷新、下载、二次点击删除 4 s 自动解除且刷新即解除、页签记忆沿用 localStorage、额度文案取服务端 limits）；版本 `0.57.0-m35` | 966 passed / 87 files / 3915 expects（2026-10-31）；`bun run check`（tsc + 全量）通过；`ui:css` 重生成与工作区逐字节一致；`api.attachments.test.ts` 覆盖清洗边界、幂等/冲突、两项额度、流式超限、下载头、删除与占用；`api.ui.test.ts` 钉住页签、GET-only 加载器、上传 body/查询串、armed 删除序列与 `armedAttachment` 类绑定（回归 `armedId`）；`tasks.test.ts` 断言任务契约不含 attachments；实起 `serve --config` 临时配置（端口 8037、临时库与工作区）：curl 上传 21 B `challenge.bin` 与 12 B `notes.txt` 均 `created:true`，重放 200 `created:false`、换字节 409，下载头 `application/octet-stream` + `attachment; filename="challenge.bin"; filename*=UTF-8''challenge.bin` 且字节一致，`available:true`、`limits {file_bytes:33554432, project_bytes:268435456}`；应用内浏览器（隐藏态，截图不可用，用 DOM 查询与 `.click()`）面板显示「2 个附件 · 共 33 B」与摘要前缀/时间/上传者/路径，经真实 `<input type=file>` 上传 16 B 文件后为「3 个附件 · 共 49 B」且磁盘字节一致，二次点击删除出 toast「已删除 ui-upload.txt」并回到「2 个附件 · 共 33 B」、磁盘文件消失；实测发现删除按钮 armed 后不变色（`:class` 绑到不存在的 `armedId`），修复为 `armedAttachment` 并补回归断言，重载后 armed 得 `{label:"再次点击确认删除", rose:true}`、点刷新回到 `{label:"删除", rose:false}` |
 | M35f ✅ | 新建题目时选择附件：新建项目弹窗在「完成校验」与「立即执行初始探索」之间新增「题目附件」暂存区，多选后本地列出名称与大小（同名重选替换、可逐项移除，`x-for` 以 `name:size:lastModified` 为 key）；创建时若暂存为空维持原流程，否则 `POST /projects` **故意不带 `scope`**——未授权项目调度器一律跳过，因此上传必然早于首个 Worker 构建提示——随后按文件顺序调用现有 `POST /projects/{id}/attachments`（显式传新项目 id，单文件失败只记首条原因），再 `PUT /projects/{id}/scope` 恢复授权，最后打开项目并切到「附件」页签；上传失败仍会授权并运行，错误 toast 写明 `项目已创建，但有 N 项未完成：…`；无附件时的提示与请求不变 | 968 passed / 87 files（2026-10-31）；`bun run check`（tsc + 全量）通过；`ui:css` 重新生成补齐 `hover:text-rose-400`；`api.ui.test.ts` 新增 2 例：暂存同名替换/移除、创建请求无 `scope`、上传显式 projectId 且顺序在 `PUT` 之前、`PUT → openProject → 切换 attachments` 的顺序与成功 toast，无文件时 scope 随创建请求且不发 PUT；上传失败时仍 PUT scope、toast 含 `未完成` 与首条失败原因；实起临时 `serve --config`（端口 8037、临时库与工作区）：弹窗暂存 8 B `handout.bin` 与 13 B `notes.txt`，点创建后 toast「项目已创建，已上传 2 个附件」，自动落在「附件」页签、摘要「2 个附件 · 共 21 B」，磁盘两文件字节一致，`GET /projects/proj_001/scope` 为 `{"targets":["127.0.0.1:18080"]}`；首个 bootstrap 任务在授权后派发，其 `task.json` 的「Challenge Attachments」段已列出两个附件与摘要前缀，证明上传先于首个 Worker；临时服务、库与目录已删除；版本 `0.58.0-m35f` |
 | M36 ✅ | AgentContext：`packages/graph/src/agent-context.ts` 从图 + 旁路投影任务级 `agent-context.yaml`（Fact 的 `current/superseded`、`superseded_by`、证据状态/run/引用数；意图的 `open/concluded` 与由 `runs.intent_id` 派生的 attempts/最近 outcome/最近错误；最近 finished run；完成验证策略、计数、多 flag 进度与最近判定；reason 的 delta 与既有预算数字），排序稳定、有上限并记录 `truncated_sections`；`prepareTask` 在写 `graph.yaml` 的同一事务后写该文件，提示词只追加 `# Investigation State` 段落并标注为数据而非指令，模板、YAML 导出、HTTP golden 与 worker 契约不变；`runtime.strategy_context: on|off`（默认 `on`）控制，`off` 不写文件不加段落，bootstrap 与 bootstrap conclude 不生成投影；配置视图只读展示该开关 | 980 passed / 88 files / 4010 expects（2026-10-31）；`bun run check`（tsc + 全量）通过；`agent-context.test.ts` 7 例覆盖空项目、取代与证据、attempts/预算、challenge 进度、reason delta、截断与渲染脱敏；`tasks.test.ts` 2 例覆盖文件写入/提示段落与关闭时不写；`loop.test.ts` 2 例覆盖真实调度写入 reason/explore 与 `off` 回退；`config.test.ts` 覆盖开关解析与非法值；版本 `0.59.0-m36` |
-| M37 ✅ | 意图生命周期：`intent_meta` 增加 `status/status_reason/status_at/status_by`（旧行默认 `open`），`setIntentStatus` 用 UPSERT 只写状态列、`recordIntentMeta` 改为保留状态；操作员 `POST /projects/{id}/intents/{intent_id}/abandon`（理由 1–500 字、跨源拒绝、可选 operator token），reason 仅在 `strategist.reason_abandon: on` 时每轮最多放弃 1 个（要求 open、非 bootstrap、无 worker 占用、无 pending conclude、至少一次 finished 失败且从未成功）；派发、reason open 列表、水位、AgentContext、Observer context 与 `/report` 全部过滤，排队 conclude 被丢弃并释放租约；只读 `GET /projects/{id}/intents/lifecycle`，UI 节点显示「已放弃」与原因、慢层提供原因输入与二次确认 | 1002 passed / 90 files / 4074 expects（2026-10-31）；`bun run check`（tsc + 全量）通过；`intent-lifecycle.test.ts` 4 例、`parse.test.ts` 新增 5 例、`api.intent-lifecycle.test.ts` 6 例、`loop.test.ts` 2 例覆盖 reason 放弃与开关关闭；AgentContext/report/strategist/tasks/UI 各补断言；版本 `0.60.0-m37` |
+| M38 ✅ | 启动对账（Phase C1）：新增全局旁路表 `scheduler_instances(id, started_at, heartbeat_at, stopped_at)`（不接项目外键、不进图/YAML/契约），`Scheduler.start()` 在一个事务里 `registerSchedulerInstance()` 写 `boot-<12 hex>` 行 → `listActiveSchedulerPeers()` 判活跃同伴（`stopped_at IS NULL` 且心跳在 `max(2 × runtime.interval, 30s)` 内）→ 无同伴时 `reconcileOrphanRuns()` 把全部 `outcome IS NULL` 写成 `inactive` / `finished_at = now` / `duration_ms = NULL` / detail `control plane restarted before finish`，逐条记日志并汇总计数，有同伴时只记 skipped；`armTimers()` 挂独立心跳定时器按 `leaseIntervalMs` 刷 `heartbeat_at`，`stop()` 写 `stopped_at`，已停止的 boot 不会复活；派发路径、快层 claim 与意图 / reason 租约不变，`runs` 列不变，不新增写路由，`/stats`、`/report`、`/strategist`、`AgentContext.budget.running_tasks` 与 UI 无需改动即收敛 | 1017 passed / 92 files / 4121 expects（2026-11-01）；`bun run check`（tsc + 全量）通过；`scheduler-instances.test.ts` 3 例（注册/幂等/停止后不复活、30s 边界与排除自身、心跳不可解析视为死亡）、`runs.test.ts` 2 例（只改 NULL 行、第二次空返回）、`stats.test.ts` 1 例（running→0、inactive+1、avg duration 变化）、`scheduler/startup.test.ts` 7 例（旧库启动并计数、活跃同伴跳过、1h 过期后对账、`stop()` 后重启、租约不释放、pending conclude 仍记 session missing、心跳前进并拦住新实例）、`api.runs.test.ts` 1 例覆盖 HTTP 读模型、`api.strategist.test.ts` 在原例里追加对账后 `running_tasks` 与 `exhausted.tasks` 的断言、`agent-context.test.ts` 1 例覆盖预算归零；无 UI 改动故不做浏览器实测；版本 `0.61.0-m38` |
 
 ## 与 Phase 0 的关系
 

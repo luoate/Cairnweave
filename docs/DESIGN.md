@@ -1,13 +1,13 @@
 # 设计文档：AgentContext —— 让决策者看到系统知道的
 
 状态：**Phase A 已实现（M36）；Phase B 已实现（M37，收窄为 `abandoned`，不含
-`refuted` / `done_when` / reopen）；Phase C1 已规划为 M38，C2 与 Phase D 仍为草案**。
+`refuted` / `done_when` / reopen）；Phase C1 已实现（M38，启动对账），C2 与 Phase D 仍为草案**。
 本文只讨论结构与语义，不代表后续阶段已经排期。实现记录见 `docs/MILESTONES.md`。
 兼容性约束：不改变 Cairn 图的形状、YAML 导出、对外 HTTP golden 与 worker 契约中的既有字段。
 
 ## 1. 摘要
 
-系统的数据模型已经分了两层：一层是 Cairn 兼容的**图**（facts / intents / hints），另一层是围绕图生长的**旁路表**（runs、证据、完成验证、取代边、flag 复核、附件、成本……）。但还缺第三层：**给做决策的 agent 看的投影**。
+系统的数据模型已经分了两层：一层是 Cairn 兼容的**图**（facts / intents / hints），另一层是围绕图生长的**旁路表**（runs、证据、完成验证、取代边、flag 复核、附件、成本、调度实例心跳……）。但还缺第三层：**给做决策的 agent 看的投影**。
 
 今天 reason 与 explore 拿到的仍然是最薄的图快照（外加附件清单），而 oracle、UI 和报告用的是旁路里的富状态。于是出现一种结构性错位：
 
@@ -233,7 +233,8 @@ done_when:     可选文本，描述该方向的完成判据
 
 - 内存 `running` map 是派发与并发配额的权威；`runs` 是旁路。
 - 意图/ reason 的租约在 `intents.worker`、`projects.reason_*`；pending conclude 已持久化。
-- 重启后：租约按心跳过期恢复；`runs` 中 `outcome = NULL` 的行无人收尾。
+- 重启后：租约按心跳过期恢复；`runs` 中 `outcome = NULL` 的行原先无人收尾，M38 起由启动
+  对账补成 `inactive`（见 §13）。
 
 ### 6.2 目标
 
@@ -245,7 +246,7 @@ done_when:     可选文本，描述该方向的完成判据
 
 ### 6.3 迁移
 
-- 先加 startup 对账（低风险、独立可测），观察一个版本；
+- 先加 startup 对账（低风险、独立可测），观察一个版本；——M38 已落地，见 §13；
 - 再把快层 claim 从内存 map 迁到 DB（新增 claim 字段或表，`intent_meta` 不够表达任务级租约）；
 - 全程保持 `runs` 列不变，避免破坏 `/runs`、`/stats`、`/cost` 与报告。
 
@@ -296,7 +297,7 @@ AgentContext 输出 `progress: {found, total}` 与最近一次检查，reason �
 | --- | --- | --- |
 | **A（已实现，M36）** | AgentContext v1：构建器、`agent-context.yaml`、追加式提示词段落、`strategy_context` 开关；覆盖 Fact 状态/证据/取代、验证进度、recent attempts、delta；预算沿用既有段落的数据 | 关掉开关即回到今天的行为；图与 golden 不变 |
 | **B（已实现，M37，收窄）** | 意图生命周期：`intent_meta.status/status_reason/status_at/status_by`；reason 提议 abandon（默认关闭）；操作员路由；派发/提示/水位/AgentContext 过滤；UI 徽标与二次确认。`refuted`、`done_when`、reopen 留到后续 | 旧数据缺列合成 `open`；abandon 只影响未来的派发 |
-| **C1（M38 计划）** | 启动对账：`scheduler_instances` 心跳；无活跃同伴时把遗留 `runs.outcome = NULL` 标为 `inactive`；不动租约与派发路径 | `runs` 列不变；仅读模型从 running 变成 inactive；可单独回滚 |
+| **C1（已实现，M38）** | 启动对账：`scheduler_instances` 心跳；无活跃同伴时把遗留 `runs.outcome = NULL` 标为 `inactive`；不动租约与派发路径 | `runs` 列不变；仅读模型从 running 变成 inactive；可单独回滚 |
 | **C2（M39 草案）** | DB claim：任务级 claim 表成为队列真相；双 claim 拒绝、租约接管 | 在 C1 之后；失败可回退到内存 claim |
 | **D** | 目标条件与部分完成；`done_when` 进入提示词；评估集接入 milestone | 旧 `verification` 作为别名保留 |
 
@@ -337,7 +338,7 @@ AgentContext 输出 `progress: {found, total}` 与最近一次检查，reason �
 | 完成契约 | 目标条件 + 既有 `verification` 别名 | 渐进迁移，旧项目不变 |
 | 能力评估 | 独立 `tools/eval` | 与管线 gate 的职责分开 |
 
-## 13. M38 计划：启动对账（Phase C1）
+## 13. M38：启动对账（Phase C1，已实现）
 
 ### 13.1 目标
 
@@ -360,61 +361,82 @@ CREATE TABLE IF NOT EXISTS scheduler_instances (
 );
 ```
 
-- `id` 是每次 scheduler 启动生成的随机 boot id；`heartbeat_at` 由既有 lease 定时器更新；
-  `stop()` 写 `stopped_at`。
+- `id` 是每次 `Scheduler.start()` 生成的 boot 行（`boot-<12 hex>`），同一 boot 内不变；
+  `heartbeat_at` 由 `armTimers()` 里独立的心跳定时器按 `leaseIntervalMs` 更新；`stop()` 写
+  `stopped_at`，且写心跳/停止的 SQL 都带 `stopped_at IS NULL` 条件——已停止的 boot 不会复活。
 - 不修改 `runs` 列。`inactive` 已经是 `RunOutcome` 的合法值，`/stats`、UI 与报告已按
   finished/inactive 统计，因此读模型自然收敛。
 - 表随项目库一起迁移，旧库自动建表；没有行时视为“没有活跃实例”。
 
 ### 13.3 启动、心跳与停止
 
-`Scheduler.start()` 的顺序变为：
+`Scheduler.start()` 的顺序（`reconcilePreviousBoot()`，实现见 `apps/cairn/src/scheduler/loop.ts`）：
 
-1. `registerInstance()` 写入本进程的 boot 行（`heartbeat_at = started_at = now`）。
-2. 检查是否存在**其它**活跃实例：`stopped_at IS NULL` 且
-   `now - heartbeat_at <= instanceTimeout`。`instanceTimeout` 取
-   `max(2 × runtime.interval, 30s)`，测试可注入时钟。
-3. 没有活跃同伴时调用 `reconcileOrphanRuns()`：把全部 `outcome IS NULL` 的行写成
+1. 同一次 `db.withConn` 事务里 `registerSchedulerInstance()` 写入本进程的 boot 行
+   （`heartbeat_at = started_at = now`，重复注册只刷心跳、不改 `started_at`）。
+2. `listActiveSchedulerPeers()` 检查是否存在**其它**活跃同伴：`stopped_at IS NULL` 且
+   `(now - heartbeat_at) <= instanceTimeout`。`instanceTimeout` 取
+   `max(2 × runtime.interval, 30s)`；`now` 来自可注入的 `this.now()`，截断到秒，测试可固定时钟。
+3. 没有活跃同伴时在同一事务里调用 `reconcileOrphanRuns()`：把全部 `outcome IS NULL` 的行写成
    `outcome = 'inactive'`、`finished_at = now`、`duration_ms = NULL`、detail 为
-   `control plane restarted before finish`；返回受影响行数并逐条记日志。
-4. 有活跃同伴时跳过对账并记录日志。两个 scheduler 共用一个库本来就不是受支持部署；
-   M38 只保证不会误杀另一个**仍在心跳**的控制面。
-5. 继续已有的 `sweepNow()`（pending conclude、session 保留、工件刷新），然后进入 tick。
+   `ORPHAN_RUN_DETAIL` = `control plane restarted before finish`；返回被关闭的行并逐条记日志，
+   最后记一条 `startup reconcile closed N orphan run(s)`。
+4. 有活跃同伴时跳过对账（返回 `null` 以区分“跳过”和“没有孤儿”）并记录
+   `startup reconcile skipped: another scheduler instance heartbeats within Ns`。两个 scheduler
+   共用一个库本来就不是受支持部署；M38 只保证不会误杀另一个**仍在心跳**的控制面。
+5. 注册/查询/对账任一 SQL 失败只记 `startup reconcile failed: ...`，不阻塞启动。
+6. 继续已有的 `sweepNow()`（pending conclude、session 保留、工件刷新），然后 `armTimers()` 进 tick。
 
-心跳与停止：复用 `leaseIntervalMs` 定时器更新 `heartbeat_at`；`stop()` 先写
-`stopped_at`，再取消任务与关闭 runtime。崩溃不会写 `stopped_at`，因此下一次启动只能依赖
+心跳与停止：`armTimers()` 额外挂一个 `heartbeatTimer`，按 `leaseIntervalMs` 调
+`heartbeatSchedulerInstance()`——不搭 tick 回调，避免一次慢 tick 让本进程被同伴判为死亡；
+`reconfigure()` 重挂时一并重建。`stop()` 先清定时器、再 `stopSchedulerInstance()` 写
+`stopped_at`，然后取消任务与关闭 runtime。崩溃不会写 `stopped_at`，因此下一次启动只能依赖
 心跳过期判断，而不是只看状态列。
 
-对账本身是幂等的：第二次执行没有 `outcome IS NULL` 行，返回 0。
+对账本身是幂等的：第二次执行没有 `outcome IS NULL` 行，返回空数组、不写任何行。
 
 ### 13.4 读模型与预算
 
 - `/stats` 与 `/report`：原先的幽灵任务从 `running` 变为 `finished` 且 `inactive + 1`；
   succeeded / failed / rejected 不变，Token 与成本不变。
 - `/strategist` 与 `AgentContext.budget.running_tasks` 直接过滤 `outcome === null`，对账后
-  自然归零。
+  自然归零；`budget.exhausted.tasks` 随之解除。
 - `/projects/{id}/runs` 原样显示新 outcome 与 detail；不需要新路由，也不新增写路由。
+- `/strategist` 的 recent-runs 视图按 `finished_at IS NOT NULL` 过滤，对账后这些孤儿 run 才
+  第一次出现在视图里——这是预期的可见性变化，不是新统计口径。副作用：零产出连续计数
+  （`countZeroOutputStreak`）读的正是这个列表，一次重启最多把 streak 抬高遗留任务的数量，
+  可能更快触发 `zero_output:N`；它仍受冷却、小时配额与 `tasks_running` 抑制约束。
 
 ### 13.5 边界与风险
 
 - **worker 可能比控制面活得久**：容器模式下 `docker exec` 进程可能继续写 session 目录。
   M38 只把 run 标为 inactive，不删除 session；旧 worker 之后写出的 result 不会被导入，
   这是一次性可见语义，必须在 detail 与文档里说清楚。
-- **时钟**：心跳与 `utcnow()` 使用同一时钟；实例超时至少两个 interval，避免单次抖动误判。
+- **时钟**：boot 行、同伴判定与 `finished_at` 都取 `Scheduler.now()`（测试可注入，截断到秒），
+  `reconcileOrphanRuns()` 不传 `finishedAt` 时退回 `utcnow()`；实例超时至少两个 interval，
+  避免单次抖动误判。
+- **每次启动换新 boot id**：`start()` 生成随机 id，因此重启后的进程不会把自己上一世的行当成
+  活跃同伴；同一进程内重复 `start()` 幂等（`timer !== null` 直接返回）。
 - **不释放租约**：意图 / reason 租约仍按各自心跳 TTL 过期，避免控制面刚重启就把仍在运行的
   worker 挤掉；这也是 M38 不改变派发路径的原因之一。
 - **测试隔离**：只有 `start()` 注册实例并做对账；`runUntilIdle()` 不触发，因此现有测试中
   人为保留的 NULL run 不受影响。
 
-### 13.6 验收
+### 13.6 验收（已达成）
 
-- `runs.test.ts`：两个 NULL + 一个 finished；对账后只改 NULL 行，detail/finished_at/
-  duration 正确，第二次调用返回 0。
-- `scheduler/startup.test.ts`：旧库启动 → inactive 且日志含计数；活跃同伴 → 跳过；
-  同伴心跳过期 → 允许对账；`stop()` 后重启 → 立即视为死亡实例。
-- `stats.test.ts` / `api.stats`：running 归零、finished + N、inactive 计数正确；预算
-  `running_tasks` 归零；pending conclude 对账仍按原逻辑执行。
-- `bun run check` 全量通过；版本 `0.61.0-m38`。
+- `packages/graph/src/runs.test.ts`：两个 NULL + 一个 finished；对账后只改 NULL 行，
+  outcome/finished_at/duration/detail 正确，`duration_ms` 置 NULL，第二次调用返回空数组。
+- `packages/graph/src/scheduler-instances.test.ts`：boot 行注册与重复注册、已停止的 boot 不复活、
+  同伴窗口（30s 边界算活跃）、心跳不可解析视为死亡。
+- `apps/cairn/src/scheduler/startup.test.ts`：旧库启动 → 全部 inactive 且日志含计数与 boot id；
+  活跃同伴 → 跳过（run 仍 NULL）；同伴心跳过期（1h）→ 允许对账；`stop()` 后重启 → 立即视为死亡
+  实例；意图/reason 租约不被释放；pending conclude 仍按原逻辑记 `session missing`；心跳按
+  `leaseIntervalMs` 前进并能阻止新实例对账。
+- `packages/graph/src/stats.test.ts`、`apps/cairn/src/http/api.runs.test.ts`：running 归零、
+  finished + N、inactive 计数正确，`/projects/{id}/runs` 显示新 outcome 与 detail；
+  `api.strategist.test.ts` 与 `agent-context.test.ts`：`running_tasks` 归零、`exhausted.tasks`
+  解除、Token 与成本不变。
+- `bun run check` 全量通过（1017 tests / 92 files）；版本 `0.61.0-m38`。
 
 ### 13.7 之后：C2（M39）草案
 

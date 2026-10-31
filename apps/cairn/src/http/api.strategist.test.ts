@@ -11,6 +11,7 @@ import {
   createProject,
   finishRun,
   heartbeatIntent,
+  reconcileOrphanRuns,
   recordIntentMeta,
   recordStrategistSuccess,
   setIntentStatus,
@@ -302,6 +303,19 @@ describe("GET /projects/{id}/strategist", () => {
         max_project_tasks: 1,
       },
       exhausted: { tokens: true, cost_usd: true, tasks: true },
+    });
+
+    // A restart closes the stranded run; the task pressure clears but usage stays counted.
+    db.withConn((conn) =>
+      reconcileOrphanRuns(conn, { finishedAt: "2026-01-02T05:00:00Z" }),
+    );
+    const restarted = (await (
+      await get(instance, `/projects/${projectId}/strategist`)
+    ).json()) as { budget: Record<string, unknown> };
+    expect(restarted.budget).toMatchObject({
+      used_tokens: 500,
+      running_tasks: 0,
+      exhausted: { tokens: true, cost_usd: true, tasks: false },
     });
   });
 

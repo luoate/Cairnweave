@@ -12,6 +12,7 @@ import {
   createProject,
   finishRun,
   heartbeatIntent,
+  reconcileOrphanRuns,
   recordFactMeta,
   recordStrategistSuccess,
   recordVerificationCheck,
@@ -237,6 +238,26 @@ describe("buildAgentContext", () => {
     ]);
     expect(explore.facts.map((fact) => fact.id)).toEqual(["origin"]);
     expect(explore.budget).toBeNull();
+  });
+
+  test("zeroes the running task count once a restart reconciles open runs", () => {
+    addRun({ id: "run_001", outcome: "success" });
+    addRun({ id: "run_002", kind: "reason" });
+
+    const budgetOf = () =>
+      build("reason", {
+        budget: { usedTokens: 5000, usedCostUsd: 0.25, maxTokens: 20000, maxCostUsd: 5 },
+      }).budget;
+    expect(budgetOf()).toMatchObject({ running_tasks: 1 });
+
+    db.withConn((conn) =>
+      reconcileOrphanRuns(conn, { finishedAt: "2026-10-31T10:00:00Z" }),
+    );
+
+    expect(budgetOf()).toMatchObject({
+      used_tokens: 5000,
+      running_tasks: 0,
+    });
   });
 
   test("marks abandoned intents and keeps their reason", () => {

@@ -112,6 +112,9 @@ Fact/Hint 仍会通过普通 delta 触发。
 `EXISTS(fact_meta.run_id)` 判断是否产出 Fact。reason run 本身不产 Fact，被排除。
 计数从最新向前走，遇到产出 Fact 的 run 或早于 `last_success_at` 的 run 就停止。
 `conclude` 成功写 Fact 会重置计数；失败或“只结束 intent 没写 Fact”的任务会累加。
+M38 起控制面启动时把上一进程遗留的 `outcome IS NULL` 行补写成 `inactive` 并填
+`finished_at = now`，这些行因此第一次进入该列表：重启一次最多把 streak 抬高遗留任务的数量，
+可能更快触发 `zero_output:N`（仍受冷却、小时配额与 `tasks_running` 抑制约束）。
 
 ### 陈旧意图
 
@@ -429,8 +432,9 @@ POST /projects/{project_id}/replan
 - `reason_runs`：`kind='reason'` 的 run，最新在前，最多 `limit` 条；其他 kind 不出现。
 - `budget.used_tokens` / `used_cost_usd`：`getProjectUsage()` 对所有 run 的汇总，失败
   任务也计入（与调度门禁一致）。
-- `budget.running_tasks`：`runs.outcome IS NULL` 的行数。它近似调度器内存中的在途任务；
-  崩溃遗留的未结束行也会被计入。
+- `budget.running_tasks`：`runs.outcome IS NULL` 的行数，与调度器内存中的在途任务同源。
+  M38 之前崩溃遗留的未结束行会被永久计入；现在控制面每次启动都会把它们补成 `inactive`，
+  重启后该值回到真实在途数。
 - `budget.exhausted.tokens` / `cost_usd`：`limits` 存在且上限 `> 0` 且用量达到上限。
 - `budget.exhausted.tasks`：`max_project_tasks > 0` 且 `running_tasks >= max_project_tasks`。
   `max_project_tasks = 0` 表示继承 `runtime.max_project_workers`，但纯 HTTP 视图不知道
