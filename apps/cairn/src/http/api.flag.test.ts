@@ -268,6 +268,16 @@ describe("findFlags", () => {
     expect(findFlags("const obj = { value: 1 }; function f{}")).toEqual([]);
   });
 
+  test("splits a flag glued to a JSON escape but keeps a real prefix", () => {
+    expect(findFlags('{"body":"HTTP/1.1 200 OK\\r\\n\\r\\nflag{escape_glued_value}"}')).toEqual([
+      "flag{escape_glued_value}",
+    ]);
+    expect(findFlags('{"x":"a\\npicoCTF{escape_glued_ctf}"}')).toEqual([
+      "picoCTF{escape_glued_ctf}",
+    ]);
+    expect(findFlags('prefix = "nflag{own_format_kept}"')).toEqual(["nflag{own_format_kept}"]);
+  });
+
   test("rejects placeholder bodies", () => {
     for (const placeholder of [
       "CTF2{...}",
@@ -543,5 +553,34 @@ describe("scanProjectFlag limits", () => {
       placeholder: false,
     });
     expect(result.placeholder_suspect).toBe(false);
+  });
+});
+
+describe("operator-rejected flag filtering", () => {
+  test("keeps a rejected flag hidden when only a JSON-escaped copy is indexed", () => {
+    writeFileSync(
+      join(artifacts, "scheme.json"),
+      '{"body":"HTTP/1.1 200 OK\\r\\n\\r\\nflag{secondary_fixture}"}\n',
+      "utf8",
+    );
+    writeFileSync(join(artifacts, "notes.txt"), "no flag here\n", "utf8");
+    const indexed: FlagArtifact[] = [
+      { path: "scheme.json", size: 1 },
+      { path: "notes.txt", size: 1 },
+    ];
+    const workspace = join(workspaceRoot, projectId);
+
+    const shown = collectProjectFlag({ workspace, artifacts: indexed });
+    expect(shown.flag).toBe(SECOND_FLAG);
+
+    const filtered = collectProjectFlag({
+      workspace,
+      artifacts: indexed,
+      rejectedFlags: [SECOND_FLAG],
+    });
+    expect(filtered.found).toBe(false);
+    expect(filtered.flag).toBeNull();
+    expect(filtered.candidates).toEqual([]);
+    expect(filtered.placeholder_suspect).toBe(false);
   });
 });

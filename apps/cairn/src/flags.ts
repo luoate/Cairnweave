@@ -29,6 +29,27 @@ export interface FlagSighting {
   placeholder: boolean;
 }
 
+/**
+ * JSON dumps and captured HTTP responses store newlines as the two-character escape `\r\n`, so
+ * the greedy prefix class swallows the escape's trailing letter and reads `flag{...}` as
+ * `nflag{...}` — a value that no longer matches what an operator already rejected as a decoy.
+ * Only that single glued letter is dropped, and only when the match starts right after a
+ * backslash, so `picoCTF{...}` keeps its real prefix and a genuine `nflag{...}` format written
+ * anywhere else keeps its own spelling.
+ */
+function canonicalPrefix(line: string, rawPrefix: string, index: number): string {
+  if (line[index - 1] !== "\\") return rawPrefix;
+  if (!ESCAPE_TAIL.test(rawPrefix)) return rawPrefix;
+  const stripped = rawPrefix.slice(1);
+  return acceptablePrefix(stripped.toLowerCase()) ? stripped : rawPrefix;
+}
+
+const ESCAPE_TAIL = /^[nrtbfvux0]/i;
+
+function acceptablePrefix(lower: string): boolean {
+  return lower === "flag" || lower.endsWith("flag") || lower.includes("ctf");
+}
+
 /** Every flag-shaped string in `content`, marked as a mask when it looks redacted. */
 export function classifyFlags(
   content: string,
@@ -38,10 +59,12 @@ export function classifyFlags(
   for (const line of content.split(/\r?\n/)) {
     const scoped = line.length > maxLineLength ? line.slice(0, maxLineLength) : line;
     for (const match of scoped.matchAll(FLAG_PATTERN)) {
-      const prefix = match[1]!.toLowerCase();
-      if (prefix !== "flag" && !prefix.endsWith("flag") && !prefix.includes("ctf")) continue;
+      if (!acceptablePrefix(match[1]!.toLowerCase())) continue;
       const body = match[2]!;
-      found.push({ flag: `${match[1]}{${body}}`, placeholder: isPlaceholder(body) });
+      found.push({
+        flag: `${canonicalPrefix(scoped, match[1]!, match.index)}{${body}}`,
+        placeholder: isPlaceholder(body),
+      });
     }
   }
   return found;

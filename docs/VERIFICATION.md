@@ -85,7 +85,9 @@ M32 把“抓到的 flag 值是否可信”交给操作员，而不是模型自�
 - **检测**：任务结果落图后，用与 `/flag` 相同的分类器（`apps/cairn/src/flags.ts`；
   前缀为 `flag` / `*flag` / 含 `ctf`，且不是 `[REDACTED]`、`...`、`<...>` 等掩码）
   扫描 explore / conclude 的 Fact 描述、bootstrap 的 Fact 与完成描述、reason 的完成
-  描述。每个命中值按项目登记一行 `pending`；同一值只登记一次。
+  描述。每个命中值按项目登记一行 `pending`；同一值只登记一次。M32f 起分类器先把工件里
+  JSON 转义正文（`\n` 写作两个字符）粘上的那一个字母剥回，扫描值与操作员判定值是同一拼写，
+  已判假的值不会因为多扫进几个文件就换一种写法重新出现。
 - **不暂停派发，只推迟完成**：`pending` 行不进入调度门禁，explore / conclude / reason /
   bootstrap 照常派发；但项目的任何完成声明在判定前都不落地——bootstrap 保留已产出的
   Fact，reason 的完成声明释放租约并留待下一次 reason，日志分别是
