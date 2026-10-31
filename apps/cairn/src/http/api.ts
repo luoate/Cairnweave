@@ -26,6 +26,7 @@ import {
   getAuditStreamLoss,
   getCompletionIntentOr409,
   getFactMeta,
+  getFlagReview,
   getLatestVerificationCheck,
   getProjectDetail,
   getProjectOr404,
@@ -637,9 +638,10 @@ function buildRoutes(
     db.withConn((conn) => json(summarizeFlagReviews(conn, params["project_id"]!))),
   );
 
-  // Operator verdict on one captured flag. The three cases are deliberate:
-  // `real_more` resumes exploration, `real_done` stops and completes the project, and
-  // `fake` records the decoy (plus a hint) so exploration continues without it.
+  // Operator verdict on one captured flag. Reviews never pause work, so a project may
+  // already be completed by the time the operator answers.
+  // `real_more` keeps exploration going, `real_done` stops an active project (a completed
+  // one just records the verdict), and `fake` records the decoy plus a hint.
   route(
     "POST",
     "/projects/{project_id}/flag-reviews/{review_id}/decision",
@@ -652,17 +654,25 @@ function buildRoutes(
         if (!Number.isInteger(reviewId) || reviewId <= 0) {
           throw new HttpError(400, "flag review id must be a positive integer");
         }
-        const outcome = decideFlagReview(conn, projectId, reviewId, body.decision, body.note);
-        if (body.decision === "real_done") {
-          if (outcome.review.fact_id === null) {
+        const active = getProjectOr404(conn, projectId).status === "active";
+        if (body.decision === "real_done" && active) {
+          const current = getFlagReview(conn, projectId, reviewId);
+          if (current.fact_id === null) {
             throw new HttpError(409, "flag review has no fact to complete from");
           }
-          completeProject(conn, projectId, {
-            from: [outcome.review.fact_id],
-            description: `Operator confirmed ${outcome.review.flag} and stopped the project.`,
-            worker: "operator",
-          });
-        } else {
+        }
+        const outcome = decideFlagReview(conn, projectId, reviewId, body.decision, body.note);
+        if (body.decision === "real_done") {
+          if (active) {
+            completeProject(conn, projectId, {
+              from: [outcome.review.fact_id!],
+              description: `Operator confirmed ${outcome.review.flag} and stopped the project.`,
+              worker: "operator",
+            });
+          }
+        } else if (active) {
+          // A hint only steers work that can still happen; a finished project keeps the
+          // verdict (verified/rejected) without new exploration guidance.
           const hint =
             body.decision === "fake"
               ? `操作员判定 ${outcome.review.flag} 是假 Flag，不要把它当作有效 Flag，继续探索。`

@@ -46,7 +46,7 @@ worker 在项目沙箱里跑真实模型，每个任务启动一次进程，只�
 | 图提案 | Observer 只能写候选文件，控制面是唯一审核者与写图者；默认 `dry_run`（完整校验、记录结果、不写图），改 `apply` 才落图 |
 | 中文 Writeup | 从图中数据确定性渲染中文 Markdown 草稿，可由模型重写；附带载荷（payload）章节、附件 zip 打包与「AI 撰写 / 恢复草稿」 |
 | Flag 与校验 | `/flag` 从已索引工件与会话工具输出中提取真实 flag，拒绝占位符与掩码；会话兜底遍历有目录/条目上界，结果按工作区短缓存；challenge 项目按外部计分校验 |
-| 人工 Flag 复核 | `verification.flag_review: manual`（默认）时，worker 写回 flag 形状的值会暂停项目，由操作员判定「真·还有更多 / 真·停止 / 假·继续」；判定写旁路表、驱动完成或提示，假 flag 不会二次暂停 |
+| 人工 Flag 复核 | `verification.flag_review: manual`（默认）时，worker 写回的 flag 形状值会登记为后台复核，项目继续运行，由操作员随时判定「真·还有更多 / 真·停止 / 假·继续」；判定写旁路表、驱动完成或提示，假 flag 不会二次入队 |
 | 成本与预算 | `runs` 记录模型 / Token / 成本；意图级 priority 与预算、单项目 token/成本配额、逐 Fact 与逐意图的成本归因与因果边 |
 | 只读运维视图 | 运行、慢层、审计、证据、提案、看板、成本、统计、报告、Writeup 十个侧栏页签，全部只发 GET（人工重规划除外） |
 | 运行期配置 | Observer、并发、超时、证据门、预算、策略阈值、提案参数等可在页头「设置 → 运行与执行」里热调，覆盖存 SQLite，重启不丢 |
@@ -172,7 +172,7 @@ proposals:                    # 默认开启，但只演练
 | POST | `/projects/{id}/verify` | 手动重跑完成 oracle（可限定 Fact 子集） |
 | GET | `/projects/{id}/flag` | 命中的 flag、候选与校验状态（按工作区缓存 10 s，结果带 `truncated`；排除已判假的 Flag，优先展示已确认值） |
 | GET | `/projects/{id}/flag-reviews` | 待复核 Flag、已确认/已判假值与各状态计数 |
-| POST | `/projects/{id}/flag-reviews/{review_id}/decision` | 操作员判定：`real_more` / `real_done` / `fake`；`real_done` 直接完成项目 |
+| POST | `/projects/{id}/flag-reviews/{review_id}/decision` | 操作员判定：`real_more` / `real_done` / `fake`；项目仍 active 时 `real_done` 直接完成项目 |
 | GET | `/projects/{id}/stats` | 按 worker / 模型 / profile 的运行统计 |
 | GET | `/projects/{id}/cost` | 总量、按类型汇总、逐 Fact/意图归因与因果边 |
 | GET | `/projects/{id}/strategist` | 慢层状态、预算、未结束意图与推理历史 |
@@ -272,7 +272,7 @@ gate 放在 `tools/gate/`，手动执行、不计入 CI，命令与环境变量�
 | [WRITEUP.md](docs/WRITEUP.md) | 中文 Writeup：草稿组成、载荷、附件包、Flag 置信度与模型撰写 |
 | [MODELS.md](docs/MODELS.md) | 模型与密钥的一页操作手册 |
 | [PORTING.md](docs/PORTING.md) | Python Cairn → TypeScript 的模块映射与对照测试策略 |
-| [MILESTONES.md](docs/MILESTONES.md) | M1–M32 实现记录、完整验证清单与里程碑表 |
+| [MILESTONES.md](docs/MILESTONES.md) | M1–M32b 实现记录、完整验证清单与里程碑表 |
 
 ## 仓库结构
 

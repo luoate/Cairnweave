@@ -1,12 +1,12 @@
 # 里程碑与验证记录
 
-本文件保留 M1–M32 的实现记录、测试与浏览器验证清单、与 Python Cairn 的已知差异、
+本文件保留 M1–M32b 的实现记录、测试与浏览器验证清单、与 Python Cairn 的已知差异、
 里程碑表以及与 Phase 0 的关系。产品概览、快速开始与 API 概览见 [README](../README.md)。
 
 ## 实现记录
 
-状态：**M32（人工 Flag 复核）**；M0–M4、M5a–M5c、
-M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M16b、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e、M18f、M18g、M19a、M19b、M20a、M20b、M21、M22、M23、M24、M24b、M25、M26、M26b、M27、M28、M29、M30、M31、M32 的计划项全部完成。Phase 1 的
+状态：**M32b（Flag 复核改为后台进行）**；M0–M4、M5a–M5c、
+M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M16b、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e、M18f、M18g、M19a、M19b、M20a、M20b、M21、M22、M23、M24、M24b、M25、M26、M26b、M27、M28、M29、M30、M31、M32、M32b 的计划项全部完成。Phase 1 的
 “本地看板 + Observer 提案 + 证据门 + 单一写图者”闭环已具备；Observer 复盘自 M22 起默认
 开启（只读复盘，不改任务结果），提案自 M23 起默认 `dry_run`（完整校验并记录，不写图）。
 Phase 2 的触发持久化、意图优先级/预算、单项目 token/成本与并发配额、只读慢层观测、逐 Fact
@@ -300,11 +300,12 @@ flag 形状的值，就会被 `/flag` 当作结果展示；假 flag（decoy）�
 模型也可能在抓到第一个 flag 后直接声明完成。新增共享分类器 `apps/cairn/src/flags.ts`
 （与 `/flag` 同一套前缀/掩码规则），scheduler 在 explore / conclude 的 Fact 描述、
 bootstrap 的 Fact 与完成描述、reason 的完成描述里发现 flag 值时，按
-`UNIQUE(project_id, flag)` 记一行 `flag_reviews` 并暂停该项目——`tryDispatch` 不再派发
-任何任务（含 conclude 打捞），reason 完成声明也被推迟并释放租约。操作员三选一：
-`real_more` 记 verified 并写去重 Hint 恢复探索；`real_done` 记 verified、把其余 pending
-置 dismissed，控制面用该 flag 关联的 Fact 直接 `completeProject`（没有 Fact 则 409）；
-`fake` 记 rejected、写去重 Hint 恢复探索，此后同值不再入队，`/flag` 与 Writeup 扫描也
+`UNIQUE(project_id, flag)` 记一行 `flag_reviews`。M32b 把最初的“暂停项目”改成后台复核：
+`pending` 不进入 `tryDispatch` 门禁，reason / bootstrap 的完成声明也不再推迟，项目边跑
+边等判定。操作员三选一：`real_more` 记 verified，项目仍 active 时写去重 Hint 继续探索；
+`real_done` 记 verified、把其余 pending 置 dismissed，项目仍 active 时控制面用该 flag
+关联的 Fact 直接 `completeProject`（没有 Fact 则 409），项目已结束时只记录判定；`fake`
+记 rejected，项目仍 active 时写去重 Hint，此后同值不再入队，`/flag` 与 Writeup 扫描也
 过滤它。判定是终态（重复提交 409），路由沿用操作员凭据；配置
 `verification.flag_review` 默认 `manual`、`off` 关闭复核。`flag_reviews` 是旁路表，
 图导出、YAML 与任务契约不变。
@@ -853,9 +854,9 @@ M16b 增加（第二个模型接入与真实 A/B）：
 `CAIRN_SOLVER=breachweave` 的真实 Solver 路径上，fake solver 会忽略它。
 
 
-## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a + M17a + M17b + M17c + M17d + M18a + M18b + M18c + M18d + M18e + M18f + M18g + M19a + M19b + M16b + M20a + M20b + M21 + M22 + M23 + M24 + M24b + M25 + M26 + M26b + M27 + M28 + M29 + M30 + M31 + M32，2026-10-31，Bun 1.4.4）
+## 验证（M1 + M2a + M2b + M2c + M3 + M4a + M4b + M4c + M5a + M5b + M5c + M6 + M7 + M8 + M9 + M9.1 + M10 + M11 + M12a + M12b + M12c + M13a + M13b + M14a + M14b + M14c + M14d + M15a + M15b + M15c + M15d + M15e + M15f + M16a + M17a + M17b + M17c + M17d + M18a + M18b + M18c + M18d + M18e + M18f + M18g + M19a + M19b + M16b + M20a + M20b + M21 + M22 + M23 + M24 + M24b + M25 + M26 + M26b + M27 + M28 + M29 + M30 + M31 + M32 + M32b，2026-10-31，Bun 1.4.4）
 
-- `bun test`：**860 passed**（83 个文件），0 failed。
+- `bun test`：**863 passed**（83 个文件），0 failed。
 - `bun run typecheck`：`tsc --noEmit` 通过。
 - **HTTP 对照**：`api.golden.json` 的 60 步请求（成功路径、400/403/404/405/409、租约过期、
   删除级联、导出、路由错误）由 Python FastAPI + 固定时钟生成；TS 重放后状态码、content-type
@@ -1296,21 +1297,23 @@ M16b 增加（第二个模型接入与真实 A/B）：
   断言审核结果为 `duplicate` + `intent_description_open`，`applied_id` 指向已存在意图且只落一条开放 Intent；
   `loop.test.ts` 用新 fixture `reworded-reason-worker.ts` 跑两轮 reason（初始 + 人工重规划）：第二轮两条
   都被去重，`deduped > 0` 仍记为 `success`，open Intent 保持 1 条、`intent_meta` 只有一行。
-- **人工 Flag 复核（M32）**：`flag-reviews.test.ts`（12 个用例）覆盖登记/去空值/重复值单行、
+- **人工 Flag 复核（M32 + M32b）**：`flag-reviews.test.ts`（12 个用例）覆盖登记/去空值/重复值单行、
   空 flag 400 与未知项目 404、同项目不同值分行、`real_more` 的 note 与 verified 汇总、`fake`
   进入 rejected、`real_done` 把其余 pending 置 dismissed 且计数正确、终态重复判定 409、
   非法判定与未知复核行、`dismissPendingFlagReviews` 的 `exceptId`、汇总五种状态与 404。
-  `api.flag-review.test.ts`（12 个用例）覆盖详情与 `/flag-reviews` 的空摘要、三种判定的
+  `api.flag-review.test.ts`（15 个用例）覆盖详情与 `/flag-reviews` 的空摘要、三种判定的
   Hint 文案与状态流转、`fake` 值从 `/flag` 隐藏、扫描器同时看到真假值时已确认值优先、
   扫描器没见过的已确认值以 `source: "operator review"` 合成且 `scanned_files: 0`
   （工作区目录缺失、整个 workspace root 未配置时同样可见）、`real_done` 用该 Fact 完成
-  并以 `worker: "operator"` 落库、无 Fact 时 409 且项目保持 active、404/400/409 校验与
-  操作员 token 401/200。`scheduler/flag-review.test.ts`（4 个用例）用 `flag-worker.ts`
-  fixture 跑完整调度：抓到 flag 后登记 pending、额外 tick 不派发
-  （日志 `operator flag review is pending`）；`fake` 判定后恢复探索且 pending 清空；
-  `real_done` 由调度器正常完成且完成描述含 flag；`flag_review: "off"` 时直接完成、计数
-  全零。golden 只给两条 `GET /projects/{id}` 响应补了空的 `flag_reviews` 摘要，其余
-  逐字不变。
+  并以 `worker: "operator"` 落库、无 Fact 时 409 且项目保持 active、项目已结束时
+  `real_done` 只记录判定（不新增完成 Intent，无 Fact 也不报错）、结束后的判定不追加
+  Hint、404/400/409 校验与操作员 token 401/200。`scheduler/flag-review.test.ts`
+  （4 个用例）用 `flag-worker.ts` fixture 跑完整调度：抓到 flag 后登记 pending 但继续
+  派发直至项目自行完成（日志无 pending 暂停/推迟）、重复值只有一行；`fake` 判定后
+  同值保持已判定、项目完成且计数为 1；`real_more` 判定后项目照常完成；`flag_review:
+  "off"` 时直接完成、无复核行、计数全零。golden 只给两条 `GET /projects/{id}` 响应补了
+  空的 `flag_reviews` 摘要，其余逐字不变。浏览器在临时 DB 的 8031 端口验证了进行中与
+  已完成两种项目的复核条文案、Toast 与状态流转，控制台无消息。
 
 golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定时钟、`TZ=UTC`）。
 重新生成方法与约束见 `docs/PORTING.md`。
@@ -1399,6 +1402,7 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M30 ✅ | 按需子图 API：`packages/graph/src/export.ts` 新增 `selectSubgraph`（`around` 兼容 Fact / Intent，Fact↔Intent 因果边 BFS，`depth` 默认 2、上限 4）、`exportProjectSubgraphYaml` 与 HTTP 只读 `GET /projects/{id}/subgraph`（`around`/`depth`/`max_facts`/`max_intents`/`format=json\|yaml`）；未结束 Intent 作为 0 跳种子保证并行方向可见，裁剪优先级为 `origin`/`goal` → focus → 已选 Intent 来源 → 跳数，被裁即 `truncated`；`max_facts` 最小 2（项目头需要 origin/goal），越界参数 400 而非静默夹取，未知节点 404 | 827 passed / 80 files（2026-10-31）；`bun run check`（tsc + 全量）通过；`export.subgraph.test.ts` 覆盖 focus fact/intent、depth 1→4 的边界（深度外的 Intent 产出 Fact 不被排序拉回）、未结束 Intent 种子、caps 与 truncated、未知节点 404、YAML 确定性与 `slice:` 段；`api.subgraph.test.ts` 覆盖默认 JSON 形状、`format=yaml`、Intent 焦点、缺失/非法参数 400、未知项目/节点 404 与 POST 405；M4b 切片、全图导出与 golden 逐字节不变 |
 | M31 ✅ | 描述级 Intent 去重：`packages/graph/src/proposals.ts` 新增 `findDuplicateOpenIntent`（未结束 Intent 先按非空 `dedupe_key` 精确匹配，再比较描述：NFKC + 小写 + 去空白/标点归一化、≥10 字符、长度比 ≥0.75、字符二元组 Jaccard ≥ 0.9）与 `normalizeIntentDescription`；reason 的 intents 分支与 Observer 提案审查都改用它，命中时 reason 跳过该条并计入 `deduped`（整轮仍算成功），提案返回 `duplicate` + `intent_description_open` 并指向已存在的意图；不带 `dedupe_key` 的 reason 意图也能被描述去重，已结束方向可重新提出；不新增列、不落库 | 832 passed / 80 files（2026-10-31）；`bun run check`（tsc + 全量）通过；`packages/graph/src/proposals.test.ts` 覆盖换说法（全角/标点/空白）判重、不同方向不判重、显式 key 优先、短描述与已结束 Intent 不判重、归一化输出；`proposals.test.ts`（scheduler）断言 `intent_description_open` 与只落一条开放 Intent；`loop.test.ts` 用 `reworded-reason-worker.ts` 验证首轮与重规划两轮去重后 open Intent 仍为 1、`intent_meta` 只有一行 |
 | M32 ✅ | 人工 Flag 复核：新增共享分类器 `apps/cairn/src/flags.ts`（前缀 `flag`/`*flag`/含 `ctf`，拒绝掩码与占位符），scheduler 在 explore/conclude Fact 描述、bootstrap Fact 与完成描述、reason 完成描述里识别 flag 值，按 `UNIQUE(project_id, flag)` 落 `flag_reviews` 并暂停项目——`tryDispatch` 不派发任何任务（含 conclude 打捞），reason 完成声明推迟并释放租约；操作员三选一：`real_more`（verified + 去重 Hint，继续探索）、`real_done`（verified、其余 pending 置 dismissed、用关联 Fact 直接完成，无 Fact 409）、`fake`（rejected + 去重 Hint，继续探索且同值不再入队）；判定终态（重复 409）、路由沿用操作员凭据；`/flag` 与 Writeup 扫描过滤 rejected、已确认值置顶并可见 `source: "operator review"`，`GET /projects/{id}` 附带 `flag_reviews` 摘要，UI 页头新增琥珀色复核条与三枚按钮；配置 `verification.flag_review` 默认 `manual`、`off` 关闭 | 860 passed / 83 files（2026-10-31）；`bun run check`（tsc + 全量）通过；`flag-reviews.test.ts` 覆盖单行去重、三种判定与终态、sibling dismissal、汇总与 404；`api.flag-review.test.ts` 覆盖三种判定的 Hint/完成、展示过滤与 `operator review` 合成（含工作区目录缺失与 workspace root 未配置两种情况）、409/400/404 与 token 401/200；`scheduler/flag-review.test.ts` 用 `flag-worker.ts` 覆盖暂停、`fake` 恢复、`real_done` 完成与 `off` 直通；golden 仅在两条 GET 详情响应补空摘要，图导出与任务契约不变；浏览器实测临时 DB 起 `serve --port 8030`：proj_001 显示琥珀色「FLAG 复核」条与三个按钮，判 `real_more` 后 POST 200、横幅消失、绿色 Flag 条显示 `来自 operator review` 且提示数 +1；proj_002 判 `fake` 后横幅消失、`/flag` 不再返回该值并写反向 Hint；proj_003 两条 pending 点「真 · 停止」后项目 completed、sibling 记 dismissed、绿色条显示已确认值，控制台无消息。应用内浏览器处于隐藏态（`visibilityState=hidden`），原生坐标点击不触发事件，改用页面内 DOM `.click()` 触发同一 Alpine 处理函数 |
+| M32b ✅ | Flag 复核改为后台进行：删掉 `tryDispatch` 的 pending 门禁与 reason / bootstrap 完成声明的推迟，`reviewCapturedFlags` 只登记复核不返回阻塞；项目带着未判定复核继续派发并可直接完成。判定路由对已结束项目改为只记录结果：`real_done` 不再调用 `completeProject`（active 且无 Fact 才 409），`real_more` / `fake` 仅在 active 时追加 Hint；UI 复核条文案改为“项目继续运行”，Toast 对已结束项目注明“仅记录判定”；调度器测试改写为“抓取后继续派发至自行完成”，HTTP 新增已完成项目的 `real_done`、无 Fact 容忍与不追加 Hint 用例 | 863 passed / 83 files（2026-10-31）；`bun run check`（tsc + 全量）通过；`scheduler/flag-review.test.ts` 断言 pending 期间 run 数继续增长、项目自行 completed、同值仅一行、日志无 pending 暂停/推迟，`fake` / `real_more` 判定后项目照常完成；`api.flag-review.test.ts` 新增已完成项目 `real_done` 只记录判定（完成 Intent 仍为 1 条且 worker 为 `cairn-worker`）、无 Fact 也返回 200、`fake` 不追加 Hint；浏览器实测临时 DB 起 `serve --port 8031`：进行中项目的复核条显示“检测到以下 Flag，项目继续运行。请判断：”，判「假 · 继续探索」后 Toast 为“已标记为假 Flag，继续探索”、横幅保留真值且假值从展示中消失，判「真 · 停止」后项目 completed、横幅消失、Toast 为“已确认 Flag 并停止项目”；已完成项目仍显示复核条，判「真 · 停止」后状态保持 completed、完成意图仍为 1 条、横幅消失、Toast 为“已确认为真 Flag（项目已结束，仅记录判定）”，控制台无消息 |
 
 ## 与 Phase 0 的关系
 

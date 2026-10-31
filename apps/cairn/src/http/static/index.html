@@ -536,7 +536,7 @@
     <div class="shrink-0 border-b border-amber-300 bg-amber-50/95 px-4 py-2 text-xs text-amber-900">
       <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
         <span class="text-2xs font-semibold uppercase tracking-[0.16em] text-amber-600">Flag 复核</span>
-        <span>项目已暂停。请判断捕获到的 Flag：</span>
+        <span>检测到以下 Flag，项目继续运行。请判断：</span>
       </div>
       <div class="mt-1.5 space-y-1.5">
         <template x-for="review in pendingFlagReviews()" :key="review.id">
@@ -7217,6 +7217,7 @@ function cairnApp() {
     async decideFlagReview(reviewId, decision) {
       const projectId = this.selectedProjectId;
       if (!projectId || this.flagReviewBusy) return;
+      const wasActive = this.project?.project?.status === 'active';
       this.flagReviewBusy = true;
       try {
         await this.api('POST', `/projects/${encodeURIComponent(projectId)}/flag-reviews/${reviewId}/decision`, { decision });
@@ -7224,10 +7225,10 @@ function cairnApp() {
         this.loadProjectFlag(projectId);
         this.updateGraph();
         const message = decision === 'real_done'
-          ? '已确认 Flag 并停止项目'
+          ? (wasActive ? '已确认 Flag 并停止项目' : '已确认为真 Flag（项目已结束，仅记录判定）')
           : decision === 'fake'
-            ? '已标记为假 Flag，继续探索'
-            : '已确认为真 Flag，继续探索';
+            ? (wasActive ? '已标记为假 Flag，继续探索' : '已标记为假 Flag（项目已结束）')
+            : (wasActive ? '已确认为真 Flag，继续探索' : '已确认为真 Flag（项目已结束）');
         this.showToast(message);
       } catch (e) {
         this.projectError = this.errorText(e);

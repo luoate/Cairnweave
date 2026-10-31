@@ -8,9 +8,11 @@ import {
   createProject,
   decideFlagReview,
   getProjectDetail,
+  listFlagReviews,
   listProjectRuns,
   summarizeFlagReviews,
   type CairnDatabase,
+  type FlagReview,
   type FlagReviewSummary,
   type ProjectDetail,
 } from "@cairn/graph";
@@ -118,85 +120,92 @@ function summary(projectId: string): FlagReviewSummary {
   return db.withConn((conn) => summarizeFlagReviews(conn, projectId));
 }
 
+function reviews(projectId: string): FlagReview[] {
+  return db.withConn((conn) => listFlagReviews(conn, projectId));
+}
+
 function runCount(projectId: string): number {
   return db.withConn((conn) => listProjectRuns(conn, projectId).length);
 }
 
-async function pauseOnCapturedFlag(loop: Scheduler, projectId: string) {
+async function capture(loop: Scheduler, projectId: string): Promise<FlagReview> {
   await drive(loop, () => summary(projectId).pending.length === 1);
   const pending = summary(projectId).pending[0];
   if (pending === undefined) throw new Error("no pending review");
   return pending;
 }
 
-describe("scheduler flag review gate", () => {
+describe("scheduler flag review capture", () => {
   test(
-    "pauses dispatch until an operator decides the captured flag",
+    "captures a flag but keeps dispatching while the review is pending",
     async () => {
       const project = createRow();
       const projectId = project.project.id;
       const loop = scheduler();
 
-      const pending = await pauseOnCapturedFlag(loop, projectId);
+      const pending = await capture(loop, projectId);
 
       expect(pending.flag).toBe(CAPTURED_FLAG);
       expect(pending.fact_id).not.toBeNull();
+      expect(load(projectId).project.status).toBe("active");
       expect(
         load(projectId).facts.some(
           (fact) => fact.id === pending.fact_id && fact.description.includes(CAPTURED_FLAG),
         ),
       ).toBe(true);
-      expect(load(projectId).project.status).toBe("active");
 
       const before = runCount(projectId);
-      await advance(loop);
-      expect(runCount(projectId)).toBe(before);
+      await loop.runUntilIdle();
+
+      expect(runCount(projectId)).toBeGreaterThan(before);
+      expect(load(projectId).project.status).toBe("completed");
+      // The automated completion claim is not an operator verdict.
+      expect(summary(projectId).pending).toHaveLength(1);
+      expect(reviews(projectId)).toHaveLength(1);
+      expect(logs.some((line) => line.includes("flag review is pending"))).toBe(false);
       expect(
-        logs.some((line) => line.includes("operator flag review is pending")),
-      ).toBe(true);
+        logs.some((line) => line.includes("deferred") && line.includes("flag review")),
+      ).toBe(false);
     },
     60_000,
   );
 
   test(
-    "a rejected decoy is recorded once and never pauses the project again",
+    "a rejected decoy is recorded once and later sightings stay decided",
     async () => {
       const project = createRow();
       const projectId = project.project.id;
       const loop = scheduler();
 
-      const pending = await pauseOnCapturedFlag(loop, projectId);
+      const pending = await capture(loop, projectId);
       db.withConn((conn) => decideFlagReview(conn, projectId, pending.id, "fake"));
 
-      const before = runCount(projectId);
-      await advance(loop);
-      expect(runCount(projectId)).toBeGreaterThan(before);
+      await loop.runUntilIdle();
 
       const snapshot = summary(projectId);
+      expect(load(projectId).project.status).toBe("completed");
       expect(snapshot.pending).toEqual([]);
       expect(snapshot.rejected).toEqual([CAPTURED_FLAG]);
       expect(snapshot.counts.fake).toBe(1);
+      expect(reviews(projectId)).toHaveLength(1);
     },
     60_000,
   );
 
   test(
-    "real_done lets the project finish and the repeated value does not re-pause",
+    "an accepted flag leaves the project free to finish on its own",
     async () => {
       const project = createRow();
       const projectId = project.project.id;
       const loop = scheduler();
 
-      const pending = await pauseOnCapturedFlag(loop, projectId);
-      db.withConn((conn) => decideFlagReview(conn, projectId, pending.id, "real_done"));
+      const pending = await capture(loop, projectId);
+      db.withConn((conn) => decideFlagReview(conn, projectId, pending.id, "real_more"));
 
-      await drive(loop, () => load(projectId).project.status === "completed");
+      await loop.runUntilIdle();
 
-      const detail = load(projectId);
-      const completion = detail.intents.find((intent) => intent.to === "goal");
-      expect(completion?.description).toContain(CAPTURED_FLAG);
-      expect(completion?.worker).toBe("cairn-worker");
-      expect(summary(projectId).counts).toMatchObject({ real_done: 1, pending: 0 });
+      expect(load(projectId).project.status).toBe("completed");
+      expect(summary(projectId).counts).toMatchObject({ real_more: 1, pending: 0 });
     },
     60_000,
   );
@@ -211,6 +220,7 @@ describe("scheduler flag review gate", () => {
       await loop.runUntilIdle();
 
       expect(load(projectId).project.status).toBe("completed");
+      expect(reviews(projectId)).toEqual([]);
       expect(summary(projectId).counts).toEqual({
         pending: 0,
         real_more: 0,

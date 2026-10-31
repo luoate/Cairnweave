@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  completeProject,
   configureDatabase,
   createProject,
   getProjectDetail,
@@ -242,6 +243,61 @@ describe("flag review API", () => {
     const response = await decide(id, "real_done");
     expect(response.status).toBe(409);
     expect(projectStatus()).toBe("active");
+  });
+
+  test("real_done on an already completed project only records the verdict", async () => {
+    const id = capture(REAL_FLAG);
+    db.withConn((conn) =>
+      completeProject(conn, projectId, {
+        from: ["origin"],
+        description: "worker finished on its own",
+        worker: "cairn-worker",
+      }),
+    );
+
+    const response = await decide(id, "real_done");
+    expect(response.status).toBe(200);
+    expect(projectStatus()).toBe("completed");
+
+    const goals = db
+      .withConn((conn) => getProjectDetail(conn, projectId))
+      .intents.filter((intent) => intent.to === "goal");
+    expect(goals).toHaveLength(1);
+    expect(goals[0]?.worker).toBe("cairn-worker");
+
+    const reviews = (await (await get(`/projects/${projectId}/flag-reviews`)).json()) as {
+      verified: string[];
+    };
+    expect(reviews.verified).toEqual([REAL_FLAG]);
+  });
+
+  test("real_done on a completed project tolerates a review without a fact", async () => {
+    const id = capture(REAL_FLAG, null);
+    db.withConn((conn) =>
+      completeProject(conn, projectId, {
+        from: ["origin"],
+        description: "worker finished on its own",
+        worker: "cairn-worker",
+      }),
+    );
+
+    expect((await decide(id, "real_done")).status).toBe(200);
+    expect(projectStatus()).toBe("completed");
+  });
+
+  test("a verdict on a completed project does not add exploration hints", async () => {
+    const id = capture(DECOY_FLAG);
+    db.withConn((conn) =>
+      completeProject(conn, projectId, {
+        from: ["origin"],
+        description: "worker finished on its own",
+        worker: "cairn-worker",
+      }),
+    );
+
+    expect((await decide(id, "fake")).status).toBe(200);
+    expect(hintContents()).toEqual([]);
+    expect(projectStatus()).toBe("completed");
   });
 
   test("rejects unknown reviews, invalid decisions and decided reviews", async () => {
