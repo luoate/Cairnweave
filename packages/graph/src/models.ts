@@ -152,6 +152,8 @@ export interface Run {
   session: string | null;
   evidence_count: number;
   detail: string | null;
+  /** Scheduler boot that dispatched the task (M39); null for runs predating the claim ledger. */
+  instance_id: string | null;
   /** Solver-session usage; all zero when the worker could not report any. */
   input_tokens: number;
   output_tokens: number;

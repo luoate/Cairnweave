@@ -227,6 +227,23 @@ export {
 } from "./scheduler-instances";
 
 export {
+  CLAIM_RELEASE_INSTANCE_STOPPED,
+  CLAIM_RELEASE_OWNER_EXPIRED,
+  CLAIM_RELEASE_SHUTDOWN,
+  claimTask,
+  getTaskClaim,
+  listActiveTaskClaims,
+  reapTaskClaims,
+  releaseTaskClaim,
+  releaseTaskClaimsForInstance,
+  renewTaskClaimLease,
+  type ClaimTaskInput,
+  type ReapedTaskClaim,
+  type TaskClaim,
+  type TaskClaimReapResult,
+} from "./task-claims";
+
+export {
   createProposal,
   findAppliedProposalByDedupeKey,
   findFactByDescription,

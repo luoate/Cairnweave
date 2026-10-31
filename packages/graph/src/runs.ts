@@ -21,6 +21,8 @@ export interface StartRunInput {
   trigger?: string | null;
   startedAt: string;
   session?: string | null;
+  /** Scheduler boot that owns the task (M39); paired with its `task_claims` row. */
+  instanceId?: string | null;
 }
 
 export function startRun(conn: Database, input: StartRunInput): void {
@@ -29,8 +31,8 @@ export function startRun(conn: Database, input: StartRunInput): void {
     `
     INSERT INTO runs
         (id, project_id, task_id, kind, intent_id, worker, worker_profile, trigger,
-         started_at, session)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         started_at, session, instance_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     input.id,
     input.projectId,
@@ -42,6 +44,7 @@ export function startRun(conn: Database, input: StartRunInput): void {
     input.trigger ?? null,
     input.startedAt,
     input.session ?? null,
+    input.instanceId ?? null,
   );
 }
 
@@ -257,6 +260,7 @@ interface RunRow {
   session: string | null;
   evidence_count: number;
   detail: string | null;
+  instance_id: string | null;
   input_tokens: number;
   output_tokens: number;
   cache_read_tokens: number;
@@ -294,6 +298,7 @@ function runFromRow(row: RunRow): Run {
     session: row.session,
     evidence_count: row.evidence_count,
     detail: row.detail,
+    instance_id: row.instance_id,
     input_tokens: row.input_tokens,
     output_tokens: row.output_tokens,
     cache_read_tokens: row.cache_read_tokens,

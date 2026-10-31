@@ -358,7 +358,7 @@ scheduler 与 HTTP API 共用 `packages/graph/src/commands.ts` 的命令，不�
 | 数据 | 写入者 | 读取者 | 位置 |
 | --- | --- | --- | --- |
 | SQLite（projects/facts/intents/hints/settings/project_scopes/project_artifacts） | 控制面 | 控制面 | 控制面主机 |
-| SQLite 旁路表（`runs` / `fact_meta` / `fact_evidence` / `pending_concludes` / `audit_events` / `audit_stream_lost` / `proposals` / `intent_meta` / `strategist_state` / `project_verification` / `verification_checks` / `project_writeups` / `project_attachments` / `scheduler_instances`） | 控制面（不进入图模型与 YAML） | 控制面 | 控制面主机 |
+| SQLite 旁路表（`runs` / `fact_meta` / `fact_evidence` / `pending_concludes` / `audit_events` / `audit_stream_lost` / `proposals` / `intent_meta` / `strategist_state` / `project_verification` / `verification_checks` / `project_writeups` / `project_attachments` / `scheduler_instances` / `task_claims`） | 控制面（不进入图模型与 YAML） | 控制面 | 控制面主机 |
 | `graph.yaml` 快照 | 控制面 | worker | 项目工作区/容器内绝对路径 |
 | `task.json` | 控制面 | worker | `sessionDir` |
 | `result.json` | worker（临时文件 + rename 原子写） | 控制面 | `sessionDir` |
@@ -668,18 +668,19 @@ stderr 归档到 `sessionDir/{stdout,stderr}.log`。需要 UI 实时进度时再
   文件清单（名称、字节数、`sha256` 前 12 位）并声明它们只读。
 - 索引失败只记日志，不影响任务结果；下一次扫描会重建。
 
-### 5.6 旁路表：runs、fact_meta、fact_evidence、pending_concludes、audit_events、audit_stream_lost、intent_meta、strategist_state、verification、project_writeups、project_attachments 与 scheduler_instances
+### 5.6 旁路表：runs、fact_meta、fact_evidence、pending_concludes、audit_events、audit_stream_lost、intent_meta、strategist_state、verification、project_writeups、project_attachments、scheduler_instances 与 task_claims
 
 这些表都在 `packages/graph/src/db.ts` 中创建，既不属于图导出，也不参与任何既有命令：
 
 - `runs(id, project_id, task_id, kind, intent_id, worker, trigger, outcome, exit_code,
   started_at, finished_at, duration_ms, session, evidence_count, detail, input_tokens,
   output_tokens, cache_read_tokens, cache_write_tokens, total_tokens, cost_usd, model,
-  worker_profile)`，
+  worker_profile, instance_id)`，
   按 `(project_id, started_at)` 建索引；项目删除时级联删除。六个用量列由 M12b 增量迁移
   补齐，旧行为 0；`model` 由 M14c 迁移补齐，旧行与没有用量的任务为 `NULL`；
-  `worker_profile` 由 M15a 迁移补齐，prompt 模式与未做选择的任务为 `NULL`。失败任务
-  的用量同样保留。
+  `worker_profile` 由 M15a 迁移补齐，prompt 模式与未做选择的任务为 `NULL`；
+  `instance_id` 由 M39 迁移补齐，只有派发该任务的 `scheduler_instances.id`，旧行为 `NULL`。
+  失败任务的用量同样保留。
 - `fact_meta(fact_id, project_id, run_id, evidence_refs, evidence_status, supersedes,
   created_at)`，主键 `(fact_id, project_id)`，外键指向 Fact 并级联删除。`evidence_refs`
   与 `supersedes` 以 JSON 数组存储。`evidence_status` 为 `provided | missing | legacy`。
@@ -749,6 +750,17 @@ stderr 归档到 `sessionDir/{stdout,stderr}.log`。需要 UI 实时进度时再
   心跳定时器按 `leaseIntervalMs` 刷 `heartbeat_at`；`stop()` 写 `stopped_at`。注册重复执行只刷
   心跳、保留 `started_at`，心跳与停止的 SQL 都带 `stopped_at IS NULL`，已结束的 boot 不会复活。
   表不进入图模型、YAML 导出、HTTP 图响应或 worker 契约。
+- `task_claims(task_id, run_id, instance_id, project_id, intent_id, kind, worker, created_at,
+  lease_expires_at, released_at, release_reason)`（M39），主键 `task_id`，外键指向项目并级联删除，
+  另有两个**部分唯一索引**：`task_claims_active_intent` 按 `(project_id, intent_id)`（仅
+  `released_at IS NULL AND intent_id IS NOT NULL AND kind <> 'reason'`）、`task_claims_active_reason`
+  按 `project_id`（仅 `released_at IS NULL AND kind = 'reason'`），以及 `task_claims_instance`
+  按 `(instance_id, released_at)` 的普通索引。一行代表一个已派发任务的所有权：派发事务里插入、
+  续租时推后 `lease_expires_at`、结束时只写 `released_at` / `release_reason`，**从不删除**。
+  两个 scheduler 都以为同一个 `cairn-worker` 名义认领图级租约，所以真正区分进程的是这两个索引；
+  冲突抛出 409 并让同一个事务里的图级 claim 一起回滚。`instance_id` 指向 `scheduler_instances.id`
+  但不建外键：接管规则要读的是拥有者那次启动的 `stopped_at` / 心跳，行缺失时按死亡处理。
+  表不进入图模型、YAML 导出、HTTP 图响应或 worker 契约（`/runs` 只多一个 `instance_id` 字段）。
 
 - `runtime_config_overrides(id, overrides, updated_at)`（M22），单行 `id = 1`，
   `overrides` 是 snake_case JSON patch，`updated_at` 是最后一次成功写入的 ISO 时间。
@@ -758,7 +770,8 @@ stderr 归档到 `sessionDir/{stdout,stderr}.log`。需要 UI 实时进度时再
 HTTP（除实时追加外均为只读，均在控制面进程内直接查库）：
 
 - `GET /projects/{id}/runs` → run 数组，按 `started_at, id` 排序；每行含六个用量列、
-  `model` 与 `worker_profile`（无记录时为 `null`）；未知项目 404。
+  `model`、`worker_profile`（无记录时为 `null`）与 `instance_id`（M39：派发该任务的
+  scheduler boot，旧行为 `null`）；未知项目 404。
 - `GET /projects/{id}/stats`（M14d/M15a，只读）→
   `{project_id, totals, by_worker, by_model, by_profile}`。
   每组统计运行数、运行中/已结束、各 outcome 计数、`success_rate`（成功 ÷ 已结束，
@@ -1129,7 +1142,7 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
   直接指向 `?format=markdown`；Fact 详情的“取代关系”只读取 fact meta。两者都不写图、
   不写旁路，也不改变调度；UI 的唯一写操作仍是慢层的人工重规划。
 
-### 5.9 session 保留与启动对账（M6/M38）
+### 5.9 session 保留、启动对账与任务 claim（M6/M38/M39）
 
 scheduler 的 housekeeping sweep 由 `scheduler/retention.ts` 与 `loop.ts` 共同实现：
 
@@ -1160,14 +1173,38 @@ scheduler 的 housekeeping sweep 由 `scheduler/retention.ts` 与 `loop.ts` 共�
   `leaseIntervalMs`，与 tick 回调分开，一次慢 tick 不会让本进程被判为死亡；`reconfigure()`
   重挂时一并重建）；`stop()` 先清定时器再写 `stopped_at`。崩溃不写 `stopped_at`，下一次启动
   只能靠心跳过期判定同伴是否还活着。
-- **对账边界**：不改派发路径、不迁移快层 claim、不释放意图 / reason 租约（仍按各自心跳 TTL
-  过期），避免刚重启就挤掉仍在运行的 worker。容器模式下旧 worker 可能比控制面活得久：session
-  保留但 run 已是 `inactive`，它之后写出的 result 不会被导入。两个 scheduler 共用一个库本来
-  就不受支持，心跳只防误杀仍在心跳的同伴。
+- **任务 claim（M39，Phase C2）**：`instanceId` 在构造时生成 `boot-<12 hex>`，`start()` 注册并
+  做 M38 对账，从未 `start()` 过的实例在第一次派发事务里惰性注册（只注册、不对账），保证
+  claim 的 `instance_id` 永不为空。`startClaimed()` 在同一个 `db.withConn` 事务里先做图级 claim、
+  生成 `run_id`，再 `claimTask()` 插入 `task_claims`、`startRun()` 带上 `instanceId`：唯一索引冲突
+  抛 409，整个事务回滚（图级租约也回到原状），外层沿用既有的 `claim lost` 跳过分支，**不会**
+  替真正的拥有者释放租约。`renewLease()` 先续图级心跳再推 `lease_expires_at`（TTL 复用
+  `getIntentTimeout` / `getReasonTimeout`，不新增配置），任一为 0 行即走 `leaseLost` 取消。
+  `finish()` 开头无条件 `releaseTaskClaim(task_id, outcome)`，`startProcess()` 失败记
+  `spawn_failed`，`stop()` 末尾 `releaseTaskClaimsForInstance(instanceId, "shutdown")` 兜底。
+  已释放的行只写 `released_at` / `release_reason`，从不删除，也永不复活。
+- **配额从 DB 派生**：每个 tick 开头 `claimView()` 读一次 `listActiveTaskClaims(now)`，再并上本进程
+  `this.running` 里尚未被计入的句柄（按 `task_id` 去重），派发过程中新增的 claim 就地累加，避免
+  同一 tick 超卖。全局 `maxWorkers`、`maxRunningProjects`、单项目并发 / `budget.maxProjectTasks`、
+  `isIntentRunning`、pending conclude 的“是否已在跑”、慢层触发抑制（`productiveByProject` 与
+  `intentsByProject`）都读这个视图；`runningCount` / `busy` / execution mode 切换仍只看本进程句柄，
+  所以单进程时两套数字一致，多进程时配额是全局的。读账本失败降级为“只按本地任务计数”并记一次
+  日志，不会让派发停摆。
+- **接管**：每次 `sweepNow()` 在 pending 对账之前跑 `reapTaskClaims(instanceTimeoutSeconds)`：拥有者
+  已写 `stopped_at` → 立即释放（`instance stopped`）；拥有者心跳过期且 claim 租约也到期 → 释放
+  （`owner instance expired`）；心跳过期但租约未到期 → 保留并记 `stale claim waiting`；拥有者仍在
+  心跳 → 完全不碰，即使租约已过（那是它自己的续租路径要取消的任务）。接管只动账本，不释放意图 /
+  reason 租约，因此崩溃后同一意图不会立刻被重做，peer 通常会先转到慢层。
+- **对账边界**：不改派发选择逻辑（哪个意图可以派发仍由图决定）、不迁移快层 claim、不释放意图 /
+  reason 租约（仍按各自心跳 TTL 过期），避免刚重启就挤掉仍在运行的 worker。容器模式下旧 worker
+  可能比控制面活得久：session 保留但 run 已是 `inactive`，它之后写出的 result 不会被导入。
+  M38 的心跳只防误杀仍在心跳的同伴；M39 之后误开第二个控制面不会再把同一意图跑两遍，但集群与
+  leader 选举仍然不做。
 - **效果**：上一控制面崩溃遗留的无效队列项不会阻塞新工作；有效项在首次 tick 前保留，
   由正常派发分支优先执行。清理与对账都不要求图可写，也不修改 Fact / intent 历史。
   `/stats`、`/report`、`/strategist` 与 `AgentContext.budget.running_tasks` 因此不需要改动：
   它们过滤 `outcome IS NULL`，对账后幽灵任务自然归零，Token 与成本不变。
+  `/projects/{id}/runs` 的 `instance_id` 让每个 run 能回查到派发它的那次启动。
 
 ### 5.10 项目 Writeup 生成（M19a/M20a/M20b）
 

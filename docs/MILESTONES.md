@@ -1,12 +1,12 @@
 # 里程碑与验证记录
 
-本文件保留 M1–M38 的实现记录、测试与浏览器验证清单、与 Python Cairn 的已知差异、
+本文件保留 M1–M39 的实现记录、测试与浏览器验证清单、与 Python Cairn 的已知差异、
 里程碑表以及与 Phase 0 的关系。产品概览、快速开始与 API 概览见 [README](../README.md)。
 
 ## 实现记录
 
-状态：**M38（启动对账：`scheduler_instances` 心跳 + 无活跃同伴时把遗留 `runs.outcome = NULL` 补成 `inactive`，`/stats`、`/report`、`/strategist` 与预算的 running 计数自然归零；不改派发路径、不动租约）**；M0–M4、M5a–M5c、
-M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M16b、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e、M18f、M18g、M19a、M19b、M20a、M20b、M21、M22、M23、M24、M24b、M25、M26、M26b、M27、M28、M29、M30、M31、M32、M32b、M32c、M32f、M33a、M33b、M33c、M33d、M34、M35、M35f、M36、M37、M38 的计划项全部完成。Phase 1 的
+状态：**M39（DB claim：`task_claims` 任务级所有权账本 + 意图 / reason 槽两个部分唯一索引；派发事务里双写 claim 与图级租约，全局 / 单项目并发、`isIntentRunning` 与慢层抑制改从 DB 派生，`this.running` 退回进程句柄表；崩溃拥有者要等 claim 租约到期才被接管，优雅停止立即释放）**；M0–M4、M5a–M5c、
+M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M16b、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e、M18f、M18g、M19a、M19b、M20a、M20b、M21、M22、M23、M24、M24b、M25、M26、M26b、M27、M28、M29、M30、M31、M32、M32b、M32c、M32f、M33a、M33b、M33c、M33d、M34、M35、M35f、M36、M37、M38、M39 的计划项全部完成。Phase 1 的
 “本地看板 + Observer 提案 + 证据门 + 单一写图者”闭环已具备；Observer 复盘自 M22 起默认
 开启（只读复盘，不改任务结果），提案自 M23 起默认 `dry_run`（完整校验并记录，不写图）。
 Phase 2 的触发持久化、意图优先级/预算、单项目 token/成本与并发配额、只读慢层观测、逐 Fact
@@ -1449,6 +1449,28 @@ M16b 增加（第二个模型接入与真实 A/B）：
   过滤，对账后这些孤儿 run 第一次出现在视图里（预期的可见性变化）。已知边界：容器模式下旧
   worker 可能比控制面活得久，session 保留但它之后写出的 result 不会被导入；两个 scheduler
   共用一个库本就不受支持，心跳只防误杀仍在心跳的同伴。
+- **任务 claim 账本：谁在跑由数据库说了算（M39，Phase C2）**：`runs.outcome IS NULL` 与内存
+  `running` map 都只描述本进程，两个 scheduler 共用一个库时各自数各自的并发，`max_workers`、
+  单项目上限、`isIntentRunning` 与慢层抑制被成倍放大，同一个意图会被两边同时派发；崩溃也没有
+  任何记录说明这个任务曾属于谁。M39 新增旁路表 `task_claims(task_id, run_id, instance_id,
+  project_id, intent_id, kind, worker, created_at, lease_expires_at, released_at,
+  release_reason)`，配两个部分唯一索引（未释放的意图槽位、每项目的 reason 槽位各只允许一行）
+  与 `task_claims_instance`；`startClaimed()` 在派发事务里取完图级租约再 `claimTask()`，索引冲突
+  抛 409 从而连同图租约一起回滚，胜出方继续、失败方只记 `claim lost` 且绝不释放对方的租约（两个
+  scheduler 都以同一个 `cairn-worker` 名义认领，图级租约分不出进程，只有 claim 行能）。claim 的
+  TTL 复用 `settings.intent_timeout` / `reason_timeout`，续期与图租约同一路径，任务收尾按 task id
+  幂等释放。读模型 `claimView()` 每 tick 构造一次：账本里未释放且租约未过期的行 ∪ 本进程尚未计入
+  的本地句柄，派发成功时原地追加，因此单进程行为与 M38 逐字一致；读账本失败就降级为只按本地任务
+  预算并 `logOnce`。接管在派发之前跑 `reapTaskClaimLedger()`：拥有者 `stopped_at` 已写→立即释放
+  （`instance stopped`），拥有者心跳过期且自身租约也到期→释放（`owner instance expired`），拥有者
+  看着死了但任务租约还没跑完→只记 `stale claim waiting`，因为容器里的 worker 可能比控制面活得久，
+  提前接管会让两个进程写同一个工作区；`stop()` 用 `releaseTaskClaimsForInstance()` 兜底释放漏掉的
+  claim（`shutdown`）。行从不删除，释放后留 `released_at` / `release_reason` 供归因，重新认领已释放
+  的 task id 一律 409。`runs` 增加 `instance_id`（迁移补齐、旧行为 `NULL`）并出现在
+  `GET /projects/{id}/runs`。边界：图级租约照旧双写、不迁移、不合并，接管只动账本，所以崩溃那次仍
+  占着 `intents.worker`，peer 腾出槽位后的第一步通常是慢层——这也正是删掉 `task_claims` 就整体回到
+  M38 的原因；不做选主/集群，不改「哪个意图可以被派发」的选择逻辑，不动 `pending_concludes` 语义，
+  不新增写路由，图/YAML/worker 契约与 UI 不变。
 
 golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定时钟、`TZ=UTC`）。
 重新生成方法与约束见 `docs/PORTING.md`。
@@ -1550,6 +1572,7 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M35f ✅ | 新建题目时选择附件：新建项目弹窗在「完成校验」与「立即执行初始探索」之间新增「题目附件」暂存区，多选后本地列出名称与大小（同名重选替换、可逐项移除，`x-for` 以 `name:size:lastModified` 为 key）；创建时若暂存为空维持原流程，否则 `POST /projects` **故意不带 `scope`**——未授权项目调度器一律跳过，因此上传必然早于首个 Worker 构建提示——随后按文件顺序调用现有 `POST /projects/{id}/attachments`（显式传新项目 id，单文件失败只记首条原因），再 `PUT /projects/{id}/scope` 恢复授权，最后打开项目并切到「附件」页签；上传失败仍会授权并运行，错误 toast 写明 `项目已创建，但有 N 项未完成：…`；无附件时的提示与请求不变 | 968 passed / 87 files（2026-10-31）；`bun run check`（tsc + 全量）通过；`ui:css` 重新生成补齐 `hover:text-rose-400`；`api.ui.test.ts` 新增 2 例：暂存同名替换/移除、创建请求无 `scope`、上传显式 projectId 且顺序在 `PUT` 之前、`PUT → openProject → 切换 attachments` 的顺序与成功 toast，无文件时 scope 随创建请求且不发 PUT；上传失败时仍 PUT scope、toast 含 `未完成` 与首条失败原因；实起临时 `serve --config`（端口 8037、临时库与工作区）：弹窗暂存 8 B `handout.bin` 与 13 B `notes.txt`，点创建后 toast「项目已创建，已上传 2 个附件」，自动落在「附件」页签、摘要「2 个附件 · 共 21 B」，磁盘两文件字节一致，`GET /projects/proj_001/scope` 为 `{"targets":["127.0.0.1:18080"]}`；首个 bootstrap 任务在授权后派发，其 `task.json` 的「Challenge Attachments」段已列出两个附件与摘要前缀，证明上传先于首个 Worker；临时服务、库与目录已删除；版本 `0.58.0-m35f` |
 | M36 ✅ | AgentContext：`packages/graph/src/agent-context.ts` 从图 + 旁路投影任务级 `agent-context.yaml`（Fact 的 `current/superseded`、`superseded_by`、证据状态/run/引用数；意图的 `open/concluded` 与由 `runs.intent_id` 派生的 attempts/最近 outcome/最近错误；最近 finished run；完成验证策略、计数、多 flag 进度与最近判定；reason 的 delta 与既有预算数字），排序稳定、有上限并记录 `truncated_sections`；`prepareTask` 在写 `graph.yaml` 的同一事务后写该文件，提示词只追加 `# Investigation State` 段落并标注为数据而非指令，模板、YAML 导出、HTTP golden 与 worker 契约不变；`runtime.strategy_context: on|off`（默认 `on`）控制，`off` 不写文件不加段落，bootstrap 与 bootstrap conclude 不生成投影；配置视图只读展示该开关 | 980 passed / 88 files / 4010 expects（2026-10-31）；`bun run check`（tsc + 全量）通过；`agent-context.test.ts` 7 例覆盖空项目、取代与证据、attempts/预算、challenge 进度、reason delta、截断与渲染脱敏；`tasks.test.ts` 2 例覆盖文件写入/提示段落与关闭时不写；`loop.test.ts` 2 例覆盖真实调度写入 reason/explore 与 `off` 回退；`config.test.ts` 覆盖开关解析与非法值；版本 `0.59.0-m36` |
 | M38 ✅ | 启动对账（Phase C1）：新增全局旁路表 `scheduler_instances(id, started_at, heartbeat_at, stopped_at)`（不接项目外键、不进图/YAML/契约），`Scheduler.start()` 在一个事务里 `registerSchedulerInstance()` 写 `boot-<12 hex>` 行 → `listActiveSchedulerPeers()` 判活跃同伴（`stopped_at IS NULL` 且心跳在 `max(2 × runtime.interval, 30s)` 内）→ 无同伴时 `reconcileOrphanRuns()` 把全部 `outcome IS NULL` 写成 `inactive` / `finished_at = now` / `duration_ms = NULL` / detail `control plane restarted before finish`，逐条记日志并汇总计数，有同伴时只记 skipped；`armTimers()` 挂独立心跳定时器按 `leaseIntervalMs` 刷 `heartbeat_at`，`stop()` 写 `stopped_at`，已停止的 boot 不会复活；派发路径、快层 claim 与意图 / reason 租约不变，`runs` 列不变，不新增写路由，`/stats`、`/report`、`/strategist`、`AgentContext.budget.running_tasks` 与 UI 无需改动即收敛 | 1017 passed / 92 files / 4121 expects（2026-11-01）；`bun run check`（tsc + 全量）通过；`scheduler-instances.test.ts` 3 例（注册/幂等/停止后不复活、30s 边界与排除自身、心跳不可解析视为死亡）、`runs.test.ts` 2 例（只改 NULL 行、第二次空返回）、`stats.test.ts` 1 例（running→0、inactive+1、avg duration 变化）、`scheduler/startup.test.ts` 7 例（旧库启动并计数、活跃同伴跳过、1h 过期后对账、`stop()` 后重启、租约不释放、pending conclude 仍记 session missing、心跳前进并拦住新实例）、`api.runs.test.ts` 1 例覆盖 HTTP 读模型、`api.strategist.test.ts` 在原例里追加对账后 `running_tasks` 与 `exhausted.tasks` 的断言、`agent-context.test.ts` 1 例覆盖预算归零；无 UI 改动故不做浏览器实测；版本 `0.61.0-m38` |
+| M39 ✅ | 任务 claim 账本（Phase C2）：新增旁路表 `task_claims(task_id, run_id, instance_id, project_id, intent_id, kind, worker, created_at, lease_expires_at, released_at, release_reason)` 与两个部分唯一索引（未释放的意图槽位、每项目 reason 槽位各只允许一行）+ `task_claims_instance`；`startClaimed()` 在派发事务里取完图级租约再 `claimTask()`，索引冲突抛 409 使图租约一起回滚，失败方只记 `claim lost`、绝不释放对方的租约（两个 scheduler 都以同一个 `cairn-worker` 名义认领，只有 claim 行能区分进程）；TTL 复用 `settings.intent_timeout` / `reason_timeout`，续期与图租约同路径，收尾按 task id 幂等释放；每 tick 构造一次 `claimView()`（账本未释放且未过期的行 ∪ 本进程未计入的本地句柄，派发成功时原地追加）供全局 / 单项目并发、`isIntentRunning`、bootstrap 去重与慢层抑制共用，读账本失败降级为只按本地任务并 `logOnce`；tick 前 `reapTaskClaimLedger()` 按拥有者状态接管（`instance stopped` 立即释放、心跳过期且自身租约到期释放、心跳过期但租约未满只记 `stale claim waiting`），`stop()` 用 `releaseTaskClaimsForInstance()` 兜底（`shutdown`），行从不删除、重认领已释放的 task id 一律 409；`runs` 补 `instance_id`（旧行 `NULL`）并出现在 `GET /projects/{id}/runs`；图级租约照旧双写不迁移，删掉这张表即回到 M38 | 1038 passed / 94 files / 4234 expects（2026-11-01）；`bun run check`（tsc + 全量）通过；`packages/graph/src/task-claims.test.ts` 13 例覆盖认领行形状、同一意图的第二个活跃 claim 被拒、reason 每项目一行且 explore claim 不挡它、释放幂等且已释放的 claim 不复生（重认领同一个已释放 task id 得到 409）、活跃视图排除已释放与已过期、续期推后 TTL 且失效后不再续、按实例批量释放且不动同伴、已停止拥有者立即释放、心跳过期但任务租约未满先 `waiting` 到期才接管、心跳仍在的拥有者永不被接管、没有实例行等同停止心跳、接管后活实例可重新认领、释放行保留供归因；`apps/cairn/src/scheduler/claims.test.ts` 7 例用两个共用同一临时库的 Scheduler 钉住一次派发只写一行 claim 且归属自动注册的 boot、`runs.instance_id` 与 `claim.run_id` 互相对得上、peer 的本地 task map 为空仍会被账本挡在派发之外、reason 槽在图租约已人工释放后仍由唯一索引拒绝重复（`claim lost … status=409`，败者事务回滚把自己的 `reason_worker` 抹回 `NULL`、不碰胜者）、全局与单项目并发上限数账本而不是各自 `this.running`、优雅停止立即让位、崩溃拥有者要等租约到期才被接管且接管只动账本（意图上仍留着死掉那次的 `intents.worker`）；`runs.test.ts` 与 `api.runs.test.ts` 断言 `instance_id` 落库并出现在 `/runs`（无 boot 上下文的历史 run 保持 `NULL`）；既有 153 例 scheduler 用例不改断言继续通过，证明单进程语义未变；降级路径（读账本失败时只按本地任务预算）未单独测试；无 UI 改动故不做浏览器实测；版本 `0.62.0-m39` |
 
 ## 与 Phase 0 的关系
 

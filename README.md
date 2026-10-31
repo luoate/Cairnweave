@@ -8,7 +8,7 @@
 没有 Python ↔ TypeScript 桥，没有 JSONL RPC。
 
 [![CI](https://github.com/luoate/Cairnweave/actions/workflows/ci.yml/badge.svg)](https://github.com/luoate/Cairnweave/actions/workflows/ci.yml)
-[![tests](https://img.shields.io/badge/tests-1002%20passed-brightgreen.svg)](docs/MILESTONES.md)
+[![tests](https://img.shields.io/badge/tests-1038%20passed-brightgreen.svg)](docs/MILESTONES.md)
 [![license](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![runtime](https://img.shields.io/badge/runtime-Bun%201.4.4-black.svg)](package.json)
 
@@ -54,6 +54,7 @@ worker 在项目沙箱里跑真实模型，每个任务启动一次进程，只�
 | 只读运维视图 | 运行、慢层、审计、证据、提案、看板、成本、统计、报告、Writeup、附件十一个侧栏页签，除人工重规划与附件上传/删除外全部只发 GET |
 | 运行期配置 | Observer、并发、超时、证据门、预算、策略阈值、提案参数等可在页头「设置 → 运行与执行」里热调，覆盖存 SQLite，重启不丢 |
 | 启动对账 | `runs` 行只在拥有它的进程里收尾，控制面重启会留下永远“运行中”的幽灵任务；每次 `start()` 先在 `scheduler_instances` 注册 boot 行并按心跳判断是否有活跃同伴，无同伴时把遗留的 `outcome IS NULL` 补成 `inactive`（detail 说明原因），统计、慢层视图与预算的 running 计数随之归零；不改派发路径、不释放租约 |
+| 任务 claim 账本 | 每个派发任务在 `task_claims` 里占一行（意图 / reason 槽各有一个部分唯一索引），配额、单项目并发与慢层抑制都改从这张表派生，`this.running` 退回成进程句柄表；误开第二个控制面时它看得见同一份账本，重复执行同一意图会在存储层被 409 挡回，崩溃那次的 claim 要等租约到期才被接管，优雅停止则立刻释放——图级租约照旧双写，删掉这张表就回到 M38 |
 | 两种执行模式 | `runtime.execution: local` 本地子进程；`container` 每项目一个长期容器、每任务一次 `docker exec`，配置只读挂载、不挂 Docker socket；调度器空闲时可在「设置」里在线切换，并用「测试有效性」先检查 Bun / Docker / 镜像 / 试启动 / 工作区 |
 | 技能管理 | 页头「设置 → 技能」里新增、删除、启停与恢复技能；「预览」打开独立详情弹窗，左树右正文地浏览技能目录里的 `SKILL.md`、`references/`、`scripts/`；内置 17 个，仅写入 `cairn-worker` prompt 白名单的才生效；删除内置技能会在 `.deleted-builtins.json` 里留痕，重启不回填，可一键恢复 |
 | 轻量首屏 | Tailwind 用 CLI 预编译成 `static/app.css` 入库（不再加载 451 KB 的 Play CDN），cytoscape 与布局引擎按项目/布局懒加载，静态响应带 ETag/304 与 gzip/br；列表页首屏传输从 3.82 MB 降到 96 KB |
@@ -284,7 +285,7 @@ gate 放在 `tools/gate/`，手动执行、不计入 CI，命令与环境变量�
 | [WRITEUP.md](docs/WRITEUP.md) | 中文 Writeup：草稿组成、载荷、附件包、Flag 置信度与模型撰写 |
 | [MODELS.md](docs/MODELS.md) | 模型与密钥的一页操作手册 |
 | [PORTING.md](docs/PORTING.md) | Python Cairn → TypeScript 的模块映射与对照测试策略 |
-| [MILESTONES.md](docs/MILESTONES.md) | M1–M38 实现记录、完整验证清单与里程碑表 |
+| [MILESTONES.md](docs/MILESTONES.md) | M1–M39 实现记录、完整验证清单与里程碑表 |
 
 ## 仓库结构
 

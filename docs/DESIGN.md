@@ -1,8 +1,9 @@
 # 设计文档：AgentContext —— 让决策者看到系统知道的
 
 状态：**Phase A 已实现（M36）；Phase B 已实现（M37，收窄为 `abandoned`，不含
-`refuted` / `done_when` / reopen）；Phase C1 已实现（M38，启动对账），C2 与 Phase D 仍为草案**。
-本文只讨论结构与语义，不代表后续阶段已经排期。实现记录见 `docs/MILESTONES.md`。
+`refuted` / `done_when` / reopen）；Phase C1 已实现（M38，启动对账）；Phase C2 已规划为
+M39，Phase D 仍为草案**。本文只讨论结构与语义，不代表后续阶段已经排期。实现记录见
+`docs/MILESTONES.md`。
 兼容性约束：不改变 Cairn 图的形状、YAML 导出、对外 HTTP golden 与 worker 契约中的既有字段。
 
 ## 1. 摘要
@@ -247,7 +248,7 @@ done_when:     可选文本，描述该方向的完成判据
 ### 6.3 迁移
 
 - 先加 startup 对账（低风险、独立可测），观察一个版本；——M38 已落地，见 §13；
-- 再把快层 claim 从内存 map 迁到 DB（新增 claim 字段或表，`intent_meta` 不够表达任务级租约）；
+- 再把快层 claim 从内存 map 迁到 DB（新增 claim 字段或表，`intent_meta` 不够表达任务级租约）；——M39 计划见 §14；
 - 全程保持 `runs` 列不变，避免破坏 `/runs`、`/stats`、`/cost` 与报告。
 
 ## 7. 完成与目标模型
@@ -298,14 +299,14 @@ AgentContext 输出 `progress: {found, total}` 与最近一次检查，reason �
 | **A（已实现，M36）** | AgentContext v1：构建器、`agent-context.yaml`、追加式提示词段落、`strategy_context` 开关；覆盖 Fact 状态/证据/取代、验证进度、recent attempts、delta；预算沿用既有段落的数据 | 关掉开关即回到今天的行为；图与 golden 不变 |
 | **B（已实现，M37，收窄）** | 意图生命周期：`intent_meta.status/status_reason/status_at/status_by`；reason 提议 abandon（默认关闭）；操作员路由；派发/提示/水位/AgentContext 过滤；UI 徽标与二次确认。`refuted`、`done_when`、reopen 留到后续 | 旧数据缺列合成 `open`；abandon 只影响未来的派发 |
 | **C1（已实现，M38）** | 启动对账：`scheduler_instances` 心跳；无活跃同伴时把遗留 `runs.outcome = NULL` 标为 `inactive`；不动租约与派发路径 | `runs` 列不变；仅读模型从 running 变成 inactive；可单独回滚 |
-| **C2（M39 草案）** | DB claim：任务级 claim 表成为队列真相；双 claim 拒绝、租约接管 | 在 C1 之后；失败可回退到内存 claim |
+| **C2（已实现，M39）** | DB claim：新增 `task_claims` 任务级租约账本；并发计数、`isIntentRunning` 与跨进程防重由 DB 派生；崩溃按实例心跳与租约过期接管 | 保留图级租约；可回退到 M38 的内存运行视图 |
 | **D** | 目标条件与部分完成；`done_when` 进入提示词；评估集接入 milestone | 旧 `verification` 作为别名保留 |
 
 每个阶段的最小验证：
 - A：构建器确定性、上限/截断、脱敏断言、session 文件存在、提示词段落存在、golden 不变；fake solver 端到端跑通。
 - B：状态迁移表、非法提议丢弃、派发排除、操作员路由 403/409、UI 断言。
 - C1：重启模拟（NULL run → inactive）、活跃同伴跳过对账、实例心跳过期、`/stats` 的 running 归零而 finished/inactive 增加；pending conclude 对账不变。
-- C2：双 claim 拒绝、租约接管、进程重启后 claim 仍在。
+- C2：唯一活跃意图/reason；两个 scheduler 竞争只有一方成功；优雅停止立即释放；崩溃在租约到期后接管；`/runs` 带 `instance_id`。
 - D：条件组合、失败理由回写、进度字段、评估报告。
 
 ## 10. 非目标与取舍
@@ -438,12 +439,158 @@ CREATE TABLE IF NOT EXISTS scheduler_instances (
   解除、Token 与成本不变。
 - `bun run check` 全量通过（1017 tests / 92 files）；版本 `0.61.0-m38`。
 
-### 13.7 之后：C2（M39）草案
+### 13.7 之后：C2（已实现，M39）
 
-M38 稳定一个版本后，再把快层 claim 从内存 map 迁到 DB：新增任务级 claim 表（instance_id、
-project_id、intent_id、kind、lease_expires_at），调度每个 tick 从 DB 派生可派发集合与
-running 视图；`runs.instance_id` 用于归因；双 claim 拒绝与租约接管进入验收。M38 的实例心跳
-与启动对账是那张表的前置条件。
+M38 之后的任务级 claim 已按 §14 落地：DB 的 `task_claims` 成为运行中任务的权威账本，并发计数、
+`isIntentRunning` 与慢层抑制都从它派生，同时保留 `intents.worker` / `projects.reason_*` 作为图级
+租约与 UI 镜像。M38 的孤儿 run 对账逻辑不变，仍只在没有活跃同伴时执行。
+
+## 14. M39：DB claim（Phase C2，已实现）
+
+### 14.1 目标
+
+M38 修好了重启后的**读模型**，但“当前有哪些任务在跑”仍由进程内 `this.running` map 决定：
+`maxWorkers` / 单项目并发、`isIntentRunning`、慢层触发抑制与 execution mode 切换都读它。
+两个 scheduler 共用一个库时，各自的内存 map 互相不可见；一个崩溃后留下的任务级所有权也没有
+DB 记录，只能等图级租约按 TTL 过期。
+
+M39 把**运行中任务的 claim** 写进 DB，并让调度计数从 DB 派生。图级租约
+（`intents.worker`、`projects.reason_*`）继续保留：它们是派发选择与 UI 的镜像，不是 M39
+要替换的对象。
+
+非目标：
+
+- 不做多控制面集群或 leader 选举；只让“误开第二个 scheduler”不会重复执行同一意图。
+- 不把 `intents.worker` / `projects.reason_*` 迁走，也不改变 `pending_concludes` 语义。
+- 不新增写路由，不改图 schema、YAML/timeline 导出与 worker 契约既有字段。
+
+### 14.2 数据模型
+
+```sql
+CREATE TABLE IF NOT EXISTS task_claims (
+  task_id TEXT PRIMARY KEY,          -- 与 task.json 的 taskId 相同
+  run_id TEXT,                       -- 同一事务里生成的 runs.id，便于归因
+  instance_id TEXT NOT NULL,         -- scheduler_instances.id
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  intent_id TEXT,                    -- reason 为 NULL
+  kind TEXT NOT NULL,                -- bootstrap | reason | explore | conclude
+  worker TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  lease_expires_at TEXT NOT NULL,
+  released_at TEXT,
+  release_reason TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS task_claims_active_intent
+  ON task_claims(project_id, intent_id)
+  WHERE released_at IS NULL AND intent_id IS NOT NULL AND kind <> 'reason';
+
+CREATE UNIQUE INDEX IF NOT EXISTS task_claims_active_reason
+  ON task_claims(project_id)
+  WHERE released_at IS NULL AND kind = 'reason';
+
+CREATE INDEX IF NOT EXISTS task_claims_instance
+  ON task_claims(instance_id, released_at);
+```
+
+实现相对本节的唯一加料：`project_id` 带项目外键并级联删除，与其余旁路表一致——否则删除
+项目会在账本里留下无人认领的行。`instance_id` **不**建外键：接管规则要读拥有者那次启动的
+`stopped_at` / 心跳，而“没有实例行”本身就是一种死亡判定，级联删除反而会抹掉接管证据。
+
+`runs` 增加可空列 `instance_id`（`ensureRunColumns`，旧行保持 `NULL`），由 `startRun` 写入；
+`/projects/{id}/runs` 的响应增加同名字段。旧库自动建表、补列，没有行时视为“没有运行中任务”。
+
+### 14.3 claim 生命周期
+
+- **获取**：`startClaimed()` 的同一个 `db.withConn` 事务里，在现有图级 claim 之后、`startRun`
+  之前插入 claim（`task_id = prepared.task.taskId`）。唯一索引冲突即抛出 409，事务回滚图级
+  claim 与已生成的任务文件，外层按既有的 `claim lost` 跳过。
+- **续租**：`renewLease()` 同时更新图级心跳与 `task_claims.lease_expires_at`；任一更新影响
+  0 行即返回 false，沿用 `leaseLost` 取消路径。`lease_expires_at` 取该 kind 的既有超时
+  （`getIntentTimeout` / `getReasonTimeout`），不新增配置项。
+- **释放**：`finish()` 无条件按 `task_id` 释放 claim（`released_at`、`release_reason`），
+  与图级租约的释放／保留分开：失败 explore 仍保留意图租约等待 conclude，但它的任务 claim
+  已经结束；conclude 派发时插入新的 claim。
+- **spawn 失败**：`startProcess()` 返回 false 的路径同时释放 claim 与图级租约。
+- **幂等**：重复释放只更新 `released_at IS NULL` 的行；已释放 claim 不会复活。任务 id 每次派发
+  重新随机生成，所以同一个 `task_id` 再次出现一定是异常，`claimTask()` 对已释放的行直接抛 409
+  而不是把它悄悄复活。
+
+### 14.4 调度计数从 DB 派生
+
+`this.running` 保留为**进程句柄表**：`waitForIdle()`、`cancel()`、runtime 切换与信号仍用它。
+以下判断改为查询未释放且未过期的 claim：
+
+- 全局 `maxWorkers` 与 `maxRunningProjects`；
+- 单项目 `maxProjectWorkers` / `budget.maxProjectTasks`；
+- `isIntentRunning()`（pending conclude 对账、慢层触发抑制）；
+- 新 tick 的“是否还有空位”判断。
+
+`runningCount` 与 `busy` 仍表示本进程句柄（API 语义不变）；配额判断改读每 tick 构造一次的
+claim 视图：`listActiveTaskClaims(now)` 打底，再并上 `this.running` 里尚未按 `task_id` 计入的
+句柄，派发成功时就地累加，所以同一 tick 不会超卖，也不需要第二次查询。视图永不为空——读账本
+失败时退化为“只按本地任务计数”并记一次日志，派发不会因此停摆。这样单进程时两者一致，第二个
+scheduler 出现时配额是全局的，而 execution mode 切换不会被别人的任务阻塞。
+
+慢层的抑制条件也走同一个视图：`productiveByProject`（非 reason claim 数）替代本进程的运行任务
+数，`intentsByProject` 替代本进程正在跑的意图集合——peer 的 explore 工作和自己的探索一样压制慢层。
+
+### 14.5 启动、停止与租约接管
+
+- **实例身份**：`instanceId` 改在 Scheduler 构造时生成；`start()` 注册并做 M38 对账；
+  未调用 `start()` 的测试在第一次 claim 前惰性注册（只注册，不对账），保证 claim 的
+  `instance_id` 非空且各 Scheduler 实例互不相同。
+- **优雅停止**：`stop()` 取消并等待本进程任务，`finish()` 释放各自 claim；随后
+  `releaseTaskClaimsForInstance(instanceId, "shutdown")` 兜底，最后写 `stopped_at`。
+- **崩溃**：进程不会写 `stopped_at`，claim 保留。启动（以及 `sweepNow`）按以下规则接管：
+  - 所属实例 `stopped_at IS NOT NULL`：立即释放，reason `instance stopped`；
+  - 所属实例心跳过期且 `lease_expires_at <= now`：释放，reason `owner instance expired`；
+  - 心跳过期但租约未到期：保留并记日志，等 TTL 到期——这与 M38“重启不抢仍可能活着的
+    worker”一致；
+  - 所属实例仍在心跳：绝不接管，即使 claim 租约已过期（先让它自己的续租逻辑取消任务）。
+- **sweep**：每个 `sweepNow()` 增加一次过期 claim 清理；不删除行，只写 `released_at`。
+  已释放行暂不裁剪（一行一个任务，量级可控），后续需要时再加保留策略。
+
+### 14.6 双 claim 与并发验收（已达成）
+
+- `task-claims.test.ts`（13 例）：所有权行逐字段相等、活跃意图唯一（含 409 文案、冲突不留下
+  半行、跨项目与不同意图互不干扰）、reason 槽唯一且能与 explore claim 并存、释放幂等（`success`
+  不被后来的 `failed` 覆盖、未知 task id 返回 false、槽位立刻让给下一个 task、已释放的 task id
+  再 claim 一律 409）、活跃查询按秒精度剔除过期与已释放（到期时刻等于 `now` 即视为过期）、续租
+  推后 `lease_expires_at` 且释放后续租返回 false、按实例批量释放的次序与空转、拥有者已停止 →
+  立即释放、拥有者死亡但租约未到期 → 先 `waiting` 再到期释放、拥有者仍在心跳 → 即使过期也不碰、
+  实例行缺失按死亡处理、接管后新 claim 可以补上、已释放行只改不删（`COUNT(*)` 仍为 1）。
+- `scheduler/claims.test.ts`（7 例，两个 Scheduler 共用一个临时库、共享一个可注入时钟）：
+  一个派发写一行 claim 且 `runs.instance_id` 与拥有者 boot 一致、从未 `start()` 的实例也有一条
+  自己的 `scheduler_instances` 行；B 只靠账本挡住同一意图（A 释放后 B 立即接上）；reason 槽
+  跨进程唯一，先由视图挡住，再释放图级租约逼出唯一索引的 409，失败方的图级租约随事务回滚；
+  `max_workers: 1` 时 B 的空 `this.running` 不会让它多开一个任务；优雅停止后 B 立刻派发；
+  崩溃拥有者在心跳过期但租约未到期时只留下 `stale claim waiting`，租约到期才记
+  `stale claim released` + 计数并让 B 接管（接管只动账本，意图的图级租约仍是死掉那个 boot 的）；
+  仍在心跳的拥有者即使租约已过也不被接管。
+- `loop.test.ts` 等既有 153 例 scheduler 用例保持通过：spawn 失败、取消、leaseLost、pending
+  conclude 都释放 claim；`runningCount` / `busy` 语义不变。
+- `runs.test.ts` / `api.runs.test.ts`：`instance_id` 落库并出现在 `/runs` 响应，不写它的旧行保持
+  `null`。
+- 全量 `bun run check` 通过（1038 tests / 94 files / 4234 expects，2026-11-01）；版本 `0.62.0-m39`。
+
+### 14.7 兼容、回滚与风险
+
+- **双写过渡**：M39 同时维护图级租约与 claim。回退到 M38 代码时 claim 表被忽略，图级租约
+  仍然完整，派发不会失效；这是 M39 的回滚边界。
+- **为什么必须双写**：两个控制面都以同一个 `WORKER_NAME`（`cairn-worker`）认领图级租约，
+  `intents.worker` 里看不出是哪个进程，所以只有 `task_claims` 的两个部分唯一索引能真正拒绝
+  重复派发。相应地，派发失败的 403/409 分支**不能**调用 `releaseBestEffort`：抢不过的一方
+  一旦释放租约，就会把拥有者还在跑的图级租约也清掉。
+- **漂移**：任何“claim 更新成功、图级租约更新失败”都会让两套状态不一致。所有写入必须放在
+  同一个事务里；`releaseBestEffort` 与 `finish` 的测试要断言两边的最终状态。M39 只记录
+  漂移告警，不自动“修复”图级租约。
+- **旧 worker 比控制面活得久**：崩溃接管仍要求租约到期，避免容器里的旧进程与新任务并发写
+  同一工作区；代价是崩溃后最多等待一个 intent/reason 超时。
+- **测试隔离**：每个 Scheduler 有独立 `instanceId`；测试库互不共享时 claim 行随临时库删除。
+  共享库的测试必须显式释放或等待租约，避免串扰。
+- **迁移顺序**：先落 claim 表与双写（M39），观察一个版本；再考虑用 claim 直接派生可派发
+  集合、删除部分图级租约判断（后续阶段）。M39 不改变“哪个意图可以被派发”的选择逻辑。
 
 ## 附录 A：当前提示词输入
 
@@ -472,6 +619,8 @@ running 视图；`runs.instance_id` 用于归因；双 claim 拒绝与租约接�
 | `proposals` | Observer 提案与审核结果 |
 | `pending_concludes` | 待恢复的 conclude 队列 |
 | `audit_events` / `audit_stream_lost` | 工具调用哈希链与实时流丢失 |
+| `scheduler_instances` | 每次控制面启动的 boot 行与心跳（M38） |
+| `task_claims` | 派发任务的所有权账本与跨进程防重索引（M39） |
 | `project_writeups` | 已生成的 Writeup |
 | `project_scopes` | 授权范围 |
 | `runtime_config_overrides` | 运行时配置覆盖 |
@@ -482,6 +631,6 @@ running 视图；`runs.instance_id` 用于归因；双 claim 拒绝与租约接�
 | --- | --- |
 | S1 陈旧 Fact、S2 证据不可见、S4 flag 进度 | A |
 | S3 执行记忆、S5 意图失败态 | A（历史） + B（状态与淘汰） |
-| S6 调度双真相 | C |
+| S6 调度双真相 | C1（启动对账） + C2（DB claim） |
 | 完成契约、部分完成 | D |
 | 能力不可度量 | 评估集（可独立开始） |

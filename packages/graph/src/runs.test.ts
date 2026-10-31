@@ -150,6 +150,7 @@ describe("runs", () => {
         task_id: "task-1",
         kind: "explore",
         outcome: null,
+        instance_id: null,
         session: ".cairn/sessions/task-1",
       },
     ]);
@@ -179,6 +180,15 @@ describe("runs", () => {
     start({ id: "run_002", taskId: "task-a", startedAt: "2026-01-02T03:00:01Z" });
     const runs = db.withConn((conn) => listProjectRuns(conn, projectId));
     expect(runs.map((run) => run.id)).toEqual(["run_002", "run_001"]);
+  });
+
+  test("records which scheduler boot dispatched the run", () => {
+    start({ instanceId: "boot-a1b2c3d4e5f6" });
+    start({ id: "run_002", taskId: "task-2", startedAt: "2026-01-02T03:00:01Z" });
+    const runs = db.withConn((conn) => listProjectRuns(conn, projectId));
+    // The second row is written without a boot: work predating the claim ledger keeps a null
+    // owner instead of being attributed to whoever happens to read it.
+    expect(runs.map((run) => run.instance_id)).toEqual(["boot-a1b2c3d4e5f6", null]);
   });
 
   test("persists solver usage and aggregates it per project", () => {

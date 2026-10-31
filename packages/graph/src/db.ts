@@ -182,7 +182,8 @@ CREATE TABLE IF NOT EXISTS runs (
     cache_read_tokens INTEGER NOT NULL DEFAULT 0,
     cache_write_tokens INTEGER NOT NULL DEFAULT 0,
     total_tokens INTEGER NOT NULL DEFAULT 0,
-    cost_usd REAL NOT NULL DEFAULT 0
+    cost_usd REAL NOT NULL DEFAULT 0,
+    instance_id TEXT
 );
 
 CREATE INDEX IF NOT EXISTS runs_project_started ON runs(project_id, started_at);
@@ -197,6 +198,38 @@ CREATE TABLE IF NOT EXISTS scheduler_instances (
     heartbeat_at TEXT NOT NULL,
     stopped_at TEXT
 );
+
+-- Task-level claim ledger (M39). The scheduler's in-memory task map can only supervise the
+-- processes it owns, so it cannot answer "is this intent already being worked" for a second
+-- control plane, and nothing records who owned a task after a crash. A claim is active while
+-- released_at IS NULL; the partial unique indexes below keep at most one active claim per
+-- intent and one per project reason slot regardless of process state. instance_id has no
+-- foreign key on purpose: a claim must still be readable when its instance row is gone, and
+-- reap treats that as "this owner is not heartbeating".
+CREATE TABLE IF NOT EXISTS task_claims (
+    task_id TEXT PRIMARY KEY,
+    run_id TEXT,
+    instance_id TEXT NOT NULL,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    intent_id TEXT,
+    kind TEXT NOT NULL,
+    worker TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    lease_expires_at TEXT NOT NULL,
+    released_at TEXT,
+    release_reason TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS task_claims_active_intent
+    ON task_claims(project_id, intent_id)
+    WHERE released_at IS NULL AND intent_id IS NOT NULL AND kind <> 'reason';
+
+CREATE UNIQUE INDEX IF NOT EXISTS task_claims_active_reason
+    ON task_claims(project_id)
+    WHERE released_at IS NULL AND kind = 'reason';
+
+CREATE INDEX IF NOT EXISTS task_claims_instance
+    ON task_claims(instance_id, released_at);
 
 CREATE TABLE IF NOT EXISTS fact_meta (
     fact_id TEXT NOT NULL,
@@ -398,9 +431,9 @@ function ensureProjectColumns(conn: Database): void {
 }
 
 /**
- * M12b adds usage counters and M14c the solver model to `runs`. `CREATE TABLE IF NOT
- * EXISTS` does not alter an existing table, so apply the same additive migration pattern
- * as `projects`.
+ * M12b adds usage counters, M14c the solver model and M39 the owning scheduler instance to
+ * `runs`. `CREATE TABLE IF NOT EXISTS` does not alter an existing table, so apply the same
+ * additive migration pattern as `projects`.
  */
 function ensureRunColumns(conn: Database): void {
   const columns = new Set(
@@ -415,6 +448,7 @@ function ensureRunColumns(conn: Database): void {
     ["cost_usd", "REAL NOT NULL DEFAULT 0"],
     ["model", "TEXT"],
     ["worker_profile", "TEXT"],
+    ["instance_id", "TEXT"],
   ] as const;
   for (const [name, definition] of additions) {
     if (!columns.has(name)) {

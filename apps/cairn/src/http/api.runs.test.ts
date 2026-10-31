@@ -59,6 +59,7 @@ describe("GET /projects/{id}/runs", () => {
         kind: "explore",
         intentId: "i001",
         worker: "cairn-worker",
+        instanceId: "boot-a1b2c3d4e5f6",
         startedAt: "2026-01-02T03:00:00Z",
         session: ".cairn/sessions/explore-1",
       });
@@ -90,6 +91,9 @@ describe("GET /projects/{id}/runs", () => {
         kind: "explore",
         intent_id: "i001",
         worker: "cairn-worker",
+        // The boot that dispatched the task, so the run list can be read against the claim
+        // ledger and the scheduler instance table.
+        instance_id: "boot-a1b2c3d4e5f6",
         worker_profile: null,
         model: "gateway/deepseek-flash",
         trigger: null,

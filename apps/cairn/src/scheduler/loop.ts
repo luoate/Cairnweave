@@ -21,8 +21,10 @@ import {
 import {
   BOOTSTRAP_INTENT_CREATOR,
   BOOTSTRAP_INTENT_DESCRIPTION,
+  CLAIM_RELEASE_SHUTDOWN,
   HttpError,
   claimReason,
+  claimTask,
   completeProject,
   concludeIntent,
   countReasonRunsSince,
@@ -37,10 +39,12 @@ import {
   finishRun,
   getIntentMeta,
   getIntentOr404,
+  getIntentTimeout,
   getPendingConclude,
   getProjectDetail,
   getProjectScope,
   getProjectUsage,
+  getReasonTimeout,
   getStrategistState,
   hasPendingConclude,
   hasPendingFlagReviews,
@@ -52,6 +56,7 @@ import {
   buildProfileRunStats,
   buildAgentContext,
   listActiveSchedulerPeers,
+  listActiveTaskClaims,
   listAllPendingConcludes,
   listProjectAttachments,
   listProjectIntentMeta,
@@ -61,6 +66,7 @@ import {
   listRejectedFlags,
   nextRunId,
   ORPHAN_RUN_DETAIL,
+  reapTaskClaims,
   recordFlagReview,
   recordIntentMeta,
   recordPendingConclude,
@@ -70,11 +76,14 @@ import {
   registerSchedulerInstance,
   releaseIntent,
   releaseReason,
+  releaseTaskClaim,
+  releaseTaskClaimsForInstance,
   recordProjectArtifacts,
   refreshProjectArtifacts,
   renderAgentContextYaml,
   renewIntentLease,
   renewReasonLease,
+  renewTaskClaimLease,
   setIntentStatus,
   startRun,
   stopSchedulerInstance,
@@ -88,6 +97,7 @@ import {
   type ProjectScope,
   type ProjectSummary,
   type RunOutcome,
+  type TaskClaim,
 } from "@cairn/graph";
 import type { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
@@ -178,6 +188,67 @@ interface PendingConclude {
   workerProfile?: string;
 }
 
+/**
+ * Cross-process view of running work (M39): active `task_claims` rows plus this process's own
+ * handles. Built once per tick and extended in place as that tick dispatches, so the quotas see
+ * both the tasks started here and the ones a second control plane holds.
+ */
+interface ClaimView {
+  total: number;
+  byProject: Map<string, number>;
+  /** Non-reason claims per project: what the Strategist counts as productive work. */
+  productiveByProject: Map<string, number>;
+  runningProjects: Set<string>;
+  /** Intent ids occupied per project by explore, conclude or bootstrap claims. */
+  intentsByProject: Map<string, Set<string>>;
+  bootstrapProjects: Set<string>;
+  /** Task ids already counted, so a local handle whose claim is gone is not counted twice. */
+  countedTasks: Set<string>;
+}
+
+function newClaimView(): ClaimView {
+  return {
+    total: 0,
+    byProject: new Map(),
+    productiveByProject: new Map(),
+    runningProjects: new Set(),
+    intentsByProject: new Map(),
+    bootstrapProjects: new Set(),
+    countedTasks: new Set(),
+  };
+}
+
+/** Adds one claim (or local handle) to the view; a task id already seen is ignored. */
+function countClaim(
+  view: ClaimView,
+  taskId: string,
+  projectId: string,
+  intentId: string | null,
+  kind: string,
+): void {
+  if (view.countedTasks.has(taskId)) return;
+  view.countedTasks.add(taskId);
+  view.total += 1;
+  view.byProject.set(projectId, (view.byProject.get(projectId) ?? 0) + 1);
+  view.runningProjects.add(projectId);
+  if (kind !== "reason") {
+    view.productiveByProject.set(
+      projectId,
+      (view.productiveByProject.get(projectId) ?? 0) + 1,
+    );
+  }
+  if (intentId !== null) {
+    const intents = view.intentsByProject.get(projectId) ?? new Set<string>();
+    intents.add(intentId);
+    view.intentsByProject.set(projectId, intents);
+  }
+  if (kind === "bootstrap") view.bootstrapProjects.add(projectId);
+}
+
+function newBootId(): string {
+  return `boot-${randomUUID().replaceAll("-", "").slice(0, 12)}`;
+}
+
 interface RunningTask {
   taskId: string;
   /** Control-plane generated id for the sidecar `runs` row. */
@@ -234,11 +305,12 @@ export class Scheduler {
   private sweepTimer: ReturnType<typeof setInterval> | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   /**
-   * Boot id of the `scheduler_instances` row this process owns; null before `start()` and
-   * after `stop()`. Every start registers a fresh id so a restarted process never inherits a
-   * row its predecessor may still be heartbeating.
+   * Boot id of the `scheduler_instances` row this process owns, and the `instance_id` written on
+   * every claim and run it dispatches. Generated in the constructor so a dispatch that never went
+   * through `start()` still has an owner; `start()` allocates a fresh id so a restarted process
+   * never inherits a row its predecessor may still be heartbeating.
    */
-  private instanceId: string | null = null;
+  private instanceId = newBootId();
   private projectCursor = 0;
 
   constructor(options: SchedulerOptions) {
@@ -408,11 +480,15 @@ export class Scheduler {
 
   async stop(): Promise<void> {
     this.clearTimers();
-    this.markInstanceStopped();
     for (const task of this.running.values()) {
       this.cancel(task, "shutdown");
     }
     await this.waitForIdle();
+    // Each finished task released its own claim; this is the backstop for anything still
+    // attributed to this boot. It runs before `stopped_at` so a peer never sees a dead owner
+    // holding a live claim.
+    this.releaseInstanceClaims();
+    this.markInstanceStopped();
     try {
       this.runtime.close();
     } catch (error) {
@@ -453,6 +529,9 @@ export class Scheduler {
       this.log(`sweep project list failed: ${describe(error)}`);
       return;
     }
+    // First: claims owned by a dead instance. Releasing them is what lets the pending-conclude
+    // reconciliation below see an intent as free rather than still worked elsewhere.
+    this.reapTaskClaimLedger();
     this.reconcilePendingConcludes();
     this.pruneSessions(summaries);
     if (this.config.retention.refreshArtifacts) {
@@ -473,10 +552,10 @@ export class Scheduler {
    * crowd out a worker that is still running, and they expire on their own TTL.
    */
   private reconcilePreviousBoot(): void {
-    const instanceId = `boot-${randomUUID().replaceAll("-", "").slice(0, 12)}`;
+    const instanceId = newBootId();
     this.instanceId = instanceId;
     const at = this.instanceTimestamp();
-    const timeoutSeconds = Math.max(this.config.runtime.interval * 2, 30);
+    const timeoutSeconds = this.instanceTimeoutSeconds();
     let closed: OrphanRun[] | null;
     try {
       closed = this.db.withConn((conn) => {
@@ -506,10 +585,24 @@ export class Scheduler {
     this.log(`startup reconcile closed ${closed.length} orphan run(s)`);
   }
 
+  /** Peer liveness window: two dispatch intervals, never shorter than 30 seconds. */
+  private instanceTimeoutSeconds(): number {
+    return Math.max(this.config.runtime.interval * 2, 30);
+  }
+
+  /**
+   * Writes this process's instance row inside the caller's transaction. `start()` registers up
+   * front; a scheduler that dispatches without ever starting (tests, one-shot runs) registers on
+   * its first claim so the claim's `instance_id` is never dangling. The statement is an upsert on
+   * the boot id, so repeating it only refreshes the heartbeat.
+   */
+  private ensureInstanceRegistered(conn: Database): void {
+    registerSchedulerInstance(conn, { id: this.instanceId, at: this.instanceTimestamp() });
+  }
+
   /** Keeps this boot's instance row fresh; a crashed process simply stops writing it. */
   private heartbeatInstance(): void {
     const instanceId = this.instanceId;
-    if (instanceId === null) return;
     try {
       this.db.withConn((conn) =>
         heartbeatSchedulerInstance(conn, instanceId, this.instanceTimestamp()),
@@ -522,14 +615,72 @@ export class Scheduler {
   /** Terminal for this boot: the row stops counting as an active peer. */
   private markInstanceStopped(): void {
     const instanceId = this.instanceId;
-    if (instanceId === null) return;
-    this.instanceId = null;
     try {
       this.db.withConn((conn) =>
         stopSchedulerInstance(conn, instanceId, this.instanceTimestamp()),
       );
     } catch (error) {
       this.log(`instance stop failed: ${describe(error)}`);
+    }
+  }
+
+  /**
+   * Releases every claim still attributed to this boot. Runs on a graceful stop, after the tasks
+   * themselves have released their own claims, so it only catches anything that slipped through.
+   */
+  private releaseInstanceClaims(): void {
+    try {
+      const released = this.db.withConn((conn) =>
+        releaseTaskClaimsForInstance(
+          conn,
+          this.instanceId,
+          CLAIM_RELEASE_SHUTDOWN,
+          this.instanceTimestamp(),
+        ),
+      );
+      for (const claim of released) {
+        this.log(
+          `claim released task=${claim.task_id} project=${claim.project_id} ` +
+            `kind=${claim.kind} reason=${CLAIM_RELEASE_SHUTDOWN}`,
+        );
+      }
+    } catch (error) {
+      this.log(`claim release failed: ${describe(error)}`);
+    }
+  }
+
+  /**
+   * Takes over claims left by a dead control plane. Rows are never deleted, only released, so the
+   * intent a crashed task held becomes dispatchable again without waiting for the graph lease's
+   * own TTL twice over. A live peer's claims are untouched even when past their lease.
+   */
+  private reapTaskClaimLedger(): void {
+    let result: ReturnType<typeof reapTaskClaims>;
+    try {
+      result = this.db.withConn((conn) =>
+        reapTaskClaims(conn, {
+          now: this.instanceTimestamp(),
+          instanceTimeoutSeconds: this.instanceTimeoutSeconds(),
+        }),
+      );
+    } catch (error) {
+      this.log(`claim reap failed: ${describe(error)}`);
+      return;
+    }
+    for (const claim of result.released) {
+      this.log(
+        `stale claim released task=${claim.task_id} project=${claim.project_id} ` +
+          `kind=${claim.kind} owner=${claim.instance_id} reason=${claim.reason}`,
+      );
+    }
+    for (const claim of result.waiting) {
+      this.log(
+        `stale claim waiting task=${claim.task_id} project=${claim.project_id} ` +
+          `kind=${claim.kind} owner=${claim.instance_id} lease_expires_at=${claim.lease_expires_at}`,
+      );
+    }
+    if (result.released.length > 0) {
+      this.log(`claim reap released ${result.released.length} stale claim(s)`);
     }
   }
 
@@ -549,10 +700,13 @@ export class Scheduler {
     }
     if (rows.length === 0) return;
 
+    // One claim view for the whole pass: an intent worked by any control plane keeps its queued
+    // salvage, exactly as when this process works it.
+    const claims = this.claimView();
     const details = new Map<string, ProjectDetail | null>();
     const unreadable = new Set<string>();
     for (const row of rows) {
-      if (this.isIntentRunning(row.project_id, row.intent_id)) continue;
+      if (this.isIntentRunning(row.project_id, row.intent_id, claims)) continue;
       if (unreadable.has(row.project_id)) continue;
 
       let detail: ProjectDetail | null;
@@ -731,17 +885,20 @@ export class Scheduler {
     if (active.length === 0) return false;
     this.reviewProjectProposals(active);
 
+    // Quotas are counted against the claim ledger, not just this map, so a second control plane
+    // sharing the database cannot double-book `maxWorkers` or work the same intent.
+    const claims = this.claimView();
     let dispatchedAny = false;
     let progress = true;
-    while (this.running.size < this.config.runtime.maxWorkers && progress) {
+    while (this.slotsUsed(claims) < this.config.runtime.maxWorkers && progress) {
       progress = false;
-      const runningIds = this.activeRunningProjectIds(active);
+      const runningIds = this.activeRunningProjectIds(active, claims);
       const runningProjects = active.filter((summary) => runningIds.has(summary.id));
       const idleProjects = active.filter((summary) => !runningIds.has(summary.id));
 
       for (const summary of this.order(runningProjects)) {
-        if (this.running.size >= this.config.runtime.maxWorkers) break;
-        if (this.tryDispatch(summary)) {
+        if (this.slotsUsed(claims) >= this.config.runtime.maxWorkers) break;
+        if (this.tryDispatch(summary, claims)) {
           dispatchedAny = true;
           progress = true;
         }
@@ -749,18 +906,20 @@ export class Scheduler {
       if (progress) continue;
 
       if (
-        this.runningProjectCount(active) >= this.config.runtime.maxRunningProjects
+        this.runningProjectCount(active, claims) >=
+        this.config.runtime.maxRunningProjects
       ) {
         break;
       }
       for (const summary of this.order(idleProjects)) {
-        if (this.running.size >= this.config.runtime.maxWorkers) break;
+        if (this.slotsUsed(claims) >= this.config.runtime.maxWorkers) break;
         if (
-          this.runningProjectCount(active) >= this.config.runtime.maxRunningProjects
+          this.runningProjectCount(active, claims) >=
+          this.config.runtime.maxRunningProjects
         ) {
           break;
         }
-        if (this.tryDispatch(summary)) {
+        if (this.tryDispatch(summary, claims)) {
           dispatchedAny = true;
           progress = true;
           break;
@@ -770,8 +929,8 @@ export class Scheduler {
     return dispatchedAny;
   }
 
-  private tryDispatch(summary: ProjectSummary): boolean {
-    if (this.projectTaskCount(summary.id) >= this.projectTaskLimit()) {
+  private tryDispatch(summary: ProjectSummary, claims: ClaimView): boolean {
+    if (this.projectTaskCount(summary.id, claims) >= this.projectTaskLimit()) {
       return false;
     }
 
@@ -821,20 +980,13 @@ export class Scheduler {
           kind: "explore",
           intentId: pending.intentId,
         });
-      } else if (this.isIntentRunning(summary.id, pending.intentId)) {
+      } else if (this.isIntentRunning(summary.id, pending.intentId, claims)) {
         return false;
       } else {
         // Keep the entry until the conclude task actually finishes: if the sandbox or
         // spawn is temporarily unavailable, the next tick should retry the salvage rather
         // than fall back to exploring from scratch. `finish` removes it.
-        return this.startClaimed(
-          project,
-          scope,
-          "conclude",
-          intent,
-          undefined,
-          pending,
-        );
+        return this.startClaimed(project, scope, "conclude", intent, claims, undefined, pending);
       }
     }
 
@@ -845,38 +997,30 @@ export class Scheduler {
     if (isInitialProject(project)) {
       if (project.project.reason !== null) return false;
       if (project.project.bootstrap_enabled) {
-        return this.dispatchBootstrap(project, scope);
+        return this.dispatchBootstrap(project, scope, claims);
       }
       // Route through the persisted trigger policy even for the first reason turn:
       // a failed initial attempt must respect backoff after a restart.
-      const trigger = this.strategistTrigger(project);
-      return trigger === null ? false : this.dispatchReason(project, scope, trigger);
+      const trigger = this.strategistTrigger(project, claims);
+      return trigger === null
+        ? false
+        : this.dispatchReason(project, scope, trigger, claims);
     }
 
     if (project.project.reason === null) {
-      const trigger = this.strategistTrigger(project);
+      const trigger = this.strategistTrigger(project, claims);
       if (trigger !== null) {
-        return this.dispatchReason(project, scope, trigger);
+        return this.dispatchReason(project, scope, trigger, claims);
       }
     }
 
-    const runningIntentIds = new Set(
-      [...this.running.values()]
-        .filter(
-          (task) =>
-            task.projectId === summary.id &&
-            task.kind === "explore" &&
-            task.intentId !== undefined,
-        )
-        .map((task) => task.intentId!),
-    );
     const intentMeta = this.intentMetaFor(summary.id);
     const unclaimed = project.intents.filter(
       (intent) =>
         intent.to === null &&
         intent.worker === null &&
         intentMeta.get(intent.id)?.status !== "abandoned" &&
-        !runningIntentIds.has(intent.id) &&
+        !this.isIntentRunning(summary.id, intent.id, claims) &&
         !isBootstrapIntent(intent),
     );
     if (unclaimed.length > 0) {
@@ -884,6 +1028,7 @@ export class Scheduler {
         project,
         scope,
         pickByPriority(unclaimed, intentMeta),
+        claims,
       );
     }
 
@@ -894,7 +1039,11 @@ export class Scheduler {
     return false;
   }
 
-  private dispatchBootstrap(project: ProjectDetail, scope: ProjectScope): boolean {
+  private dispatchBootstrap(
+    project: ProjectDetail,
+    scope: ProjectScope,
+    claims: ClaimView,
+  ): boolean {
     let intent = project.intents.find(isBootstrapIntent);
     if (intent === undefined) {
       try {
@@ -915,37 +1064,41 @@ export class Scheduler {
       }
     }
 
-    if (this.hasRunningBootstrap(project.project.id)) return false;
+    if (this.hasRunningBootstrap(project.project.id, claims)) return false;
     if (intent.worker !== null) return false;
-    return this.startClaimed(project, scope, "bootstrap", intent);
+    return this.startClaimed(project, scope, "bootstrap", intent, claims);
   }
 
   private dispatchExplore(
     project: ProjectDetail,
     scope: ProjectScope,
     intent: Intent,
+    claims: ClaimView,
   ): boolean {
-    return this.startClaimed(project, scope, "explore", intent);
+    return this.startClaimed(project, scope, "explore", intent, claims);
   }
 
   private dispatchReason(
     project: ProjectDetail,
     scope: ProjectScope,
     trigger: string,
+    claims: ClaimView,
   ): boolean {
-    return this.startClaimed(project, scope, "reason", undefined, trigger);
+    return this.startClaimed(project, scope, "reason", undefined, claims, trigger);
   }
 
   /**
-   * Claims the lease and prepares the task in one transaction so the graph snapshot
-   * matches the state the task is about to reason about. A lost race (403/409) is a skip,
-   * not an error.
+   * Claims the lease, writes the task claim and prepares the task in one transaction so the graph
+   * snapshot matches the state the task is about to reason about. A lost race (403/409) is a skip,
+   * not an error — and specifically not a release: both schedulers claim as the same worker name,
+   * so the only thing that tells them apart is the claim row.
    */
   private startClaimed(
     project: ProjectDetail,
     scope: ProjectScope,
     kind: RunnableTaskKind,
     intent: Intent | undefined,
+    claims: ClaimView,
     trigger?: string,
     pending?: PendingConclude,
   ): boolean {
@@ -1063,6 +1216,23 @@ export class Scheduler {
         // The run row exists before applyResult can attach fact metadata to it, and its
         // id is never supplied by the worker.
         const runId = nextRunId(conn, projectId);
+        // M39: the claim row is what makes this dispatch visible to — and exclusive over — any
+        // other control plane on the same database. Registering the boot here keeps `instance_id`
+        // populated even for a scheduler that dispatches without ever calling `start()`; a 409 from
+        // the partial unique indexes rolls the graph-level lease back with it, so the loser of the
+        // race leaves no trace.
+        this.ensureInstanceRegistered(conn);
+        claimTask(conn, {
+          taskId: prepared.task.taskId,
+          runId,
+          instanceId: this.instanceId,
+          projectId,
+          intentId: intent?.id ?? null,
+          kind,
+          worker: WORKER_NAME,
+          leaseSeconds: this.claimLeaseSeconds(conn, kind),
+          at: this.instanceTimestamp(),
+        });
         startRun(conn, {
           id: runId,
           projectId,
@@ -1072,6 +1242,7 @@ export class Scheduler {
           worker: WORKER_NAME,
           workerProfile: profile?.id ?? null,
           trigger: trigger ?? null,
+          instanceId: this.instanceId,
           startedAt: utcnow(),
           session: workspaceReference(prepared.hostWorkspace, prepared.hostSessionDir),
         });
@@ -1106,6 +1277,10 @@ export class Scheduler {
       this.releaseBestEffort({ projectId, kind, intentId: intent?.id });
       return false;
     }
+    // Occupy the slot in this tick's view: the ledger row was written by the transaction above,
+    // but the view was built before it, and re-reading per dispatch would overspend the budget
+    // on a database that has not caught up with what this process just started.
+    countClaim(claims, started.prepared.task.taskId, projectId, intent?.id ?? null, kind);
     const profile = started.prepared.task.workerProfile;
     this.log(
       `dispatched ${kind} project=${projectId}${intent ? ` intent=${intent.id}` : ""}` +
@@ -1161,6 +1336,9 @@ export class Scheduler {
     } catch (error) {
       this.auditStream?.tokens.revoke(task.projectId, task.taskId);
       this.log(`worker spawn failed task=${task.taskId}: ${describe(error)}`);
+      // Nothing is running, so nothing may keep the slot or the intent claimed: the claim goes
+      // here and the caller's `releaseBestEffort` returns the graph lease.
+      this.releaseClaim(task.taskId, "spawn_failed");
       this.recordRunFinish(
         runId,
         "failed",
@@ -1320,18 +1498,47 @@ export class Scheduler {
     }
   }
 
+  /** The claim TTL is the graph lease's TTL: one setting, so the two can never disagree. */
+  private claimLeaseSeconds(conn: Database, kind: RunnableTaskKind): number {
+    return kind === "reason" ? getReasonTimeout(conn) : getIntentTimeout(conn);
+  }
+
   private renewLease(task: RunningTask): boolean {
     try {
-      return this.db.withConn((conn) =>
-        task.kind === "reason"
-          ? renewReasonLease(conn, task.projectId, WORKER_NAME)
-          : task.intentId === undefined
-            ? false
-            : renewIntentLease(conn, task.projectId, task.intentId, WORKER_NAME),
-      );
+      return this.db.withConn((conn) => {
+        const graphOk =
+          task.kind === "reason"
+            ? renewReasonLease(conn, task.projectId, WORKER_NAME)
+            : task.intentId === undefined
+              ? false
+              : renewIntentLease(conn, task.projectId, task.intentId, WORKER_NAME);
+        if (!graphOk) return false;
+        // The claim is the cross-process copy of the same lease. Either one going away means this
+        // task no longer owns its work, so both renewals collapse into one cancel decision.
+        return renewTaskClaimLease(
+          conn,
+          task.taskId,
+          this.claimLeaseSeconds(conn, task.kind),
+          this.instanceTimestamp(),
+        );
+      });
     } catch (error) {
       this.log(`lease renewal failed task=${task.taskId}: ${describe(error)}`);
       return false;
+    }
+  }
+
+  /**
+   * Ends a task's claim. Idempotent by task id, so a claim a peer already took over stays taken
+   * over and a release that races the per-instance shutdown release is harmless.
+   */
+  private releaseClaim(taskId: string, reason: string): void {
+    try {
+      this.db.withConn((conn) =>
+        releaseTaskClaim(conn, taskId, reason, this.instanceTimestamp()),
+      );
+    } catch (error) {
+      this.log(`claim release failed task=${taskId}: ${describe(error)}`);
     }
   }
 
@@ -1788,6 +1995,9 @@ export class Scheduler {
   private finish(running: RunningTask, outcome: TaskOutcome, detail?: string | null): void {
     this.running.delete(running.taskId);
     this.processes.delete(running.taskId);
+    // The claim ends with the task, whatever the outcome: a failed explore keeps its *intent*
+    // lease for the queued conclude, but it stops occupying a worker slot in every control plane.
+    this.releaseClaim(running.taskId, outcome);
     // The worker flushed before exiting; no process may append to this chain any more.
     this.auditStream?.tokens.revoke(running.projectId, running.taskId);
 
@@ -2177,11 +2387,12 @@ export class Scheduler {
     };
   }
 
-  private isIntentRunning(projectId: string, intentId: string): boolean {
-    for (const task of this.running.values()) {
-      if (task.projectId === projectId && task.intentId === intentId) return true;
-    }
-    return false;
+  private isIntentRunning(
+    projectId: string,
+    intentId: string,
+    claims: ClaimView,
+  ): boolean {
+    return claims.intentsByProject.get(projectId)?.has(intentId) ?? false;
   }
 
   private releaseBestEffort(context: {
@@ -2209,18 +2420,18 @@ export class Scheduler {
 
   // --- scheduling helpers -----------------------------------------------------------
 
-  private strategistTrigger(project: ProjectDetail): string | null {
+  private strategistTrigger(
+    project: ProjectDetail,
+    claims: ClaimView,
+  ): string | null {
     const projectId = project.project.id;
     const policy = this.config.strategist;
     const now = this.now();
 
-    const runningTasks = [...this.running.values()].filter(
-      (task) => task.projectId === projectId && task.kind !== "reason",
-    );
-    const runningIntentIds = new Set<string>();
-    for (const task of runningTasks) {
-      if (task.intentId !== undefined) runningIntentIds.add(task.intentId);
-    }
+    // A peer control plane's explore work suppresses the slow layer exactly like our own.
+    const runningProductiveTasks = claims.productiveByProject.get(projectId) ?? 0;
+    const runningIntentIds =
+      claims.intentsByProject.get(projectId) ?? new Set<string>();
 
     let snapshot: {
       state: ReturnType<typeof getStrategistState>;
@@ -2284,7 +2495,7 @@ export class Scheduler {
       state: snapshot.state,
       recentRuns: snapshot.recentRuns,
       reasonRunsLastHour: snapshot.reasonRunsLastHour,
-      runningProductiveTasks: runningTasks.length,
+      runningProductiveTasks,
       runningIntentIds,
       abandonedIntentIds: snapshot.abandonedIntentIds,
       ...(snapshot.budget === undefined ? {} : { budget: snapshot.budget }),
@@ -2382,25 +2593,64 @@ export class Scheduler {
     return orderedIds.map((id) => byId.get(id)!);
   }
 
-  private activeRunningProjectIds(active: readonly ProjectSummary[]): Set<string> {
-    const activeIds = new Set(active.map((summary) => summary.id));
-    const ids = new Set<string>();
+  /**
+   * Cross-process "what is running": unreleased, unexpired `task_claims` rows plus this
+   * process's own handles. The local entries are folded in by task id rather than added on top,
+   * so a single scheduler counts exactly what it counted before the ledger existed and a second
+   * one only widens the view.
+   *
+   * If the ledger cannot be read, the view falls back to the local map and says so once: budgeting
+   * against nothing at all would let this process oversubscribe the runtime.
+   */
+  private claimView(): ClaimView {
+    const view = newClaimView();
+    let rows: TaskClaim[] | null;
+    try {
+      rows = this.db.withConn((conn) =>
+        listActiveTaskClaims(conn, { now: this.instanceTimestamp() }),
+      );
+      this.loggedSkips.delete("claims:view");
+    } catch (error) {
+      this.logOnce(
+        "claims:view",
+        `claim ledger read failed, budgeting on local tasks only: ${describe(error)}`,
+      );
+      rows = null;
+    }
+    for (const claim of rows ?? []) {
+      countClaim(view, claim.task_id, claim.project_id, claim.intent_id, claim.kind);
+    }
     for (const task of this.running.values()) {
-      if (activeIds.has(task.projectId)) ids.add(task.projectId);
+      countClaim(view, task.taskId, task.projectId, task.intentId ?? null, task.kind);
+    }
+    return view;
+  }
+
+  /** Worker slots in use across every control plane sharing this database. */
+  private slotsUsed(claims: ClaimView): number {
+    return claims.total;
+  }
+
+  private activeRunningProjectIds(
+    active: readonly ProjectSummary[],
+    claims: ClaimView,
+  ): Set<string> {
+    const ids = new Set<string>();
+    for (const summary of active) {
+      if (claims.runningProjects.has(summary.id)) ids.add(summary.id);
     }
     return ids;
   }
 
-  private runningProjectCount(active: readonly ProjectSummary[]): number {
-    return this.activeRunningProjectIds(active).size;
+  private runningProjectCount(
+    active: readonly ProjectSummary[],
+    claims: ClaimView,
+  ): number {
+    return this.activeRunningProjectIds(active, claims).size;
   }
 
-  private projectTaskCount(projectId: string): number {
-    let count = 0;
-    for (const task of this.running.values()) {
-      if (task.projectId === projectId) count += 1;
-    }
-    return count;
+  private projectTaskCount(projectId: string, claims: ClaimView): number {
+    return claims.byProject.get(projectId) ?? 0;
   }
 
   /** Per-project concurrency quota; a budget of 0 inherits the runtime default. */
@@ -2476,11 +2726,8 @@ export class Scheduler {
     return false;
   }
 
-  private hasRunningBootstrap(projectId: string): boolean {
-    for (const task of this.running.values()) {
-      if (task.projectId === projectId && task.kind === "bootstrap") return true;
-    }
-    return false;
+  private hasRunningBootstrap(projectId: string, claims: ClaimView): boolean {
+    return claims.bootstrapProjects.has(projectId);
   }
 
   /**
