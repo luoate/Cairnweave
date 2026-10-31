@@ -168,7 +168,7 @@ curl -X PUT http://127.0.0.1:8000/settings/runtime \
 | 键 | 默认 | 说明 |
 | --- | --- | --- |
 | `evidence_enforcement` | completion | `completion` 阻断无证据完成，`off` 关闭；对新建项目与无策略行的项目生效 |
-| `flag_review` | manual | `manual` 把抓到 flag 形状的值登记为后台复核（派发不暂停，完成声明等判定；操作员判定真·还有更多 / 真·停止 / 假·继续探索）；`off` 关闭复核。运行配置弹窗的「Flag 人工复核」开关直接切换这两个值，默认打开 |
+| `flag_review` | manual | `manual` 把抓到 flag 形状的值登记为后台复核（派发不暂停，完成声明等判定；操作员判定真·还有更多 / 真·停止 / 假·继续探索）；`off` 关闭复核。运行配置弹窗的「Flag 人工复核」开关直接切换这两个值，默认打开。与 M32 的两档不同，M34 的拒绝不看这个键：`manual` 与 `off` 下，完成声明只要引用了本项目已被判为 `fake` 的值就会被拒（reason 释放租约继续跑，并写一条去重 Hint），因为判过的值不再入队、等判定的 hold 会随判定消失 |
 
 ### 范围 `scope`（M33）
 

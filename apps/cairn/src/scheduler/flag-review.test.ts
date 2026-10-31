@@ -11,6 +11,7 @@ import {
   getProjectDetail,
   listFlagReviews,
   listProjectRuns,
+  recordFlagReview,
   summarizeFlagReviews,
   type CairnDatabase,
   type FlagReview,
@@ -19,7 +20,7 @@ import {
 } from "@cairn/graph";
 
 import { parseDispatchConfig } from "../config";
-import { Scheduler } from "./loop";
+import { rejectedCitationHint, Scheduler } from "./loop";
 
 const CONFIG = {
   server: "http://127.0.0.1:8000",
@@ -52,6 +53,7 @@ const CONFIG = {
 };
 
 const CAPTURED_FLAG = "flag{review_value}";
+const BOOTSTRAP_FLAG = "flag{bootstrap_value}";
 
 let directory: string;
 let db: CairnDatabase;
@@ -183,7 +185,7 @@ describe("scheduler flag review capture", () => {
   );
 
   test(
-    "a rejected decoy is recorded once and the project finishes after the verdict",
+    "a value judged fake cannot be reused to complete the project",
     async () => {
       const project = createRow();
       const projectId = project.project.id;
@@ -195,11 +197,83 @@ describe("scheduler flag review capture", () => {
       await loop.runUntilIdle();
 
       const snapshot = summary(projectId);
-      expect(load(projectId).project.status).toBe("completed");
+      expect(load(projectId).project.status).toBe("active");
       expect(snapshot.pending).toEqual([]);
       expect(snapshot.rejected).toEqual([CAPTURED_FLAG]);
       expect(snapshot.counts.fake).toBe(1);
       expect(reviews(projectId)).toHaveLength(1);
+      expect(
+        load(projectId).intents.filter((intent) => intent.to === "goal"),
+      ).toHaveLength(0);
+      expect(
+        logs.some(
+          (line) =>
+            line.includes("completion deferred") &&
+            line.includes("cites an operator-rejected flag"),
+        ),
+      ).toBe(true);
+    },
+    60_000,
+  );
+
+  test(
+    "the refusal explains itself once, however often the claim repeats",
+    async () => {
+      const project = createRow();
+      const projectId = project.project.id;
+      const loop = scheduler();
+
+      const pending = await capture(loop, projectId);
+      db.withConn((conn) => decideFlagReview(conn, projectId, pending.id, "fake"));
+
+      await loop.runUntilIdle();
+      const explained = () =>
+        load(projectId).hints.filter(
+          (hint) => hint.content === rejectedCitationHint(CAPTURED_FLAG),
+        ).length;
+      const refusals = () =>
+        logs.filter((line) => line.includes("cites an operator-rejected flag")).length;
+
+      expect(explained()).toBe(1);
+      expect(refusals()).toBe(1);
+
+      // A new hint is a reason trigger, so the model gets to repeat its claim.
+      db.withConn((conn) =>
+        createHint(conn, projectId, { content: "try another lane", creator: "operator" }),
+      );
+      await drive(loop, () => refusals() >= 2);
+
+      expect(explained()).toBe(1);
+      expect(load(projectId).project.status).toBe("active");
+    },
+    60_000,
+  );
+
+  test(
+    "turning reviews off does not erase a verdict already on record",
+    async () => {
+      const project = createRow();
+      const projectId = project.project.id;
+      const manual = scheduler();
+      const pending = await capture(manual, projectId);
+      await manual.runUntilIdle();
+      db.withConn((conn) => {
+        decideFlagReview(conn, projectId, pending.id, "fake");
+        // New hints re-arm the slow layer for the scheduler created below.
+        createHint(conn, projectId, { content: "keep looking", creator: "operator" });
+      });
+
+      const loop = scheduler("off");
+      await drive(loop, () =>
+        logs.some(
+          (line) =>
+            line.includes("completion deferred") &&
+            line.includes("cites an operator-rejected flag"),
+        ),
+      );
+
+      expect(load(projectId).project.status).toBe("active");
+      expect(summary(projectId).rejected).toEqual([CAPTURED_FLAG]);
     },
     60_000,
   );
@@ -264,6 +338,38 @@ describe("scheduler flag review capture", () => {
 
       expect(load(projectId).project.status).toBe("completed");
       expect(summary(projectId).counts).toMatchObject({ fake: 1, pending: 0 });
+    },
+    60_000,
+  );
+
+  test(
+    "a bootstrap claim on an already-rejected value cannot close the project either",
+    async () => {
+      const project = createRow(true);
+      const projectId = project.project.id;
+      db.withConn((conn) => {
+        const seeded = recordFlagReview(conn, projectId, { flag: BOOTSTRAP_FLAG });
+        decideFlagReview(conn, projectId, seeded.review.id, "fake");
+      });
+
+      const loop = scheduler("manual", "flag-bootstrap-worker.ts");
+      await loop.runUntilIdle();
+
+      expect(load(projectId).project.status).toBe("active");
+      expect(
+        load(projectId).intents.filter((intent) => intent.to === "goal"),
+      ).toHaveLength(0);
+      expect(reviews(projectId)).toHaveLength(1);
+      expect(load(projectId).hints).toContainEqual(
+        expect.objectContaining({ content: rejectedCitationHint(BOOTSTRAP_FLAG) }),
+      );
+      expect(
+        logs.some(
+          (line) =>
+            line.includes("bootstrap completion deferred") &&
+            line.includes("cites an operator-rejected flag"),
+        ),
+      ).toBe(true);
     },
     60_000,
   );

@@ -47,6 +47,7 @@ import {
   listProjectIntentMeta,
   listProjects,
   listRecentStrategistRuns,
+  listRejectedFlags,
   nextRunId,
   recordFlagReview,
   recordIntentMeta,
@@ -104,6 +105,11 @@ import {
 } from "./tasks";
 
 const WORKER_NAME = "cairn-worker";
+
+/** Control-plane guidance explaining why a completion claim that cites a judged-fake value was refused. */
+export function rejectedCitationHint(flag: string): string {
+  return `完成声明引用的 ${flag} 已被操作员判定为假 Flag，该声明被拒绝，继续探索或给出未出现过的 Flag。`;
+}
 const BOOTSTRAP_INTENT_DESCRIPTION = "bootstrap";
 const BOOTSTRAP_INTENT_CREATOR = "dispatcher.bootstrap";
 const KILL_GRACE_MS = 5_000;
@@ -1302,6 +1308,15 @@ export class Scheduler {
           );
           return "success";
         }
+        const rejectedCited = this.citesRejectedFlag(conn, running.projectId, [description]);
+        if (rejectedCited !== null) {
+          releaseReason(conn, running.projectId, WORKER_NAME);
+          this.recordRejectedCitationHint(conn, running.projectId, rejectedCited);
+          this.log(
+            `completion deferred project=${running.projectId}: cites an operator-rejected flag`,
+          );
+          return "success";
+        }
         // `completionClaim` verified the same fact set before the transaction. A missing
         // outcome here means the claim shape changed under us; fail closed.
         if (verification === null || !verification.ok) {
@@ -1492,6 +1507,16 @@ export class Scheduler {
       )
     ) {
       this.log(`bootstrap completion deferred project=${running.projectId}: flag review pending`);
+      return "success";
+    }
+    const rejectedCited = this.citesRejectedFlag(conn, running.projectId, [
+      validated.data.completeDescription,
+    ]);
+    if (rejectedCited !== null) {
+      this.recordRejectedCitationHint(conn, running.projectId, rejectedCited);
+      this.log(
+        `bootstrap completion deferred project=${running.projectId}: cites an operator-rejected flag`,
+      );
       return "success";
     }
     if (verification === null || !verification.ok) {
@@ -2232,6 +2257,36 @@ export class Scheduler {
       }
     }
     return hasPendingFlagReviews(conn, running.projectId);
+  }
+
+  /**
+   * Returns the first flag-shaped value in `texts` that an operator has already judged fake.
+   * A repeated sighting of a judged value never queues a second review, so the pending-review
+   * hold on its own lets a completion claim rest on evidence the operator rejected. Verdicts
+   * are read as stored, regardless of `verification.flag_review`, the same way `/flag` keeps
+   * filtering rejected values after reviews are switched off.
+   */
+  private citesRejectedFlag(
+    conn: Database,
+    projectId: string,
+    texts: readonly string[],
+  ): string | null {
+    const rejected = new Set(listRejectedFlags(conn, projectId));
+    if (rejected.size === 0) return null;
+    for (const text of texts) {
+      if (typeof text !== "string" || text === "") continue;
+      for (const flag of findFlags(text)) {
+        if (rejected.has(flag)) return flag;
+      }
+    }
+    return null;
+  }
+
+  /** Explains a refused claim once, so repeated claims do not stack identical hints. */
+  private recordRejectedCitationHint(conn: Database, projectId: string, flag: string): void {
+    const content = rejectedCitationHint(flag);
+    if (findHintByContent(conn, projectId, content) !== null) return;
+    createHint(conn, projectId, { content, creator: "operator" });
   }
 
   private logOnce(key: string, message: string): void {

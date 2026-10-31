@@ -1,13 +1,12 @@
 # 里程碑与验证记录
 
-本文件保留 M1–M33 的实现记录、测试与浏览器验证清单、与 Python Cairn 的已知差异、
+本文件保留 M1–M34 的实现记录、测试与浏览器验证清单、与 Python Cairn 的已知差异、
 里程碑表以及与 Phase 0 的关系。产品概览、快速开始与 API 概览见 [README](../README.md)。
 
 ## 实现记录
 
-状态：**M33（授权请求里携带的其它主机字面量拆成 primary / carried，`scope.ssrf_markers`
-三档策略，默认只记录）**；M0–M4、M5a–M5c、
-M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M16b、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e、M18f、M18g、M19a、M19b、M20a、M20b、M21、M22、M23、M24、M24b、M25、M26、M26b、M27、M28、M29、M30、M31、M32、M32b、M32c、M32f、M33a、M33b、M33c、M33d 的计划项全部完成。Phase 1 的
+状态：**M34（完成声明引用操作员已判假的 Flag 值即被拒绝，reason 车道不因此退避）**；M0–M4、M5a–M5c、
+M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M16b、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e、M18f、M18g、M19a、M19b、M20a、M20b、M21、M22、M23、M24、M24b、M25、M26、M26b、M27、M28、M29、M30、M31、M32、M32b、M32c、M32f、M33a、M33b、M33c、M33d、M34 的计划项全部完成。Phase 1 的
 “本地看板 + Observer 提案 + 证据门 + 单一写图者”闭环已具备；Observer 复盘自 M22 起默认
 开启（只读复盘，不改任务结果），提案自 M23 起默认 `dry_run`（完整校验并记录，不写图）。
 Phase 2 的触发持久化、意图优先级/预算、单项目 token/成本与并发配额、只读慢层观测、逐 Fact
@@ -1366,6 +1365,21 @@ M16b 增加（第二个模型接入与真实 A/B）：
   的裸主机名校验；`api.ui.test.ts` 89 例覆盖开关、每种模式的说明文案与审计徽标。
   已知盲区不变：编码形式的携带目标（十进制/十六进制 IP、非 IP 主机名作参数）任何模式下都提不出来，
   `observe` 并不扩大也不缩小这个盲区；模型用未识别的程序直连网络仍要由容器隔离兜底。
+- **引用已判假 Flag 的完成声明一律拒绝（M34）**：起因是 proj_023 在操作员已经把捕获值判成
+  「假」之后自己变成 `completed` 并停止探索，而项目并没有做完。链条是 M32b 留下的：完成门禁
+  只看 `hasPendingFlagReviews`，而 `flag_reviews` 是 `UNIQUE(project_id, flag)` + 判定终态，
+  一个已经判过的值永远不会重新入队，于是「等判定」的 hold 在判定落地那一刻同时消失；下一轮
+  reason 又把同一个值写进完成描述，`verification.mode: off` 让这个声明直接通过校验器，
+  `completeProject` 于是落图。M34 在 scheduler 里补上这一格：reason 与 bootstrap 的完成声明
+  先过 `citesRejectedFlag`——用共享分类器 `findFlags` 扫声明文本，命中该项目的 rejected 判定
+  即拒绝，`releaseReason` 放掉租约、按 `success` 记账（用 `rejected` 会让慢层累计失败并触发
+  `failure_backoff`，把操作员想继续跑的 reason 车道一起退避掉），再写一条去重 Hint 说明为什么
+  被拒、下一轮该给什么。这条门禁与 `verification.flag_review` 无关，也和 `/flag` 的展示过滤
+  一样独立于复核开关——判过「假」的值在任何模式下都不该成为结束项目的理由；校验语义
+  （evidence / challenge / oracle）未改动。验证除单元与集成测试外，还在 lab 库的副本上回放
+  了 proj_023 真实保留的 reason 结果：声明确实引用了被判假的那条值（交集 1），过门禁后项目
+  保持 `active`、goal 边 0 条、拒绝 Hint 恰好 1 条、日志给出
+  `completion deferred project=…: cites an operator-rejected flag`，explore 车道继续派发。
 
 golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定时钟、`TZ=UTC`）。
 重新生成方法与约束见 `docs/PORTING.md`。
@@ -1462,6 +1476,7 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M33b ✅ | Bridge 侧策略与硬底线：`scope.ssrf_markers` = `block` / `observe` / `off`（默认 `observe`）；携带目标本身在授权范围内不算候选。`observe` 放行但把每个越界携带目标另写一行 `event: "ssrf_candidate"` 审计（排在它所隶属的决策行之后），`block` 让该 tool_call 直接失败并同样留审计，`off` 完全不检查。`observe` / `block` 共用硬底线：链路本地元数据段 `169.254.0.0/16`（前缀常量 `0xa9fe`）、`metadata.google.internal` / `metadata.goog`、`scope.protected_hosts` 与从 `server` / `audit_stream.url` 派生的控制面主机名（纯 IP 字面量不参与），主机名只在标签边界匹配；载荷文件只读工作区内的文本文件（单文件 64 KiB、合计 256 KiB），越界与二进制跳过而不拒 | `bridge.ssrf.test.ts` 20 例：三种策略的放行/拒绝与审计顺序、硬底线（链路本地、命名元数据、受保护主机、无 scheme 无端口的裸名）、`http` 工具同样生效、范围内的携带目标不自标、载荷四类边界；`bridge.test.ts` 另加 2 例断言 `CAIRN_SCOPE_POLICY.ssrfMarkers` / `protectedHosts` 生效与非法值拒绝。无库迁移：`audit_events.event` 是哈希链里的 JSON 信封，摄入只过滤空行/非对象/超长行，不按 `event` 取值 |
 | M33c ✅ | 配置、传输与开关：dispatch.yaml 新增 `scope` 段（`ssrf_markers` 默认 **observe**、`protected_hosts` 只接受裸主机名且只读）；`EDITABLE_OVERRIDE_KEYS.scope` 只放 `ssrf_markers`，`editable.scope` 出现在 `GET /settings/runtime`；scheduler `startProcess` 用 `CAIRN_SSRF_POLICY` / `CAIRN_SSRF_PROTECTED_HOSTS` 传递，solver 的 `ssrfMarkerFields` 折进 `CAIRN_SCOPE_POLICY`（任务 JSON 契约与 Python golden 不变，未识别的模式原样交给策略解析器，会话拒绝启动）；worker-extension 校验两字段。设置弹窗新增「SSRF 标记」组：`observe`（只记录，默认）/ `block`（拦截并拒绝）/ `off`（忽略）三档下拉，组内 `notes` 逐条解释携带目标定义、三档差别、硬底线以及 `off` 是相对旧行为的放宽；「审计」页签给 `ssrf_candidate` 行加琥珀色「SSRF 标记」徽标，理由按记录（琥珀）与拒绝（玫红）分色 | `api.ui.test.ts` 新增 3 例（开关最小 patch、三种模式说明文案都在 DOM 里、审计行徽标与理由配色）、`api.settings-runtime.test.ts` 1 例（PUT 读写 + `protected_hosts` 400）、`config-overrides.test.ts` 2 例、`config.test.ts` 7 例、`breachweave.test.ts` 3 例；`runtimeGroups()` 的组新增 `notes`，渲染器加一个 `x-show="group.notes"` 列表，`bun run ui:css` 无产物变化（新样式已在既有的预编译产物里） |
 | M33d ✅ | 收尾：调度器→worker 那一跳补集成测试（`scheduler/testdata/ssrf-env-worker.ts` 把收到的 `CAIRN_SSRF_POLICY` / `CAIRN_SSRF_PROTECTED_HOSTS` 写成一行 `ssrf_candidate` 审计，再委托真实 worker，测试从控制面账本里读回该值，钉住环境变量名与 `protectedTargetHosts` 的小写+排序结果）；README 安全模型、`docs/ARCHITECTURE.md`（端点来源与 SSRF 标记、审计、§12 边界）、`docs/CONFIG.md`（`scope` 段、生效时机、只读项、前端行为）、`docs/CONTRACT.md`（§5 示例行与摄入规则）、`docs/OPERATIONS.md`（Host Bridge 子项与「只影响下一个 worker」）同步；版本 `0.55.0-m33` | 931 passed / 85 files（2026-10-31）；`bun run check`（tsc + 全量）通过（本轮唯一新增的 tsc 失败是 `config.test.ts` 里 `"block"\|"observe"\|"off"` 数组需要 `as const`）；浏览器实测临时 DB + 临时 dispatch.yaml 起 `serve --config <临时配置> --port 8036`（工作区也指向临时目录；项目建成无 scope，日志如实 `[scheduler] skip project=proj_001 because it has no authorized scope`，全程不派发任何任务）：「SSRF 标记」组的下拉为 `observe,block,off` 且默认 `observe`，五条说明逐项可见；切到 `block` 后 `runtimePatch()` 只有 `{"scope":{"ssrf_markers":"block"}}`，点「保存并生效」后 `editable.scope.ssrf_markers` 为 `block`、`overrides:["scope.ssrf_markers"]`、「标记模式」出现可见「已覆盖」徽标；改回 `observe` 保存后覆盖清空、徽标消失；PUT 非法模式 400、`scope.protected_hosts` 400 且 detail 为 `overrides.scope has unsupported key: protected_hosts`；写 `block` 后重启服务，覆盖仍重放且 SQLite `runtime_config_overrides.overrides` 为 `{"scope":{"ssrf_markers":"block"}}`；「审计」页签在种入的一行普通决策 + 一行 `observe` 记录 + 一行硬底线拒绝上，渲染 2 枚琥珀「SSRF 标记」徽标，理由分别是 `text-amber-700`（记录）与 `text-rose-600`（拒绝），控制台无消息（应用内浏览器仍为隐藏态，用页面内 DOM 查询与 `.click()` 验证）；未验证的一跳：真实 Solver 进程内的 Bridge 只由 `bridge.test.ts` 的环境驱动用例覆盖，没有跑真实模型 |
+| M34 ✅ | 引用已判假 Flag 的完成声明一律拒绝：`flag_reviews` 是 `UNIQUE(project_id, flag)` + 判定终态，判过的值不再入队，所以 M32b 的「等判定」hold 在判定落地时就消失了；下一轮 reason 把同一个被判假的值写进完成描述，`verification.mode: off` 直接放行，`completeProject` 落图，项目自己 completed 并停止探索。scheduler 在 reason 的 `complete` 分支与 bootstrap 的完成分支各加一道 `citesRejectedFlag`：用共享分类器 `findFlags` 扫声明文本，命中该项目 `status='fake'` 的值即拒绝——`releaseReason` 放租约、按 `success` 记账（`rejected` 会计入慢层失败并触发 `failure_backoff`，把操作员要求继续跑的 reason 车道退避掉）、`recordRejectedCitationHint` 按内容去重写一条控制面 Hint 解释原因并提示下一轮该给什么、日志记 `completion deferred …: cites an operator-rejected flag`；bootstrap 分支保留已产出的 Fact 并保持 active。该门禁不看 `verification.flag_review`，与 `/flag` 的展示过滤同属独立判断；校验语义（evidence / challenge / oracle）与 `flag_reviews` 写入路径都不变 | 934 passed / 85 files（2026-10-31）；`bun run check`（tsc + 全量）通过；`scheduler/flag-review.test.ts` 8/8：原「判定后完成」用例翻转为「判定后仍被拒绝」（断言 active、无 `to=goal` Intent、日志含拒绝行），新增重复拒绝只写一条 Hint、`off` 模式下判定与拒绝仍然生效、`flag-bootstrap-worker.ts` 的 bootstrap 自我声明引用判假值时被拒（夹具改为在 bootstrap 完成描述里带上 flag 值，同时复现未判定即自封与引用判假值两种形状）；lab 库副本上回放 proj_023 真实保留的 reason `result.json`（`from: ["f001"]`，声明文本里恰好 1 处引用被判假的值）：过门禁后 `status=active`、goal 边 0、拒绝 Hint 恰好 1、reason 派发 1 次并留下拒绝日志，explore 车道继续派发；临时脚本与副本库已删除，未改动 lab 的 `runs/demo/cairn.db` |
 
 ## 与 Phase 0 的关系
 

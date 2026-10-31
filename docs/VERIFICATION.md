@@ -74,7 +74,7 @@ flag_count`）同样失败。以下情况一律失败（fail closed）：环境�
 展示证据中的真实 flag，只有证据里只剩 `[REDACTED]` 等占位符时才回退读取 worker 的
 solver-session 日志（只返回 flag 值与路径，不返回日志内容）。
 
-## 3. 人工 Flag 复核（M32 + M32b）
+## 3. 人工 Flag 复核（M32 + M32b + M32f + M34）
 
 M32 把“抓到的 flag 值是否可信”交给操作员，而不是模型自判。开关
 `verification.flag_review`（默认 `manual`，`off` 关闭）只控制是否登记复核，与完成策略
@@ -95,9 +95,9 @@ M32 把“抓到的 flag 值是否可信”交给操作员，而不是模型自�
   `completion deferred … operator flag review pending`。这样未判定的值（可能是假 Flag）
   不会直接结束项目。项目页头的琥珀色「Flag 复核」条提示“项目继续探索，判定前不会结束”，
   列出待判定值与三枚按钮，操作员随时可以作答。
-- **判定后恢复**：`real_more` / `fake` 写 Hint 并驱动下一次 reason，完成声明重新生效；
-  `real_done` 直接结束项目。判定前若项目已自行完成（例如旧复核行），判定只记录结果，
-  不会重复写入完成 Intent。
+- **判定后恢复**：`real_more` / `fake` 写 Hint 并驱动下一次 reason，未再引用被判假值的
+  完成声明重新生效；`real_done` 直接结束项目。判定前若项目已自行完成（例如旧复核行），
+  判定只记录结果，不会重复写入完成 Intent。
 - **三种判定**：
   - `real_more`：值记入 `verified`；项目仍为 active 时写一条去重 Hint（“操作员确认 …
     为真且还有其他 Flag，继续探索。”）。
@@ -106,6 +106,20 @@ M32 把“抓到的 flag 值是否可信”交给操作员，而不是模型自�
     则 409）；项目已经结束时只记录判定，不重复写入完成 Intent。
   - `fake`：值记入 `rejected`；项目仍为 active 时写一条去重 Hint（“操作员判定 … 是假
     Flag …”）。同一值不会再入 `pending`，`/flag`、Writeup 扫描与候选列表都会过滤它。
+- **判假值不能成为结束理由（M34）**：判定是终态且同一值不再入队，所以“等判定”的 hold 在
+  判定落地那一刻就消失了；下一轮 reason 完全可能把同一个被判假的值重新写进完成描述，而
+  `verification.mode: off` 会让它直接通过校验器，项目于是自己 completed 并停止探索。调度器
+  在 reason 的 `complete` 分支与 bootstrap 的完成分支各加一道检查：声明文本里出现该项目
+  任何 `status='fake'` 的值即拒绝这次完成——reason 释放租约继续跑（按 `success` 记账，所以
+  不会累计慢层失败、不会触发 `failure_backoff`），bootstrap 保留已产出的 Fact 并保持 active，
+  两种路径都写一条内容去重的控制面 Hint 说明被拒原因，日志为
+  `completion deferred …: cites an operator-rejected flag` 与
+  `bootstrap completion deferred …: cites an operator-rejected flag`。这道门禁与
+  `verification.flag_review` 无关：`off` 只关掉复核登记，判过「假」的值在任何模式下都不算
+  完成依据。判定是终态，一个值不能从「假」改判成「真」；要让项目真的结束，操作员可以
+  直接 `POST /projects/{id}/complete`（走操作员 Token，这条路径不经过该门禁），或对该项目
+  仍 `pending` 的其它值选「真 · 停止」（`real_done`），或者接受它继续探索、等 reason 给出
+  未出现过的值。项目已经误关时用 `POST /projects/{id}/reopen` 拉回 active。
 
 判定是终态：再次提交同一行返回 409。设置 `CAIRN_OPERATOR_TOKEN` 后判定路由同样要求
 `X-Cairn-Operator-Token`（与 `/complete` 一致）。
@@ -118,7 +132,8 @@ verification:
   # 该值在创建项目时写入 project_verification，之后改配置不会改变已有项目。
   evidence_enforcement: completion
   # manual：登记抓到 flag 形状的值供操作员后台复核（派发不停，完成声明等判定）；
-  # off 关闭复核。
+  # off 关闭复核。M34 的「完成声明不得引用被判假的值」不受这个键影响：off 只是不再
+  # 新登记 pending 行，已有的 rejected 判定照样会拒掉引用它的完成声明。
   flag_review: manual
   challenge:
     base_url_env: TCH_CHALLENGE_API_BASE_URL

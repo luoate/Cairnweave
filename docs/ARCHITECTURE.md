@@ -199,6 +199,16 @@ M32f 收掉一个让已判假值重新出现的漏网：工件里的 HTTP 响应
 变化（缓存指纹失效）后重新挂上绿色横幅。`classifyFlags` 现在只在匹配紧跟反斜杠、被吞的
 首字母属于转义尾（`n r t b f v u x 0`）、且剥掉它之后仍是合法前缀时剥掉这一个字符——
 `\npicoCTF{...}` 保留真前缀，写在别处的 `nflag{...}` 自定义格式保留自己的拼写。
+M34 补上完成门禁剩下的最后一格：`flag_reviews` 一个值只有一行且判定是终态，所以“等判定”的
+hold 在操作员落笔那一刻就消失了，而下一轮 reason 完全可能把同一个已被判假的值重新写进完成描述；
+`verification.mode: off` 会让这个声明直接通过校验器，`completeProject` 于是把项目关掉并停止探索。
+调度器因此在 reason 的 `complete` 分支与 bootstrap 的完成分支前各加一道 `citesRejectedFlag`：
+用同一个 `findFlags` 扫声明文本，命中该项目 `status='fake'` 的值就拒绝这次完成——reason 释放租约
+并按 `success` 记账（记成 `rejected` 会累计慢层失败、触发 `failure_backoff`，把操作员要求继续跑的
+reason 车道一起退避掉），bootstrap 保留已产出的 Fact 并保持 active，两种路径都经
+`recordRejectedCitationHint` 按内容去重写一条控制面 Hint 说明拒绝理由。这道门禁不看
+`verification.flag_review`：和 `/flag` 的展示过滤一样，判过“假”的值在任何模式下都不该成为结束
+项目的理由；校验语义（evidence / challenge / oracle）与 `flag_reviews` 的写入路径都没变。
 M29 收掉两处后端热点，两处都先量后改。其一，`facts` 的主键是 `(id, project_id)`，所以项目列表里
 `(SELECT COUNT(*) FROM facts WHERE project_id = p.id)` 与 `GET /projects/{id}` 的按项目读 Fact
 都用不上主键，只能整表扫描；`packages/graph/src/db.ts` 增加

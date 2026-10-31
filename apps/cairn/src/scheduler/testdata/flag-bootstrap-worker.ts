@@ -1,8 +1,8 @@
 /**
  * Test fixture for the flag-review bootstrap path: the bootstrap task captures a flag and
- * claims the goal in one run, the reason turn completes without repeating the value. That
- * reproduces a project that would close on its own claim before the operator judges the
- * captured flag.
+ * claims the goal in one run, repeating the value in that claim, while the reason turn
+ * completes without naming it. That reproduces both a project closing on its own unjudged
+ * claim and a bootstrap claim that leans on a value the operator already rejected.
  */
 
 import { writeFileSync } from "node:fs";
@@ -35,7 +35,7 @@ if (task.kind === "bootstrap") {
       accepted: true,
       data: {
         fact: { description: `bootstrap target leaked ${FLAG}` },
-        complete: { description: "the bootstrap objective is satisfied" },
+        complete: { description: `the bootstrap objective is satisfied: ${FLAG}` },
       },
     }),
     "utf8",
