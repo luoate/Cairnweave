@@ -492,3 +492,63 @@ describe("GET /projects/{id}/verification", () => {
     expect(response.status).toBe(404);
   });
 });
+
+describe("GET /verification/defaults", () => {
+  function getDefaults(verification?: VerificationService): Promise<Response> {
+    return api(verification).handle(
+      new Request("http://cairn.test/verification/defaults"),
+    );
+  }
+
+  test("shows the evidence fallback and that completion needs a review", async () => {
+    const response = await getDefaults(
+      new VerificationService(db, DEFAULT_VERIFICATION, { env: {} }),
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as Record<string, any>;
+    expect(body.policy).toEqual({ kind: "evidence", challenge_code: null });
+    expect(body.conditions).toEqual([
+      { kind: "evidence", challenge_code: null, min: null },
+    ]);
+    expect(body.objective).toBe(false);
+    expect(body.manual_review).toBe(true);
+    expect(body.warning).toContain("人工复核");
+    expect(body.completion).toEqual({ off: "manual", evidence: "manual" });
+  });
+
+  test("shows an environment-selected challenge policy without a warning", async () => {
+    const response = await getDefaults(
+      new VerificationService(db, DEFAULT_VERIFICATION, {
+        env: {
+          TCH_CHALLENGE_API_BASE_URL: "https://challenge.test",
+          TCH_CHALLENGE_AGENT_TOKEN: "agent-token-value",
+          TCH_CHALLENGE_ID: "web-01",
+        },
+      }),
+    );
+
+    const body = (await response.json()) as Record<string, any>;
+    expect(body.policy).toEqual({ kind: "challenge", challenge_code: "web-01" });
+    expect(body.conditions).toEqual([
+      { kind: "challenge", challenge_code: "web-01", min: null },
+    ]);
+    expect(body.objective).toBe(true);
+    expect(body.manual_review).toBe(false);
+    expect(body.warning).toBeNull();
+  });
+
+  test("reflects an auto-completion override in the warning", async () => {
+    const response = await getDefaults(
+      new VerificationService(
+        db,
+        { ...DEFAULT_VERIFICATION, evidenceCompletion: "auto" },
+        { env: {} },
+      ),
+    );
+
+    const body = (await response.json()) as Record<string, any>;
+    expect(body.manual_review).toBe(false);
+    expect(body.warning).toContain("直接结束项目");
+  });
+});

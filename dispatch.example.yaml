@@ -42,8 +42,11 @@ runtime:
 
 tasks:
   bootstrap:
-    # Initial direct solve attempt.
-    timeout: 300
+    # Initial direct solve attempt. M42 raises the previous 300s example (and the
+    # older 120s demo config): real Web challenges often need more time before the
+    # first useful fact. With worker.soft_deadline_ratio 0.8 this is a 480s soft
+    # deadline.
+    timeout: 600
     # Budget to summarize confirmed findings when the main phase is unusable.
     conclude_timeout: 90
   reason:

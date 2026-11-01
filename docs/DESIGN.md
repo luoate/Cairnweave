@@ -4,7 +4,8 @@
 `refuted` / `done_when` / reopen）；Phase C1 已实现（M38，启动对账）；Phase C2 已实现
 （M39，DB claim）；Phase D 仍为草案，其中完成契约加固的 H1 已实现（M40：bootstrap
 fact-only + `off` 人工确认），H2 已实现（M41：`goal_conditions` + `flag_count`），
-H3 仍为计划，见 §15**。本文只讨论结构与语义，不代表后续阶段已经排期。实现记录见
+H3 已实现（M42：超时、创建页策略预览、校验徽标、评估集），见 §15**。本文只讨论
+结构与语义，不代表后续阶段已经排期。实现记录见
 `docs/MILESTONES.md`。
 兼容性约束：不改变 Cairn 图的形状、YAML 导出、对外 HTTP golden 与 worker 契约中的既有字段。
 
@@ -790,6 +791,9 @@ CREATE TABLE IF NOT EXISTS project_goal_conditions (
   当策略没有客观目标条件时给出警告；项目页增加校验模式徽标。
 - **评估**：按 §8 建立 `tools/eval/` 基线，至少覆盖单 flag、部分 flag、错误完成、预算耗尽、
   证据缺失；H1/H2 落地前后用同一组场景对比完成率、错误完成率、成本、耗时和尝试次数。
+- **`done_when`**：不在本阶段进入提示词。`intent_meta` 还没有该列，提示词与 AgentContext
+  也没有对应字段；M42 只把“是否进入提示词”作为独立实验记录下来，先用同一组场景做 A/B，
+  重点看错误完成率与平均尝试次数，通过后再考虑落列。
 - **回归**：把 proj_030 的 `result.json` 作为固定夹具，覆盖：
   - `off` + 否定 `complete` → pending review，项目 active；
   - fact-only bootstrap → 项目 active 并继续调度；
@@ -819,6 +823,10 @@ CREATE TABLE IF NOT EXISTS project_goal_conditions (
 - AgentContext 输出逐条件进度与最近一次失败理由；reason 能在下一轮看到“还差 flag”。
   （M41 达成：`goal.verification.conditions`。）
 - proj_030 原始结果重放不再关闭项目。
+- 示例 bootstrap 超时提升到 600 秒（软截止 480）；创建页显示实际解析出的策略并在
+  `off` / 仅 `evidence` 时给出人工复核警告；项目页显示校验模式徽标。（M42 达成。）
+- `bun run eval` 用同一组五个场景对比 legacy 与 hardened：hardened 的错误完成率为 0，
+  legacy 为 2/5。（M42 达成，2026-11-01 基线。）
 
 ### 15.9 落地顺序
 
@@ -827,10 +835,10 @@ CREATE TABLE IF NOT EXISTS project_goal_conditions (
 | H1a ✅ | bootstrap fact-only：契约 + 提示词 + scheduler + 回归 | 0.5–1 天 |
 | H1b ✅ | `off` 完成人工确认：表 + 路由 + UI + 配置 | 1–2 天 |
 | H2 ✅ | `goal_conditions` + `flag_count`/`challenge` + 部分完成 | 2–3 天 |
-| H3 | bootstrap 超时、创建页警告、评估集回归 | 0.5–1 天 |
+| H3 ✅ | bootstrap 超时、创建页警告、评估集回归 | 0.5–1 天 |
 
 H1 是安全门，H2 是完成契约的正确形态，H3 是测量与体验收尾。执行模式在落地时编为 M39b，
-因此 H1 作为 M40、H2 作为 M41 实现；H3 仍待排期。
+因此 H1 作为 M40、H2 作为 M41、H3 作为 M42 实现。
 
 ### 15.10 M40 实现记录（H1）
 
@@ -884,6 +892,37 @@ H1 是安全门，H2 是完成契约的正确形态，H3 是测量与体验收�
   flag_count 完成后重试用例、`agent-context.test.ts` 的逐条件进度用例，以及 API 创建与
   详情用例；API golden 与报告字段同步。UI 仅增加只读展示，创建页的客观条件输入与警告留给
   H3。
+
+### 15.12 M42 实现记录（H3）
+
+- **超时**：示例配置 `tasks.bootstrap.timeout` 从 300 提到 600（旧 demo 配置是 120）；
+  `worker.soft_deadline_ratio` 仍为 0.8，因此软截止是 480 秒。控制面没有硬编码默认值，
+  解析器仍要求显式配置，只更新 `dispatch.example.yaml`、`docs/CONFIG.md` 与本地 demo
+  配置。
+- **解析策略预览**：新增只读 `GET /verification/defaults`，返回 `policy`（统一带
+  `challenge_code: null`）、派生 `conditions`、`objective`、`manual_review`、`completion`
+  与 `warning`。创建弹窗在 `verification: auto` 时请求它，显示“实际生效：证据校验 / 关闭
+  校验 / 题目校验（code）”；没有客观条件且会进入人工复核时用琥珀色警告，`*_completion:
+  auto` 时警告“会直接结束项目”。
+- **项目页徽标**：项目详情的 `goal_conditions` 驱动头部徽标：`校验关闭`、单条件名称或
+  `校验 N 项`，颜色区分 rose（关闭）/ emerald（题目）/ sky（flag 数）/ amber（仅证据）。
+  title 列出逐条件详情。旧项目没有条件行时按别名合成，不会缺徽标。
+- **评估集**：`tools/eval/` 用确定性 fake worker（`scenario-worker.ts`）跑五个场景：
+  `single_flag`、`partial_flag`、`wrong_completion`、`budget_exhausted`、
+  `missing_evidence`。每个场景跑两遍：`legacy`（M40/M41 前的自动完成语义）与
+  `hardened`（M41 目标条件 + 人工完成复核）。报告汇总完成率、合法完成率、错误完成率、
+  tokens、成本、`duration_ms`、`wall_ms` 与尝试次数，并写入被 git 忽略的
+  `runs/eval-<date>.json`。
+- **基线（2026-11-01）**：legacy 完成 3/5、错误完成 2/5（`partial_flag` 1/2 与
+  `wrong_completion` 无 flag）；hardened 完成 1/5、错误完成 0，`missing_evidence` 与
+  `budget_exhausted` 都保持 active。同一次运行中 hardened 的 tokens/尝试次数更高，这是
+  拒绝错误完成后继续调度的预期代价。
+- **`done_when`**：结论固定为“本阶段不进入提示词”。`intent_meta` 无该列，prompt 与
+  AgentContext 无字段；报告写入 `done_when: { in_prompt: false, evaluated: false }`，
+  后续应单独落列并做提示词 A/B。详见 `tools/eval/README.md`。
+- **验证**：`bun run check` 通过（1122 tests / 97 files / 4679 expects，2026-11-01）。
+  新增 `tools/eval/run.test.ts` 5 例、`GET /verification/defaults` 3 例、创建页预览与
+  徽标 4 例；`bun run eval` 可重复产出上述基线。
 
 ## 附录 A：当前提示词输入
 

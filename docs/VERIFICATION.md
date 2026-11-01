@@ -1,4 +1,4 @@
-# 完成验证（M14a + M18f + M32 + M32b + M40 + M41）
+# 完成验证（M14a + M18f + M32 + M32b + M40 + M41 + M42）
 
 M14a 把“项目完成”从模型自证改为控制面可验证。worker 返回的 `complete` 只是声明；
 scheduler 在关项目之前运行 oracle，并把每次判定写入旁路表。验证失败不会丢工作：
@@ -258,6 +258,15 @@ oracle 的判定，只决定“判定通过后是否还需要人工批准”。�
 - 新建项目弹窗（M18f）提供“完成校验”选择：`auto`（默认，题目环境优先）、
   `challenge`（需填写题目编号）、`evidence`、`off`。选择只影响创建请求，落库为
   单条件；多条件列表目前通过 API 创建。已有项目的条件固定，需要改条件时应新建项目。
+- `GET /verification/defaults`（M42）：只读，返回省略 `verification` 时实际会落库的
+  `policy`（`{kind, challenge_code}`，没有 code 时为 `null`）、派生 `conditions`、
+  `objective`、`manual_review`、`completion: {off, evidence}` 与 `warning`。创建弹窗在
+  `auto` 时读取它，显示“实际生效：证据校验 / 关闭校验 / 题目校验（code）”；`off` 或仅
+  `evidence` 且会进入人工复核时给出琥珀色警告，`*_completion: auto` 时警告完成声明会
+  直接结束项目。项目头部徽标（M42）由 `GET /projects/{id}` 的 `goal_conditions` 驱动：
+  `校验关闭`、单条件名称或 `校验 N 项`，title 列出逐条件详情。
+- 完成契约的回归评估集在 `tools/eval/`（M42）：`bun run eval` 用同一组五个场景对比
+  legacy 与 hardened，报告写入 `runs/eval-<date>.json`。结论与口径见该目录的 README。
 - `GET /projects/{id}/flag-reviews`（M32）：返回
   `{pending, verified, rejected, counts}`；`pending` 带 `id` / `fact_id` / `run_id` /
   `flag` / `created_at`，`verified` / `rejected` 是值列表，`counts` 覆盖五种状态。

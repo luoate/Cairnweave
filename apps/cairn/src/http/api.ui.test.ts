@@ -3142,3 +3142,84 @@ describe("clone project", () => {
     expect(html).toContain("可继续编辑后创建");
   });
 });
+
+describe("verification policy preview and badge (M42)", () => {
+  test("shows the resolved auto policy and warns when completion needs review", () => {
+    const html = readFileSync(INDEX_PATH, "utf8");
+    expect(html).toContain("data-new-project-verification-preview");
+    expect(html).toContain("data-project-verification");
+    expect(html).toContain("newProjectVerificationWarning()");
+
+    const app = loadState();
+    app.newProject = { ...app.newProject, verificationKind: "auto" };
+    app.verificationDefaults = {
+      loading: false,
+      error: "",
+      policy: { kind: "evidence", challenge_code: null },
+      conditions: [{ kind: "evidence", challenge_code: null, min: null }],
+      objective: false,
+      manual_review: true,
+      warning: "",
+      completion: { off: "manual", evidence: "manual" },
+    };
+    expect(app.newProjectVerificationResolvedLabel()).toBe("证据校验");
+    expect(app.newProjectVerificationWarning()).toContain("人工复核");
+
+    app.verificationDefaults.policy = { kind: "challenge", challenge_code: "web-01" };
+    app.verificationDefaults.completion = { off: "manual", evidence: "manual" };
+    expect(app.newProjectVerificationResolvedLabel()).toBe("题目校验（web-01）");
+    expect(app.newProjectVerificationWarning()).toBe("");
+  });
+
+  test("warns when an explicit off policy will only be reviewed by an operator", () => {
+    const app = loadState();
+    app.newProject = { ...app.newProject, verificationKind: "off" };
+    app.verificationDefaults.completion = { off: "manual", evidence: "manual" };
+    expect(app.newProjectVerificationResolvedLabel()).toBe("关闭校验");
+    expect(app.newProjectVerificationWarning()).toContain("人工复核");
+
+    app.verificationDefaults.completion = { off: "auto", evidence: "manual" };
+    expect(app.newProjectVerificationWarning()).toContain("直接结束项目");
+  });
+
+  test("labels the project badge from the stored goal conditions", () => {
+    const app = loadState();
+    app.project = {
+      goal_conditions: [
+        { kind: "challenge", challenge_code: "web-01" },
+        { kind: "flag_count", min: 2 },
+      ],
+    };
+    expect(app.projectVerificationBadgeLabel()).toBe("校验 2 项");
+    expect(app.projectVerificationBadgeTitle()).toContain("所有条件通过");
+    expect(app.projectVerificationBadgeClass()).toContain("emerald");
+
+    app.project = { goal_conditions: [{ kind: "evidence" }] };
+    expect(app.projectVerificationBadgeLabel()).toBe("证据可追溯");
+    expect(app.projectVerificationBadgeClass()).toContain("amber");
+
+    app.project = { goal_conditions: [] };
+    expect(app.projectVerificationBadgeLabel()).toBe("校验关闭");
+    expect(app.projectVerificationBadgeClass()).toContain("rose");
+  });
+
+  test("loads defaults from the read-only preview route when the dialog opens", async () => {
+    const app = loadState();
+    const calls: Array<{ method: string; path: string }> = [];
+    app.api = async (method: string, path: string) => {
+      calls.push({ method, path });
+      return {
+        policy: { kind: "off", challenge_code: null },
+        conditions: [],
+        objective: false,
+        manual_review: true,
+        warning: "关闭自动校验",
+        completion: { off: "manual", evidence: "manual" },
+      };
+    };
+    await app.loadVerificationDefaults();
+    expect(calls).toEqual([{ method: "GET", path: "/verification/defaults" }]);
+    expect(app.verificationDefaults.policy).toEqual({ kind: "off", challenge_code: null });
+    expect(app.verificationDefaults.warning).toContain("关闭自动校验");
+  });
+});

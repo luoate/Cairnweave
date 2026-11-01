@@ -468,6 +468,10 @@
         class="px-2 py-0.5 rounded-full border text-2xs font-medium whitespace-nowrap"
         :class="projectExecutionBadgeClass()" :title="projectExecutionHint()"
         x-text="projectExecutionLabel()"></span>
+      <span x-show="projectVerificationBadgeLabel()" data-project-verification
+        class="px-2 py-0.5 rounded-full border text-2xs font-medium whitespace-nowrap"
+        :class="projectVerificationBadgeClass()" :title="projectVerificationBadgeTitle()"
+        x-text="projectVerificationBadgeLabel()"></span>
     </div>
     <div class="flex items-center gap-1.5">
       <template x-if="!replay.active">
@@ -2592,7 +2596,18 @@
             <p class="text-2xs text-slate-400 mt-1">需要服务端设置 TCH_CHALLENGE_API_BASE_URL 与 TCH_CHALLENGE_AGENT_TOKEN；完成时按平台 flag 计数自动判定。</p>
           </div>
         </template>
-        <p x-show="newProject.verificationKind === 'auto'" class="text-2xs text-slate-400 mt-1">服务端存在 TCH_CHALLENGE_ID 时自动启用题目校验，否则默认按证据校验。</p>
+        <div data-new-project-verification-preview
+          class="mt-2 rounded-lg border px-2.5 py-2 text-2xs"
+          :class="newProjectVerificationWarning() ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-slate-200 bg-slate-50 text-slate-500'">
+          <div class="flex flex-wrap items-center gap-1">
+            <span>实际生效：</span>
+            <span class="font-medium" x-text="newProjectVerificationResolvedLabel()"></span>
+            <span x-show="newProject.verificationKind === 'auto' && verificationDefaults.loading" class="text-slate-400">解析中…</span>
+          </div>
+          <div x-show="newProjectVerificationWarning()" class="mt-1 break-words" x-text="newProjectVerificationWarning()"></div>
+          <div x-show="verificationDefaults.error && newProject.verificationKind === 'auto'" class="mt-1 break-words text-slate-500"
+            x-text="`无法获取服务端默认策略：${verificationDefaults.error}`"></div>
+        </div>
       </div>
       <div>
         <div class="flex items-center justify-between mb-1">
@@ -3543,6 +3558,7 @@ function cairnApp() {
     showSkillDetail: false,
 
     newProject: { title: '', origin: '', goal: '', bootstrap: true, targetsText: '', scopeNotes: '', hints: [{ content: '' }], verificationKind: 'auto', challengeCode: '', execution: '', files: [], clonedFrom: '' },
+    verificationDefaults: { loading: false, error: '', policy: null, conditions: [], objective: false, manual_review: false, warning: '', completion: null },
     isCreatingProject: false,
     isCloningProject: false,
     scopeForm: { projectId: '', projectTitle: '', targetsText: '', notes: '' },
@@ -5414,6 +5430,83 @@ function cairnApp() {
         return `${state} · ${found}/${total}`;
       }
       return result.detail ? `${state} · ${result.detail}` : state;
+    },
+
+    projectVerificationConditions() {
+      const conditions = this.project && Array.isArray(this.project.goal_conditions)
+        ? this.project.goal_conditions
+        : [];
+      return conditions;
+    },
+
+    projectVerificationBadgeLabel() {
+      const conditions = this.projectVerificationConditions();
+      if (conditions.length === 0) return '校验关闭';
+      if (conditions.length === 1) return this.goalConditionLabel(conditions[0]);
+      return `校验 ${conditions.length} 项`;
+    },
+
+    projectVerificationBadgeTitle() {
+      const conditions = this.projectVerificationConditions();
+      if (conditions.length === 0) {
+        return '没有目标条件：完成声明需要人工复核';
+      }
+      const labels = conditions.map((condition) => this.goalConditionLabel(condition));
+      return `${labels.join('；')}。所有条件通过才允许自动完成。`;
+    },
+
+    projectVerificationBadgeClass() {
+      const conditions = this.projectVerificationConditions();
+      if (conditions.length === 0) return 'border-rose-200 bg-rose-50 text-rose-600';
+      const kinds = new Set(conditions.map((condition) => condition.kind));
+      if (kinds.has('challenge')) return 'border-emerald-200 bg-emerald-50 text-emerald-700';
+      if (kinds.has('flag_count')) return 'border-sky-200 bg-sky-50 text-sky-700';
+      return 'border-amber-200 bg-amber-50 text-amber-700';
+    },
+
+    newProjectVerificationResolvedKind() {
+      if (this.newProject.verificationKind === 'auto') {
+        return this.verificationDefaults.policy ? this.verificationDefaults.policy.kind : null;
+      }
+      return this.newProject.verificationKind;
+    },
+
+    newProjectVerificationResolvedLabel() {
+      const kind = this.newProjectVerificationResolvedKind();
+      if (this.newProject.verificationKind === 'auto' && !kind) {
+        return this.verificationDefaults.loading ? '正在解析…' : '暂无法解析';
+      }
+      if (kind === 'challenge') {
+        const code = this.newProject.verificationKind === 'challenge'
+          ? this.newProject.challengeCode.trim()
+          : (this.verificationDefaults.policy && this.verificationDefaults.policy.challenge_code) || '';
+        return `题目校验${code ? `（${code}）` : ''}`;
+      }
+      if (kind === 'off') return '关闭校验';
+      if (kind === 'evidence') return '证据校验';
+      return '—';
+    },
+
+    newProjectVerificationCompletionMode(kind) {
+      const completion = this.verificationDefaults.completion;
+      if (!completion) return 'manual';
+      return completion[kind] || 'manual';
+    },
+
+    // Shown under the create dialog's policy select. A missing objective condition means
+    // the completion claim cannot close the project on its own after M40/M41.
+    newProjectVerificationWarning() {
+      const kind = this.newProjectVerificationResolvedKind();
+      if (!kind || kind === 'challenge') return '';
+      const manual = this.newProjectVerificationCompletionMode(kind) === 'manual';
+      if (kind === 'off') {
+        return manual
+          ? '关闭自动校验：完成声明会进入人工复核，不会自动结束项目。'
+          : '关闭自动校验：当前 off_completion 为 auto，完成声明会直接结束项目。';
+      }
+      return manual
+        ? '证据校验只证明 Fact 可追溯，不能证明已拿到 Flag；完成声明会进入人工复核。'
+        : '证据校验只证明 Fact 可追溯；当前 evidence_completion 为 auto，完成声明会直接结束项目。';
     },
 
     costFactRows() {
@@ -7856,6 +7949,27 @@ function cairnApp() {
       if (this.newProject.clonedFrom) this.resetNewProjectForm();
       this.newProjectShowErrors = false;
       this.showNewProject = true;
+      void this.loadVerificationDefaults();
+    },
+
+    async loadVerificationDefaults() {
+      if (this.verificationDefaults.loading) return;
+      this.verificationDefaults = { ...this.verificationDefaults, loading: true, error: '' };
+      try {
+        const data = await this.api('GET', '/verification/defaults');
+        this.verificationDefaults = {
+          loading: false,
+          error: '',
+          policy: data && data.policy ? data.policy : null,
+          conditions: data && Array.isArray(data.conditions) ? data.conditions : [],
+          objective: Boolean(data && data.objective),
+          manual_review: Boolean(data && data.manual_review),
+          warning: (data && data.warning) || '',
+          completion: data && data.completion ? data.completion : null,
+        };
+      } catch (e) {
+        this.verificationDefaults = { ...this.verificationDefaults, loading: false, error: this.errorText(e) };
+      }
     },
 
     resetNewProjectForm() {
@@ -7922,6 +8036,7 @@ function cairnApp() {
       this.newProject = form;
       this.newProjectShowErrors = false;
       this.showNewProject = true;
+      void this.loadVerificationDefaults();
       this.isCloningProject = false;
       const staged = form.files.length;
       if (problems.length > 0) {

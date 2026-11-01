@@ -35,6 +35,28 @@ import {
   type VerificationConfig,
 } from "../config";
 
+/**
+ * What an unset `verification` field resolves to right now. The create dialog shows this
+ * so "auto" is never a mystery: before M42 the operator had to infer it from the server
+ * environment (and could silently create an `off` project).
+ */
+export interface DefaultPolicyPreview {
+  /** Normalized to always carry `challenge_code`, so the UI can render it verbatim. */
+  policy: {
+    kind: DefaultVerificationPolicy["kind"];
+    challenge_code: string | null;
+  };
+  conditions: Array<{
+    kind: "challenge" | "evidence";
+    challenge_code: string | null;
+    min: null;
+  }>;
+  objective: boolean;
+  manual_review: boolean;
+  warning: string | null;
+  completion: { off: "manual" | "auto"; evidence: "manual" | "auto" };
+}
+
 export interface VerificationOptions {
   /** Fact ids that justify completion. Defaults to every non-seed fact. */
   facts?: readonly string[];
@@ -126,6 +148,59 @@ export class VerificationService {
    */
   defaultPolicy(): DefaultVerificationPolicy {
     return defaultVerificationPolicy(this.config, this.env);
+  }
+
+  /** M42: the resolved default policy plus what completion will do with it. */
+  defaultPolicyPreview(): DefaultPolicyPreview {
+    const resolved = this.defaultPolicy();
+    const policy = {
+      kind: resolved.kind,
+      challenge_code: resolved.challenge_code ?? null,
+    };
+    const completion = {
+      off: this.config.offCompletion,
+      evidence: this.config.evidenceCompletion,
+    } as const;
+    if (policy.kind === "challenge") {
+      return {
+        policy,
+        conditions: [
+          {
+            kind: "challenge",
+            challenge_code: policy.challenge_code ?? null,
+            min: null,
+          },
+        ],
+        objective: true,
+        manual_review: false,
+        warning: null,
+        completion,
+      };
+    }
+    if (policy.kind === "off") {
+      const manual = completion.off === "manual";
+      return {
+        policy,
+        conditions: [],
+        objective: false,
+        manual_review: manual,
+        warning: manual
+          ? "关闭自动校验：完成声明会进入人工复核，不会自动结束项目。"
+          : "关闭自动校验：当前 off_completion: auto 会让完成声明直接结束项目。",
+        completion,
+      };
+    }
+    const manual = completion.evidence === "manual";
+    return {
+      policy,
+      conditions: [{ kind: "evidence", challenge_code: null, min: null }],
+      objective: false,
+      manual_review: manual,
+      warning: manual
+        ? "证据校验只证明 Fact 可追溯，不能证明已拿到 Flag；完成声明会进入人工复核。"
+        : "证据校验只证明 Fact 可追溯；当前 evidence_completion: auto 会直接结束项目。",
+      completion,
+    };
   }
 
   async verify(

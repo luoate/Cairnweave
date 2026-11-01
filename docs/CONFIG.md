@@ -144,7 +144,7 @@ Docker 模式需要本机 Docker 和镜像；创建时不启动容器，派发�
 
 | 键 | 默认 | 说明 |
 | --- | --- | --- |
-| `bootstrap.timeout` / `bootstrap.conclude_timeout` | 300 / 90 | 秒 |
+| `bootstrap.timeout` / `bootstrap.conclude_timeout` | 600 / 90 | 秒；M42 把示例从 300 提到 600（旧 demo 为 120），软截止按 0.8 为 480 |
 | `reason.timeout` / `reason.max_intents` | 300 / 2 | 秒；单次 reason 新增意图上限 |
 | `explore.timeout` / `explore.conclude_timeout` | 600 / 120 | 秒 |
 | `graph_slice.enabled` | false | explore 及其 conclude 是否拿切片 |

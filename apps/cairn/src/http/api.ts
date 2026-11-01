@@ -641,6 +641,10 @@ function buildRoutes(
     return json(settings);
   });
 
+  // M42: what an omitted `verification` resolves to. Read-only; the create dialog uses it
+  // to show the actual policy and warn when completion will need an operator.
+  route("GET", "/verification/defaults", () => json(oracle.defaultPolicyPreview()));
+
   route("GET", "/projects", () =>
     db.withConn((conn) => json(listProjects(conn))),
   );

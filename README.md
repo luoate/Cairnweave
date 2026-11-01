@@ -43,7 +43,7 @@ worker 在项目沙箱里跑真实模型，每个任务启动一次进程，只�
 | 意图生命周期 | 操作员（或开启 `strategist.reason_abandon` 后的 reason）可放弃已经尝试且从未成功的 open 意图；状态存 `intent_meta` 旁路，派发、提示、水位与报告都排除它，UI 提供原因输入与二次确认 |
 | Scope 硬校验 | `Host Bridge` 在每次模型工具调用前检查网络端点与文件路径，越界即拒绝，allow/block 全量写 `audit.jsonl`；无 `scope` 的项目不派发 |
 | 证据门控 | worker 声明的 `evidence_refs` 在写图前逐条校验（存在、非目录、非符号链接、不越界、最小字节），并固化 SHA-256 以便事后比对 |
-| 可验证完成 | 项目级目标条件列表（`challenge` / `flag_count` / `evidence`，有序 AND）与兼容别名 `evidence` / `challenge` / `off`；worker 的 “complete” 只是声明，oracle 不通过就不关项目；`flag_count` 只统计操作员已确认与挑战服务已确认的 flag，支持手动 `/verify`。自动完成至少需要一个客观条件：仅有 `evidence` 或 `off` 的完成声明默认进入人工确认（`completion_reviews`），`verification.evidence_completion: auto` 可保留旧的自动路径 |
+| 可验证完成 | 项目级目标条件列表（`challenge` / `flag_count` / `evidence`，有序 AND）与兼容别名 `evidence` / `challenge` / `off`；worker 的 “complete” 只是声明，oracle 不通过就不关项目；`flag_count` 只统计操作员已确认与挑战服务已确认的 flag，支持手动 `/verify`。自动完成至少需要一个客观条件：仅有 `evidence` 或 `off` 的完成声明默认进入人工确认（`completion_reviews`），`verification.evidence_completion: auto` 可保留旧的自动路径；创建弹窗显示 `auto` 实际解析出的策略并在需要人工复核时警告，项目页显示校验徽标；`bun run eval` 用同一组场景对比加固前后的完成率与错误完成率 |
 | Observer sidecar | 真实 Solver 旁的独立复盘会话，只维护项目级看板（ideas / memory），主 Solver 仅拿到只读工具；失败、超时都不影响任务结果 |
 | 图提案 | Observer 只能写候选文件，控制面是唯一审核者与写图者；默认 `dry_run`（完整校验、记录结果、不写图），改 `apply` 才落图 |
 | 中文 Writeup | 从图中数据确定性渲染中文 Markdown 草稿，可由模型重写；附带载荷（payload）章节、附件 zip 打包与「AI 撰写 / 恢复草稿」 |
@@ -173,6 +173,7 @@ proposals:                    # 默认开启，但只演练
 | GET | `/projects/{id}/facts/{fact_id}/evidence` | 证据实时校验（`ok` / `modified` / `missing` …） |
 | GET | `/projects/{id}/artifacts` | 工件索引（路径、大小、SHA-256、来源任务） |
 | GET | `/projects/{id}/audit[/{task_id}]` | 审计任务汇总与逐任务哈希链 |
+| GET | `/verification/defaults` | `auto` 实际解析出的校验策略、目标条件、完成模式与人工复核警告 |
 | GET | `/projects/{id}/verification` | 完成别名、目标条件列表与最近一次逐条件检查 |
 | POST | `/projects/{id}/verify` | 手动重跑完成 oracle（可限定 Fact 子集） |
 | GET | `/projects/{id}/flag` | 命中的 flag、候选与校验状态（按工作区缓存 10 s，结果带 `truncated`；排除已判假的 Flag，优先展示已确认值） |
@@ -259,8 +260,9 @@ API key 只写不读（响应只回掩码），写入 `auth.json` 并按上游 S
 ## 测试与 CI
 
 ```bash
-bun test             # 827 passed / 80 files（fake solver，不需凭据）
+bun test             # 1122 passed / 97 files（fake solver，不需凭据）
 bun run typecheck    # tsc --noEmit
+bun run eval         # 五个完成场景的 legacy / hardened 对照，写 runs/eval-<date>.json
 bun run ui:css       # 改了 index.html 的 class 后重新生成 static/app.css
 bun run check        # typecheck + test；CI 还会校验 app.css 与 index.html 不漂移
 ```
