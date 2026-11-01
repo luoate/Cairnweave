@@ -42,6 +42,7 @@ import {
   getIntentTimeout,
   getPendingConclude,
   getProjectDetail,
+  getProjectExecution,
   getProjectScope,
   getProjectUsage,
   getReasonTimeout,
@@ -67,6 +68,7 @@ import {
   nextRunId,
   ORPHAN_RUN_DETAIL,
   reapTaskClaims,
+  recordCompletionReview,
   recordFlagReview,
   recordIntentMeta,
   recordPendingConclude,
@@ -158,6 +160,8 @@ export interface SchedulerOptions {
   workerArgv?: (taskPath: string) => string[];
   /** Test hook: replace the local/container backend entirely. */
   runtime?: RuntimeBackend;
+  runtimes?: Partial<Record<ExecutionMode, RuntimeBackend>>;
+  containerReady?: () => boolean;
   log?: (message: string) => void;
   /** Override the lease renewal cadence; defaults to runtime.interval seconds. */
   leaseIntervalMs?: number;
@@ -287,8 +291,9 @@ export class Scheduler {
   private readonly workspaceRootOverride: string | undefined;
   private workspaceRoot: string;
   private runtime: RuntimeBackend;
-  /** Rebuilds the backend for a mode switch; null when a test injected one. */
-  private readonly runtimeFactory: (() => RuntimeBackend) | null;
+  private readonly runtimeFactory: ((mode: ExecutionMode) => RuntimeBackend) | null;
+  private readonly runtimes = new Map<ExecutionMode, RuntimeBackend>();
+  private readonly containerReady: () => boolean;
   private runtimeMode: ExecutionMode;
   private readonly log: (message: string) => void;
   /** Test override; otherwise the lease cadence follows runtime.interval. */
@@ -321,19 +326,27 @@ export class Scheduler {
     this.log = options.log ?? ((message) => console.error(`[scheduler] ${message}`));
     this.now = options.now ?? (() => new Date());
     this.runtimeMode = options.config.runtime.execution;
-    if (options.runtime !== undefined) {
-      this.runtime = options.runtime;
+    this.containerReady = options.containerReady ?? (() => true);
+    for (const backend of Object.values(options.runtimes ?? {})) {
+      if (backend !== undefined) this.runtimes.set(backend.execution, backend);
+    }
+    if (options.runtime !== undefined || options.runtimes !== undefined) {
+      const backend = options.runtime ?? this.runtimes.get(this.runtimeMode);
+      if (backend === undefined) throw new Error(`no runtime provided for ${this.runtimeMode}`);
+      this.runtime = backend;
       this.runtimeFactory = null;
     } else {
       const workerArgv = options.workerArgv;
-      this.runtimeFactory = () =>
+      this.runtimeFactory = (execution) =>
         createRuntime({
           config: this.config,
+          execution,
           log: this.log,
           ...(workerArgv === undefined ? {} : { workerArgv }),
         });
-      this.runtime = this.runtimeFactory();
+      this.runtime = this.runtimeFactory(this.runtimeMode);
     }
+    this.runtimes.set(this.runtime.execution, this.runtime);
     this.leaseIntervalOverrideMs = options.leaseIntervalMs ?? null;
     this.leaseIntervalMs =
       this.leaseIntervalOverrideMs ?? this.config.runtime.interval * 1000;
@@ -421,10 +434,9 @@ export class Scheduler {
       );
       return;
     }
-    const previous = this.runtime;
     let next: RuntimeBackend;
     try {
-      next = this.runtimeFactory();
+      next = this.runtimeFor(mode);
     } catch (error) {
       this.log(`cannot switch runtime to ${mode}: ${describe(error)}`);
       return;
@@ -432,12 +444,17 @@ export class Scheduler {
     this.runtime = next;
     this.runtimeMode = mode;
     this.workspaceRoot = resolveWorkspaceRoot(this.config, this.workspaceRootOverride);
-    try {
-      previous.close();
-    } catch (error) {
-      this.log(`runtime shutdown failed during mode switch: ${describe(error)}`);
-    }
     this.log(`runtime switched to ${mode}`);
+  }
+
+  private runtimeFor(mode: ExecutionMode): RuntimeBackend {
+    const existing = this.runtimes.get(mode);
+    if (existing !== undefined) return existing;
+    if (this.runtimeFactory === null) throw new Error(`no runtime provided for ${mode}`);
+    const backend = this.runtimeFactory(mode);
+    if (backend.execution !== mode) throw new Error(`runtime does not support ${mode}`);
+    this.runtimes.set(mode, backend);
+    return backend;
   }
 
   private armTimers(): void {
@@ -489,10 +506,12 @@ export class Scheduler {
     // holding a live claim.
     this.releaseInstanceClaims();
     this.markInstanceStopped();
-    try {
-      this.runtime.close();
-    } catch (error) {
-      this.log(`runtime shutdown failed: ${describe(error)}`);
+    for (const runtime of this.runtimes.values()) {
+      try {
+        runtime.close();
+      } catch (error) {
+        this.log(`runtime shutdown failed: ${describe(error)}`);
+      }
     }
   }
 
@@ -876,10 +895,12 @@ export class Scheduler {
     }
 
     // Completed, stopped and deleted projects release their containers/workspaces here.
-    try {
-      this.runtime.cleanupInactive(activeIds);
-    } catch (error) {
-      this.log(`runtime cleanup failed: ${describe(error)}`);
+    for (const runtime of this.runtimes.values()) {
+      try {
+        runtime.cleanupInactive(activeIds);
+      } catch (error) {
+        this.log(`runtime cleanup failed: ${describe(error)}`);
+      }
     }
 
     if (active.length === 0) return false;
@@ -1104,8 +1125,16 @@ export class Scheduler {
   ): boolean {
     const projectId = project.project.id;
     const hostWorkspace = projectWorkspace(this.workspaceRoot, projectId);
+    let runtime: RuntimeBackend;
     try {
-      if (!this.runtime.ensureProject(projectId, hostWorkspace)) {
+      const selectedMode = this.db.withConn((conn) => getProjectExecution(conn, projectId));
+      runtime = selectedMode === null ? this.runtime : this.runtimeFor(selectedMode);
+      if (runtime.execution === "container" && !this.containerReady()) {
+        this.logOnce(`container-ready:${projectId}`, `skip project=${projectId}: container agent configuration is not ready`);
+        return false;
+      }
+      this.loggedSkips.delete(`container-ready:${projectId}`);
+      if (!runtime.ensureProject(projectId, hostWorkspace)) {
         this.logOnce(
           `sandbox:${projectId}`,
           `skip project=${projectId} because its sandbox is not available`,
@@ -1193,7 +1222,7 @@ export class Scheduler {
               )
             : undefined;
         const prepared = prepareTask({
-          config: this.config,
+          config: { ...this.config, runtime: { ...this.config.runtime, execution: runtime.execution } },
           project,
           exportYaml,
           kind,
@@ -1211,7 +1240,7 @@ export class Scheduler {
           ...(agentContextYaml === undefined ? {} : { agentContextYaml }),
           scope,
           workspaceRoot: this.workspaceRoot,
-          pathMapper: (hostPath) => this.runtime.mapPath(hostPath),
+          pathMapper: (hostPath) => runtime.mapPath(hostPath),
         });
         // The run row exists before applyResult can attach fact metadata to it, and its
         // id is never supplied by the worker.
@@ -1243,6 +1272,7 @@ export class Scheduler {
           workerProfile: profile?.id ?? null,
           trigger: trigger ?? null,
           instanceId: this.instanceId,
+          execution: runtime.execution,
           startedAt: utcnow(),
           session: workspaceReference(prepared.hostWorkspace, prepared.hostSessionDir),
         });
@@ -1267,6 +1297,7 @@ export class Scheduler {
       !this.startProcess(
         started.prepared,
         started.runId,
+        runtime,
         kind,
         intent?.id,
         trigger,
@@ -1292,6 +1323,7 @@ export class Scheduler {
   private startProcess(
     prepared: PreparedTask,
     runId: string,
+    runtime: RuntimeBackend,
     kind: RunnableTaskKind,
     intentId: string | undefined,
     trigger: string | undefined,
@@ -1310,7 +1342,7 @@ export class Scheduler {
     if (protectedHosts.length > 0) {
       extraEnv["CAIRN_SSRF_PROTECTED_HOSTS"] = protectedHosts.join(",");
     }
-    if (this.auditStream !== null) {
+    if (this.auditStream !== null && (runtime.execution === "local" || this.config.auditStream.url !== null)) {
       extraEnv["CAIRN_AUDIT_STREAM_URL"] = this.auditStream.url;
       extraEnv["CAIRN_AUDIT_STREAM_TOKEN"] = this.auditStream.tokens.register(
         task.projectId,
@@ -1320,7 +1352,7 @@ export class Scheduler {
 
     let processHandle: WorkerProcess;
     try {
-      processHandle = this.runtime.spawnWorker({
+      processHandle = runtime.spawnWorker({
         taskId: task.taskId,
         projectId: task.projectId,
         // The controller created the task at the host path; the worker reads it through
@@ -1681,6 +1713,21 @@ export class Scheduler {
           );
           return "rejected";
         }
+        if (this.defersManualCompletion(verification)) {
+          recordCompletionReview(conn, running.projectId, {
+            runId: running.runId,
+            taskId: running.taskId,
+            kind: running.kind,
+            description,
+            fromFacts: from,
+          });
+          releaseReason(conn, running.projectId, WORKER_NAME);
+          this.log(
+            `completion deferred project=${running.projectId}: ` +
+              `${manualCompletionReason(verification)}; operator review pending`,
+          );
+          return "success";
+        }
         completeProject(conn, running.projectId, {
           from,
           description,
@@ -1930,12 +1977,15 @@ export class Scheduler {
       return "rejected";
     }
 
+    const factDescription = validated.data.factDescription;
+    const completeDescription =
+      validated.kind === "complete" ? validated.data.completeDescription : null;
     const conclude = concludeIntent(
       conn,
       running.projectId,
       running.intentId,
       WORKER_NAME,
-      validated.data.factDescription,
+      factDescription,
       {
         runId: running.runId,
         evidenceRefs: evidence.refs,
@@ -1951,15 +2001,23 @@ export class Scheduler {
       this.reviewCapturedFlags(
         conn,
         running,
-        [validated.data.factDescription, validated.data.completeDescription],
+        completeDescription === null
+          ? [factDescription]
+          : [factDescription, completeDescription],
         conclude.fact.id,
       )
     ) {
       this.log(`bootstrap completion deferred project=${running.projectId}: flag review pending`);
       return "success";
     }
+    // Fact-only is the honest "made progress, goal not reached" outcome: the bootstrap
+    // intent is concluded, but the project remains active for the next reason turn.
+    if (completeDescription === null) {
+      this.log(`bootstrap completed without a goal claim project=${running.projectId}`);
+      return "success";
+    }
     const rejectedCited = this.citesRejectedFlag(conn, running.projectId, [
-      validated.data.completeDescription,
+      completeDescription,
     ]);
     if (rejectedCited !== null) {
       this.recordRejectedCitationHint(conn, running.projectId, rejectedCited);
@@ -1974,10 +2032,24 @@ export class Scheduler {
       );
       return "success";
     }
+    if (this.defersManualCompletion(verification)) {
+      recordCompletionReview(conn, running.projectId, {
+        runId: running.runId,
+        taskId: running.taskId,
+        kind: running.kind,
+        description: completeDescription,
+        fromFacts: [conclude.fact.id],
+      });
+      this.log(
+        `bootstrap completion deferred project=${running.projectId}: ` +
+          `${manualCompletionReason(verification)}; operator review pending`,
+      );
+      return "success";
+    }
     try {
       completeProject(conn, running.projectId, {
         from: [conclude.fact.id],
-        description: validated.data.completeDescription,
+        description: completeDescription,
         worker: WORKER_NAME,
       });
     } catch (error) {
@@ -2738,6 +2810,25 @@ export class Scheduler {
    * project on a value the operator has not judged yet. A review we failed to record is
    * reported as pending (fail closed) so an unrecorded claim cannot end the project either.
    */
+  /**
+   * Completion needs an objective condition (challenge or flag_count) to close without a
+   * human. `off` has no oracle at all; evidence alone only proves traceability. Both cases
+   * fall back to the operator review unless the deployment explicitly opts into auto.
+   */
+  private defersManualCompletion(verification: VerificationOutcome | null): boolean {
+    if (verification === null || !verification.ok) return false;
+    if (verification.kind === "off" || verification.conditions.length === 0) {
+      return this.config.verification.offCompletion === "manual";
+    }
+    const objective = verification.conditions.some(
+      (condition) =>
+        condition.kind === "challenge" || condition.kind === "flag_count",
+    );
+    return (
+      !objective && this.config.verification.evidenceCompletion === "manual"
+    );
+  }
+
   private reviewCapturedFlags(
     conn: Database,
     running: RunningTask,
@@ -2878,6 +2969,12 @@ function intentBudgetOf(value: unknown): ReasonIntentBudget | null {
   return Object.keys(budget).length === 0 ? null : budget;
 }
 
+function manualCompletionReason(verification: VerificationOutcome | null): string {
+  return verification?.kind === "off" || verification?.conditions.length === 0
+    ? "verification is off"
+    : "no objective goal condition";
+}
+
 /**
  * Recognizes the two task kinds that can close a project and describes what the oracle
  * must verify. Malformed claims return null here; the normal payload validation in the
@@ -2890,6 +2987,9 @@ function completionClaim(
 ): VerificationOptions | null {
   if (!result.accepted) return null;
   if (running.kind === "bootstrap") {
+    // Fact-only bootstrap reports progress, not completion; there is nothing for the
+    // oracle to verify and the project must stay active.
+    if (asRecord(result.data["complete"]) === null) return null;
     return {
       taskEvidence: { status: evidence.status, refs: evidence.refs },
     };

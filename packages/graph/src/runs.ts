@@ -6,7 +6,7 @@
 import type { Database } from "bun:sqlite";
 
 import { all, get, run as runSql } from "./db";
-import type { EvidenceStatus, FactMeta, Run, RunOutcome } from "./models";
+import type { EvidenceStatus, FactMeta, Run, RunExecution, RunOutcome } from "./models";
 import { getProjectOr404, utcnow } from "./services";
 import { findSupersedingFact, parseSupersededIds } from "./supersedes";
 
@@ -23,6 +23,8 @@ export interface StartRunInput {
   session?: string | null;
   /** Scheduler boot that owns the task (M39); paired with its `task_claims` row. */
   instanceId?: string | null;
+  /** Backend the task is dispatched to (M39b); recorded so a later mode switch stays auditable. */
+  execution?: RunExecution | null;
 }
 
 export function startRun(conn: Database, input: StartRunInput): void {
@@ -31,8 +33,8 @@ export function startRun(conn: Database, input: StartRunInput): void {
     `
     INSERT INTO runs
         (id, project_id, task_id, kind, intent_id, worker, worker_profile, trigger,
-         started_at, session, instance_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         started_at, session, instance_id, execution)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     input.id,
     input.projectId,
@@ -45,6 +47,7 @@ export function startRun(conn: Database, input: StartRunInput): void {
     input.startedAt,
     input.session ?? null,
     input.instanceId ?? null,
+    input.execution ?? null,
   );
 }
 
@@ -261,6 +264,7 @@ interface RunRow {
   evidence_count: number;
   detail: string | null;
   instance_id: string | null;
+  execution: RunExecution | null;
   input_tokens: number;
   output_tokens: number;
   cache_read_tokens: number;
@@ -299,6 +303,7 @@ function runFromRow(row: RunRow): Run {
     evidence_count: row.evidence_count,
     detail: row.detail,
     instance_id: row.instance_id,
+    execution: row.execution,
     input_tokens: row.input_tokens,
     output_tokens: row.output_tokens,
     cache_read_tokens: row.cache_read_tokens,

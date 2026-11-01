@@ -60,6 +60,7 @@ describe("GET /projects/{id}/runs", () => {
         intentId: "i001",
         worker: "cairn-worker",
         instanceId: "boot-a1b2c3d4e5f6",
+        execution: "container",
         startedAt: "2026-01-02T03:00:00Z",
         session: ".cairn/sessions/explore-1",
       });
@@ -94,6 +95,8 @@ describe("GET /projects/{id}/runs", () => {
         // The boot that dispatched the task, so the run list can be read against the claim
         // ledger and the scheduler instance table.
         instance_id: "boot-a1b2c3d4e5f6",
+        // Which backend actually ran the attempt; a later mode switch does not rewrite it.
+        execution: "container",
         worker_profile: null,
         model: "gateway/deepseek-flash",
         trigger: null,
@@ -113,6 +116,27 @@ describe("GET /projects/{id}/runs", () => {
         cost_usd: 0.0042,
       },
     ]);
+  });
+
+  test("reports an unrecorded backend as null for a legacy run", async () => {
+    db.withConn((conn) =>
+      startRun(conn, {
+        id: "run_001",
+        projectId,
+        taskId: "explore-1",
+        kind: "explore",
+        worker: "cairn-worker",
+        startedAt: "2026-01-02T03:00:00Z",
+      }),
+    );
+
+    const response = await get(`/projects/${projectId}/runs`);
+    expect(response.status).toBe(200);
+    const runs = (await response.json()) as { execution: string | null }[];
+    expect(runs).toHaveLength(1);
+    // Guessing "local" here would misattribute an attempt nobody logged, and the UI reads
+    // this null as 未记录.
+    expect(runs[0]!.execution).toBeNull();
   });
 
   test("404s for an unknown project", async () => {

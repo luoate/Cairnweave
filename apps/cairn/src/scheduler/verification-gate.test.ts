@@ -4,12 +4,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  completeProject,
   configureDatabase,
+  createHint,
   createProject,
+  decideCompletionReview,
+  decideFlagReview,
   getLatestVerificationCheck,
+  getPendingCompletionReview,
   getProjectDetail,
+  listProjectRuns,
+  recordFlagReview,
   type CairnDatabase,
   type ProjectDetail,
+  type ProjectGoalConditionInput,
 } from "@cairn/graph";
 
 import { DEFAULT_VERIFICATION, parseDispatchConfig } from "../config";
@@ -77,14 +85,43 @@ function createRow(
   );
 }
 
-function scheduler(verification?: VerificationService): Scheduler {
+function createConditionRow(
+  goalConditions: ProjectGoalConditionInput[],
+): ProjectDetail {
+  return db.withConn((conn) =>
+    createProject(conn, {
+      title: "gate conditions",
+      origin: "start here",
+      goal: "reach the end",
+      bootstrap_enabled: false,
+      hints: null,
+      scope: { targets: ["127.0.0.1:8080"] },
+      goal_conditions: goalConditions,
+    }),
+  );
+}
+
+function scheduler(
+  verification?: VerificationService,
+  workerFixture?: string,
+  configOverrides: Record<string, unknown> = {},
+): Scheduler {
   return new Scheduler({
     db,
-    config: parseDispatchConfig(CONFIG),
+    config: parseDispatchConfig({ ...CONFIG, ...configOverrides }),
     workspaceRoot: join(directory, "workspace"),
     log: (message) => logs.push(message),
     leaseIntervalMs: 500,
     ...(verification === undefined ? {} : { verification }),
+    ...(workerFixture === undefined
+      ? {}
+      : {
+          workerArgv: (taskPath: string) => [
+            process.execPath,
+            join(import.meta.dir, "testdata", workerFixture),
+            taskPath,
+          ],
+        }),
   });
 }
 
@@ -253,6 +290,244 @@ describe("scheduler completion verification", () => {
       const detail = load(projectId);
       expect(detail.project.status).toBe("active");
       expect(logs.some((line) => line.includes("oracle exploded"))).toBe(true);
+    },
+    60_000,
+  );
+
+  test(
+    "keeps a fact-only bootstrap active and continues with a reason turn",
+    async () => {
+      const project = createRow(true);
+      const projectId = project.project.id;
+      const loop = scheduler(undefined, "fact-only-bootstrap-worker.ts");
+
+      await advance(loop);
+
+      const detail = load(projectId);
+      expect(detail.project.status).toBe("active");
+      expect(
+        detail.facts.some((fact) => fact.description === "partial bootstrap progress"),
+      ).toBe(true);
+      expect(detail.intents.filter((intent) => intent.to === "goal")).toHaveLength(0);
+      expect(
+        db.withConn((conn) => getPendingCompletionReview(conn, projectId)),
+      ).toBeNull();
+      expect(
+        logs.some((line) => line.includes("bootstrap completed without a goal claim")),
+      ).toBe(true);
+
+      await drive(loop, () =>
+        db.withConn((conn) =>
+          listProjectRuns(conn, projectId).some((run) => run.kind === "reason"),
+        ),
+      );
+      expect(load(projectId).project.status).toBe("active");
+    },
+    60_000,
+  );
+
+  test(
+    "turns an off reason completion into a pending operator review",
+    async () => {
+      const project = createRow(false, { kind: "off" });
+      const projectId = project.project.id;
+      const loop = scheduler();
+
+      await drive(
+        loop,
+        () =>
+          db.withConn((conn) => getPendingCompletionReview(conn, projectId)) !== null,
+        20,
+      );
+
+      const detail = load(projectId);
+      expect(detail.project.status).toBe("active");
+      expect(detail.intents.filter((intent) => intent.to === "goal")).toHaveLength(0);
+
+      const pending = db.withConn((conn) =>
+        getPendingCompletionReview(conn, projectId),
+      );
+      expect(pending).toMatchObject({ kind: "reason", status: "pending" });
+      expect(pending!.from_facts.length).toBeGreaterThanOrEqual(2);
+      expect(pending!.description).toContain("fake completion using");
+      expect(
+        logs.some(
+          (line) =>
+            line.includes("verification is off") &&
+            line.includes("operator review pending"),
+        ),
+      ).toBe(true);
+
+      db.withConn((conn) => {
+        decideCompletionReview(conn, projectId, pending!.id, "approve");
+        completeProject(conn, projectId, {
+          from: pending!.from_facts,
+          description: pending!.description,
+          worker: "operator",
+        });
+      });
+      expect(load(projectId).project.status).toBe("completed");
+    },
+    60_000,
+  );
+
+  test(
+    "turns an off completion claim into a pending operator review",
+    async () => {
+      const project = createRow(true, { kind: "off" });
+      const projectId = project.project.id;
+      const loop = scheduler(undefined, "negative-complete-bootstrap-worker.ts");
+
+      await advance(loop);
+
+      const detail = load(projectId);
+      expect(detail.project.status).toBe("active");
+      expect(detail.intents.filter((intent) => intent.to === "goal")).toHaveLength(0);
+
+      const pending = db.withConn((conn) =>
+        getPendingCompletionReview(conn, projectId),
+      );
+      expect(pending).toMatchObject({
+        kind: "bootstrap",
+        status: "pending",
+      });
+      expect(pending!.description).toContain("Goal NOT definitively achieved");
+      expect(pending!.from_facts).toHaveLength(1);
+      expect(
+        logs.some(
+          (line) =>
+            line.includes("verification is off") &&
+            line.includes("operator review pending"),
+        ),
+      ).toBe(true);
+
+      db.withConn((conn) => {
+        decideCompletionReview(conn, projectId, pending!.id, "approve", "flag not needed");
+        completeProject(conn, projectId, {
+          from: pending!.from_facts,
+          description: pending!.description,
+          worker: "operator",
+        });
+      });
+      expect(load(projectId).project.status).toBe("completed");
+    },
+    60_000,
+  );
+
+  test(
+    "turns an evidence-only completion into a pending operator review",
+    async () => {
+      const project = createRow(false);
+      const projectId = project.project.id;
+      const loop = scheduler();
+
+      await drive(
+        loop,
+        () =>
+          db.withConn((conn) => getPendingCompletionReview(conn, projectId)) !== null,
+        20,
+      );
+
+      expect(load(projectId).project.status).toBe("active");
+      expect(
+        db.withConn((conn) => getPendingCompletionReview(conn, projectId)),
+      ).toMatchObject({ kind: "reason", status: "pending" });
+      expect(
+        logs.some(
+          (line) =>
+            line.includes("no objective goal condition") &&
+            line.includes("operator review pending"),
+        ),
+      ).toBe(true);
+      expect(logs.some((line) => line.includes("verification is off"))).toBe(false);
+    },
+    60_000,
+  );
+
+  test(
+    "auto-completes evidence-only when evidence_completion is auto",
+    async () => {
+      const project = createRow(false);
+      const projectId = project.project.id;
+      const loop = scheduler(undefined, undefined, {
+        verification: { evidence_completion: "auto" },
+      });
+
+      await drive(loop, () => load(projectId).project.status === "completed", 20);
+
+      expect(load(projectId).project.status).toBe("completed");
+      expect(
+        db.withConn((conn) => getPendingCompletionReview(conn, projectId)),
+      ).toBeNull();
+    },
+    60_000,
+  );
+
+  test(
+    "defers a flag_count completion until an operator confirms a flag",
+    async () => {
+      const project = createConditionRow([{ kind: "flag_count", min: 1 }]);
+      const projectId = project.project.id;
+      // The rejected claim counts as a failed reason turn; drop the backoff so the hint
+      // added after the verdict can trigger the retry immediately.
+      const loop = scheduler(undefined, undefined, {
+        strategist: { ...CONFIG.strategist, failure_backoff_seconds: 0 },
+      });
+
+      await drive(
+        loop,
+        () =>
+          db.withConn((conn) => getLatestVerificationCheck(conn, projectId)) !== null,
+        20,
+      );
+
+      expect(load(projectId).project.status).toBe("active");
+      const check = db.withConn((conn) => getLatestVerificationCheck(conn, projectId));
+      expect(check).toMatchObject({ kind: "evidence", ok: false });
+      expect(check!.detail).toContain("flag_count requires 1 confirmed flag(s)");
+      expect(check!.conditions).toMatchObject([
+        { kind: "flag_count", ok: false, flag_count: 1, flag_got_count: 0 },
+      ]);
+
+      db.withConn((conn) => {
+        const { review } = recordFlagReview(conn, projectId, {
+          flag: "FLAG{confirmed}",
+        });
+        decideFlagReview(conn, projectId, review.id, "real_done");
+        createHint(conn, projectId, {
+          content: "operator confirmed a real flag",
+          creator: "operator",
+        });
+      });
+
+      await loop.runUntilIdle();
+      expect(load(projectId).project.status).toBe("completed");
+    },
+    60_000,
+  );
+
+  test(
+    "requires both challenge and flag_count conditions before completing",
+    async () => {
+      const project = createConditionRow([
+        { kind: "challenge", challenge_code: "web-01" },
+        { kind: "flag_count", min: 2 },
+      ]);
+      const projectId = project.project.id;
+      const loop = scheduler(challengeService(1));
+
+      await drive(
+        loop,
+        () =>
+          db.withConn((conn) => getLatestVerificationCheck(conn, projectId)) !== null,
+        20,
+      );
+
+      const check = db.withConn((conn) => getLatestVerificationCheck(conn, projectId));
+      expect(load(projectId).project.status).toBe("active");
+      expect(check).toMatchObject({ kind: "challenge", ok: false });
+      expect(check!.detail).toContain("goal conditions failed:");
+      expect(check!.conditions.map((condition) => condition.ok)).toEqual([false, false]);
     },
     60_000,
   );

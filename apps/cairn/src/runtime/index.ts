@@ -1,7 +1,7 @@
 import { join } from "node:path";
 
 import { DEFAULT_AGENT_CONFIG_DIR } from "../agent-config-dir";
-import type { DispatchConfig } from "../config";
+import { DEFAULT_CONTAINER_WORKER_ARGV, type DispatchConfig, type ExecutionMode } from "../config";
 import { DockerRuntime } from "./docker";
 import { LocalRuntime } from "./local";
 import type { RuntimeBackend } from "./types";
@@ -14,18 +14,23 @@ export { LocalRuntime } from "./local";
 export interface CreateRuntimeOptions {
   config: DispatchConfig;
   log: (message: string) => void;
+  execution?: ExecutionMode;
   /** Test hook for local mode. */
   workerArgv?: (taskPath: string) => string[];
 }
 
 export function createRuntime(options: CreateRuntimeOptions): RuntimeBackend {
   const { config } = options;
-  if (config.runtime.execution === "container") {
-    if (config.container === null) {
-      throw new Error("container config is required when runtime.execution is container");
-    }
+  if ((options.execution ?? config.runtime.execution) === "container") {
     return new DockerRuntime({
-      container: config.container,
+      container: config.container ?? {
+        image: "cairn-worker:latest",
+        networkMode: "bridge",
+        completedAction: "remove",
+        capAdd: [],
+        workspaceRoot: null,
+        workerArgv: [...DEFAULT_CONTAINER_WORKER_ARGV],
+      },
       agentConfigDir: resolveAgentConfigDir(config),
       log: options.log,
     });

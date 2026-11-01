@@ -21,9 +21,11 @@ import {
   parseRuntimeOverridePatch,
   type ConfigOptions,
   type DispatchConfig,
+  type EvidenceCompletionMode,
   type EvidenceEnforcement,
   type ExecutionMode,
   type FlagReviewMode,
+  type OffCompletionMode,
   type ProposalKindConfig,
   type ProposalMode,
   type RuntimeOverridePatch,
@@ -121,6 +123,10 @@ export interface ReadOnlyRuntimeConfig {
     kernel_tasks: string[];
   };
   audit_stream: { enabled: boolean; url: string | null };
+  verification: {
+    off_completion: OffCompletionMode;
+    evidence_completion: EvidenceCompletionMode;
+  };
   worker_profiles: { id: string; model: string }[];
   common_env_keys: string[];
   workspace: { mode: ExecutionMode; root: string | null };
@@ -432,6 +438,10 @@ function readOnlyView(config: DispatchConfig): ReadOnlyRuntimeConfig {
     audit_stream: {
       enabled: config.auditStream.enabled,
       url: config.auditStream.url,
+    },
+    verification: {
+      off_completion: config.verification.offCompletion,
+      evidence_completion: config.verification.evidenceCompletion,
     },
     worker_profiles: config.workerProfiles.map((profile) => ({ ...profile })),
     common_env_keys: Object.keys(config.commonEnv).sort(),

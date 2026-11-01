@@ -464,16 +464,39 @@ describe("validateExplorePayload", () => {
 });
 
 describe("validateBootstrapExecutePayload", () => {
-  test("requires both fact and complete", () => {
-    expect(() =>
+  test("accepts a fact-only result", () => {
+    expect(
       validateBootstrapExecutePayload({
         accepted: true,
-        data: { fact: { description: "one" } },
+        data: { fact: { description: " partial progress " } },
       }),
-    ).toThrow("complete is required");
+    ).toEqual({
+      kind: "fact",
+      data: { factDescription: "partial progress" },
+    });
   });
 
-  test("returns trimmed descriptions", () => {
+  test("accepts a bare fact-only result", () => {
+    expect(
+      validateBootstrapExecutePayload({
+        fact: { description: "bare fact" },
+      }),
+    ).toEqual({
+      kind: "fact",
+      data: { factDescription: "bare fact" },
+    });
+    expect(
+      validateBootstrapExecutePayload({
+        fact: { description: "null complete" },
+        complete: null,
+      }),
+    ).toEqual({
+      kind: "fact",
+      data: { factDescription: "null complete" },
+    });
+  });
+
+  test("returns trimmed descriptions for fact plus complete", () => {
     expect(
       validateBootstrapExecutePayload({
         accepted: true,
@@ -486,6 +509,27 @@ describe("validateBootstrapExecutePayload", () => {
       kind: "complete",
       data: { factDescription: "fact", completeDescription: "goal" },
     });
+  });
+
+  test("rejects a missing fact", () => {
+    expect(() =>
+      validateBootstrapExecutePayload({
+        accepted: true,
+        data: { complete: { description: "goal" } },
+      }),
+    ).toThrow("fact is required");
+  });
+
+  test("rejects an empty complete description", () => {
+    expect(() =>
+      validateBootstrapExecutePayload({
+        accepted: true,
+        data: {
+          fact: { description: "fact" },
+          complete: { description: "   " },
+        },
+      }),
+    ).toThrow("complete.description is required");
   });
 });
 

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -18,7 +18,9 @@ import {
   type TaskClaim,
 } from "@cairn/graph";
 
-import { parseDispatchConfig, type DispatchConfig } from "../config";
+import { AuditTokenRegistry } from "../audit-stream/tokens";
+import { parseDispatchConfig, type DispatchConfig, type ExecutionMode } from "../config";
+import { createRuntime, DockerRuntime } from "../runtime";
 import { Scheduler } from "./loop";
 import type { RuntimeBackend, WorkerProcess } from "../runtime/types";
 
@@ -85,10 +87,10 @@ interface Stub {
   releaseAll(): void;
 }
 
-function stubRuntime(): Stub {
+function stubRuntime(execution: ExecutionMode = "local"): Stub {
   const terminate = new Map<string, () => void>();
   const backend: RuntimeBackend = {
-    execution: "local",
+    execution,
     ensureProject: () => true,
     mapPath: (hostPath) => hostPath,
     mapPathIfUnderWorkspace: (hostPath) => hostPath,
@@ -139,10 +141,14 @@ interface Boot {
 /**
  * A control plane that was never `start()`ed: work moves only when the test calls `tick()` or
  * `sweepNow()`, so no interval can change the ledger between two assertions.
+ *
+ * `execution` labels the stub backend, which is what M39b writes onto each run row. It is
+ * deliberately independent of `cfg.runtime.execution`: a container-flagged stub never talks
+ * to Docker, it only proves the recording follows the object that spawns the attempt.
  */
-function boot(cfg: DispatchConfig = config): Boot {
+function boot(cfg: DispatchConfig = config, execution: ExecutionMode = "local"): Boot {
   const logs: string[] = [];
-  const stub = stubRuntime();
+  const stub = stubRuntime(execution);
   const loop = new Scheduler({
     db,
     config: cfg,
@@ -162,7 +168,7 @@ function boot(cfg: DispatchConfig = config): Boot {
   };
 }
 
-function createProjectRow(bootstrapEnabled: boolean): ProjectDetail {
+function createProjectRow(bootstrapEnabled: boolean, execution?: ExecutionMode): ProjectDetail {
   return db.withConn((conn) =>
     createProject(conn, {
       title: `claims-${bootstrapEnabled}`,
@@ -171,6 +177,7 @@ function createProjectRow(bootstrapEnabled: boolean): ProjectDetail {
       bootstrap_enabled: bootstrapEnabled,
       hints: null,
       scope: SCOPE,
+      ...(execution === undefined ? {} : { execution }),
     }),
   );
 }
@@ -305,6 +312,7 @@ describe("cross-process task claims", () => {
       intent_id: intent.id,
       instance_id: owner,
       outcome: null,
+      execution: "local",
     });
     expect(rows[0]!.run_id).toBe(runRows[0]!.id);
 
@@ -314,6 +322,165 @@ describe("cross-process task claims", () => {
       release_reason: "failed",
     });
     expect(activeClaims()).toEqual([]);
+  });
+
+  test("constructs the default Docker backend when a local config omits container settings", () => {
+    expect(config.container).toBeNull();
+    const runtime = createRuntime({ config, execution: "container", log: () => {} });
+    expect(runtime).toBeInstanceOf(DockerRuntime);
+    expect(runtime.execution).toBe("container");
+    runtime.close();
+  });
+
+  test("dispatches projects to their selected runtimes under one worker limit", async () => {
+    const localProject = createProjectRow(false, "local");
+    const containerProject = createProjectRow(false, "container");
+    openIntent(localProject.project.id, "local direction");
+    openIntent(containerProject.project.id, "container direction");
+    const local = stubRuntime("local");
+    const container = stubRuntime("container");
+    const spawned: Array<[string, ExecutionMode]> = [];
+    for (const stub of [local, container]) {
+      const spawn = stub.backend.spawnWorker.bind(stub.backend);
+      stub.backend.spawnWorker = (options) => {
+        spawned.push([options.projectId, stub.backend.execution]);
+        return spawn(options);
+      };
+    }
+    const loop = new Scheduler({
+      db,
+      config: parseDispatchConfig({ ...CONFIG, runtime: { ...CONFIG.runtime, max_project_workers: 1 } }),
+      workspaceRoot: join(directory, "workspace"),
+      runtimes: { local: local.backend, container: container.backend },
+      now: () => new Date(clockMs),
+    });
+    expect(loop.tick()).toBe(true);
+    const expected: Array<[string, ExecutionMode]> = [
+      [localProject.project.id, "local"],
+      [containerProject.project.id, "container"],
+    ];
+    expect(spawned.sort()).toEqual(expected.sort());
+    expect(runs(localProject.project.id)[0]?.execution).toBe("local");
+    expect(runs(containerProject.project.id)[0]?.execution).toBe("container");
+    for (const [projectId, location] of [
+      [localProject.project.id, "sandbox"],
+      [containerProject.project.id, "container"],
+    ]) {
+      const session = runs(projectId!)[0]!.session!;
+      const task = JSON.parse(readFileSync(join(directory, "workspace", projectId!, session, "task.json"), "utf8")) as { prompt: string };
+      expect(task.prompt).toContain(`inside the current ${location}`);
+    }
+    expect(loop.runningCount).toBe(2);
+    local.releaseAll();
+    container.releaseAll();
+    await loop.waitForIdle();
+  });
+
+  test("does not send a host-derived audit URL or token to container tasks", async () => {
+    const localProject = createProjectRow(false, "local");
+    const containerProject = createProjectRow(false, "container");
+    openIntent(localProject.project.id, "local direction");
+    openIntent(containerProject.project.id, "container direction");
+    const local = stubRuntime("local");
+    const container = stubRuntime("container");
+    const envs = new Map<ExecutionMode, Record<string, string>>();
+    for (const stub of [local, container]) {
+      const spawn = stub.backend.spawnWorker.bind(stub.backend);
+      stub.backend.spawnWorker = (options) => {
+        envs.set(stub.backend.execution, options.extraEnv ?? {});
+        return spawn(options);
+      };
+    }
+    const loop = new Scheduler({
+      db,
+      config: parseDispatchConfig({
+        ...CONFIG,
+        runtime: { ...CONFIG.runtime, max_project_workers: 1 },
+        audit_stream: { enabled: true },
+      }),
+      workspaceRoot: join(directory, "workspace"),
+      runtimes: { local: local.backend, container: container.backend },
+      auditTokens: new AuditTokenRegistry(),
+      auditStreamUrl: "http://127.0.0.1:8000",
+      now: () => new Date(clockMs), log: () => {},
+    });
+    expect(loop.tick()).toBe(true);
+    expect(envs.get("local")?.["CAIRN_AUDIT_STREAM_URL"]).toBe("http://127.0.0.1:8000");
+    expect(envs.get("local")?.["CAIRN_AUDIT_STREAM_TOKEN"]).toBeTruthy();
+    expect(envs.get("container")?.["CAIRN_AUDIT_STREAM_URL"]).toBeUndefined();
+    expect(envs.get("container")?.["CAIRN_AUDIT_STREAM_TOKEN"]).toBeUndefined();
+    local.releaseAll();
+    container.releaseAll();
+    await loop.waitForIdle();
+  });
+
+  test("keeps container projects pending until container configuration is ready", async () => {
+    const containerProject = createProjectRow(false, "container");
+    const localProject = createProjectRow(false, "local");
+    openIntent(containerProject.project.id, "container direction");
+    openIntent(localProject.project.id, "local direction");
+    const local = stubRuntime("local");
+    const container = stubRuntime("container");
+    let ready = false;
+    const loop = new Scheduler({
+      db, config: parseDispatchConfig({ ...CONFIG, runtime: { ...CONFIG.runtime, max_project_workers: 1 } }),
+      workspaceRoot: join(directory, "workspace"),
+      runtimes: { local: local.backend, container: container.backend },
+      containerReady: () => ready,
+      now: () => new Date(clockMs), log: () => {},
+    });
+    expect(loop.tick()).toBe(true);
+    expect(runs(containerProject.project.id)).toEqual([]);
+    expect(runs(localProject.project.id)[0]?.execution).toBe("local");
+    ready = true;
+    expect(loop.tick()).toBe(true);
+    expect(runs(containerProject.project.id)[0]?.execution).toBe("container");
+    local.releaseAll();
+    container.releaseAll();
+    await loop.waitForIdle();
+  });
+
+  test("does not fall back to local when a container is unavailable", () => {
+    const project = createProjectRow(false, "container");
+    openIntent(project.project.id, "container direction");
+    const local = stubRuntime("local");
+    const container = stubRuntime("container");
+    container.backend.ensureProject = () => false;
+    const loop = new Scheduler({
+      db, config, workspaceRoot: join(directory, "workspace"),
+      runtimes: { local: local.backend, container: container.backend },
+      now: () => new Date(clockMs), log: () => {},
+    });
+    expect(loop.tick()).toBe(false);
+    expect(loop.runningCount).toBe(0);
+    expect(runs(project.project.id)).toEqual([]);
+  });
+
+  test("records the backend that spawned the attempt, not the config default", async () => {
+    const project = createProjectRow(false);
+    const intent = openIntent(project.project.id, "direction one");
+    // `CONFIG.runtime.execution` stays "local" while the injected backend calls itself a
+    // container: the row has to say where the worker really went.
+    const a = boot(config, "container");
+    expect(a.loop.tick()).toBe(true);
+
+    const firstRuns = runs(project.project.id);
+    expect(firstRuns).toHaveLength(1);
+    expect(firstRuns[0]).toMatchObject({
+      kind: "explore",
+      intent_id: intent.id,
+      execution: "container",
+    });
+
+    // The label is per-attempt, so a second boot on the local stub writes its own value.
+    const b = boot(config, "local");
+    await a.drain();
+    expect(b.loop.tick()).toBe(true);
+
+    const dispatched = runs(project.project.id).map((row) => row.execution);
+    expect(dispatched).toHaveLength(2);
+    expect(dispatched.sort()).toEqual(["container", "local"]);
+    await b.drain();
   });
 
   test("a peer cannot re-dispatch an intent only the ledger knows about", async () => {

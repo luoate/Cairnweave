@@ -273,6 +273,25 @@ export function renderAgentContextYaml(context: AgentContext): string {
               ]),
             ],
             [
+              "conditions",
+              context.goal.verification.conditions.map((condition) =>
+                map([
+                  ["ordinal", condition.ordinal],
+                  ["kind", condition.kind],
+                  ["ok", condition.ok],
+                  ["detail", condition.detail],
+                  ["challenge_code", condition.challenge_code],
+                  [
+                    "progress",
+                    map([
+                      ["found", condition.progress.found],
+                      ["total", condition.progress.total],
+                    ]),
+                  ],
+                ]),
+              ),
+            ],
+            [
               "latest",
               context.goal.verification.latest === null
                 ? null
@@ -574,8 +593,25 @@ function verificationView(
   verification: ReturnType<typeof summarizeProjectVerification>,
   limits: AgentContextLimits,
 ): AgentContextVerification {
-  const { policy, checks, latest } = verification;
+  const { policy, checks, latest, goal_conditions: goalConditions } = verification;
   const challenge = policy.kind === "challenge" ? latest : null;
+  const latestByOrdinal = new Map(
+    (latest?.conditions ?? []).map((condition) => [condition.ordinal, condition]),
+  );
+  // A check written before M41 (or by a single-condition path) has no per-condition
+  // results; map its top-level result onto the one legacy-synthesized condition.
+  if (latest !== null && latestByOrdinal.size === 0 && goalConditions.length === 1) {
+    latestByOrdinal.set(goalConditions[0]!.ordinal, {
+      ordinal: goalConditions[0]!.ordinal,
+      kind: goalConditions[0]!.kind,
+      ok: latest.ok,
+      detail: latest.detail,
+      challenge_code: latest.challenge_code,
+      flag_count: latest.flag_count,
+      flag_got_count: latest.flag_got_count,
+      evidence_refs: latest.evidence_refs,
+    });
+  }
   return {
     kind: policy.kind,
     challenge_code: policy.challenge_code,
@@ -589,6 +625,21 @@ function verificationView(
       passed: checks.passed,
       failed: checks.failed,
     },
+    conditions: goalConditions.map((condition) => {
+      const result = latestByOrdinal.get(condition.ordinal) ?? null;
+      return {
+        ordinal: condition.ordinal,
+        kind: condition.kind,
+        ok: result?.ok ?? null,
+        detail:
+          result === null ? null : truncate(result.detail, limits.maxDetailChars),
+        challenge_code: condition.challenge_code,
+        progress: {
+          found: result?.flag_got_count ?? null,
+          total: result?.flag_count ?? null,
+        },
+      };
+    }),
     latest:
       latest === null
         ? null

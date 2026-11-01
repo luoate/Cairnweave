@@ -81,6 +81,10 @@ describe("runtime override patches", () => {
     expect(() => parseRuntimeOverridePatch({ tasks: { review: {} } })).toThrow(
       "overrides.tasks has unsupported key: review",
     );
+    // The off-completion safety gate is deployment policy, not a runtime dial.
+    expect(() =>
+      parseRuntimeOverridePatch({ verification: { off_completion: "auto" } }),
+    ).toThrow("overrides.verification has unsupported key: off_completion");
   });
 
   test("merges nested sections and flattens overridden paths", () => {
@@ -122,6 +126,7 @@ describe("RuntimeConfigStore", () => {
     expect(view.editable.runtime.execution).toBe("local");
     expect(view.read_only.runtime).not.toHaveProperty("execution");
     expect(view.read_only.runtime.strategy_context).toBe("on");
+    expect(view.read_only.verification.off_completion).toBe("manual");
     expect(view.read_only.observer.enabled).toBe(true);
   });
 

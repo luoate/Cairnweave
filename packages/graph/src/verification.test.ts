@@ -4,15 +4,25 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  MAX_FLAG_COUNT_CONDITION,
+  MAX_PROJECT_GOAL_CONDITIONS,
   configureDatabase,
   createProject,
   getLatestVerificationCheck,
   getProjectVerification,
+  goalConditionsFromVerification,
+  hasObjectiveGoalCondition,
+  listProjectGoalConditions,
   listVerificationChecks,
   parseCreateProjectRequest,
   recordVerificationCheck,
+  resolveProjectGoalConditions,
+  setProjectGoalConditions,
   setProjectVerification,
+  summarizeProjectVerification,
+  verificationAliasForGoalConditions,
   type CairnDatabase,
+  type ProjectGoalConditionInput,
 } from "./index";
 
 let directory: string;
@@ -204,6 +214,224 @@ describe("project creation validation", () => {
     expect(() =>
       parseCreateProjectRequest(
         body({ kind: "challenge", challenge_code: "x".repeat(201) }),
+      ),
+    ).toThrow();
+  });
+});
+
+function createConditionRow(goalConditions: ProjectGoalConditionInput[]): string {
+  return db.withConn(
+    (conn) =>
+      createProject(conn, {
+        title: "goal conditions",
+        origin: "origin",
+        goal: "goal",
+        hints: null,
+        bootstrap_enabled: false,
+        scope: { targets: ["127.0.0.1:8080"] },
+        goal_conditions: goalConditions,
+      }).project.id,
+  );
+}
+
+const MIXED_CONDITIONS: ProjectGoalConditionInput[] = [
+  { kind: "challenge", challenge_code: "web-01" },
+  { kind: "flag_count", min: 3 },
+  { kind: "evidence" },
+];
+
+describe("project goal conditions", () => {
+  test("stores the ordered AND list and the compatibility alias", () => {
+    const projectId = createConditionRow(MIXED_CONDITIONS);
+
+    const stored = db.withConn((conn) => listProjectGoalConditions(conn, projectId));
+    expect(stored.map((condition) => condition.ordinal)).toEqual([0, 1, 2]);
+    expect(stored.map((condition) => condition.kind)).toEqual([
+      "challenge",
+      "flag_count",
+      "evidence",
+    ]);
+    expect(stored[0]).toMatchObject({ challenge_code: "web-01", min: null });
+    expect(stored[1]).toMatchObject({ challenge_code: null, min: 3 });
+
+    const policy = db.withConn((conn) => getProjectVerification(conn, projectId));
+    expect(policy).toMatchObject({ kind: "challenge", challenge_code: "web-01" });
+
+    const summary = db.withConn((conn) =>
+      summarizeProjectVerification(conn, projectId),
+    );
+    expect(summary.goal_conditions).toHaveLength(3);
+  });
+
+  test("aliases a flag_count-only list to evidence", () => {
+    const projectId = createConditionRow([{ kind: "flag_count", min: 2 }]);
+    const policy = db.withConn((conn) => getProjectVerification(conn, projectId));
+
+    expect(policy.kind).toBe("evidence");
+    expect(policy.challenge_code).toBeNull();
+    expect(
+      db.withConn((conn) => resolveProjectGoalConditions(conn, projectId)),
+    ).toMatchObject([{ kind: "flag_count", min: 2 }]);
+  });
+
+  test("synthesizes one condition from the legacy verification alias", () => {
+    const projectId = createRow({ kind: "challenge", challenge_code: "web-01" });
+    const conditions = db.withConn((conn) =>
+      resolveProjectGoalConditions(conn, projectId),
+    );
+
+    expect(conditions).toMatchObject([
+      { ordinal: 0, kind: "challenge", challenge_code: "web-01", min: null },
+    ]);
+    expect(db.withConn((conn) => listProjectGoalConditions(conn, projectId))).toHaveLength(
+      1,
+    );
+  });
+
+  test("treats off and missing aliases as no conditions", () => {
+    const off = createRow({ kind: "off" });
+    expect(db.withConn((conn) => resolveProjectGoalConditions(conn, off))).toEqual([]);
+
+    const projectId = createRow();
+    db.withConn((conn) => {
+      conn
+        .query("DELETE FROM project_goal_conditions WHERE project_id = ?")
+        .run(projectId);
+      conn
+        .query("DELETE FROM project_verification WHERE project_id = ?")
+        .run(projectId);
+    });
+    expect(
+      db.withConn((conn) => resolveProjectGoalConditions(conn, projectId, "off")),
+    ).toEqual([]);
+    expect(
+      db.withConn((conn) => resolveProjectGoalConditions(conn, projectId, "evidence")),
+    ).toMatchObject([{ kind: "evidence" }]);
+  });
+
+  test("replaces the whole list, including with an empty list", () => {
+    const projectId = createConditionRow(MIXED_CONDITIONS);
+
+    db.withConn((conn) =>
+      setProjectGoalConditions(conn, projectId, [{ kind: "flag_count", min: 1 }]),
+    );
+    expect(db.withConn((conn) => listProjectGoalConditions(conn, projectId))).toMatchObject(
+      [{ ordinal: 0, kind: "flag_count", min: 1 }],
+    );
+
+    db.withConn((conn) => setProjectGoalConditions(conn, projectId, []));
+    expect(db.withConn((conn) => listProjectGoalConditions(conn, projectId))).toEqual([]);
+    expect(db.withConn((conn) => resolveProjectGoalConditions(conn, projectId))).toEqual([]);
+  });
+
+  test("rejects duplicate or malformed conditions at storage time", () => {
+    const projectId = createRow();
+    const set = (conditions: ProjectGoalConditionInput[]) =>
+      db.withConn((conn) => setProjectGoalConditions(conn, projectId, conditions));
+
+    expect(() => set([{ kind: "evidence" }, { kind: "evidence" }])).toThrow("duplicate");
+    expect(() =>
+      set([
+        { kind: "challenge", challenge_code: "web-01" },
+        { kind: "challenge", challenge_code: "web-01" },
+      ]),
+    ).toThrow("duplicate challenge condition");
+    expect(() => set([{ kind: "challenge", challenge_code: "  " }])).toThrow(
+      "challenge_code",
+    );
+    expect(() => set([{ kind: "flag_count", min: 0 }])).toThrow("min");
+    expect(() => set([{ kind: "flag_count", min: MAX_FLAG_COUNT_CONDITION + 1 }])).toThrow(
+      "min",
+    );
+    expect(() =>
+      set([{ kind: "evidence", min: 1 }]),
+    ).toThrow("only valid for flag_count");
+    expect(() =>
+      set(
+        Array.from({ length: MAX_PROJECT_GOAL_CONDITIONS + 1 }, () => ({
+          kind: "evidence" as const,
+        })),
+      ),
+    ).toThrow("at most");
+  });
+
+  test("derives the alias and objective flag from a condition list", () => {
+    expect(verificationAliasForGoalConditions(MIXED_CONDITIONS)).toEqual({
+      kind: "challenge",
+      challenge_code: "web-01",
+    });
+    expect(verificationAliasForGoalConditions([{ kind: "flag_count", min: 1 }])).toEqual({
+      kind: "evidence",
+    });
+    expect(verificationAliasForGoalConditions([{ kind: "evidence" }])).toEqual({
+      kind: "evidence",
+    });
+    expect(verificationAliasForGoalConditions([])).toEqual({ kind: "off" });
+
+    const synthesized = goalConditionsFromVerification({
+      project_id: "proj_001",
+      kind: "evidence",
+      challenge_code: null,
+      created_at: "2026-01-01T00:00:00Z",
+    });
+    expect(synthesized).toMatchObject([{ ordinal: 0, kind: "evidence" }]);
+    expect(hasObjectiveGoalCondition(MIXED_CONDITIONS)).toBe(true);
+    expect(hasObjectiveGoalCondition([{ kind: "evidence" }])).toBe(false);
+    expect(hasObjectiveGoalCondition([])).toBe(false);
+  });
+});
+
+describe("goal condition parsing", () => {
+  function body(goalConditions: unknown): unknown {
+    return {
+      title: "goal conditions",
+      origin: "origin",
+      goal: "goal",
+      scope: { targets: ["127.0.0.1:8080"] },
+      goal_conditions: goalConditions,
+    };
+  }
+
+  test("accepts an ordered list and preserves ordinals", () => {
+    expect(
+      parseCreateProjectRequest(body(MIXED_CONDITIONS)).goal_conditions,
+    ).toEqual(MIXED_CONDITIONS);
+  });
+
+  test("rejects goal_conditions next to the legacy verification field", () => {
+    expect(() =>
+      parseCreateProjectRequest({
+        ...(body([{ kind: "evidence" }]) as Record<string, unknown>),
+        verification: { kind: "off" },
+      }),
+    ).toThrow("cannot coexist");
+  });
+
+  test("rejects malformed condition entries", () => {
+    expect(() => parseCreateProjectRequest(body([]))).toThrow();
+    expect(() => parseCreateProjectRequest(body("evidence"))).toThrow();
+    expect(() => parseCreateProjectRequest(body([{ kind: "other" }]))).toThrow();
+    expect(() => parseCreateProjectRequest(body([{ kind: "challenge" }]))).toThrow();
+    expect(() =>
+      parseCreateProjectRequest(body([{ kind: "evidence", min: 1 }])),
+    ).toThrow();
+    expect(() =>
+      parseCreateProjectRequest(body([{ kind: "flag_count", min: 0 }])),
+    ).toThrow();
+    expect(() =>
+      parseCreateProjectRequest(body([{ kind: "evidence", extra: true }])),
+    ).toThrow();
+    expect(() =>
+      parseCreateProjectRequest(
+        body([
+          { kind: "challenge", challenge_code: "a" },
+          { kind: "challenge", challenge_code: "a" },
+        ]),
+      ),
+    ).toThrow();
+    expect(() =>
+      parseCreateProjectRequest(
+        body(Array.from({ length: 9 }, () => ({ kind: "evidence" }))),
       ),
     ).toThrow();
   });

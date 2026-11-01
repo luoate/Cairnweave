@@ -5,12 +5,14 @@ import { join } from "node:path";
 
 import {
   configureDatabase,
+  createProject,
   getRuntimeConfigOverrides,
   type CairnDatabase,
 } from "@cairn/graph";
 
 import { parseDispatchConfig, type DispatchConfig } from "../config";
 import { RuntimeConfigStore } from "../config-overrides";
+import { containerNameFor } from "../runtime/docker";
 import { createApi, type Api } from "./api";
 import type { ExecutionProbe } from "./settings-runtime";
 
@@ -100,7 +102,11 @@ describe("GET /settings/runtime", () => {
       };
       overrides: string[];
       updated_at: string | null;
-      read_only: { runtime: Record<string, unknown>; observer: { enabled: boolean } };
+      read_only: {
+        runtime: Record<string, unknown>;
+        verification: { off_completion: string };
+        observer: { enabled: boolean };
+      };
     };
     expect(view.defaults.budget.max_project_tokens).toBe(1000);
     expect(view.editable.verification.flag_review).toBe("manual");
@@ -109,6 +115,7 @@ describe("GET /settings/runtime", () => {
     expect(view.overrides).toEqual([]);
     expect(view.updated_at).toBeNull();
     expect(view.read_only.runtime).not.toHaveProperty("execution");
+    expect(view.read_only.verification.off_completion).toBe("manual");
     expect(view.read_only.observer.enabled).toBe(true);
   });
 
@@ -409,5 +416,107 @@ describe("DELETE /settings/runtime", () => {
     expect(config.runtime.interval).toBe(3);
     expect(config.retention.sweepIntervalSeconds).toBe(3600);
     expect(((await response.json()) as { overrides: string[] }).overrides).toEqual([]);
+  });
+});
+
+describe("GET /projects/{id} execution view", () => {
+  // The project page answers "本地还是容器" from this key, so the payload has to distinguish
+  // "running in a container" from "this process cannot know".
+  function project(): string {
+    return db.withConn(
+      (conn) =>
+        createProject(conn, {
+          title: "execution view",
+          origin: "origin",
+          goal: "goal",
+          hints: null,
+          bootstrap_enabled: false,
+          scope: { targets: ["127.0.0.1:8080"] },
+        }).project.id,
+    );
+  }
+
+  async function executionView(api: Api, projectId: string): Promise<unknown> {
+    const response = await call(api, "GET", `/projects/${projectId}`);
+    expect(response.status).toBe(200);
+    return ((await response.json()) as { execution: unknown }).execution;
+  }
+
+  test("names the long-lived container while the mode is container", async () => {
+    const api = makeApi();
+    const projectId = project();
+    await call(api, "PUT", "/settings/runtime", { runtime: { execution: "container" } });
+
+    expect(await executionView(api, projectId)).toEqual({
+      mode: "container",
+      container_name: `cairn-dispatch-${projectId}`,
+    });
+    expect(containerNameFor(projectId)).toBe(`cairn-dispatch-${projectId}`);
+  });
+
+  test("withholds a container name in local mode", async () => {
+    const api = makeApi();
+    const projectId = project();
+
+    expect(await executionView(api, projectId)).toEqual({ mode: "local", container_name: null });
+
+    // Switching back and forth is the whole point of the per-run column: the current mode
+    // follows the live config rather than the first dispatch.
+    await call(api, "PUT", "/settings/runtime", { runtime: { execution: "container" } });
+    expect(await executionView(api, projectId)).toEqual({
+      mode: "container",
+      container_name: containerNameFor(projectId),
+    });
+    await call(api, "DELETE", "/settings/runtime");
+    expect(await executionView(api, projectId)).toEqual({ mode: "local", container_name: null });
+  });
+
+  test("keeps the project's chosen mode when the global default changes", async () => {
+    const api = makeApi();
+    const response = await call(api, "POST", "/projects", {
+      title: "container project", origin: "start", goal: "finish",
+      bootstrap_enabled: false, execution: "container",
+    });
+    expect(response.status).toBe(201);
+    const projectId = ((await response.json()) as { project: { id: string } }).project.id;
+    expect(await executionView(api, projectId)).toEqual({
+      mode: "container", container_name: containerNameFor(projectId), configured_mode: "container",
+    });
+    await call(api, "PUT", "/settings/runtime", { runtime: { execution: "container" } });
+    await call(api, "DELETE", "/settings/runtime");
+    expect(await executionView(api, projectId)).toEqual({
+      mode: "container", container_name: containerNameFor(projectId), configured_mode: "container",
+    });
+  });
+
+  test("persists the choice even when the scheduler is disabled", async () => {
+    const api = makeApi({ store: null });
+    const response = await call(api, "POST", "/projects", {
+      title: "container project", origin: "start", goal: "finish", execution: "container",
+    });
+    expect(response.status).toBe(201);
+    const projectId = ((await response.json()) as { project: { id: string } }).project.id;
+    expect(await executionView(api, projectId)).toEqual({
+      mode: null, container_name: null, configured_mode: "container",
+    });
+    expect(await executionView(makeApi(), projectId)).toEqual({
+      mode: "container", container_name: containerNameFor(projectId), configured_mode: "container",
+    });
+  });
+
+  test("rejects an invalid execution mode before creating a project", async () => {
+    const api = makeApi();
+    const response = await call(api, "POST", "/projects", {
+      title: "invalid", origin: "start", goal: "finish", execution: "docker",
+    });
+    expect(response.status).toBe(422);
+    expect(db.withConn((conn) => conn.query("SELECT COUNT(*) AS total FROM projects").get())).toEqual({ total: 0 });
+  });
+
+  test("reports an unknown mode when no dispatch config was loaded", async () => {
+    const api = makeApi({ store: null });
+    const projectId = project();
+
+    expect(await executionView(api, projectId)).toEqual({ mode: null, container_name: null });
   });
 });

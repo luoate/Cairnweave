@@ -43,7 +43,7 @@ worker 在项目沙箱里跑真实模型，每个任务启动一次进程，只�
 | 意图生命周期 | 操作员（或开启 `strategist.reason_abandon` 后的 reason）可放弃已经尝试且从未成功的 open 意图；状态存 `intent_meta` 旁路，派发、提示、水位与报告都排除它，UI 提供原因输入与二次确认 |
 | Scope 硬校验 | `Host Bridge` 在每次模型工具调用前检查网络端点与文件路径，越界即拒绝，allow/block 全量写 `audit.jsonl`；无 `scope` 的项目不派发 |
 | 证据门控 | worker 声明的 `evidence_refs` 在写图前逐条校验（存在、非目录、非符号链接、不越界、最小字节），并固化 SHA-256 以便事后比对 |
-| 可验证完成 | 项目级 `evidence` / `challenge` / `off` 策略；worker 的 “complete” 只是声明，oracle 不通过就不关项目；支持手动 `/verify` |
+| 可验证完成 | 项目级目标条件列表（`challenge` / `flag_count` / `evidence`，有序 AND）与兼容别名 `evidence` / `challenge` / `off`；worker 的 “complete” 只是声明，oracle 不通过就不关项目；`flag_count` 只统计操作员已确认与挑战服务已确认的 flag，支持手动 `/verify`。自动完成至少需要一个客观条件：仅有 `evidence` 或 `off` 的完成声明默认进入人工确认（`completion_reviews`），`verification.evidence_completion: auto` 可保留旧的自动路径 |
 | Observer sidecar | 真实 Solver 旁的独立复盘会话，只维护项目级看板（ideas / memory），主 Solver 仅拿到只读工具；失败、超时都不影响任务结果 |
 | 图提案 | Observer 只能写候选文件，控制面是唯一审核者与写图者；默认 `dry_run`（完整校验、记录结果、不写图），改 `apply` 才落图 |
 | 中文 Writeup | 从图中数据确定性渲染中文 Markdown 草稿，可由模型重写；附带载荷（payload）章节、附件 zip 打包与「AI 撰写 / 恢复草稿」 |
@@ -55,7 +55,7 @@ worker 在项目沙箱里跑真实模型，每个任务启动一次进程，只�
 | 运行期配置 | Observer、并发、超时、证据门、预算、策略阈值、提案参数等可在页头「设置 → 运行与执行」里热调，覆盖存 SQLite，重启不丢 |
 | 启动对账 | `runs` 行只在拥有它的进程里收尾，控制面重启会留下永远“运行中”的幽灵任务；每次 `start()` 先在 `scheduler_instances` 注册 boot 行并按心跳判断是否有活跃同伴，无同伴时把遗留的 `outcome IS NULL` 补成 `inactive`（detail 说明原因），统计、慢层视图与预算的 running 计数随之归零；不改派发路径、不释放租约 |
 | 任务 claim 账本 | 每个派发任务在 `task_claims` 里占一行（意图 / reason 槽各有一个部分唯一索引），配额、单项目并发与慢层抑制都改从这张表派生，`this.running` 退回成进程句柄表；误开第二个控制面时它看得见同一份账本，重复执行同一意图会在存储层被 409 挡回，崩溃那次的 claim 要等租约到期才被接管，优雅停止则立刻释放——图级租约照旧双写，删掉这张表就回到 M38 |
-| 两种执行模式 | `runtime.execution: local` 本地子进程；`container` 每项目一个长期容器、每任务一次 `docker exec`，配置只读挂载、不挂 Docker socket；调度器空闲时可在「设置」里在线切换，并用「测试有效性」先检查 Bun / Docker / 镜像 / 试启动 / 工作区 |
+| 两种执行模式 | 新建题目时可选择本地进程、Docker 容器或跟随全局默认；显式选择按题目保存，可与其他模式的题目并行运行。Docker 不可用时不会回退到本地；容器配置只读挂载、不挂 Docker socket，设置中的「测试有效性」可检查执行环境 |
 | 技能管理 | 页头「设置 → 技能」里新增、删除、启停与恢复技能；「预览」打开独立详情弹窗，左树右正文地浏览技能目录里的 `SKILL.md`、`references/`、`scripts/`；内置 17 个，仅写入 `cairn-worker` prompt 白名单的才生效；删除内置技能会在 `.deleted-builtins.json` 里留痕，重启不回填，可一键恢复 |
 | 轻量首屏 | Tailwind 用 CLI 预编译成 `static/app.css` 入库（不再加载 451 KB 的 Play CDN），cytoscape 与布局引擎按项目/布局懒加载，静态响应带 ETag/304 与 gzip/br；列表页首屏传输从 3.82 MB 降到 96 KB |
 | 审计与实时流 | 任务结束导入 `audit.jsonl` 到哈希链账本；可选实时流按 `(task_id, seq)` 幂等追加，只降低暴露窗口，不改变最终一致性 |
@@ -163,7 +163,7 @@ proposals:                    # 默认开启，但只演练
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET/POST | `/projects` | 列表（含 `has_scope`）与创建（可带 `scope`、`verification`） |
+| GET/POST | `/projects` | 列表（含 `has_scope`）与创建（可带 `scope`、`goal_conditions` 或兼容别名 `verification`、`execution: "local"\|"container"`） |
 | GET/PUT/DELETE | `/projects/{id}` | 详情、状态/标题更新、删除 |
 | GET/PUT | `/projects/{id}/scope` | 授权范围读取与补配 |
 | GET | `/projects/{id}/export` | YAML 图导出 |
@@ -173,9 +173,11 @@ proposals:                    # 默认开启，但只演练
 | GET | `/projects/{id}/facts/{fact_id}/evidence` | 证据实时校验（`ok` / `modified` / `missing` …） |
 | GET | `/projects/{id}/artifacts` | 工件索引（路径、大小、SHA-256、来源任务） |
 | GET | `/projects/{id}/audit[/{task_id}]` | 审计任务汇总与逐任务哈希链 |
-| GET | `/projects/{id}/verification` | 完成策略与最近一次检查 |
+| GET | `/projects/{id}/verification` | 完成别名、目标条件列表与最近一次逐条件检查 |
 | POST | `/projects/{id}/verify` | 手动重跑完成 oracle（可限定 Fact 子集） |
 | GET | `/projects/{id}/flag` | 命中的 flag、候选与校验状态（按工作区缓存 10 s，结果带 `truncated`；排除已判假的 Flag，优先展示已确认值） |
+| GET | `/projects/{id}/completion-review` | `verification: off` 项目的待确认完成声明与历史 |
+| POST | `/projects/{id}/completion-review/{review_id}/decision` | 操作员决定 `approve` / `reject`；approve 用记录的来源 Fact 完成项目，reject 写提示并继续探索 |
 | GET | `/projects/{id}/flag-reviews` | 待复核 Flag、已确认/已判假值与各状态计数 |
 | POST | `/projects/{id}/flag-reviews/{review_id}/decision` | 操作员判定：`real_more` / `real_done` / `fake`；项目仍 active 时 `real_done` 直接完成项目 |
 | GET | `/projects/{id}/stats` | 按 worker / 模型 / profile 的运行统计 |
@@ -305,7 +307,7 @@ apps/cairn/src/
   config-overrides.ts    运行期覆盖：SQLite patch ↔ dispatch.yaml（M22/M24）
   prompts/               prompt 加载、渲染与上游默认模板
   scheduler/             tick、派发、租约、证据、提案、策略、保留、审计
-  verification/oracle.ts 完成 oracle：evidence / challenge / off
+  verification/oracle.ts 完成 oracle：goal_conditions（challenge / flag_count / evidence）与兼容别名
   runtime/               scheduler ↔ 沙箱接口（local / container）与执行环境探测（M24b）
   host-bridge/           tool_call 级 Scope 校验 + audit.jsonl + 看板保护
   solver/                fake 与 breachweave 两种 solver

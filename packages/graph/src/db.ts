@@ -77,11 +77,28 @@ CREATE TABLE IF NOT EXISTS project_scopes (
     notes TEXT
 );
 
+CREATE TABLE IF NOT EXISTS project_execution (
+    project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+    mode TEXT NOT NULL CHECK (mode IN ('local', 'container'))
+);
+
 CREATE TABLE IF NOT EXISTS project_verification (
     project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
     kind TEXT NOT NULL,
     challenge_code TEXT,
     created_at TEXT NOT NULL
+);
+
+-- M41: ordered completion conditions. The legacy project_verification row stays as a
+-- compatibility alias; projects created before this table have no rows and are read as a
+-- single condition synthesized from that policy.
+CREATE TABLE IF NOT EXISTS project_goal_conditions (
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    config TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(project_id, ordinal)
 );
 
 CREATE TABLE IF NOT EXISTS verification_checks (
@@ -94,6 +111,7 @@ CREATE TABLE IF NOT EXISTS verification_checks (
     flag_count INTEGER,
     flag_got_count INTEGER,
     evidence_refs TEXT NOT NULL DEFAULT '[]',
+    conditions TEXT NOT NULL DEFAULT '[]',
     checked_at TEXT NOT NULL
 );
 
@@ -120,6 +138,29 @@ CREATE UNIQUE INDEX IF NOT EXISTS flag_reviews_project_flag
 
 CREATE INDEX IF NOT EXISTS flag_reviews_project_status
     ON flag_reviews(project_id, status, created_at);
+
+-- A model completion claim under verification: off is not trusted automatically. The
+-- scheduler records one pending row per project and keeps the project active until an
+-- operator approves or rejects it. Repeated claims update the pending row.
+CREATE TABLE IF NOT EXISTS completion_reviews (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    run_id TEXT,
+    task_id TEXT,
+    kind TEXT NOT NULL,
+    description TEXT NOT NULL,
+    from_facts TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL DEFAULT 'pending',
+    note TEXT,
+    created_at TEXT NOT NULL,
+    decided_at TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS completion_reviews_one_pending
+    ON completion_reviews(project_id) WHERE status = 'pending';
+
+CREATE INDEX IF NOT EXISTS completion_reviews_project
+    ON completion_reviews(project_id, created_at, id);
 
 CREATE TABLE IF NOT EXISTS project_artifacts (
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -183,7 +224,8 @@ CREATE TABLE IF NOT EXISTS runs (
     cache_write_tokens INTEGER NOT NULL DEFAULT 0,
     total_tokens INTEGER NOT NULL DEFAULT 0,
     cost_usd REAL NOT NULL DEFAULT 0,
-    instance_id TEXT
+    instance_id TEXT,
+    execution TEXT
 );
 
 CREATE INDEX IF NOT EXISTS runs_project_started ON runs(project_id, started_at);
@@ -412,8 +454,23 @@ export function configureDatabase(path: string): CairnDatabase {
     ensurePendingConcludeColumns(conn);
     ensureIntentMetaColumns(conn);
     ensureStrategistColumns(conn);
+    ensureVerificationCheckColumns(conn);
   });
   return database;
+}
+
+/** M41 adds per-condition results without rewriting existing verification history. */
+function ensureVerificationCheckColumns(conn: Database): void {
+  const columns = new Set(
+    all<{ name: string }>(conn, "PRAGMA table_info(verification_checks)").map(
+      (row) => row.name,
+    ),
+  );
+  if (!columns.has("conditions")) {
+    conn.exec(
+      "ALTER TABLE verification_checks ADD COLUMN conditions TEXT NOT NULL DEFAULT '[]'",
+    );
+  }
 }
 
 function ensureProjectColumns(conn: Database): void {
@@ -449,6 +506,7 @@ function ensureRunColumns(conn: Database): void {
     ["model", "TEXT"],
     ["worker_profile", "TEXT"],
     ["instance_id", "TEXT"],
+    ["execution", "TEXT"],
   ] as const;
   for (const [name, definition] of additions) {
     if (!columns.has(name)) {

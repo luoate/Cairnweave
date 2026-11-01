@@ -191,6 +191,20 @@ describe("runs", () => {
     expect(runs.map((run) => run.instance_id)).toEqual(["boot-a1b2c3d4e5f6", null]);
   });
 
+  test("keeps the backend each attempt ran on", () => {
+    start({ execution: "local" });
+    start({ id: "run_002", taskId: "task-2", startedAt: "2026-01-02T03:00:01Z", execution: "container" });
+    const runs = db.withConn((conn) => listProjectRuns(conn, projectId));
+    expect(runs.map((run) => run.execution)).toEqual(["local", "container"]);
+
+    // A row written before the recording keeps null rather than claiming a backend nobody logged.
+    start({ id: "run_003", taskId: "task-3", startedAt: "2026-01-02T03:00:02Z" });
+    const [third] = db
+      .withConn((conn) => listProjectRuns(conn, projectId))
+      .filter((run) => run.id === "run_003");
+    expect(third?.execution).toBeNull();
+  });
+
   test("persists solver usage and aggregates it per project", () => {
     start();
     db.withConn((conn) =>

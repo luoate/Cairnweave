@@ -308,6 +308,9 @@ describe("evidence enforcement configuration", () => {
       conn
         .query("DELETE FROM project_verification WHERE project_id = ?")
         .run(projectId);
+      conn
+        .query("DELETE FROM project_goal_conditions WHERE project_id = ?")
+        .run(projectId);
     });
     const service = new VerificationService(db, {
       ...DEFAULT_VERIFICATION,
@@ -326,6 +329,92 @@ describe("evidence enforcement configuration", () => {
       await post(instance, `/projects/${projectId}/verify`, {})
     ).json()) as Record<string, unknown>;
     expect(outcome).toMatchObject({ kind: "off", ok: true });
+  });
+});
+
+describe("goal conditions", () => {
+  const conditions = [
+    { kind: "challenge", challenge_code: "web-01" },
+    { kind: "flag_count", min: 2 },
+    { kind: "evidence" },
+  ];
+
+  test("creates a project with an ordered AND list and exposes it", async () => {
+    const response = await post(api(), "/projects", {
+      title: "conditions",
+      origin: "origin",
+      goal: "goal",
+      scope: { targets: ["127.0.0.1:8080"] },
+      goal_conditions: conditions,
+    });
+    expect(response.status).toBe(201);
+    const created = (await response.json()) as { project: { id: string } };
+
+    const verification = (await (
+      await api().handle(
+        new Request(
+          `http://cairn.test/projects/${created.project.id}/verification`,
+        ),
+      )
+    ).json()) as {
+      policy: Record<string, unknown>;
+      goal_conditions: Array<Record<string, unknown>>;
+    };
+    expect(verification.policy).toMatchObject({
+      kind: "challenge",
+      challenge_code: "web-01",
+    });
+    expect(verification.goal_conditions.map((condition) => condition["kind"])).toEqual([
+      "challenge",
+      "flag_count",
+      "evidence",
+    ]);
+    expect(verification.goal_conditions[1]).toMatchObject({
+      ordinal: 1,
+      min: 2,
+      challenge_code: null,
+    });
+
+    const detail = (await (
+      await api().handle(
+        new Request(`http://cairn.test/projects/${created.project.id}`),
+      )
+    ).json()) as { goal_conditions: Array<Record<string, unknown>> };
+    expect(detail.goal_conditions.map((condition) => condition["ordinal"])).toEqual([
+      0, 1, 2,
+    ]);
+  });
+
+  test("rejects goal_conditions alongside the legacy verification field", async () => {
+    const response = await post(api(), "/projects", {
+      title: "both",
+      origin: "origin",
+      goal: "goal",
+      goal_conditions: [{ kind: "evidence" }],
+      verification: { kind: "off" },
+    });
+    expect(response.status).toBe(422);
+    expect(await response.text()).toContain("cannot coexist");
+  });
+
+  test("rejects malformed goal conditions", async () => {
+    for (const invalid of [
+      [],
+      [{ kind: "other" }],
+      [{ kind: "challenge" }],
+      [{ kind: "flag_count", min: 0 }],
+      [{ kind: "evidence", min: 1 }],
+      [{ kind: "evidence", extra: true }],
+      Array.from({ length: 9 }, () => ({ kind: "evidence" })),
+    ]) {
+      const response = await post(api(), "/projects", {
+        title: "bad conditions",
+        origin: "origin",
+        goal: "goal",
+        goal_conditions: invalid,
+      });
+      expect(response.status).toBe(422);
+    }
   });
 });
 
@@ -383,6 +472,15 @@ describe("GET /projects/{id}/verification", () => {
         kind: "evidence",
         challenge_code: null,
       }),
+      goal_conditions: [
+        expect.objectContaining({
+          project_id: projectId,
+          ordinal: 0,
+          kind: "evidence",
+          challenge_code: null,
+          min: null,
+        }),
+      ],
       latest: null,
     });
   });

@@ -34,6 +34,10 @@ export {
   parseUpdateProjectStatusRequest,
   parseUpdateProjectTitleRequest,
   type CompleteRequest,
+  type CompletionReview,
+  type CompletionReviewDecision,
+  type CompletionReviewStatus,
+  type CompletionReviewSummary,
   type ConcludeRequest,
   type ConcludeResponse,
   type AgentContext,
@@ -58,6 +62,10 @@ export {
   type FlagReviewDecision,
   type FlagReviewStatus,
   type FlagReviewSummary,
+  type GoalConditionKind,
+  type GoalConditionResult,
+  type ProjectGoalCondition,
+  type ProjectGoalConditionInput,
   type ProjectAttachment,
   type ProjectSupersedeSummary,
   type ProjectScopeInput,
@@ -101,6 +109,7 @@ export {
   type ReopenResponse,
   type ReplanRequest,
   type Run,
+  type RunExecution,
   type RunOutcome,
   type StrategistRunSummary,
   type StrategistState,
@@ -155,6 +164,7 @@ export {
   createIntent,
   createProject,
   getProjectDetail,
+  getProjectExecution,
   getProjectScope,
   heartbeatIntent,
   heartbeatReason,
@@ -216,6 +226,17 @@ export {
   type PendingConcludeRow,
   type RecordPendingConcludeInput,
 } from "./pending-concludes";
+
+export {
+  closePendingCompletionReviews,
+  decideCompletionReview,
+  getCompletionReview,
+  getPendingCompletionReview,
+  listCompletionReviews,
+  recordCompletionReview,
+  summarizeCompletionReviews,
+  type RecordCompletionReviewInput,
+} from "./completion-reviews";
 
 export {
   heartbeatSchedulerInstance,
@@ -309,12 +330,20 @@ export { hashFileSha256 } from "./hashing";
 
 export {
   DEFAULT_VERIFICATION_KIND,
+  MAX_FLAG_COUNT_CONDITION,
+  MAX_PROJECT_GOAL_CONDITIONS,
   getLatestVerificationCheck,
   getProjectVerification,
+  goalConditionsFromVerification,
+  hasObjectiveGoalCondition,
+  listProjectGoalConditions,
   listVerificationChecks,
   recordVerificationCheck,
+  resolveProjectGoalConditions,
+  setProjectGoalConditions,
   setProjectVerification,
   summarizeProjectVerification,
+  verificationAliasForGoalConditions,
   type ProjectVerificationSummary,
   type RecordVerificationCheckInput,
 } from "./verification";

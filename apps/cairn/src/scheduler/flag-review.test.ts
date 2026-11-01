@@ -89,12 +89,17 @@ function createRow(
 function scheduler(
   flagReview: "manual" | "off" = "manual",
   worker = "flag-worker.ts",
+  offCompletion: "manual" | "auto" = "manual",
 ): Scheduler {
   const fixture = join(import.meta.dir, "testdata", worker);
-  const config =
-    flagReview === "off"
-      ? parseDispatchConfig({ ...CONFIG, verification: { flag_review: "off" } })
-      : parseDispatchConfig(CONFIG);
+  const config = parseDispatchConfig({
+    ...CONFIG,
+    verification: {
+      flag_review: flagReview,
+      off_completion: offCompletion,
+      evidence_completion: "auto",
+    },
+  });
   return new Scheduler({
     db,
     config,
@@ -301,7 +306,7 @@ describe("scheduler flag review capture", () => {
     async () => {
       const project = createRow(true, { kind: "off" });
       const projectId = project.project.id;
-      const loop = scheduler("manual", "flag-bootstrap-worker.ts");
+      const loop = scheduler("manual", "flag-bootstrap-worker.ts", "auto");
 
       const pending = await capture(loop, projectId);
 

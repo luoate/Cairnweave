@@ -8,6 +8,7 @@ import {
   configureDatabase,
   createIntent,
   createProject,
+  getProjectExecution,
   getProjectScope,
   listProjects,
   parseCreateProjectRequest,
@@ -37,6 +38,31 @@ const BODY = {
   goal: "goal",
   hints: [],
 };
+
+describe("project execution", () => {
+  test("persists a selected mode and leaves legacy projects unset", () => {
+    for (const mode of ["local", "container"] as const) {
+      const input = parseCreateProjectRequest({ ...BODY, execution: mode });
+      const project = db.withConn((conn) => createProject(conn, input));
+      expect(db.withConn((conn) => getProjectExecution(conn, project.project.id))).toBe(mode);
+    }
+    const legacy = db.withConn((conn) => createProject(conn, parseCreateProjectRequest(BODY)));
+    expect(db.withConn((conn) => getProjectExecution(conn, legacy.project.id))).toBeNull();
+  });
+
+  test("adds the execution sidecar when opening an older database", () => {
+    const project = db.withConn((conn) => createProject(conn, parseCreateProjectRequest(BODY)));
+    db.withConn((conn) => conn.exec("DROP TABLE project_execution"));
+    const reopened = configureDatabase(db.path);
+    expect(reopened.withConn((conn) => getProjectExecution(conn, project.project.id))).toBeNull();
+  });
+
+  test("rejects invalid execution modes", () => {
+    for (const execution of ["docker", "invalid", 1, {}, ""]) {
+      expect(() => parseCreateProjectRequest({ ...BODY, execution })).toThrow(RequestValidationError);
+    }
+  });
+});
 
 describe("project scope", () => {
   test("parses a scope with trimmed targets and notes", () => {

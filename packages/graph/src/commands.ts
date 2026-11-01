@@ -12,6 +12,7 @@ import type { Database } from "bun:sqlite";
 
 import { all, get, run } from "./db";
 import { HttpError } from "./errors";
+import { closePendingCompletionReviews } from "./completion-reviews";
 import { recordFactEvidence, type FactEvidenceFileInput } from "./fact-evidence";
 import { recordFactMeta } from "./runs";
 import type {
@@ -27,8 +28,14 @@ import type {
   ProjectMeta,
   ProjectScopeInput,
   ProjectSummary,
+  RunExecution,
 } from "./models";
-import { setProjectVerification } from "./verification";
+import {
+  goalConditionsFromVerification,
+  setProjectGoalConditions,
+  setProjectVerification,
+  verificationAliasForGoalConditions,
+} from "./verification";
 import {
   buildIntents,
   checkProjectActive,
@@ -54,6 +61,19 @@ import {
 } from "./services";
 
 export type ProjectScope = ProjectScopeInput;
+
+export function getProjectExecution(conn: Database, projectId: string): RunExecution | null {
+  const row = get<{ mode: string }>(
+    conn,
+    "SELECT mode FROM project_execution WHERE project_id = ?",
+    projectId,
+  );
+  if (row === null) return null;
+  if (row.mode !== "local" && row.mode !== "container") {
+    throw new Error(`invalid project execution mode for ${projectId}`);
+  }
+  return row.mode;
+}
 
 export function listProjects(conn: Database): ProjectSummary[] {
   expireWorkers(conn);
@@ -146,7 +166,38 @@ export function createProject(
   if (body.scope !== null) {
     setProjectScope(conn, projectId, body.scope);
   }
-  setProjectVerification(conn, projectId, body.verification ?? { kind: "evidence" }, now);
+  if (body.execution !== undefined && body.execution !== null) {
+    run(conn, "INSERT INTO project_execution (project_id, mode) VALUES (?, ?)", projectId, body.execution);
+  }
+
+  if (body.goal_conditions !== undefined && body.goal_conditions !== null) {
+    if (body.verification !== undefined && body.verification !== null) {
+      throw new HttpError(
+        400,
+        "goal_conditions and verification cannot coexist; goal_conditions is the M41 form",
+      );
+    }
+    setProjectVerification(
+      conn,
+      projectId,
+      verificationAliasForGoalConditions(body.goal_conditions),
+      now,
+    );
+    setProjectGoalConditions(conn, projectId, body.goal_conditions, now);
+  } else {
+    const policy = setProjectVerification(
+      conn,
+      projectId,
+      body.verification ?? { kind: "evidence" },
+      now,
+    );
+    setProjectGoalConditions(
+      conn,
+      projectId,
+      goalConditionsFromVerification(policy),
+      now,
+    );
+  }
 
   return {
     project: {
@@ -518,6 +569,14 @@ export function completeProject(
     WHERE id = ?
     `,
     projectId,
+  );
+  // Any operator review still pending is now moot: the project completed through another
+  // path. Closing it keeps a later approve from applying to a different completion claim.
+  closePendingCompletionReviews(
+    conn,
+    projectId,
+    `project completed by ${body.worker} without this review`,
+    now,
   );
 
   return {

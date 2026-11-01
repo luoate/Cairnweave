@@ -89,12 +89,24 @@ curl -X PUT http://127.0.0.1:8000/settings/runtime \
 
 | 键 | 默认 | 说明 |
 | --- | --- | --- |
-| `execution` | local | `local` / `container`；只在调度器空闲时切换（见下） |
+| `execution` | local | 全局默认：`local` / `container`；只在调度器空闲时切换。已在创建时指定执行环境的项目不受该设置影响（见下） |
 | `max_workers` | 3 | 全局并发任务上限，正整数 |
 | `max_running_projects` | 2 | 同时调度的项目数，正整数 |
 | `max_project_workers` | 1 | 单项目并发任务，正整数且 ≤ `max_workers` |
 | `interval` | 3 | 调度 tick 秒数，正整数；改动会重挂定时器 |
 | `strategy_context` | on | M36：写 `agent-context.yaml` 并在 reason/explore 提示里引用；`off` 回到 M36 之前的行为（只读项） |
+
+### 题目的执行环境
+
+新建题目可选择「本地进程」「Docker 容器」或「跟随全局默认设置」。API 创建请求可选
+`execution: "local" | "container"`；显式选择保存在 `project_execution` 中，之后修改全局
+`runtime.execution` 不改变它。旧项目、旧客户端和未选择时跟随全局默认；复制题目保留源项目
+的显式选择。所有项目共享现有的工作区根目录与调度并发上限。
+
+Docker 模式需要本机 Docker 和镜像；创建时不启动容器，派发时不可用则跳过并记录日志，
+不会自动改用本地进程。若 dispatch.yaml 未配置 `container`，使用 `cairn-worker:latest`、
+`bridge` 和 `remove` 的默认值；本地模式不提供容器隔离。无调度器时可以保存选择，但不会派发。
+容器的实时审计流必须明确配置容器可访问的 `audit_stream.url`；否则仍在任务结束时导入审计文件。
 
 ### 执行模式切换
 
@@ -104,8 +116,8 @@ curl -X PUT http://127.0.0.1:8000/settings/runtime \
 - 切到 `container` 时先检查本机 `docker`；不可用返回 400 并说明原因。
 - 调度器有任务在跑时返回 400（“wait for running tasks to finish…”）；正在切换时同样拒绝，
   避免并发替换后端。
-- 校验通过后，`Scheduler.reconfigure()` 用新的执行模式重建 runtime 后端：等空闲 → 创建
-  新后端 → 关闭旧后端 → 重新解析工作区根目录。进入容器模式时，控制面先把内置
+- 校验通过后，`Scheduler.reconfigure()` 在空闲时切换全局默认后端；已创建的本地与容器
+  后端按需保留，以便显式选择各自环境的项目继续使用。进入容器模式时，控制面先把内置
   prompts / skills 播种到宿主 agent 配置目录（容器内只读挂载）。
 - dispatch.yaml 没有 `container:` 段也能切过去：校验时补上 `cairn-worker:latest` /
   `bridge` / `remove` 三个默认值，但这些默认值**不写入覆盖 patch**，之后改 YAML 仍然生效。
@@ -169,6 +181,8 @@ curl -X PUT http://127.0.0.1:8000/settings/runtime \
 | 键 | 默认 | 说明 |
 | --- | --- | --- |
 | `evidence_enforcement` | completion | `completion` 阻断无证据完成，`off` 关闭；对新建项目与无策略行的项目生效 |
+| `off_completion` | manual | `verification: off` 项目的完成声明是否需要操作员确认。`manual` 写一条 `completion_reviews` pending 并保持项目 active，由项目页「完成确认」或 `POST /projects/{id}/completion-review/{review_id}/decision` 决定；`auto` 保留旧的“模型说完成就关闭”行为，只用于不需要人工的沙盒。只读项，需改 dispatch.yaml 并重启 |
+| `evidence_completion` | manual | 只有 `evidence` 条件（没有 `challenge` / `flag_count` 客观条件）的项目在 oracle 通过后是否自动完成。`manual` 写一条 `completion_reviews` pending 并保持 active；`auto` 保留 M41 之前的自动完成路径，只用于不需要人工的实验项目。客观条件齐全的项目不受此键影响。只读项，需改 dispatch.yaml 并重启 |
 | `flag_review` | manual | `manual` 把抓到 flag 形状的值登记为后台复核（派发不暂停，完成声明等判定；操作员判定真·还有更多 / 真·停止 / 假·继续探索）；`off` 关闭复核。运行配置弹窗的「Flag 人工复核」开关直接切换这两个值，默认打开。与 M32 的两档不同，M34 的拒绝不看这个键：`manual` 与 `off` 下，完成声明只要引用了本项目已被判为 `fake` 的值就会被拒（reason 释放租约继续跑，并写一条去重 Hint），因为判过的值不再入队、等判定的 hold 会随判定消失 |
 
 ### 范围 `scope`（M33）
@@ -215,6 +229,8 @@ dispatch.yaml，不在运行期可编辑视图里。
 | `runtime.interval`、`retention.sweep_interval_seconds` | `Scheduler.reconfigure()` 重挂定时器 |
 | `verification.evidence_enforcement` | 下一次 `VerificationService.defaultKind` 读取（getter） |
 | `verification.flag_review` | 下一个任务结果落图时的复核登记与完成门禁（派发不停） |
+| `verification.off_completion` | 重启；`off` 项目的完成声明在任务结果落图时直接走人工确认或自动完成 |
+| `verification.evidence_completion` | 重启；仅有 `evidence` 条件的完成声明在 oracle 通过后走人工确认或自动完成 |
 | `scope.ssrf_markers` | 下一次任务准备的 worker 环境（`CAIRN_SSRF_POLICY` 折进 `CAIRN_SCOPE_POLICY`）；已启动的 worker 沿用注入时的模式 |
 | `worker.*` | 下一次 `prepareTask`；运行中的任务沿用已经写好的 `task.json` |
 
@@ -235,6 +251,8 @@ dispatch.yaml，不在运行期可编辑视图里。
 - `audit_stream`
 - `scope.protected_hosts`（部署自身设施名单，只在 yaml 配置；弹窗只读区不展示，模式本身可切）
 - `worker_profiles`
+- `verification.off_completion`（关闭完成校验时的人工确认策略）
+- `verification.evidence_completion`（仅有证据条件时的人工确认策略）
 - `verification.challenge` 的环境变量名与超时
 
 ## 6. 前端行为

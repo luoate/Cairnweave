@@ -140,6 +140,7 @@ export async function runControl(args: readonly string[]): Promise<number> {
   // which may come from a stored override rather than dispatch.yaml, and is retried after
   // a failure so a later switch into container mode can still succeed.
   let containerSeed: Promise<boolean> | null = null;
+  let containerSeedReady = false;
   function seedContainerAgentConfig(): Promise<boolean> {
     if (config === null) return Promise.resolve(true);
     if (containerSeed === null) {
@@ -148,6 +149,7 @@ export async function runControl(args: readonly string[]): Promise<number> {
           const agent = await import("@cairn/agent");
           await agent.initBuiltinSkills(agentConfigDir);
           await agent.initBuiltinPrompts(agentConfigDir);
+          containerSeedReady = true;
           return true;
         } catch (error) {
           console.error(
@@ -245,6 +247,11 @@ export async function runControl(args: readonly string[]): Promise<number> {
         db,
         config,
         verification,
+        containerReady: () => {
+          if (containerSeedReady) return true;
+          void seedContainerAgentConfig();
+          return false;
+        },
         auditTokens,
         auditStreamUrl: resolveAuditStreamUrl(config, {
           hostname: server.hostname ?? host,

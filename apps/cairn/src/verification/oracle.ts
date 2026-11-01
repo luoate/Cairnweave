@@ -19,8 +19,11 @@ import {
   getFactMeta,
   getProjectVerification,
   listFactEvidence,
+  listVerifiedFlags,
   recordVerificationCheck,
-  type ProjectVerification,
+  resolveProjectGoalConditions,
+  type GoalConditionResult,
+  type ProjectGoalCondition,
   type VerificationCheck,
   type VerificationKind,
 } from "@cairn/graph";
@@ -54,8 +57,18 @@ export interface VerificationOutcome {
   flag_count: number | null;
   flag_got_count: number | null;
   evidence_refs: string[];
+  /** M41: every condition that was evaluated, in configured order. */
+  conditions: GoalConditionResult[];
   checked_at: string;
   check: VerificationCheck;
+}
+
+interface ChallengeCounts {
+  ok: boolean;
+  detail: string;
+  flagCount: number | null;
+  flagGotCount: number | null;
+  evidenceRefs?: string[];
 }
 
 type FetchLike = (
@@ -122,6 +135,9 @@ export class VerificationService {
     const policy = this.db.withConn((conn) =>
       getProjectVerification(conn, projectId, this.defaultKind),
     );
+    const conditions = this.db.withConn((conn) =>
+      resolveProjectGoalConditions(conn, projectId, this.defaultKind),
+    );
     const checkedAt = new Date().toISOString();
 
     let result: {
@@ -130,24 +146,25 @@ export class VerificationService {
       flagCount: number | null;
       flagGotCount: number | null;
       evidenceRefs: string[];
+      conditions: GoalConditionResult[];
     };
 
-    switch (policy.kind) {
-      case "off":
-        result = {
-          ok: true,
-          detail: "verification is disabled for this project",
-          flagCount: null,
-          flagGotCount: null,
-          evidenceRefs: [],
-        };
-        break;
-      case "evidence":
-        result = this.checkEvidence(projectId, options);
-        break;
-      case "challenge":
-        result = await this.checkChallenge(policy);
-        break;
+    if (conditions.length === 0) {
+      result = {
+        ok: true,
+        detail: "verification is disabled for this project",
+        flagCount: null,
+        flagGotCount: null,
+        evidenceRefs: [],
+        conditions: [],
+      };
+    } else {
+      const conditionResults = await this.evaluateConditions(
+        projectId,
+        conditions,
+        options,
+      );
+      result = aggregateConditions(conditionResults);
     }
 
     const check = this.db.withConn((conn) =>
@@ -160,6 +177,7 @@ export class VerificationService {
         flagCount: result.flagCount,
         flagGotCount: result.flagGotCount,
         evidenceRefs: result.evidenceRefs,
+        conditions: result.conditions,
         checkedAt,
       }),
     );
@@ -172,9 +190,110 @@ export class VerificationService {
       flag_count: result.flagCount,
       flag_got_count: result.flagGotCount,
       evidence_refs: result.evidenceRefs,
+      conditions: result.conditions,
       checked_at: checkedAt,
       check,
     };
+  }
+
+  /**
+   * Evaluates the ordered AND list. Challenge results are fetched once per code even if a
+   * `flag_count` condition also consumes them. A missing/invalid config fails closed.
+   */
+  private async evaluateConditions(
+    projectId: string,
+    conditions: readonly ProjectGoalCondition[],
+    options: VerificationOptions,
+  ): Promise<GoalConditionResult[]> {
+    const challengeCodes = new Set(
+      conditions
+        .filter((condition) => condition.kind === "challenge")
+        .map((condition) => condition.challenge_code ?? ""),
+    );
+    const challengeResults = new Map<string, ChallengeCounts>();
+    for (const code of challengeCodes) {
+      challengeResults.set(
+        code,
+        code === ""
+          ? challengeFailure("challenge verification requires a challenge_code")
+          : await this.checkChallenge(code),
+      );
+    }
+
+    const results: GoalConditionResult[] = [];
+    for (const condition of conditions) {
+      if (condition.kind === "challenge") {
+        const code = condition.challenge_code ?? "";
+        const counts = challengeResults.get(code) ?? {
+          ok: false,
+          detail: "challenge verification result is unavailable",
+          flagCount: null,
+          flagGotCount: null,
+        };
+        results.push({
+          ordinal: condition.ordinal,
+          kind: condition.kind,
+          ok: counts.ok,
+          detail: counts.detail,
+          challenge_code: condition.challenge_code,
+          flag_count: counts.flagCount,
+          flag_got_count: counts.flagGotCount,
+          evidence_refs: [],
+        });
+        continue;
+      }
+
+      if (condition.kind === "flag_count") {
+        const min = condition.min;
+        if (min === null || !Number.isInteger(min) || min < 1) {
+          results.push({
+            ordinal: condition.ordinal,
+            kind: condition.kind,
+            ok: false,
+            detail: "flag_count condition has no valid min",
+            challenge_code: null,
+            flag_count: null,
+            flag_got_count: null,
+            evidence_refs: [],
+          });
+          continue;
+        }
+        const operatorConfirmed = this.db.withConn(
+          (conn) => listVerifiedFlags(conn, projectId).length,
+        );
+        const challengeConfirmed = [...challengeResults.values()].reduce(
+          (total, counts) => total + (counts.flagGotCount ?? 0),
+          0,
+        );
+        const found = operatorConfirmed + challengeConfirmed;
+        results.push({
+          ordinal: condition.ordinal,
+          kind: condition.kind,
+          ok: found >= min,
+          detail:
+            `flag_count requires ${min} confirmed flag(s), found ` +
+            `${operatorConfirmed} operator-confirmed + ${challengeConfirmed} challenge-confirmed`,
+          challenge_code: null,
+          flag_count: min,
+          flag_got_count: found,
+          evidence_refs: [],
+        });
+        continue;
+      }
+
+      const evidence = this.checkEvidence(projectId, options);
+      results.push({
+        ordinal: condition.ordinal,
+        kind: condition.kind,
+        ok: evidence.ok,
+        detail: evidence.detail,
+        challenge_code: null,
+        flag_count: null,
+        flag_got_count: null,
+        evidence_refs: evidence.evidenceRefs,
+      });
+    }
+    return results;
   }
 
   private checkEvidence(
@@ -279,14 +398,7 @@ export class VerificationService {
     };
   }
 
-  private async checkChallenge(policy: ProjectVerification): Promise<{
-    ok: boolean;
-    detail: string;
-    flagCount: number | null;
-    flagGotCount: number | null;
-    evidenceRefs: string[];
-  }> {
-    const code = policy.challenge_code;
+  private async checkChallenge(code: string | null): Promise<ChallengeCounts> {
     if (code === null || code.trim() === "") {
       return challengeFailure("challenge verification requires a challenge_code");
     }
@@ -368,6 +480,45 @@ export class VerificationService {
       evidenceRefs: [],
     };
   }
+}
+
+function aggregateConditions(results: readonly GoalConditionResult[]): {
+  ok: boolean;
+  detail: string;
+  flagCount: number | null;
+  flagGotCount: number | null;
+  evidenceRefs: string[];
+  conditions: GoalConditionResult[];
+} {
+  const ok = results.every((condition) => condition.ok);
+  const failed = results.filter((condition) => !condition.ok);
+  const detail =
+    results.length === 1
+      ? (results[0]?.detail ?? "")
+      : ok
+        ? `all ${results.length} goal conditions passed`
+        : `goal conditions failed: ${failed
+            .map((condition) => `${condition.kind} (${condition.detail})`)
+            .join("; ")}`;
+  const withCounts =
+    results.find(
+      (condition) => condition.kind === "challenge" && condition.flag_count !== null,
+    ) ??
+    results.find(
+      (condition) => condition.kind === "flag_count" && condition.flag_count !== null,
+    ) ??
+    null;
+  const evidenceRefs = [
+    ...new Set(results.flatMap((condition) => condition.evidence_refs)),
+  ];
+  return {
+    ok,
+    detail,
+    flagCount: withCounts?.flag_count ?? null,
+    flagGotCount: withCounts?.flag_got_count ?? null,
+    evidenceRefs,
+    conditions: [...results],
+  };
 }
 
 function challengeFailure(detail: string): {

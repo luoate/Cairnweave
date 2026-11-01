@@ -17,6 +17,7 @@ import {
   createHint,
   createIntent,
   createProject,
+  decideCompletionReview,
   decideFlagReview,
   expireReasonLeases,
   expireWorkers,
@@ -26,12 +27,14 @@ import {
   findHintByContent,
   getAuditStreamLoss,
   getCompletionIntentOr409,
+  getCompletionReview,
   getFactMeta,
   getFlagReview,
   getIntentMeta,
   getIntentOr404,
   getLatestVerificationCheck,
   getProjectDetail,
+  getProjectExecution,
   getProjectOr404,
   getProjectScope,
   getProjectUsage,
@@ -73,6 +76,7 @@ import {
   releaseReason,
   renderProjectReportMarkdown,
   requestStrategistReplan,
+  resolveProjectGoalConditions,
   selectSubgraph,
   setIntentStatus,
   setProjectScope,
@@ -80,10 +84,12 @@ import {
   SUBGRAPH_DEFAULT_FACTS,
   SUBGRAPH_DEFAULT_INTENTS,
   SUBGRAPH_MAX_DEPTH,
+  summarizeCompletionReviews,
   summarizeFlagReviews,
   utcnow,
   type AuditEntry,
   type CairnDatabase,
+  type CompletionReviewDecision,
   type FlagReviewDecision,
   type IntentMeta,
   type IntentRow,
@@ -91,8 +97,9 @@ import {
 } from "@cairn/graph";
 
 import type { AuditTokenRegistry } from "../audit-stream/tokens";
-import { DEFAULT_VERIFICATION, type BudgetConfig } from "../config";
+import { DEFAULT_VERIFICATION, type BudgetConfig, type ExecutionMode } from "../config";
 import type { RuntimeConfigStore } from "../config-overrides";
+import { containerNameFor } from "../runtime/docker";
 import { verifyEvidenceFiles } from "../scheduler/evidence";
 import { projectWorkspace } from "../scheduler/tasks";
 import { VerificationService } from "../verification/oracle";
@@ -269,6 +276,28 @@ function parseFlagReviewDecision(value: unknown): {
   const decision = body["decision"];
   if (decision !== "real_more" && decision !== "real_done" && decision !== "fake") {
     throw new HttpError(400, "decision must be real_more, real_done or fake");
+  }
+  const note = body["note"];
+  if (note !== undefined && note !== null && typeof note !== "string") {
+    throw new HttpError(400, "note must be a string");
+  }
+  if (typeof note === "string" && note.length > 500) {
+    throw new HttpError(400, "note must be at most 500 characters");
+  }
+  return { decision, note: typeof note === "string" ? note.trim() || null : null };
+}
+
+function parseCompletionReviewDecision(value: unknown): {
+  decision: CompletionReviewDecision;
+  note: string | null;
+} {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new HttpError(400, "completion review body must be a JSON object");
+  }
+  const body = value as Record<string, unknown>;
+  const decision = body["decision"];
+  if (decision !== "approve" && decision !== "reject") {
+    throw new HttpError(400, "decision must be approve or reject");
   }
   const note = body["note"];
   if (note !== undefined && note !== null && typeof note !== "string") {
@@ -555,6 +584,19 @@ function buildRoutes(
     routes.push({ method, regex: new RegExp(`^${source}$`), keys, handler });
   }
 
+  function projectExecutionView(projectId: string, configuredMode: ExecutionMode | null): {
+    mode: ExecutionMode | null;
+    container_name: string | null;
+    configured_mode?: ExecutionMode;
+  } {
+    const mode = runtimeConfig === null ? null : configuredMode ?? runtimeConfig.config.runtime.execution;
+    return {
+      mode,
+      container_name: mode === "container" ? containerNameFor(projectId) : null,
+      ...(configuredMode === null ? {} : { configured_mode: configuredMode }),
+    };
+  }
+
   registerAgentConfigRoutes(route, agentConfig);
   registerAgentSkillsRoutes(route, agentConfig);
   registerSettingsRuntimeRoutes(route, {
@@ -609,7 +651,8 @@ function buildRoutes(
     // selects challenge automatically; otherwise the evidence switch decides. A later
     // config change must not silently re-open or re-verify projects that already exist.
     const payload =
-      body.verification === undefined || body.verification === null
+      (body.verification === undefined || body.verification === null) &&
+      (body.goal_conditions === undefined || body.goal_conditions === null)
         ? { ...body, verification: oracle.defaultPolicy() }
         : body;
     return db.withConn((conn) => json(createProject(conn, payload), 201));
@@ -621,6 +664,13 @@ function buildRoutes(
       return json({
         ...getProjectDetail(conn, projectId),
         flag_reviews: summarizeFlagReviews(conn, projectId),
+        completion_review: summarizeCompletionReviews(conn, projectId),
+        goal_conditions: resolveProjectGoalConditions(
+          conn,
+          projectId,
+          oracle.defaultKind,
+        ),
+        execution: projectExecutionView(projectId, getProjectExecution(conn, projectId)),
       });
     }),
   );
@@ -743,6 +793,79 @@ function buildRoutes(
           review: outcome.review,
           dismissed: outcome.dismissed,
           reviews: summarizeFlagReviews(conn, projectId),
+        });
+      });
+    },
+  );
+
+  route("GET", "/projects/{project_id}/completion-review", ({ params }) =>
+    db.withConn((conn) =>
+      json(summarizeCompletionReviews(conn, params["project_id"]!)),
+    ),
+  );
+
+  // Operator verdict on a completion claim that arrived under `verification: off`.
+  // Approve completes the project with the recorded sources; reject records a hint and
+  // lets exploration continue. The scheduler never acts on this route itself.
+  route(
+    "POST",
+    "/projects/{project_id}/completion-review/{review_id}/decision",
+    async ({ params, request }) => {
+      if (isCrossOrigin(request)) {
+        throw new HttpError(403, "cross-origin request rejected");
+      }
+      requireOperator(request, operatorToken);
+      const body = parseCompletionReviewDecision(await readBody(request));
+      return db.withConn((conn) => {
+        const projectId = params["project_id"]!;
+        const reviewId = Number(params["review_id"]);
+        if (!Number.isInteger(reviewId) || reviewId <= 0) {
+          throw new HttpError(400, "completion review id must be a positive integer");
+        }
+        const current = getCompletionReview(conn, projectId, reviewId);
+        const project = getProjectOr404(conn, projectId);
+        if (body.decision === "approve") {
+          if (project.status !== "active") {
+            throw new HttpError(409, "project is not active");
+          }
+          if (current.from_facts.length === 0) {
+            throw new HttpError(409, "completion review has no source facts");
+          }
+          const review = decideCompletionReview(
+            conn,
+            projectId,
+            reviewId,
+            body.decision,
+            body.note,
+          );
+          completeProject(conn, projectId, {
+            from: review.from_facts,
+            description: review.description,
+            worker: "operator",
+          });
+          return json({
+            review,
+            project: getProjectDetail(conn, projectId).project,
+            completion_review: summarizeCompletionReviews(conn, projectId),
+          });
+        }
+
+        const review = decideCompletionReview(
+          conn,
+          projectId,
+          reviewId,
+          body.decision,
+          body.note,
+        );
+        if (project.status === "active") {
+          const hint = "操作员拒绝完成声明，请继续探索。";
+          if (findHintByContent(conn, projectId, hint) === null) {
+            createHint(conn, projectId, { content: hint, creator: "operator" });
+          }
+        }
+        return json({
+          review,
+          completion_review: summarizeCompletionReviews(conn, projectId),
         });
       });
     },
@@ -1099,6 +1222,11 @@ function buildRoutes(
       const projectId = params["project_id"]!;
       return json({
         policy: getProjectVerification(conn, projectId, oracle.defaultKind),
+        goal_conditions: resolveProjectGoalConditions(
+          conn,
+          projectId,
+          oracle.defaultKind,
+        ),
         latest: getLatestVerificationCheck(conn, projectId),
       });
     }),

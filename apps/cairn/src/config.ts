@@ -223,12 +223,21 @@ export function protectedTargetHosts(config: DispatchConfig): string[] {
  */
 export type EvidenceEnforcement = "completion" | "off";
 export type FlagReviewMode = "manual" | "off";
+/** Whether an `off` project's completion claim waits for an operator. */
+export type OffCompletionMode = "manual" | "auto";
+/** Whether an evidence-only project's completion claim waits for an operator (M41). */
+export type EvidenceCompletionMode = "manual" | "auto";
 
 export const EVIDENCE_ENFORCEMENT_MODES: readonly EvidenceEnforcement[] = [
   "completion",
   "off",
 ];
 export const FLAG_REVIEW_MODES: readonly FlagReviewMode[] = ["manual", "off"];
+export const OFF_COMPLETION_MODES: readonly OffCompletionMode[] = ["manual", "auto"];
+export const EVIDENCE_COMPLETION_MODES: readonly EvidenceCompletionMode[] = [
+  "manual",
+  "auto",
+];
 
 export interface ChallengeVerifierConfig {
   baseUrlEnv: string;
@@ -246,12 +255,26 @@ export interface VerificationConfig {
    * operator decision; `off` keeps dispatch and completion fully automatic.
    */
   flagReview: FlagReviewMode;
+  /**
+   * `manual` (default) turns an `off` project's completion claim into an operator review;
+   * `auto` keeps the legacy "model says complete, project closes" behavior for sandboxes
+   * that deliberately run without a human.
+   */
+  offCompletion: OffCompletionMode;
+  /**
+   * M41: `manual` (default) turns a project whose only goal condition is `evidence`
+   * into an operator review. Set `auto` only for sandboxes that deliberately accept
+   * traceability as proof of completion.
+   */
+  evidenceCompletion: EvidenceCompletionMode;
   challenge: ChallengeVerifierConfig;
 }
 
 export const DEFAULT_VERIFICATION: VerificationConfig = {
   evidenceEnforcement: "completion",
   flagReview: "manual",
+  offCompletion: "manual",
+  evidenceCompletion: "manual",
   challenge: {
     baseUrlEnv: "TCH_CHALLENGE_API_BASE_URL",
     agentTokenEnv: "TCH_CHALLENGE_AGENT_TOKEN",
@@ -947,13 +970,31 @@ function parseVerification(value: unknown): VerificationConfig {
   const flagReview = has(root, "flag_review")
     ? oneOf(root["flag_review"], "verification.flag_review", FLAG_REVIEW_MODES)
     : DEFAULT_VERIFICATION.flagReview;
+  const offCompletion = has(root, "off_completion")
+    ? oneOf(root["off_completion"], "verification.off_completion", OFF_COMPLETION_MODES)
+    : DEFAULT_VERIFICATION.offCompletion;
+  const evidenceCompletion = has(root, "evidence_completion")
+    ? oneOf(
+        root["evidence_completion"],
+        "verification.evidence_completion",
+        EVIDENCE_COMPLETION_MODES,
+      )
+    : DEFAULT_VERIFICATION.evidenceCompletion;
   if (!has(root, "challenge")) {
-    return { evidenceEnforcement, flagReview, challenge: { ...defaults } };
+    return {
+      evidenceEnforcement,
+      flagReview,
+      offCompletion,
+      evidenceCompletion,
+      challenge: { ...defaults },
+    };
   }
   const challenge = recordAt(root["challenge"], "verification.challenge");
   return {
     evidenceEnforcement,
     flagReview,
+    offCompletion,
+    evidenceCompletion,
     challenge: {
       baseUrlEnv: has(challenge, "base_url_env")
         ? requiredString(challenge, "base_url_env", "verification.challenge")
@@ -1303,6 +1344,8 @@ export function parseDispatchConfig(value: unknown, options: ConfigOptions = {})
     : {
         evidenceEnforcement: DEFAULT_VERIFICATION.evidenceEnforcement,
         flagReview: DEFAULT_VERIFICATION.flagReview,
+        offCompletion: DEFAULT_VERIFICATION.offCompletion,
+        evidenceCompletion: DEFAULT_VERIFICATION.evidenceCompletion,
         challenge: { ...DEFAULT_VERIFICATION.challenge },
       };
 

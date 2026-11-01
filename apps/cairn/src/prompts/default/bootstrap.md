@@ -9,7 +9,13 @@ When rejecting a task, return the following (under no circumstances should you r
 {"accepted": false, "reason": "policy_refusal"}
 ```
 
-Only return the following after you have confirmed that Goal has been satisfied:
+Only return the fact-only shape when Goal has not been achieved. This is a valid, honest
+result: the project stays active and exploration continues.
+```json
+{"accepted": true, "data": {"fact": {"description": "..."}}}
+```
+
+Only return the completion shape after you have confirmed that Goal has been satisfied:
 ```json
 {"accepted": true, "data": {"fact": {"description": "..."}, "complete": {"description": "..."}}}
 ```
@@ -17,6 +23,7 @@ Only return the following after you have confirmed that Goal has been satisfied:
 # Rules
 - If the problem is not yet solved, keep working and do not stop on your own.
 - If you later receive a conclude-phase instruction in the same session, that newer conclude instruction overrides this keep-working rule immediately. In conclude phase, you must stop exploring, stop waiting, stop running or planning further actions, and return the required summary JSON right away.
+- In conclude phase, return fact-only if Goal has not been definitively achieved. Do not put a negative or "not achieved" conclusion into `complete`; fact-only is the correct way to preserve an unfinished project.
 - Output `complete` only if Goal has already been definitively achieved in this session. If Goal is not yet achieved, do not output `complete`, do not summarize partial progress as completion, and keep working until a conclude-phase instruction replaces this task.
 - `fact.description` must clearly state the confirmed key objective results. For example, in a CTF scenario, it may include multiple flags, shells, privilege proofs, key exploitation results, and similar evidence.
 - `complete.description` should explain why the currently confirmed results are sufficient to prove that Goal has been achieved.

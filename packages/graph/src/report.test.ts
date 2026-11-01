@@ -89,6 +89,7 @@ describe("buildProjectReport", () => {
     expect(result.verification).toEqual({
       kind: "evidence",
       challenge_code: null,
+      goal_conditions: [expect.objectContaining({ ordinal: 0, kind: "evidence" })],
       checks: { total: 0, passed: 0, failed: 0, last_checked_at: null },
       latest: null,
     });
@@ -309,12 +310,19 @@ describe("buildProjectReport", () => {
   });
 
   test("falls back to the supplied policy for legacy projects", () => {
-    db.withConn((conn) =>
-      run(conn, "DELETE FROM project_verification WHERE project_id = ?", projectId),
-    );
+    db.withConn((conn) => {
+      run(conn, "DELETE FROM project_verification WHERE project_id = ?", projectId);
+      run(conn, "DELETE FROM project_goal_conditions WHERE project_id = ?", projectId);
+    });
 
     expect(report().verification.kind).toBe("evidence");
+    expect(report().verification.goal_conditions).toMatchObject([
+      { ordinal: 0, kind: "evidence" },
+    ]);
     expect(report({ verificationFallback: "off" }).verification.kind).toBe("off");
+    expect(report({ verificationFallback: "off" }).verification.goal_conditions).toEqual(
+      [],
+    );
   });
 
   test("aggregates audit counts without exposing event payloads", () => {

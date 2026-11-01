@@ -210,15 +210,21 @@ retention:
 #   epsilon_decay: 0.99         # (0,1]; 1 keeps epsilon constant
 #   epsilon_min: 0.01           # floor; must not exceed epsilon
 
-# Completion verification (M14a). The policy is chosen per project at creation time
-# (`verification.kind`: challenge | evidence | off). `evidence_enforcement` supplies the
+# Completion verification (M14a, goal conditions M41). A project stores an ordered AND
+# list of goal conditions (`challenge` | `flag_count` | `evidence`); `verification.kind`
+# remains the creation alias and legacy fallback. `evidence_enforcement` supplies the
 # default for API-created projects and for legacy projects without a stored policy;
 # `completion` requires evidence before a project may close, `off` is the escape hatch
-# for old projects and offline tests. The two challenge values below are environment
-# variable NAMES, never tokens or URLs. The oracle stores flag counts only; flag values
-# and the Agent-Token must never appear in this file, task.json, result.json or logs.
+# for old projects and offline tests. Automatic completion needs an objective condition
+# (`challenge` or `flag_count`); evidence-only projects default to operator review.
+# `evidence_completion: auto` restores the pre-M41 automatic path for experiments.
+# The two challenge values below are environment variable NAMES, never tokens or URLs.
+# The oracle stores flag counts only; flag values and the Agent-Token must never appear
+# in this file, task.json, result.json or logs.
 # verification:
 #   evidence_enforcement: completion   # completion | off
+#   off_completion: manual             # manual | auto (M40: manual defers `off` completion claims to an operator)
+#   evidence_completion: manual        # manual | auto (M41: manual defers evidence-only completion claims to an operator)
 #   flag_review: manual                # manual | off (default manual; also a runtime switch in the settings dialog)
 #   challenge:
 #     base_url_env: TCH_CHALLENGE_API_BASE_URL

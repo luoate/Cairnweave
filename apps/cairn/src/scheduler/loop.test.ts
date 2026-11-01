@@ -67,6 +67,9 @@ const CONFIG = {
     retain_task_files: true,
     result_grace_seconds: 2,
   },
+  // These scheduling tests predate M41's manual evidence completion; keep the legacy
+  // automatic path here. M41 defaults and manual review are covered separately.
+  verification: { evidence_completion: "auto" },
   // Keep dispatch deterministic in scheduling tests; trigger policy has its own tests.
   strategist: {
     cooldown_seconds: 0,
@@ -182,6 +185,7 @@ function concurrentScheduler(): Scheduler {
     config: parseDispatchConfig({
       ...CONFIG,
       runtime: { ...CONFIG.runtime, max_project_workers: 2 },
+      verification: { off_completion: "auto" },
     }),
     workspaceRoot: join(directory, "workspace"),
     log: (message) => logs.push(message),

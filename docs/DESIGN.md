@@ -1,8 +1,10 @@
 # 设计文档：AgentContext —— 让决策者看到系统知道的
 
 状态：**Phase A 已实现（M36）；Phase B 已实现（M37，收窄为 `abandoned`，不含
-`refuted` / `done_when` / reopen）；Phase C1 已实现（M38，启动对账）；Phase C2 已规划为
-M39，Phase D 仍为草案**。本文只讨论结构与语义，不代表后续阶段已经排期。实现记录见
+`refuted` / `done_when` / reopen）；Phase C1 已实现（M38，启动对账）；Phase C2 已实现
+（M39，DB claim）；Phase D 仍为草案，其中完成契约加固的 H1 已实现（M40：bootstrap
+fact-only + `off` 人工确认），H2 已实现（M41：`goal_conditions` + `flag_count`），
+H3 仍为计划，见 §15**。本文只讨论结构与语义，不代表后续阶段已经排期。实现记录见
 `docs/MILESTONES.md`。
 兼容性约束：不改变 Cairn 图的形状、YAML 导出、对外 HTTP golden 与 worker 契约中的既有字段。
 
@@ -257,6 +259,8 @@ done_when:     可选文本，描述该方向的完成判据
 
 `goal` 是图里的一个 Fact；完成是模型声明 + oracle 检查“引用的事实是否可追溯”。`challenge` 是唯一真正的目标验证，`evidence` 更接近审计。部分完成、多 flag、子目标都没有进入决策输入。
 
+2026-11-01 的 proj_030（web8）把这个缺口暴露得很完整：项目在第一个 bootstrap 任务后就被标成 completed，但 worker 的完成文本明确写着“flag 没有读到”。触发条件与修复计划见 §15。
+
 ### 7.2 目标条件
 
 把 `verification` 从“单一策略”扩展为“目标条件列表”（旁路表，不动图）：
@@ -271,6 +275,7 @@ goal_conditions:
 - 条件全部通过才允许完成；任一失败则完成声明被推迟，理由写回 `verification_checks` 并进入 AgentContext。
 - 保留 `evidence` / `challenge` / `off` 作为现有别名，迁移期不改旧项目的行为。
 - 不引入任意命令/HTTP 断言执行器（那是执行面，需要单独的安全设计）。
+- 在目标条件落地前，`off` 与 `evidence` 仍可能把“未达成目标”声明当成完成；加固顺序与临时门见 §15。
 
 ### 7.3 意图的 `done_when`
 
@@ -300,7 +305,7 @@ AgentContext 输出 `progress: {found, total}` 与最近一次检查，reason �
 | **B（已实现，M37，收窄）** | 意图生命周期：`intent_meta.status/status_reason/status_at/status_by`；reason 提议 abandon（默认关闭）；操作员路由；派发/提示/水位/AgentContext 过滤；UI 徽标与二次确认。`refuted`、`done_when`、reopen 留到后续 | 旧数据缺列合成 `open`；abandon 只影响未来的派发 |
 | **C1（已实现，M38）** | 启动对账：`scheduler_instances` 心跳；无活跃同伴时把遗留 `runs.outcome = NULL` 标为 `inactive`；不动租约与派发路径 | `runs` 列不变；仅读模型从 running 变成 inactive；可单独回滚 |
 | **C2（已实现，M39）** | DB claim：新增 `task_claims` 任务级租约账本；并发计数、`isIntentRunning` 与跨进程防重由 DB 派生；崩溃按实例心跳与租约过期接管 | 保留图级租约；可回退到 M38 的内存运行视图 |
-| **D** | 目标条件与部分完成；`done_when` 进入提示词；评估集接入 milestone | 旧 `verification` 作为别名保留 |
+| **D** | 目标条件与部分完成；`done_when` 进入提示词；评估集接入 milestone。完成契约的紧急加固与分阶段计划见 §15 | 旧 `verification` 作为别名保留 |
 
 每个阶段的最小验证：
 - A：构建器确定性、上限/截断、脱敏断言、session 文件存在、提示词段落存在、golden 不变；fake solver 端到端跑通。
@@ -592,6 +597,294 @@ scheduler 出现时配额是全局的，而 execution mode 切换不会被别人
 - **迁移顺序**：先落 claim 表与双写（M39），观察一个版本；再考虑用 claim 直接派生可派发
   集合、删除部分图级租约判断（后续阶段）。M39 不改变“哪个意图可以被派发”的选择逻辑。
 
+## 15. 完成契约加固（H1 已实现 M40；H2 已实现 M41）
+
+### 15.1 触发案例与三个缺口
+
+2026-11-01 的 proj_030（web8）在第一个 bootstrap 任务结束后就被标成 completed，但 worker 的
+`complete.description` 原文是：
+
+> Goal NOT definitively achieved: the flag value at /flag was not read… completion cannot be
+> claimed.
+
+这不是模型“擅自停止”那么简单，而是三个独立缺口叠加：
+
+1. **`verification: off` 无条件放行**：`VerificationService` 对 `off` 直接返回
+   `ok: true`，模型只要交出 `complete`，项目就会被关闭。
+2. **bootstrap 契约强制 `complete`**：`validateBootstrapExecutePayload` 把 `complete` 当作
+   必填；bootstrap 没有“只交 fact、保留未完成状态”的合法形状。模型被软截止要求收尾时，
+   只能在“违反提示词”和“违反契约”之间二选一。
+3. **`evidence` 不是目标验证**：`evidence` 只检查完成声明引用的 Fact 是否有可追溯的文件证据。
+   proj_030 的 bootstrap fact 有 6 个证据文件，所以即使把 `off` 改成 `evidence`，同样的
+   “没有 flag”完成声明仍会通过。只有 `challenge` 计数或新的 `flag_count` 条件能判断 flag。
+
+此外，proj_030 的 bootstrap 配置是 120 秒超时、96 秒软截止。模型在 96 秒收到收尾指令时还没
+绕过 `/app/flask_app.py` 里对 `flag`、`*`、`?` 的子串过滤；它已经拿到了 `/admin` 任意文件
+读取、源码和根目录列表（看到 `/flag` 存在），但没有读到 flag 值。软截止本身不是根因，但它
+决定了“未完成时也必须交卷”，从而触发了前两个缺口。
+
+### 15.2 目标与非目标
+
+目标：
+
+- 允许 bootstrap 诚实地以“有进展、未完成”结束，并让项目继续进入 reason/explore。
+- `off` 不再等同于“模型说完成就完成”；没有自动校验时，完成必须由操作员确认。
+- 自动完成必须至少有一个**客观目标条件**（`challenge` 或确认过的 `flag_count`）；
+  `evidence` 只作为附加的可追溯性条件。
+- 所有改动保持旁路表与追加式提示词；不改图 schema、YAML/timeline 导出、HTTP golden 和
+  worker 契约既有字段。
+
+非目标：
+
+- 不引入任意命令、HTTP 断言或脚本执行器；那属于执行面，需要单独的安全设计。
+- 不把身份认证、多用户或平台化纳入本次加固。
+- 不改变“哪个意图可以被派发”的选择逻辑；本计划只改完成判定与 bootstrap 收尾。
+
+### 15.3 H1：bootstrap fact-only
+
+这是最小、最直接的修复。
+
+**契约**（`packages/contracts/src/payloads.ts`）：
+
+- `validateBootstrapExecutePayload` 的返回值从 `rejected | complete` 扩展为
+  `rejected | fact | complete`。
+- `complete` 变为可选；缺省时返回 `{ kind: "fact", data: { factDescription } }`。
+- `looksLikeBootstrapExecuteData` 同时接受 `["fact"]` 与 `["fact", "complete"]`。
+
+**调度**（`apps/cairn/src/scheduler/loop.ts`）：
+
+- `applyBootstrap` 始终 `concludeIntent` 并记录证据。
+- fact-only：只结束 bootstrap 意图，不调用 `completeProject`，项目保持 active；下一轮进入
+  reason/explore。
+- 带 `complete`：保留现有的 flag 复核、拒绝引用检查与 verification 门。
+- `completionClaim` 只在 payload 真的带 `complete` 时为 bootstrap 返回验证请求，避免
+  fact-only 也去调用 challenge oracle。
+
+**提示词**（`apps/cairn/src/prompts/default/bootstrap.md`）：
+
+- 明确列出两种合法输出：
+  - 未完成：`{"accepted": true, "data": {"fact": {"description": "..."}}}`
+  - 已完成：`fact` + `complete`
+- 写明：被 conclude / 软截止要求收尾时，如果目标未达成，返回 fact-only，不要把否定结论写进
+  `complete`。
+- 保留“不要拒绝任务、继续工作”的既有规则。
+
+**兼容性**：旧 worker 继续返回 `fact + complete` 不受影响；`complete` 从必填变可选是向后
+兼容的，不需要升 task protocol 版本。
+
+**测试**：
+
+- `parse.test.ts`：fact-only 合法、fact+complete 合法、缺 fact 报错、空 complete 报错。
+- `loop.test.ts`：fact-only bootstrap 后项目 active、bootstrap 意图已结论、没有 goal 意图；
+  下一 tick 会派发 reason/explore。
+- 用 proj_030 的 `result.json` 造一个回归夹具，断言不再关闭项目。
+
+### 15.4 H1：`off` 完成人工确认
+
+即使 bootstrap 不再强制 `complete`，模型仍可能主动乱报完成。`verification: off` 的语义应
+改为“没有自动校验”，而不是“无条件相信模型”。
+
+**数据模型**：
+
+```sql
+CREATE TABLE IF NOT EXISTS completion_reviews (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  run_id TEXT,
+  task_id TEXT,
+  kind TEXT NOT NULL,
+  description TEXT NOT NULL,
+  from_facts TEXT NOT NULL DEFAULT '[]',
+  status TEXT NOT NULL DEFAULT 'pending',   -- pending | approved | rejected
+  note TEXT,
+  created_at TEXT NOT NULL,
+  decided_at TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS completion_reviews_one_pending
+  ON completion_reviews(project_id) WHERE status = 'pending';
+```
+
+**scheduler 流程**：
+
+- `applyBootstrap` / `applyReason` 收到 `complete` 且策略为 `off` 时：
+  - 写 pending review，不调用 `completeProject`；
+  - 项目保持 active，日志记 `completion deferred project=...: verification is off`；
+  - 释放任务 claim 与相应租约；已有的 flag review pending 逻辑仍然优先。
+- 同一项目重复出现完成声明时更新 pending 行，而不是堆积多条。
+
+**操作员路由**：
+
+- `GET /projects/{id}/completion-review`：返回 pending 记录与历史。
+- `POST /projects/{id}/completion-review/{review_id}/decision`：
+  - `approve`：调用 `completeProject`，`from` 使用记录里的 `from_facts`，描述使用记录文本；
+  - `reject`：记录一条 Hint 说明“操作员拒绝完成声明，请继续探索”，项目保持 active。
+- 守卫与其它写路由一致：跨源拒绝，配置 `CAIRN_OPERATOR_TOKEN` 时要求
+  `X-Cairn-Operator-Token`。
+
+**UI**：项目页显示“模型请求完成，等待确认”横幅，展示完成描述和来源 Fact，提供
+「确认完成 / 继续探索」。项目页同时显示当前完成校验模式。
+
+**配置**：
+
+```yaml
+verification:
+  off_completion: manual   # manual | auto
+```
+
+- `manual`（默认）：`off` 项目的完成声明进入人工确认。
+- `auto`：保留当前的实验行为，仅用于不需要人工的沙盒；必须在 CONFIG 中说明风险。
+- 该键进入配置校验与只读视图；不通过运行时 UI 热改。
+
+### 15.5 H2：目标条件（真正的“拿到 flag 才完成”，已实现 M41）
+
+H1 解决了“没人看就自动完成”，H2 解决“有人看之前，oracle 也应该能判断”。
+
+**数据模型**（旁路表，不动图）：
+
+```sql
+CREATE TABLE IF NOT EXISTS project_goal_conditions (
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  ordinal INTEGER NOT NULL,
+  kind TEXT NOT NULL,                    -- challenge | flag_count | evidence
+  config TEXT NOT NULL DEFAULT '{}',     -- 例如 {"min":1} / {"challenge_code":"web-01"}
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(project_id, ordinal)
+);
+```
+
+**条件语义**：
+
+- `challenge`：沿用现有外部挑战服务计数；全部计数达标才算通过。
+- `flag_count`：只统计操作员确认过的真实 flag（`flag_reviews.status IN
+  ('real_more','real_done')`）以及挑战服务已确认的捕获数，**不采信模型自述或未复核的候选**。
+  `config.min` 为正整数；未达到即推迟完成。
+- `evidence`：保留现有可追溯性检查，但它只是附加条件，不能单独证明目标达成。
+- 所有条件 AND；任一失败时写回 `verification_checks`，detail 指明哪个条件失败、差多少。
+- 没有 `project_goal_conditions` 的旧项目从现有 `project_verification` 合成一个条件，行为
+  与今天一致。
+
+**完成流程**：
+
+1. worker 声明 `complete`；
+2. 控制面校验载荷形状与证据；
+3. 逐个评估目标条件；
+4. 全部通过才 `completeProject`；否则项目保持 active，失败理由进入
+   `verification_checks` 与 AgentContext；
+5. AgentContext 输出逐条件进度，reason 优先补未完成条件。
+
+**默认策略**：自动完成至少需要一个客观条件（`challenge` 或 `flag_count`）。只有
+`evidence` 条件或 `off` 的项目默认进入 H1 的人工确认；这避免“有证据文件但没拿到 flag”再
+次被自动关闭。需要完全自动的实验项目可显式配置 `verification.evidence_completion: auto`
+放宽（默认 `manual`）。
+
+**兼容性**：`verification: challenge | evidence | off` 继续作为创建时的别名；旧项目不重建
+条件行，读取时按单条件解释。
+
+### 15.6 H3：预算、提示与评估
+
+- **超时**：demo 的 bootstrap 120 秒 / 软截止 96 秒对真实 Web 题偏短；建议
+  `tasks.bootstrap.timeout` 提到 600 左右（软截止 480），或为 bootstrap/explore 提供独立的
+  软截止比例。软截止仍保留，但配合 fact-only 后，收尾不再等于完成。
+- **UI**：创建项目时显示实际解析出的完成校验策略（`auto` 可能解析成 `off` 或 `evidence`），
+  当策略没有客观目标条件时给出警告；项目页增加校验模式徽标。
+- **评估**：按 §8 建立 `tools/eval/` 基线，至少覆盖单 flag、部分 flag、错误完成、预算耗尽、
+  证据缺失；H1/H2 落地前后用同一组场景对比完成率、错误完成率、成本、耗时和尝试次数。
+- **回归**：把 proj_030 的 `result.json` 作为固定夹具，覆盖：
+  - `off` + 否定 `complete` → pending review，项目 active；
+  - fact-only bootstrap → 项目 active 并继续调度；
+  - `evidence` 有证据但无 flag → H2 后必须被 `flag_count` 条件拒绝；
+  - `challenge` 计数不足 → 完成声明被拒绝。
+
+### 15.7 兼容、回滚与风险
+
+- **bootstrap 契约**：`complete` 可选是加法变更；旧 worker 与新控制面、旧控制面与新 worker
+  的组合都仍能工作。fact-only 结果在旧控制面上会被判为“complete is required”，因此部署时
+  应让控制面先升级，或让 worker 在旧控制面上继续返回 complete。
+- **新表**：`completion_reviews` 与 `project_goal_conditions` 都是旁路表；回退到旧代码时被
+  忽略，图与租约不受影响。pending review 可以留在库里，不影响调度。
+- **行为变化**：`off_completion: manual` 是默认行为变化；需要旧行为的部署显式设 `auto`。
+  H2 的“自动完成需要客观条件”同样改变了仅 evidence 项目的完成路径：M41 起默认进入人工
+  确认，需要旧行为的部署显式设 `evidence_completion: auto`。详见 MILESTONES 与 CONFIG。
+- **模型语义**：不要尝试用“描述里有没有否定词”判断完成；这不可靠。结构性修复是 fact-only
+  契约、客观条件与人工确认。
+- **旧 worker 存活**：与 §14.5 相同，人工确认不改变租约与 claim 的接管规则。
+
+### 15.8 验收
+
+- `bun run check` 全量通过；新增测试覆盖上述四类回归。（M41 达成：1114 tests /
+  96 files / 4595 expects。）
+- `completion_reviews` 的 approve/reject 路由有 403/404/409/400 边界测试。
+- `flag_count` 只统计操作员确认的 flag；未复核候选不计入。（M41 达成。）
+- AgentContext 输出逐条件进度与最近一次失败理由；reason 能在下一轮看到“还差 flag”。
+  （M41 达成：`goal.verification.conditions`。）
+- proj_030 原始结果重放不再关闭项目。
+
+### 15.9 落地顺序
+
+| 阶段 | 内容 | 预计 |
+| --- | --- | --- |
+| H1a ✅ | bootstrap fact-only：契约 + 提示词 + scheduler + 回归 | 0.5–1 天 |
+| H1b ✅ | `off` 完成人工确认：表 + 路由 + UI + 配置 | 1–2 天 |
+| H2 ✅ | `goal_conditions` + `flag_count`/`challenge` + 部分完成 | 2–3 天 |
+| H3 | bootstrap 超时、创建页警告、评估集回归 | 0.5–1 天 |
+
+H1 是安全门，H2 是完成契约的正确形态，H3 是测量与体验收尾。执行模式在落地时编为 M39b，
+因此 H1 作为 M40、H2 作为 M41 实现；H3 仍待排期。
+
+### 15.10 M40 实现记录（H1）
+
+- **bootstrap 契约**：`validateBootstrapExecutePayload` 返回 `rejected | fact | complete`；
+  `complete` 可选，缺省时只返回 `factDescription`。裸载荷同时接受 `["fact"]` 与
+  `["fact", "complete"]`。`completionClaim` 只在载荷真的带 `complete` 时请求 oracle。
+- **调度语义**：`applyBootstrap` 始终结论 bootstrap 意图并记录证据；fact-only 只记日志
+  `bootstrap completed without a goal claim`，项目保持 active，下一轮 reason/explore 继续。
+  带 `complete` 时原有 flag 复核、拒绝引用与 oracle 检查顺序不变。
+- **`off` 人工确认**：旁路表 `completion_reviews`（每个项目最多一条 pending），scheduler 在
+  `verification.kind === "off"` 且 `off_completion: manual` 时写 pending 并保持 active；重复
+  声明刷新同一行。`completeProject` 会关闭遗留 pending，避免之后误批准。
+- **操作员路由**：`GET /projects/{id}/completion-review`（pending + 历史）与
+  `POST /projects/{id}/completion-review/{review_id}/decision`（`approve | reject`）。
+  approve 用记录的 `from_facts` 与描述调用 `completeProject`；reject 记录终态并写一条去重
+  Hint。写路由跨源 403，配置 token 时要求 `X-Cairn-Operator-Token`。
+- **UI/配置**：项目页在 active 且有 pending 时显示「完成确认」横幅，可确认完成或继续探索；
+  项目详情与独立路由返回同一份摘要。`verification.off_completion` 默认 `manual`，只读展示，
+  不在运行时热改；`auto` 保留旧行为。
+- **验证**：`bun run check` 通过（1089 tests / 96 files / 4485 expects，2026-11-01）。新增
+  `completion-reviews.test.ts` 8 例、`api.completion-review.test.ts` 6 例，以及
+  `verification-gate.test.ts` 的 fact-only / proj_030 负向 complete / 人工批准用例；
+  prompt golden 与 API golden 已同步。H2 的 `goal_conditions` 和 `flag_count` 当时仍未
+  实现，因此 `evidence` 只证明可追溯、不证明拿到 flag 的限制在 M40 仍存在；该限制由 M41
+  的 `flag_count` 条件解决。
+
+### 15.11 M41 实现记录（H2）
+
+- **存储**：旁路表 `project_goal_conditions(project_id, ordinal, kind, config,
+  created_at)`；`verification_checks` 增加 `conditions` JSON 列。`setProjectGoalConditions`
+  整体替换有序条件并同步 `project_verification` 兼容别名；单条件项目继续由别名驱动，
+  多条件列表为权威来源。没有条件行的旧项目读取时按别名合成一个条件。
+- **创建契约**：`POST /projects` 接受 `goal_conditions`（1–8 条，`challenge` 需
+  `challenge_code`，`flag_count` 需 1–10000 的整数 `min`，`evidence` 无配置），与
+  `verification` 互斥；`verification: challenge | evidence | off` 仍是创建别名。
+- **判定**：oracle 逐条件 AND 评估。`challenge` 复用外部计数；`flag_count` 只累加
+  `flag_reviews.status IN ('real_more','real_done')` 与挑战服务已确认的捕获数；
+  `evidence` 保留可追溯性检查。失败时写回 `verification_checks.conditions`，detail 指明
+  失败条件与差多少；单条件项目的 detail 与 M40 保持一致。
+- **完成流程**：全部条件通过后，只有存在客观条件（`challenge` / `flag_count`）才自动完成；
+  仅 `evidence` 或无条件项目进入 H1 人工确认（`verification.evidence_completion`，默认
+  `manual`，`auto` 保留旧行为）。`off_completion` 只负责无条件项目。
+- **AgentContext / UI**：`goal.verification.conditions` 输出逐条件 `ok`、最近 detail 与
+  `found/total` 进度；项目详情的 `goal_conditions`、`/projects/{id}/verification`、
+  `/projects/{id}/report` 也暴露同一列表，项目页「完成判定」显示逐条状态。
+- **兼容性**：`verification` 别名继续存在；旧项目不重建条件行。回退旧代码时新表与新列被
+  忽略。
+- **验证**：`bun run check` 通过（1114 tests / 96 files / 4595 expects，2026-11-01）。
+  新增 `verification.test.ts` 的条件存储/别名/校验用例、`oracle.test.ts` 的多条件 AND 与
+  flag 计数用例、`verification-gate.test.ts` 的 evidence 人工确认 / `auto` 放宽 /
+  flag_count 完成后重试用例、`agent-context.test.ts` 的逐条件进度用例，以及 API 创建与
+  详情用例；API golden 与报告字段同步。UI 仅增加只读展示，创建页的客观条件输入与警告留给
+  H3。
+
 ## 附录 A：当前提示词输入
 
 | 模板 | 占位符 |
@@ -621,6 +914,8 @@ scheduler 出现时配额是全局的，而 execution mode 切换不会被别人
 | `audit_events` / `audit_stream_lost` | 工具调用哈希链与实时流丢失 |
 | `scheduler_instances` | 每次控制面启动的 boot 行与心跳（M38） |
 | `task_claims` | 派发任务的所有权账本与跨进程防重索引（M39） |
+| `completion_reviews` | `verification: off` 时模型完成声明的人工确认队列（§15 H1，M40） |
+| `project_goal_conditions` | 挑战 / flag 数 / 证据等目标条件列表（§15 H2，M41） |
 | `project_writeups` | 已生成的 Writeup |
 | `project_scopes` | 授权范围 |
 | `runtime_config_overrides` | 运行时配置覆盖 |
@@ -632,5 +927,7 @@ scheduler 出现时配额是全局的，而 execution mode 切换不会被别人
 | S1 陈旧 Fact、S2 证据不可见、S4 flag 进度 | A |
 | S3 执行记忆、S5 意图失败态 | A（历史） + B（状态与淘汰） |
 | S6 调度双真相 | C1（启动对账） + C2（DB claim） |
+| S8 未达目标却被完成（bootstrap 强制 complete / off 自动完成） | §15 H1 |
+| S9 目标无法自动验证（evidence 只证明可追溯） | §15 H2（M41） |
 | 完成契约、部分完成 | D |
 | 能力不可度量 | 评估集（可独立开始） |

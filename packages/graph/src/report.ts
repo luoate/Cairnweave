@@ -97,6 +97,7 @@ export function buildProjectReport(
     verification: {
       kind: verification.policy.kind,
       challenge_code: verification.policy.challenge_code,
+      goal_conditions: verification.goal_conditions,
       checks: verification.checks,
       latest: verification.latest,
     },

@@ -210,12 +210,6 @@
 </head>
 <body class="bg-slate-50 text-slate-800 h-screen flex flex-col overflow-hidden" :class="{ 'select-none cursor-col-resize': isResizingPanel }" x-data="cairnApp()" x-effect="syncDocumentTitle()">
 
-<!-- The control plane has no authentication; keep this visible in every view. -->
-<div class="shrink-0 flex items-center gap-2 border-b border-amber-200/70 bg-amber-50/90 px-4 py-1.5 text-2xs text-amber-700">
-  <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/></svg>
-  <span>无身份认证：界面与 API 会直接修改控制面数据，请只绑定 127.0.0.1 或置于受信网络/反向代理之后。</span>
-</div>
-
 <!-- ═══════════ PROJECT LIST VIEW ═══════════ -->
 <div x-show="view === 'list'" x-cloak class="flex-1 flex flex-col overflow-hidden">
   <header class="bg-white/80 backdrop-blur border-b border-slate-200/60 px-4 py-2.5 flex items-center gap-3 shrink-0">
@@ -470,6 +464,10 @@
     <div class="flex items-center gap-4 text-xs text-slate-400">
       <span x-text="`${project.facts.length} 个事实`"></span>
       <span x-text="`${project.intents.length} 个意图${intentLifecycleCount() ? `（${intentLifecycleCount()} 已放弃）` : ''}`"></span>
+      <span x-show="projectExecutionLabel()" data-project-execution
+        class="px-2 py-0.5 rounded-full border text-2xs font-medium whitespace-nowrap"
+        :class="projectExecutionBadgeClass()" :title="projectExecutionHint()"
+        x-text="projectExecutionLabel()"></span>
     </div>
     <div class="flex items-center gap-1.5">
       <template x-if="!replay.active">
@@ -498,6 +496,12 @@
           </button>
         </div>
       </template>
+      <button x-show="!replay.active" @click="cloneProjectFromCurrent()" :disabled="isCloningProject" data-clone-project
+        class="px-2.5 py-1 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition flex items-center gap-1.5 disabled:opacity-40"
+        title="用本项目的标题、授权范围、校验与附件预填新建表单，可再次编辑" aria-label="复制题目">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><path d="M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2"/></svg>
+        <span x-text="isCloningProject ? '复制中…' : '复制'"></span>
+      </button>
       <button @click="viewProjectYaml(selectedProjectId, project.project.title)" class="px-2.5 py-1 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition flex items-center gap-1.5">
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><path d="M14.25 3H7.5A2.25 2.25 0 0 0 5.25 5.25v13.5A2.25 2.25 0 0 0 7.5 21h9a2.25 2.25 0 0 0 2.25-2.25V8.25L14.25 3Z"/><path d="M14.25 3v5.25h4.5"/><path d="M8.25 12h7.5M8.25 15h5.25"/></svg>
         快照
@@ -551,6 +555,25 @@
               class="rounded-md border border-rose-300 bg-white px-2 py-0.5 text-2xs font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-50 transition">假 · 继续探索</button>
           </div>
         </template>
+      </div>
+    </div>
+  </template>
+
+  <template x-if="pendingCompletionReview() && projectIsActive()">
+    <div class="shrink-0 border-b border-sky-300 bg-sky-50 px-4 py-2 text-xs text-sky-700">
+      <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span class="text-2xs font-semibold uppercase tracking-[0.16em] text-sky-600">完成确认</span>
+        <span>完成校验已关闭，模型的完成声明不会自动生效。请确认目标是否已经达成。</span>
+      </div>
+      <div class="mt-1.5 flex flex-wrap items-start gap-2">
+        <div class="min-w-0 flex-1">
+          <div class="break-words text-slate-700" x-text="pendingCompletionReview().description"></div>
+          <div class="mt-0.5 text-2xs text-sky-700" x-text="completionReviewFactsLabel()"></div>
+        </div>
+        <button type="button" :disabled="completionReviewBusy" @click="decideCompletionReview('approve')"
+          class="rounded-md border border-emerald-300 bg-white px-2 py-0.5 text-2xs font-medium text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 transition">确认完成</button>
+        <button type="button" :disabled="completionReviewBusy" @click="decideCompletionReview('reject')"
+          class="rounded-md border border-amber-300 bg-white px-2 py-0.5 text-2xs font-medium text-amber-700 hover:bg-amber-50 disabled:opacity-50 transition">继续探索</button>
       </div>
     </div>
   </template>
@@ -770,6 +793,33 @@
                 </template>
               </div>
             </template>
+          </div>
+        </section>
+        <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden" data-project-execution-panel>
+          <div class="px-4 py-3 border-b border-slate-100 bg-slate-50/80 flex items-center justify-between gap-3">
+            <div class="flex items-center gap-2">
+              <span class="text-2xs font-semibold text-slate-400 uppercase tracking-widest">执行环境</span>
+            </div>
+            <button type="button" x-show="!project?.execution?.configured_mode" @click="openSettings('runtime')"
+              class="rounded-lg border border-slate-200 px-2 py-0.5 text-2xs font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition">调整默认值</button>
+          </div>
+          <div class="p-4 text-xs space-y-2">
+            <div class="flex items-center gap-2">
+              <span class="text-slate-400">任务使用</span>
+              <span x-show="projectExecutionLabel()" class="px-2 py-0.5 rounded-full border text-2xs font-medium"
+                :class="projectExecutionBadgeClass()" x-text="projectExecutionLabel()"></span>
+              <span x-show="!projectExecution().mode" class="text-2xs text-slate-400" x-text="projectExecutionLabel() ? '（本进程未启用调度器）' : '未知（本进程未启用调度器）'"></span>
+            </div>
+            <template x-if="projectExecution().container_name">
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="text-slate-400">容器名</span>
+                <code class="rounded bg-slate-50 border border-slate-200 px-1.5 py-0.5 font-mono text-2xs text-slate-600 break-all"
+                  x-text="projectExecution().container_name"></code>
+                <button type="button" @click="copyContainerName()"
+                  class="rounded-md border border-slate-200 px-2 py-0.5 text-2xs font-medium text-slate-500 hover:bg-slate-50 transition">复制</button>
+              </div>
+            </template>
+            <p class="text-2xs text-slate-400 leading-relaxed">选择的执行环境在创建时固定；跟随全局设置的题目会使用当前默认值。每次任务实际使用的环境记在「运行记录」。</p>
           </div>
         </section>
         <template x-if="!selectedNode">
@@ -1101,6 +1151,8 @@
                 <div><span class="text-slate-400">耗时</span><div class="text-slate-600" x-text="runDurationLabel(run)"></div></div>
                 <div><span class="text-slate-400">退出码</span><div class="text-slate-600" x-text="runExitLabel(run)"></div></div>
                 <div><span class="text-slate-400">证据</span><div class="text-slate-600" x-text="`${run.evidence_count} 个文件`"></div></div>
+                <div><span class="text-slate-400">执行环境</span><div class="text-slate-600" x-text="runExecutionLabel(run)"></div></div>
+                <div><span class="text-slate-400">派发进程</span><div class="font-mono text-slate-600 break-all" x-text="run.instance_id || '—'"></div></div>
                 <div class="col-span-2"><span class="text-slate-400">模型</span><div class="font-mono text-slate-600 break-all" x-text="run.model || '—'"></div></div>
               </div>
               <div class="flex items-start justify-between gap-2 text-2xs">
@@ -2194,6 +2246,16 @@
                     <div class="font-mono text-slate-600 break-all" x-text="reportPanel.data.verification.challenge_code"></div>
                   </div>
                 </template>
+                <template x-if="(reportPanel.data.verification.goal_conditions || []).length > 0">
+                  <div class="col-span-2"><span class="text-slate-400">目标条件</span>
+                    <div class="mt-0.5 space-y-1">
+                      <template x-for="condition in reportPanel.data.verification.goal_conditions" :key="condition.ordinal">
+                        <div class="text-slate-600 break-words"
+                          x-text="`${goalConditionLabel(condition)} · ${goalConditionText(reportPanel.data.verification, condition)}`"></div>
+                      </template>
+                    </div>
+                  </div>
+                </template>
               </div>
             </section>
 
@@ -2460,7 +2522,11 @@
 <!-- New Project -->
 <div x-show="showNewProject" x-cloak data-modal="newProject" x-effect="syncModal('newProject', showNewProject, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('newProject')">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 border border-slate-200/60" @click.stop>
-    <h3 class="text-base font-semibold text-slate-700 mb-4">新建项目</h3>
+    <h3 class="text-base font-semibold text-slate-700" :class="newProject.clonedFrom ? 'mb-1' : 'mb-4'"
+      x-text="newProject.clonedFrom ? '复制项目' : '新建项目'"></h3>
+    <template x-if="newProject.clonedFrom">
+      <p class="text-xs text-slate-400 mb-4">复制自 <span class="font-mono text-slate-500" x-text="newProject.clonedFrom"></span> · 标题、起点与目标、授权范围、执行环境、完成校验、提示和附件都已填好，可继续编辑后创建。</p>
+    </template>
     <div class="space-y-3">
       <div>
         <input x-ref="newProjectTitle" data-autofocus x-model="newProject.title" placeholder="项目标题" aria-label="项目标题"
@@ -2491,6 +2557,19 @@
         <p x-show="newProjectShowErrors && newProjectErrors().targets" class="text-2xs text-rose-500 mt-1" x-text="newProjectErrors().targets"></p>
         <input x-model="newProject.scopeNotes" placeholder="范围备注（可选）" class="mt-2 w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
         <p class="text-2xs text-slate-400 mt-1">调度器只向这些目标派发任务；未配置范围的项目不会运行。</p>
+      </div>
+      <div>
+        <div class="flex items-center justify-between mb-1">
+          <label for="new-project-execution" class="text-2xs text-slate-400 font-medium uppercase tracking-wider">执行环境</label>
+          <span class="text-2xs text-slate-300">按题目设置</span>
+        </div>
+        <select id="new-project-execution" x-model="newProject.execution" aria-label="执行环境"
+          class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
+          <option value="">跟随全局默认设置</option>
+          <option value="local">本地进程</option>
+          <option value="container">Docker 容器</option>
+        </select>
+        <p class="text-2xs text-slate-400 mt-1">Docker 不可用时不会自动切换到本地。本地进程不提供容器隔离。</p>
       </div>
       <div>
         <div class="flex items-center justify-between mb-1">
@@ -2895,6 +2974,7 @@
             <div class="grid grid-cols-2 md:grid-cols-3 gap-x-3 gap-y-1.5 mt-2 text-2xs text-slate-500">
               <div>Prompt 组：<span class="text-slate-700" x-text="runtimeConfig.view.read_only.runtime.prompt_group"></span></div>
               <div>策略上下文：<span class="text-slate-700" x-text="runtimeConfig.view.read_only.runtime.strategy_context === 'on' ? '开启（agent-context.yaml）' : '关闭'"></span></div>
+              <div>完成确认：<span class="text-slate-700" x-text="runtimeConfig.view.read_only.verification.off_completion === 'manual' ? '关闭校验时人工确认' : '关闭校验时自动完成'"></span></div>
               <div>健康检查：<span class="text-slate-700" x-text="runtimeConfig.view.read_only.runtime.worker_healthcheck + ' / ' + runtimeConfig.view.read_only.runtime.healthcheck_timeout + 's'"></span></div>
               <div>Observer：<span class="text-slate-700" x-text="runtimeConfig.view.read_only.observer.enabled ? '开启' : '关闭'"></span></div>
               <div>复盘模型：<span class="text-slate-700" x-text="runtimeConfig.view.read_only.observer.model || '跟随任务模型'"></span></div>
@@ -3462,8 +3542,9 @@ function cairnApp() {
     showDeleteModal: false,
     showSkillDetail: false,
 
-    newProject: { title: '', origin: '', goal: '', bootstrap: true, targetsText: '', scopeNotes: '', hints: [{ content: '' }], verificationKind: 'auto', challengeCode: '', files: [] },
+    newProject: { title: '', origin: '', goal: '', bootstrap: true, targetsText: '', scopeNotes: '', hints: [{ content: '' }], verificationKind: 'auto', challengeCode: '', execution: '', files: [], clonedFrom: '' },
     isCreatingProject: false,
+    isCloningProject: false,
     scopeForm: { projectId: '', projectTitle: '', targetsText: '', notes: '' },
     isSavingScope: false,
     scopePanel: { projectId: '', scope: null, loading: false, error: '' },
@@ -3569,6 +3650,7 @@ function cairnApp() {
       error: '',
     },
     flagReviewBusy: false,
+    completionReviewBusy: false,
     lastProjectListAt: 0,
     pollFailures: 0,
     isPollingTick: false,
@@ -5305,6 +5387,33 @@ function cairnApp() {
     verificationKindLabel(kind) {
       const labels = { challenge: '题目校验', evidence: '证据校验', off: '关闭校验' };
       return labels[kind] || kind || '—';
+    },
+
+    goalConditionLabel(condition) {
+      if (!condition) return '—';
+      if (condition.kind === 'challenge') {
+        return `题目校验 ${condition.challenge_code || ''}`.trim();
+      }
+      if (condition.kind === 'flag_count') return `Flag 数 ≥ ${condition.min ?? '?'}`;
+      return '证据可追溯';
+    },
+
+    goalConditionResult(verification, ordinal) {
+      const latest = verification && verification.latest;
+      const results = latest && Array.isArray(latest.conditions) ? latest.conditions : [];
+      return results.find((result) => result.ordinal === ordinal) || null;
+    },
+
+    goalConditionText(verification, condition) {
+      const result = this.goalConditionResult(verification, condition.ordinal);
+      if (!result) return '尚无校验记录';
+      const state = result.ok ? '通过' : '未通过';
+      if (result.kind === 'flag_count') {
+        const found = result.flag_got_count ?? 0;
+        const total = result.flag_count ?? condition.min ?? '?';
+        return `${state} · ${found}/${total}`;
+      }
+      return result.detail ? `${state} · ${result.detail}` : state;
     },
 
     costFactRows() {
@@ -7624,6 +7733,36 @@ function cairnApp() {
       return Array.isArray(pending) ? pending : [];
     },
 
+    pendingCompletionReview() {
+      const pending = this.project?.completion_review?.pending;
+      return pending && typeof pending === 'object' ? pending : null;
+    },
+
+    completionReviewFactsLabel() {
+      const review = this.pendingCompletionReview();
+      const facts = Array.isArray(review?.from_facts) ? review.from_facts : [];
+      return facts.length ? `来源：${facts.join(', ')}` : '';
+    },
+
+    async decideCompletionReview(decision) {
+      const projectId = this.selectedProjectId;
+      const review = this.pendingCompletionReview();
+      if (!projectId || !review || this.completionReviewBusy) return;
+      this.completionReviewBusy = true;
+      try {
+        await this.api('POST', `/projects/${encodeURIComponent(projectId)}/completion-review/${review.id}/decision`, { decision });
+        await this.loadProject(projectId, { quiet: false });
+        this.loadProjectFlag(projectId);
+        this.updateGraph();
+        this.showToast(decision === 'approve' ? '已确认完成，项目已结束' : '已拒绝完成声明，继续探索');
+      } catch (e) {
+        this.projectError = this.errorText(e);
+        this.showToast(this.errorText(e), 'error');
+      } finally {
+        this.completionReviewBusy = false;
+      }
+    },
+
     async decideFlagReview(reviewId, decision) {
       const projectId = this.selectedProjectId;
       if (!projectId || this.flagReviewBusy) return;
@@ -7713,8 +7852,161 @@ function cairnApp() {
     },
 
     openNewProject() {
+      // A clone fill belongs to the project it came from; a plain "新建项目" must start empty.
+      if (this.newProject.clonedFrom) this.resetNewProjectForm();
       this.newProjectShowErrors = false;
       this.showNewProject = true;
+    },
+
+    resetNewProjectForm() {
+      this.newProject = { title: '', origin: '', goal: '', bootstrap: true, targetsText: '', scopeNotes: '', hints: [{ content: '' }], verificationKind: 'auto', challengeCode: '', execution: '', files: [], clonedFrom: '' };
+    },
+
+    cloneTitle(title) {
+      const base = `${title} 副本`;
+      return base.length > 200 ? base.slice(0, 200) : base;
+    },
+
+    async cloneProjectFromCurrent() {
+      const projectId = this.selectedProjectId;
+      const detail = this.project;
+      if (!projectId || !detail || !detail.project || this.isCloningProject) return;
+      this.isCloningProject = true;
+      const encoded = encodeURIComponent(projectId);
+      const factText = (id) => {
+        const found = (Array.isArray(detail.facts) ? detail.facts : []).find((item) => item.id === id);
+        return found && found.description ? found.description : '';
+      };
+      const hints = (Array.isArray(detail.hints) ? detail.hints : [])
+        .filter((hint) => hint && hint.content)
+        .map((hint) => ({ content: hint.content }));
+      const form = {
+        title: this.cloneTitle(detail.project.title || ''),
+        origin: factText('origin'),
+        goal: factText('goal'),
+        bootstrap: detail.project.bootstrap_enabled !== false,
+        targetsText: '',
+        scopeNotes: '',
+        hints: hints.length > 0 ? hints : [{ content: '' }],
+        verificationKind: 'auto',
+        challengeCode: '',
+        execution: detail.execution?.configured_mode || '',
+        files: [],
+        clonedFrom: projectId,
+      };
+      const problems = [];
+      const [scopeResult, verificationResult, attachmentResult] = await Promise.allSettled([
+        this.api('GET', `/projects/${encoded}/scope`),
+        this.api('GET', `/projects/${encoded}/verification`),
+        this.api('GET', `/projects/${encoded}/attachments`),
+      ]);
+      const scope = scopeResult.status === 'fulfilled' ? (scopeResult.value && scopeResult.value.scope) || null : null;
+      if (scopeResult.status === 'rejected') problems.push(`授权范围: ${this.errorText(scopeResult.reason)}`);
+      if (scope) {
+        form.targetsText = (Array.isArray(scope.targets) ? scope.targets : []).join('\n');
+        form.scopeNotes = scope.notes || '';
+      }
+      const policy = verificationResult.status === 'fulfilled' ? (verificationResult.value && verificationResult.value.policy) || null : null;
+      if (verificationResult.status === 'rejected') problems.push(`完成校验: ${this.errorText(verificationResult.reason)}`);
+      if (policy && policy.kind === 'challenge') {
+        form.verificationKind = 'challenge';
+        form.challengeCode = policy.challenge_code || '';
+      } else if (policy && (policy.kind === 'evidence' || policy.kind === 'off')) {
+        form.verificationKind = policy.kind;
+      }
+      if (attachmentResult.status === 'rejected') {
+        problems.push(`附件: ${this.errorText(attachmentResult.reason)}`);
+      } else {
+        form.files = await this.cloneProjectAttachments(projectId, attachmentResult.value, problems);
+      }
+      this.newProject = form;
+      this.newProjectShowErrors = false;
+      this.showNewProject = true;
+      this.isCloningProject = false;
+      const staged = form.files.length;
+      if (problems.length > 0) {
+        this.showToast(`已复制 ${projectId}，但有 ${problems.length} 项没带上：${problems[0]}`, 'error');
+      } else {
+        this.showToast(staged > 0 ? `已复制 ${projectId}，${staged} 个附件将在创建时上传` : `已复制 ${projectId}`);
+      }
+    },
+
+    // The clone reuses the attachment download route, so a copy is staged exactly like a picked
+    // file and the existing create-then-upload path stores it under the new project.
+    async cloneProjectAttachments(projectId, view, problems) {
+      const items = view && Array.isArray(view.attachments) ? view.attachments : [];
+      if (items.length === 0) return [];
+      if (view && view.available === false) {
+        problems.push('附件: 源项目工作区不可读');
+        return [];
+      }
+      const limit = view && view.limits && Number.isFinite(view.limits.file_bytes) ? view.limits.file_bytes : Infinity;
+      const files = [];
+      for (const item of items) {
+        if (!item || !item.id || !item.name) continue;
+        if (Number.isFinite(item.size) && item.size > limit) {
+          problems.push(`${item.name}: 超过单文件上限，未复制`);
+          continue;
+        }
+        try {
+          const response = await fetch(`/projects/${encodeURIComponent(projectId)}/attachments/${encodeURIComponent(item.id)}`);
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const stamp = Date.parse(item.created_at || '');
+          files.push(new File([await response.blob()], item.name, {
+            lastModified: Number.isNaN(stamp) ? Date.now() : stamp,
+          }));
+        } catch (e) {
+          problems.push(`${item.name}: ${this.errorText(e)}`);
+        }
+      }
+      return files;
+    },
+
+    projectExecution() {
+      const view = this.project && this.project.execution;
+      const mode = view && (view.mode === 'local' || view.mode === 'container') ? view.mode : null;
+      return { mode, container_name: mode === 'container' && view.container_name ? view.container_name : null };
+    },
+
+    projectExecutionLabel() {
+      const mode = this.projectExecution().mode;
+      if (mode) return this.runtimeExecutionLabel(mode);
+      const configured = this.project?.execution?.configured_mode;
+      return configured === 'local' || configured === 'container'
+        ? `已选 ${this.runtimeExecutionLabel(configured)}`
+        : '';
+    },
+
+    projectExecutionBadgeClass() {
+      return (this.projectExecution().mode || this.project?.execution?.configured_mode) === 'container'
+        ? 'border-indigo-200 bg-indigo-50/80 text-indigo-600'
+        : 'border-teal-200 bg-teal-50/80 text-teal-600';
+    },
+
+    projectExecutionHint() {
+      const view = this.projectExecution();
+      if (view.mode === null) return this.projectExecutionLabel()
+        ? `${this.projectExecutionLabel()}；本进程未启用调度器，不会派发任务。`
+        : '本进程没有启用调度器，无法确定执行环境。';
+      return view.mode === 'container'
+        ? `此题目的任务将使用 Docker 容器 ${view.container_name || 'cairn-dispatch-…'}。`
+        : '此题目的任务将作为本机进程运行，不提供容器隔离。';
+    },
+
+    async copyContainerName() {
+      const name = this.projectExecution().container_name;
+      if (!name) return;
+      try {
+        await this.copyText(name);
+        this.showToast('容器名已复制');
+      } catch {
+        this.showToast('复制失败', 'error');
+      }
+    },
+
+    runExecutionLabel(run) {
+      if (!run || !run.execution) return '未记录';
+      return this.runtimeExecutionLabel(run.execution);
     },
 
     stageNewProjectFiles(event) {
@@ -7770,6 +8062,7 @@ function cairnApp() {
         // without an authorized scope is never dispatched, so every upload lands before
         // the first worker builds its prompt. The scope is restored right after uploads.
         if (stagedFiles.length === 0) body.scope = scope;
+        if (this.newProject.execution) body.execution = this.newProject.execution;
         const verificationKind = this.newProject.verificationKind;
         if (verificationKind === 'challenge') {
           body.verification = { kind: 'challenge', challenge_code: this.newProject.challengeCode.trim() };
@@ -7782,7 +8075,7 @@ function cairnApp() {
         const projectId = data.project.id;
         this.showNewProject = false;
         this.newProjectShowErrors = false;
-        this.newProject = { title:'', origin:'', goal:'', bootstrap: true, targetsText:'', scopeNotes:'', hints: [{ content:'' }], verificationKind: 'auto', challengeCode: '', files: [] };
+        this.resetNewProjectForm();
         await this.loadProjects();
         const failures = stagedFiles.length === 0 ? [] : await this.uploadNewProjectFiles(projectId, stagedFiles, scope);
         await this.openProject(projectId);
@@ -8084,7 +8377,7 @@ function cairnApp() {
       return [
         {
           title: '执行环境',
-          hint: '切换需调度器空闲；容器模式需要本机 Docker',
+          hint: '全局默认值只影响跟随默认的题目；切换需调度器空闲，容器模式需要本机 Docker',
           test: true,
           fields: [
             select('runtime.execution', '执行模式', [

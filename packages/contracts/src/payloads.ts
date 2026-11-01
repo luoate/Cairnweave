@@ -41,10 +41,23 @@ export const MAX_REASON_ABANDONS = 1;
 export const MAX_ABANDON_REASON_CHARS = 500;
 export const MAX_ABANDON_INTENT_ID_CHARS = 64;
 
-export interface BootstrapExecuteResult {
+/**
+ * A bootstrap turn may end with only a fact (goal not reached) or with a fact plus an
+ * explicit completion claim. The fact-only shape is the honest way to report partial
+ * progress when a conclude instruction or soft deadline stops exploration.
+ */
+export interface BootstrapFactResult {
   factDescription: string;
+}
+
+export interface BootstrapCompleteResult extends BootstrapFactResult {
   completeDescription: string;
 }
+
+export type BootstrapExecuteResult =
+  | { kind: "rejected"; data: null }
+  | { kind: "fact"; data: BootstrapFactResult }
+  | { kind: "complete"; data: BootstrapCompleteResult };
 
 export function validateReasonPayload(
   payload: JsonObject,
@@ -137,7 +150,7 @@ export function validateReasonPayload(
 
 export function validateBootstrapExecutePayload(
   payload: JsonObject,
-): { kind: "rejected"; data: null } | { kind: "complete"; data: BootstrapExecuteResult } {
+): BootstrapExecuteResult {
   const unwrapped = unwrapWrappedPayload(payload);
   if (unwrapped.accepted === false) {
     return { kind: "rejected", data: null };
@@ -155,7 +168,7 @@ export function validateBootstrapExecutePayload(
   const factDescription = requiredDescription(data["fact"], "fact");
   const complete = data["complete"];
   if (complete === undefined || complete === null) {
-    throw new Error("complete is required");
+    return { kind: "fact", data: { factDescription } };
   }
   if (!isObject(complete)) {
     throw new Error("complete must be an object");
@@ -288,10 +301,12 @@ function looksLikeReasonData(payload: JsonObject): boolean {
 }
 
 function looksLikeBootstrapExecuteData(payload: JsonObject): boolean {
-  if (!keysEqual(payload, ["fact", "complete"])) {
+  if (!keysEqual(payload, ["fact"]) && !keysEqual(payload, ["fact", "complete"])) {
     return false;
   }
-  return isObject(payload["fact"]) && isObject(payload["complete"]);
+  if (!isObject(payload["fact"])) return false;
+  const complete = payload["complete"];
+  return complete === undefined || complete === null || isObject(complete);
 }
 
 function looksLikeBootstrapConcludeData(payload: JsonObject): boolean {

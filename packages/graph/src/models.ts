@@ -131,6 +131,9 @@ export type RunOutcome =
   | "unhealthy"
   | "inactive";
 
+/** Runtime backend a task was dispatched to; `local` is a host process, `container` a Docker one. */
+export type RunExecution = "local" | "container";
+
 /** One worker task attempt. `outcome` stays null while the task is still running. */
 export interface Run {
   id: string;
@@ -154,6 +157,8 @@ export interface Run {
   detail: string | null;
   /** Scheduler boot that dispatched the task (M39); null for runs predating the claim ledger. */
   instance_id: string | null;
+  /** Backend the task actually ran on (M39b); null for runs predating the recording. */
+  execution: RunExecution | null;
   /** Solver-session usage; all zero when the worker could not report any. */
   input_tokens: number;
   output_tokens: number;
@@ -392,6 +397,8 @@ export interface ProjectDetail {
 export interface ProjectReportVerification {
   kind: VerificationKind;
   challenge_code: string | null;
+  /** Effective M41 condition list (stored, or synthesized for a legacy project). */
+  goal_conditions: ProjectGoalCondition[];
   checks: {
     total: number;
     passed: number;
@@ -501,6 +508,16 @@ export interface AgentContextAttempt {
   detail: string | null;
 }
 
+export interface AgentContextGoalCondition {
+  ordinal: number;
+  kind: GoalConditionKind;
+  /** Null when no check has run yet. */
+  ok: boolean | null;
+  detail: string | null;
+  challenge_code: string | null;
+  progress: { found: number | null; total: number | null };
+}
+
 export interface AgentContextVerification {
   kind: VerificationKind;
   challenge_code: string | null;
@@ -510,6 +527,8 @@ export interface AgentContextVerification {
     last_checked_at: string | null;
   };
   checks: { total: number; passed: number; failed: number };
+  /** M41 per-condition progress; empty for an `off` project. */
+  conditions: AgentContextGoalCondition[];
   latest: { ok: boolean; detail: string; checked_at: string } | null;
 }
 
@@ -621,6 +640,42 @@ export interface ProjectVerificationInput {
   challenge_code?: string | null;
 }
 
+export type GoalConditionKind = "challenge" | "flag_count" | "evidence";
+
+/**
+ * One objective (or supporting) goal condition. Challenge and flag_count are objective:
+ * they can justify automatic completion. Evidence only proves traceability, so an
+ * evidence-only project still needs an operator or an explicit config escape hatch.
+ */
+export interface ProjectGoalConditionInput {
+  kind: GoalConditionKind;
+  /** Required for `challenge`, forbidden otherwise. */
+  challenge_code?: string | null;
+  /** Required for `flag_count`, forbidden otherwise. */
+  min?: number | null;
+}
+
+export interface ProjectGoalCondition {
+  project_id: string;
+  ordinal: number;
+  kind: GoalConditionKind;
+  challenge_code: string | null;
+  min: number | null;
+  created_at: string;
+}
+
+/** One condition's result inside a verification check. */
+export interface GoalConditionResult {
+  ordinal: number;
+  kind: GoalConditionKind;
+  ok: boolean;
+  detail: string;
+  challenge_code: string | null;
+  flag_count: number | null;
+  flag_got_count: number | null;
+  evidence_refs: string[];
+}
+
 export interface VerificationCheck {
   id: number;
   project_id: string;
@@ -631,6 +686,8 @@ export interface VerificationCheck {
   flag_count: number | null;
   flag_got_count: number | null;
   evidence_refs: string[];
+  /** Per-condition results for M41 goal conditions; empty for pre-M41 checks. */
+  conditions: GoalConditionResult[];
   checked_at: string;
 }
 
@@ -664,6 +721,32 @@ export interface FlagReviewSummary {
   counts: Record<FlagReviewStatus, number>;
 }
 
+/** A completion claim that is waiting for an operator because no automatic oracle applies. */
+export type CompletionReviewStatus = "pending" | "approved" | "rejected";
+
+export type CompletionReviewDecision = "approve" | "reject";
+
+export interface CompletionReview {
+  id: number;
+  project_id: string;
+  run_id: string | null;
+  task_id: string | null;
+  /** Task kind that made the claim: `bootstrap` or `reason`. */
+  kind: string;
+  description: string;
+  from_facts: string[];
+  status: CompletionReviewStatus;
+  note: string | null;
+  created_at: string;
+  decided_at: string | null;
+}
+
+/** The one claim awaiting a verdict plus the decisions already recorded. */
+export interface CompletionReviewSummary {
+  pending: CompletionReview | null;
+  history: CompletionReview[];
+}
+
 /** A challenge file uploaded into the project workspace. `path` is workspace-relative. */
 export interface ProjectAttachment {
   id: number;
@@ -685,6 +768,12 @@ export interface CreateProjectRequest {
   scope: ProjectScopeInput | null;
   /** Omitted by older callers; `createProject` defaults to `evidence`. */
   verification?: ProjectVerificationInput | null;
+  /**
+   * M41 objective conditions. When present, `verification` is only a compatibility alias
+   * derived by the control plane; the condition list is the source of truth.
+   */
+  goal_conditions?: ProjectGoalConditionInput[] | null;
+  execution?: RunExecution | null;
 }
 
 export interface CreateHintRequest {
@@ -995,12 +1084,192 @@ function optionalProjectVerification(body: Body): ProjectVerificationInput | nul
   return { kind };
 }
 
+function optionalProjectGoalConditions(
+  body: Body,
+): ProjectGoalConditionInput[] | null {
+  if (!has(body, "goal_conditions") || body["goal_conditions"] === null) {
+    return null;
+  }
+  const raw = body["goal_conditions"];
+  if (!Array.isArray(raw)) {
+    invalid(
+      "list_type",
+      ["body", "goal_conditions"],
+      "Input should be a valid list",
+      raw,
+    );
+  }
+  if (raw.length === 0) {
+    invalid(
+      "too_short",
+      ["body", "goal_conditions"],
+      "List should have at least 1 item after validation, not 0",
+      raw,
+    );
+  }
+  if (raw.length > 8) {
+    invalid(
+      "too_long",
+      ["body", "goal_conditions"],
+      "List should have at most 8 items after validation",
+      raw,
+    );
+  }
+  const seenKinds = new Set<string>();
+  const seenChallengeCodes = new Set<string>();
+  return raw.map((item, index) => {
+    const loc = ["body", "goal_conditions", index] as const;
+    if (typeof item !== "object" || item === null || Array.isArray(item)) {
+      invalid(
+        "model_attributes_type",
+        loc,
+        "Input should be a valid dictionary or object to extract fields from",
+        item,
+      );
+    }
+    const record = item as Body;
+    const extra = Object.keys(record).filter(
+      (key) => key !== "kind" && key !== "challenge_code" && key !== "min",
+    );
+    if (extra.length > 0) {
+      invalid(
+        "value_error",
+        [...loc, extra[0]!],
+        `Value error, unexpected goal condition key: ${extra[0]}`,
+        record[extra[0]!],
+      );
+    }
+    const kind = record["kind"];
+    if (kind !== "challenge" && kind !== "flag_count" && kind !== "evidence") {
+      invalid(
+        "literal_error",
+        [...loc, "kind"],
+        "Input should be 'challenge', 'flag_count' or 'evidence'",
+        kind,
+      );
+    }
+    const rawCode = record["challenge_code"];
+    if (rawCode !== undefined && rawCode !== null && typeof rawCode !== "string") {
+      invalid(
+        "string_type",
+        [...loc, "challenge_code"],
+        "Input should be a valid string",
+        rawCode,
+      );
+    }
+    const code = typeof rawCode === "string" ? rawCode.trim() : "";
+    const rawMin = record["min"];
+    if (
+      rawMin !== undefined &&
+      rawMin !== null &&
+      (typeof rawMin !== "number" || !Number.isInteger(rawMin))
+    ) {
+      invalid(
+        "int_type",
+        [...loc, "min"],
+        "Input should be a valid integer",
+        rawMin,
+      );
+    }
+    const min = typeof rawMin === "number" ? rawMin : null;
+
+    if (kind === "challenge") {
+      if (code === "") {
+        invalid(
+          "value_error",
+          [...loc, "challenge_code"],
+          "Value error, challenge condition requires a non-empty challenge_code",
+          rawCode,
+        );
+      }
+      if (code.length > 200) {
+        invalid(
+          "string_too_long",
+          [...loc, "challenge_code"],
+          "String should have at most 200 characters",
+          rawCode,
+        );
+      }
+      if (min !== null) {
+        invalid(
+          "value_error",
+          [...loc, "min"],
+          "Value error, min is only valid for flag_count conditions",
+          rawMin,
+        );
+      }
+      if (seenChallengeCodes.has(code)) {
+        invalid(
+          "value_error",
+          [...loc, "challenge_code"],
+          "Value error, duplicate challenge condition",
+          rawCode,
+        );
+      }
+      seenChallengeCodes.add(code);
+      return { kind, challenge_code: code };
+    }
+
+    if (code !== "") {
+      invalid(
+        "value_error",
+        [...loc, "challenge_code"],
+        "Value error, challenge_code is only valid for challenge conditions",
+        rawCode,
+      );
+    }
+    if (seenKinds.has(kind)) {
+      invalid(
+        "value_error",
+        [...loc, "kind"],
+        `Value error, duplicate ${kind} condition`,
+        kind,
+      );
+    }
+    seenKinds.add(kind);
+
+    if (kind === "flag_count") {
+      if (min === null || min < 1 || min > 10_000) {
+        invalid(
+          "value_error",
+          [...loc, "min"],
+          "Value error, flag_count.min must be an integer between 1 and 10000",
+          rawMin,
+        );
+      }
+      return { kind, min };
+    }
+    if (min !== null) {
+      invalid(
+        "value_error",
+        [...loc, "min"],
+        "Value error, min is only valid for flag_count conditions",
+        rawMin,
+      );
+    }
+    return { kind };
+  });
+}
+
 export function parseCreateProjectRequest(value: unknown): CreateProjectRequest {
   const body = bodyRecord(value);
   const title = requiredString(body, "title");
   const origin = requiredString(body, "origin");
   const goal = requiredString(body, "goal");
   const bootstrap_enabled = optionalBoolean(body, "bootstrap_enabled", true);
+  const execution = optionalString(body, "execution");
+  const goalConditions = optionalProjectGoalConditions(body);
+  if (goalConditions !== null && has(body, "verification") && body["verification"] !== null) {
+    invalid(
+      "value_error",
+      ["body", "verification"],
+      "Value error, goal_conditions and verification cannot coexist",
+      body["verification"],
+    );
+  }
+  if (execution !== null && execution !== "local" && execution !== "container") {
+    invalid("value_error", ["body", "execution"], "Value error, expected local or container", execution);
+  }
 
   let hints: CreateHintInline[] | null = null;
   if (has(body, "hints") && body["hints"] !== null) {
@@ -1034,6 +1303,8 @@ export function parseCreateProjectRequest(value: unknown): CreateProjectRequest 
     hints,
     scope: optionalProjectScope(body),
     verification: optionalProjectVerification(body),
+    ...(goalConditions === null ? {} : { goal_conditions: goalConditions }),
+    ...(execution === null ? {} : { execution }),
   };
 }
 

@@ -19,6 +19,7 @@ import {
   renderAgentContextYaml,
   run,
   setIntentStatus,
+  setProjectGoalConditions,
   setProjectVerification,
   startRun,
   type CairnDatabase,
@@ -155,6 +156,16 @@ describe("buildAgentContext", () => {
       challenge_code: null,
       progress: { found: null, total: null, last_checked_at: null },
       checks: { total: 0, passed: 0, failed: 0 },
+      conditions: [
+        {
+          ordinal: 0,
+          kind: "evidence",
+          ok: null,
+          detail: null,
+          challenge_code: null,
+          progress: { found: null, total: null },
+        },
+      ],
       latest: null,
     });
   });
@@ -292,6 +303,10 @@ describe("buildAgentContext", () => {
         kind: "challenge",
         challenge_code: "web-01",
       });
+      // Pre-M41 project: only the legacy alias exists, so the condition is synthesized.
+      conn
+        .query("DELETE FROM project_goal_conditions WHERE project_id = ?")
+        .run(projectId);
       recordVerificationCheck(conn, {
         projectId,
         kind: "challenge",
@@ -311,12 +326,91 @@ describe("buildAgentContext", () => {
       challenge_code: "web-01",
       progress: { found: 2, total: 5, last_checked_at: "2026-10-31T09:00:00Z" },
       checks: { total: 1, passed: 0, failed: 1 },
+      conditions: [
+        {
+          ordinal: 0,
+          kind: "challenge",
+          ok: false,
+          detail: "challenge counts 2/5",
+          challenge_code: "web-01",
+          progress: { found: 2, total: 5 },
+        },
+      ],
       latest: {
         ok: false,
         detail: "challenge counts 2/5",
         checked_at: "2026-10-31T09:00:00Z",
       },
     });
+  });
+
+  test("reports per-condition progress in configured order", () => {
+    db.withConn((conn) => {
+      setProjectVerification(conn, projectId, {
+        kind: "challenge",
+        challenge_code: "web-01",
+      });
+      setProjectGoalConditions(conn, projectId, [
+        { kind: "challenge", challenge_code: "web-01" },
+        { kind: "flag_count", min: 3 },
+      ]);
+      recordVerificationCheck(conn, {
+        projectId,
+        kind: "challenge",
+        ok: false,
+        detail: "goal conditions failed: challenge (1/2); flag_count (1/3)",
+        challengeCode: "web-01",
+        flagCount: 2,
+        flagGotCount: 1,
+        conditions: [
+          {
+            ordinal: 0,
+            kind: "challenge",
+            ok: false,
+            detail: 'challenge "web-01" has 1/2 flags',
+            challenge_code: "web-01",
+            flag_count: 2,
+            flag_got_count: 1,
+            evidence_refs: [],
+          },
+          {
+            ordinal: 1,
+            kind: "flag_count",
+            ok: false,
+            detail: "flag_count requires 3 confirmed flag(s), found 1",
+            challenge_code: null,
+            flag_count: 3,
+            flag_got_count: 1,
+            evidence_refs: [],
+          },
+        ],
+        checkedAt: "2026-10-31T09:00:00Z",
+      });
+    });
+
+    const context = build("reason");
+    expect(context.goal.verification.conditions).toEqual([
+      {
+        ordinal: 0,
+        kind: "challenge",
+        ok: false,
+        detail: 'challenge "web-01" has 1/2 flags',
+        challenge_code: "web-01",
+        progress: { found: 1, total: 2 },
+      },
+      {
+        ordinal: 1,
+        kind: "flag_count",
+        ok: false,
+        detail: "flag_count requires 3 confirmed flag(s), found 1",
+        challenge_code: null,
+        progress: { found: 1, total: 3 },
+      },
+    ]);
+
+    const yaml = renderAgentContextYaml(context);
+    expect(yaml).toContain("conditions:");
+    expect(yaml).toContain("flag_count requires 3 confirmed flag(s), found 1");
   });
 
   test("builds the reason delta since the last successful reason", () => {

@@ -358,7 +358,7 @@ scheduler 与 HTTP API 共用 `packages/graph/src/commands.ts` 的命令，不�
 | 数据 | 写入者 | 读取者 | 位置 |
 | --- | --- | --- | --- |
 | SQLite（projects/facts/intents/hints/settings/project_scopes/project_artifacts） | 控制面 | 控制面 | 控制面主机 |
-| SQLite 旁路表（`runs` / `fact_meta` / `fact_evidence` / `pending_concludes` / `audit_events` / `audit_stream_lost` / `proposals` / `intent_meta` / `strategist_state` / `project_verification` / `verification_checks` / `project_writeups` / `project_attachments` / `scheduler_instances` / `task_claims`） | 控制面（不进入图模型与 YAML） | 控制面 | 控制面主机 |
+| SQLite 旁路表（`runs` / `fact_meta` / `fact_evidence` / `pending_concludes` / `audit_events` / `audit_stream_lost` / `proposals` / `intent_meta` / `strategist_state` / `project_verification` / `project_goal_conditions` / `verification_checks` / `completion_reviews` / `project_execution` / `project_writeups` / `project_attachments` / `scheduler_instances` / `task_claims`） | 控制面（不进入图模型与 YAML） | 控制面 | 控制面主机 |
 | `graph.yaml` 快照 | 控制面 | worker | 项目工作区/容器内绝对路径 |
 | `task.json` | 控制面 | worker | `sessionDir` |
 | `result.json` | worker（临时文件 + rename 原子写） | 控制面 | `sessionDir` |
@@ -559,10 +559,19 @@ M5a/M5b 只增加旁路数据，不改图模型、YAML 导出和既有 HTTP 响�
 完成验证只在应用 `complete` 声明时发生；oracle 的网络调用在 `withConn` 事务之外，
 判定结果随后单独写入 `verification_checks`。
 
-- **策略**：`project_verification.kind` 为 `evidence`（默认）/ `challenge` / `off`；
-  创建项目时可指定。未指定时（M18f）先看 `code_env` 指向的环境变量，非空即
-  `challenge`；否则由 `verification.evidence_enforcement`（`completion` 默认 / `off`）
-  决定，也是旧项目无行时的回退。策略不进入图模型或 YAML。
+- **策略**：`project_verification.kind` 为 `evidence`（默认）/ `challenge` / `off`，
+  作为创建别名与旧项目的兼容读模型保留。未指定时（M18f）先看 `code_env` 指向的环境
+  变量，非空即 `challenge`；否则由 `verification.evidence_enforcement`（`completion`
+  默认 / `off`）决定，也是旧项目无行时的回退。策略不进入图模型或 YAML。
+- **目标条件（M41）**：`project_goal_conditions` 保存有序的
+  `challenge | flag_count | evidence` 列表，全部 AND。`challenge` 沿用外部计数；
+  `flag_count` 只累加 `flag_reviews` 中 `real_more`/`real_done` 的数量与挑战服务已确认
+  的捕获数，不采信模型自述或未复核候选；`evidence` 仍是可追溯性检查。多条件列表是
+  权威来源，`project_verification` 只作为兼容投影；没有条件行的旧项目读取时按别名合成
+  一个条件。失败写回 `verification_checks.conditions`，detail 列出失败条件。
+- **自动完成门槛（M41）**：只有存在客观条件（`challenge` / `flag_count`）时，全条件通过
+  才自动完成；仅 `evidence` 或无条件的项目进入 H1 人工确认，由
+  `verification.evidence_completion`（`manual` 默认 / `auto`）控制。
 - **evidence**：reason 检查 `data.complete.from` 的每个 Fact 的 `fact_meta` 与
   `fact_evidence`：必须有 `run_id`、非空 `evidence_refs`、`evidence_status=provided`
   且至少一条证据文件。bootstrap 因为 Fact 在同一事务里创建，改用任务级
@@ -668,18 +677,23 @@ stderr 归档到 `sessionDir/{stdout,stderr}.log`。需要 UI 实时进度时再
   文件清单（名称、字节数、`sha256` 前 12 位）并声明它们只读。
 - 索引失败只记日志，不影响任务结果；下一次扫描会重建。
 
-### 5.6 旁路表：runs、fact_meta、fact_evidence、pending_concludes、audit_events、audit_stream_lost、intent_meta、strategist_state、verification、project_writeups、project_attachments、scheduler_instances 与 task_claims
+### 5.6 旁路表：runs、fact_meta、fact_evidence、pending_concludes、audit_events、audit_stream_lost、intent_meta、strategist_state、verification、project_goal_conditions、project_writeups、project_attachments、scheduler_instances 与 task_claims
 
 这些表都在 `packages/graph/src/db.ts` 中创建，既不属于图导出，也不参与任何既有命令：
 
+- `project_execution(project_id, mode)`：新建项目显式选定 `local | container` 时写入；
+  无行表示沿用 `runtime.execution` 全局默认。调度器按项目选择后端，同一全局并发额度由两种
+  后端共享；Docker 不可用时不会降级为本地进程。
 - `runs(id, project_id, task_id, kind, intent_id, worker, trigger, outcome, exit_code,
   started_at, finished_at, duration_ms, session, evidence_count, detail, input_tokens,
   output_tokens, cache_read_tokens, cache_write_tokens, total_tokens, cost_usd, model,
-  worker_profile, instance_id)`，
+  worker_profile, instance_id, execution)`，
   按 `(project_id, started_at)` 建索引；项目删除时级联删除。六个用量列由 M12b 增量迁移
   补齐，旧行为 0；`model` 由 M14c 迁移补齐，旧行与没有用量的任务为 `NULL`；
   `worker_profile` 由 M15a 迁移补齐，prompt 模式与未做选择的任务为 `NULL`；
-  `instance_id` 由 M39 迁移补齐，只有派发该任务的 `scheduler_instances.id`，旧行为 `NULL`。
+  `instance_id` 由 M39 迁移补齐，只有派发该任务的 `scheduler_instances.id`，旧行为 `NULL`；
+  `execution` 由 M39b 迁移补齐，取派发那一刻那个运行时后端自己声明的判别值（`local |
+  container`），因此切换模式不会改写历史，M39b 之前的行保持 `NULL`、界面显示「未记录」。
   失败任务的用量同样保留。
 - `fact_meta(fact_id, project_id, run_id, evidence_refs, evidence_status, supersedes,
   created_at)`，主键 `(fact_id, project_id)`，外键指向 Fact 并级联删除。`evidence_refs`
@@ -722,17 +736,28 @@ stderr 归档到 `sessionDir/{stdout,stderr}.log`。需要 UI 实时进度时再
   意图比较时临时归一化，因此不会进入图模型、YAML 或 HTTP 图响应。
 - `project_verification(project_id, kind, challenge_code, created_at)`（M14a），主键
   `project_id`，外键指向项目并级联删除。`kind` 为 `challenge | evidence | off`；
-  没有行时读取合成 `evidence`，不改旧项目。
+  没有行时读取合成 `evidence`，不改旧项目。M41 起它只是条件列表的兼容别名。
+- `project_goal_conditions(project_id, ordinal, kind, config, created_at)`（M41），主键
+  `(project_id, ordinal)`，外键指向项目并级联删除。`kind` 为
+  `challenge | flag_count | evidence`；`config` 是 JSON（`{"challenge_code":"web-01"}`、
+  `{"min":2}` 或 `{}`）。行序即 AND 评估顺序；空集合表示无条件（`off`）。
 - `verification_checks(id, project_id, kind, ok, detail, challenge_code, flag_count,
-  flag_got_count, evidence_refs, checked_at)`（M14a），按 `(project_id, checked_at)`
-  建索引，项目删除时级联删除。每次 oracle 调用（含失败与 `off`）追加一行；
-  `evidence_refs` 以 JSON 数组存储，`challenge_code` 是外部挑战的标识，不是 flag。
+  flag_got_count, evidence_refs, conditions, checked_at)`（M14a），按
+  `(project_id, checked_at)` 建索引，项目删除时级联删除。每次 oracle 调用（含失败与
+  `off`）追加一行；`evidence_refs` 与 `conditions` 以 JSON 数组存储，`conditions` 是
+  M41 逐条件结果，`challenge_code` 是外部挑战的标识，不是 flag。
 - `flag_reviews(id, project_id, fact_id, run_id, flag, status, note, created_at,
   decided_at)`（M32），`UNIQUE(project_id, flag)` 保证同一值只审一次，另有
   `(project_id, status, created_at)` 索引，项目删除时级联删除。`status` 为
   `pending | real_more | real_done | fake | dismissed`；`fact_id` 指向触发复核的 Fact
   （缺失时为 `NULL`，此时 `real_done` 返回 409）。表是旁路数据，不进入图导出、
   timeline 或 worker 契约。
+- `completion_reviews(id, project_id, run_id, task_id, kind, description, from_facts,
+  status, note, created_at, decided_at)`（M40），项目删除时级联删除；部分唯一索引
+  `completion_reviews_one_pending` 保证每个项目最多一条 `pending`。`kind` 为
+  `bootstrap | reason`，`from_facts` 是 JSON 数组。scheduler 在 `verification: off` 且
+  `off_completion: manual` 时写 pending 并保持项目 active；approve 用这些来源 Fact 完成，
+  reject 写终态并追加 Hint。表不进入图导出、timeline 或 worker 契约。
 - `project_writeups(project_id, markdown, model, created_at)`（M19a），主键
   `project_id`，外键指向项目并级联删除。只在 `POST /projects/{id}/writeup` 成功后
   upsert 一行，`DELETE` 清除；中文草稿不落库，始终由图数据现算。表不进入图模型、
@@ -770,8 +795,9 @@ stderr 归档到 `sessionDir/{stdout,stderr}.log`。需要 UI 实时进度时再
 HTTP（除实时追加外均为只读，均在控制面进程内直接查库）：
 
 - `GET /projects/{id}/runs` → run 数组，按 `started_at, id` 排序；每行含六个用量列、
-  `model`、`worker_profile`（无记录时为 `null`）与 `instance_id`（M39：派发该任务的
-  scheduler boot，旧行为 `null`）；未知项目 404。
+  `model`、`worker_profile`（无记录时为 `null`）、`instance_id`（M39：派发该任务的
+  scheduler boot，旧行为 `null`）与 `execution`（M39b：那次任务实际跑在 `local` 还是
+  `container`，旧行与没有后端上下文的情况为 `null`）；未知项目 404。
 - `GET /projects/{id}/stats`（M14d/M15a，只读）→
   `{project_id, totals, by_worker, by_model, by_profile}`。
   每组统计运行数、运行中/已结束、各 outcome 计数、`success_rate`（成功 ÷ 已结束，
@@ -826,6 +852,13 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
   `dismissed`；`real_more` / `fake` 在项目仍 active 时追加一条去重的 operator Hint。
   响应 `{review, dismissed, reviews}`；判定与完成在同一事务，失败不会留下半完成的决定。
   非 pending 409、未知项目/评审 404、非法 decision / note / id 400；配置
+  `CAIRN_OPERATOR_TOKEN` 时要求 `X-Cairn-Operator-Token`。
+- `GET /projects/{id}/completion-review`（M40，只读）→ `{pending, history}`。
+  `pending` 最多一条，`history` 按 id 降序只含已决定的行；未知项目 404。
+- `POST /projects/{id}/completion-review/{review_id}/decision`（M40）→ 请求体
+  `{decision: approve|reject, note?}`。approve 仅在项目 active 且 review 有来源 Fact 时
+  用记录描述调用 `completeProject`；reject 记录终态并在项目 active 时追加去重 Hint。
+  非 pending 409、未知项目/评审 404、非法 decision / note / id 400；跨源 403，配置
   `CAIRN_OPERATOR_TOKEN` 时要求 `X-Cairn-Operator-Token`。
 - `GET /projects/{id}/subgraph?around=<fact|intent id>`（M30，只读）→
   `{project: {id, title}, focus: {kind, id}, depth, truncated, counts: {facts, intents},

@@ -9,8 +9,12 @@ import {
   configureDatabase,
   createIntent,
   createProject,
+  decideFlagReview,
+  getLatestVerificationCheck,
   heartbeatIntent,
+  recordFlagReview,
   type CairnDatabase,
+  type ProjectGoalConditionInput,
 } from "@cairn/graph";
 
 import { DEFAULT_VERIFICATION } from "../config";
@@ -46,6 +50,28 @@ function createRow(
         verification,
       }).project.id,
   );
+}
+
+function createConditionRow(goalConditions: ProjectGoalConditionInput[]): string {
+  return db.withConn(
+    (conn) =>
+      createProject(conn, {
+        title: "oracle conditions",
+        origin: "origin",
+        goal: "goal",
+        hints: null,
+        bootstrap_enabled: false,
+        scope: { targets: ["127.0.0.1:8080"] },
+        goal_conditions: goalConditions,
+      }).project.id,
+  );
+}
+
+function decide(projectId: string, flag: string, decision: "real_more" | "real_done" | "fake"): void {
+  db.withConn((conn) => {
+    const { review } = recordFlagReview(conn, projectId, { flag });
+    decideFlagReview(conn, projectId, review.id, decision);
+  });
 }
 
 function addFact(
@@ -363,11 +389,16 @@ describe("challenge verification", () => {
 
   test("rejects challenge verification without a challenge code", async () => {
     const projectId = createRow({ kind: "challenge", challenge_code: "web-01" });
-    db.withConn((conn) =>
+    db.withConn((conn) => {
+      // Simulate a pre-M41 challenge project: the stored conditions are gone and the
+      // legacy alias (now missing its code) is the only source.
+      conn
+        .query("DELETE FROM project_goal_conditions WHERE project_id = ?")
+        .run(projectId);
       conn
         .query("UPDATE project_verification SET challenge_code = NULL WHERE project_id = ?")
-        .run(projectId),
-    );
+        .run(projectId);
+    });
 
     const outcome = await service({
       env: CHALLENGE_ENV,
@@ -376,5 +407,147 @@ describe("challenge verification", () => {
 
     expect(outcome.ok).toBe(false);
     expect(outcome.detail).toContain("challenge_code");
+  });
+});
+
+describe("goal conditions", () => {
+  test("passes only when every challenge, flag_count and evidence condition passes", async () => {
+    const projectId = createConditionRow([
+      { kind: "challenge", challenge_code: "web-01" },
+      { kind: "flag_count", min: 2 },
+      { kind: "evidence" },
+    ]);
+    const factId = addFact(projectId);
+
+    const outcome = await service({
+      env: CHALLENGE_ENV,
+      fetch: async () =>
+        challengeEnvelope([{ code: "web-01", flag_count: 2, flag_got_count: 2 }]),
+    }).verify(projectId, { facts: [factId] });
+
+    expect(outcome.ok).toBe(true);
+    expect(outcome.detail).toBe("all 3 goal conditions passed");
+    expect(outcome.conditions.map((condition) => condition.kind)).toEqual([
+      "challenge",
+      "flag_count",
+      "evidence",
+    ]);
+    expect(outcome.conditions.every((condition) => condition.ok)).toBe(true);
+    expect(outcome.conditions[1]).toMatchObject({ flag_count: 2, flag_got_count: 2 });
+    expect(outcome.flag_count).toBe(2);
+    expect(outcome.flag_got_count).toBe(2);
+
+    const stored = db.withConn((conn) =>
+      getLatestVerificationCheck(conn, projectId),
+    );
+    expect(stored?.conditions).toHaveLength(3);
+    expect(stored?.conditions[0]).toMatchObject({
+      kind: "challenge",
+      challenge_code: "web-01",
+      ok: true,
+    });
+  });
+
+  test("counts only operator-confirmed and challenge-confirmed flags", async () => {
+    const projectId = createConditionRow([{ kind: "flag_count", min: 2 }]);
+    const factId = addFact(projectId);
+
+    decide(projectId, "FLAG{real-one}", "real_more");
+    db.withConn((conn) => recordFlagReview(conn, projectId, { flag: "FLAG{pending}" }));
+    decide(projectId, "FLAG{fake}", "fake");
+
+    const partial = await service().verify(projectId, { facts: [factId] });
+    expect(partial.ok).toBe(false);
+    expect(partial.conditions[0]).toMatchObject({
+      kind: "flag_count",
+      ok: false,
+      flag_count: 2,
+      flag_got_count: 1,
+    });
+    expect(partial.detail).toContain("1 operator-confirmed + 0 challenge-confirmed");
+
+    decide(projectId, "FLAG{pending}", "real_done");
+    const complete = await service().verify(projectId, { facts: [factId] });
+    expect(complete.ok).toBe(true);
+    expect(complete.conditions[0]).toMatchObject({ flag_got_count: 2 });
+  });
+
+  test("adds challenge-confirmed captures to the flag_count total", async () => {
+    const projectId = createConditionRow([
+      { kind: "challenge", challenge_code: "web-01" },
+      { kind: "flag_count", min: 2 },
+    ]);
+    const factId = addFact(projectId);
+    decide(projectId, "FLAG{operator}", "real_more");
+
+    const outcome = await service({
+      env: CHALLENGE_ENV,
+      fetch: async () =>
+        challengeEnvelope([{ code: "web-01", flag_count: 2, flag_got_count: 1 }]),
+    }).verify(projectId, { facts: [factId] });
+
+    // One operator-confirmed flag plus one challenge-confirmed capture reaches the
+    // flag_count threshold even though the challenge itself is still incomplete.
+    expect(outcome.conditions[0]).toMatchObject({ kind: "challenge", ok: false });
+    expect(outcome.conditions[1]).toMatchObject({
+      kind: "flag_count",
+      ok: true,
+      flag_count: 2,
+      flag_got_count: 2,
+    });
+    expect(outcome.ok).toBe(false);
+  });
+
+  test("reports every failed condition and keeps the project short of completion", async () => {
+    const projectId = createConditionRow([
+      { kind: "challenge", challenge_code: "web-01" },
+      { kind: "flag_count", min: 3 },
+      { kind: "evidence" },
+    ]);
+    const factId = addFact(projectId, { evidence: false });
+
+    const outcome = await service({
+      env: CHALLENGE_ENV,
+      fetch: async () =>
+        challengeEnvelope([{ code: "web-01", flag_count: 2, flag_got_count: 1 }]),
+    }).verify(projectId, { facts: [factId] });
+
+    expect(outcome.ok).toBe(false);
+    expect(outcome.detail).toContain("goal conditions failed:");
+    expect(outcome.detail).toContain("challenge");
+    expect(outcome.detail).toContain("flag_count");
+    expect(outcome.detail).toContain("evidence");
+    expect(outcome.conditions.map((condition) => condition.ok)).toEqual([
+      false,
+      false,
+      false,
+    ]);
+  });
+
+  test("a passing challenge does not hide a failed evidence condition", async () => {
+    const projectId = createConditionRow([
+      { kind: "challenge", challenge_code: "web-01" },
+      { kind: "evidence" },
+    ]);
+    const factId = addFact(projectId, { evidence: false });
+
+    const outcome = await service({
+      env: CHALLENGE_ENV,
+      fetch: async () =>
+        challengeEnvelope([{ code: "web-01", flag_count: 1, flag_got_count: 1 }]),
+    }).verify(projectId, { facts: [factId] });
+
+    expect(outcome.ok).toBe(false);
+    expect(outcome.conditions[0]).toMatchObject({ kind: "challenge", ok: true });
+    expect(outcome.conditions[1]).toMatchObject({ kind: "evidence", ok: false });
+    expect(outcome.detail).toContain("evidence");
+  });
+
+  test("a project with no conditions is off and records no condition results", async () => {
+    const projectId = createConditionRow([]);
+    const outcome = await service().verify(projectId);
+
+    expect(outcome).toMatchObject({ kind: "off", ok: true });
+    expect(outcome.conditions).toEqual([]);
   });
 });

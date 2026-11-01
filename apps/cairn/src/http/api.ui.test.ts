@@ -125,8 +125,10 @@ describe("static operations UI", () => {
     expect(html).toContain("取代关系");
     expect(html).toContain("已被取代");
     expect(html).toContain("完成判定");
-    expect(html).toContain("无身份认证");
-    expect(html).toContain("127.0.0.1");
+    expect(html).toContain("完成确认");
+    expect(html).toContain("确认完成");
+    expect(html).toContain("完成校验已关闭");
+    expect(html).not.toContain("无身份认证");
     expect(html).toContain("新建项目");
     expect(html).toContain('x-model="newProject.verificationKind"');
     expect(html).toContain("题目 / Flag 自动校验");
@@ -1478,6 +1480,48 @@ describe("model and key settings", () => {
     expect(app.projectFlagVerificationPending()).toBe(false);
   });
 
+  test("shows the pending completion review and posts an operator decision", async () => {
+    const app = loadState();
+    app.project = {
+      completion_review: {
+        pending: {
+          id: 7,
+          description: "Goal NOT definitively achieved",
+          from_facts: ["f001"],
+        },
+        history: [],
+      },
+    };
+    app.selectedProjectId = "proj_1";
+    expect(app.pendingCompletionReview()).toMatchObject({ id: 7 });
+    expect(app.completionReviewFactsLabel()).toBe("来源：f001");
+
+    const calls: any[] = [];
+    app.api = async (method: string, path: string, body: unknown) => {
+      calls.push({ method, path, body });
+      return {};
+    };
+    app.loadProject = async (projectId: string) => {
+      calls.push({ method: "LOAD", projectId });
+    };
+    app.loadProjectFlag = () => {};
+    app.updateGraph = () => {};
+    app.showToast = (message: string) => calls.push({ method: "TOAST", message });
+
+    await app.decideCompletionReview("reject");
+    expect(calls[0]).toEqual({
+      method: "POST",
+      path: "/projects/proj_1/completion-review/7/decision",
+      body: { decision: "reject" },
+    });
+    expect(calls[1]).toEqual({ method: "LOAD", projectId: "proj_1" });
+    expect(calls.some((call) => call.message === "已拒绝完成声明，继续探索")).toBe(true);
+    expect(app.completionReviewBusy).toBe(false);
+
+    app.project.completion_review.pending = null;
+    expect(app.pendingCompletionReview()).toBeNull();
+  });
+
   test("maps the new-project verification selector into the create payload", async () => {
     const app = loadState();
     const posts: any[] = [];
@@ -2129,6 +2173,7 @@ describe("runtime settings modal", () => {
           kernel_tasks: ["explore"],
         },
         audit_stream: { enabled: false, url: null },
+        verification: { off_completion: "manual" },
         worker_profiles: [],
         common_env_keys: [],
         workspace: { mode: "local", root: null },
@@ -2713,5 +2758,387 @@ describe("typography scale", () => {
     // leave the 94 `font-mono` call sites with no rule at all.
     expect(config).toMatch(/fontFamily:\s*\{[\s\S]*?sans:[\s\S]*?mono:\s*\[[\s\S]*?\n\s*\},/);
     expect(readFileSync(APP_CSS_PATH, "utf8")).toMatch(/\.font-mono\{font-family:ui-monospace/);
+  });
+});
+
+describe("project execution environment", () => {
+  test("offers project-specific execution when creating a project", () => {
+    const html = readFileSync(INDEX_PATH, "utf8");
+    const start = html.indexOf('id="new-project-execution"');
+    expect(start).toBeGreaterThan(0);
+    const select = html.slice(start, html.indexOf("</select>", start));
+    expect(select).toContain('x-model="newProject.execution"');
+    expect(select).toContain('value="local"');
+    expect(select).toContain('value="container"');
+    expect(select).toContain('value=""');
+    expect(html).toContain("Docker 不可用时不会自动切换到本地");
+  });
+
+  test("shows the live backend in the header and repeats it in the detail panel", () => {
+    const html = readFileSync(INDEX_PATH, "utf8");
+    const badgeAnchor = html.indexOf("data-project-execution");
+    expect(badgeAnchor).toBeGreaterThan(0);
+    const badgeStart = html.lastIndexOf("<span", badgeAnchor);
+    const badge = html.slice(badgeStart, html.indexOf("</span>", badgeAnchor));
+    // Hidden rather than guessed: a control plane without a dispatch config cannot know.
+    expect(badge).toContain('x-show="projectExecutionLabel()"');
+    expect(badge).toContain('x-text="projectExecutionLabel()"');
+    expect(badge).toContain(':class="projectExecutionBadgeClass()"');
+    expect(badge).toContain(':title="projectExecutionHint()"');
+
+    const panelStart = html.indexOf("data-project-execution-panel");
+    expect(panelStart).toBeGreaterThan(badgeStart);
+    const panel = html.slice(panelStart, html.indexOf("</section>", panelStart));
+    expect(panel).toContain("执行环境");
+    expect(panel).toContain("任务使用");
+    expect(panel).toContain('x-show="!projectExecution().mode"');
+    expect(panel).toContain("未知（本进程未启用调度器）");
+    expect(panel).toContain('x-text="projectExecution().container_name"');
+    expect(panel).toContain('@click="copyContainerName()"');
+    expect(panel).toContain(`@click="openSettings('runtime')"`);
+    expect(panel).toContain("选择的执行环境在创建时固定");
+    expect(panel).toContain("跟随全局设置");
+    expect(panel).toContain("运行记录");
+  });
+
+  test("lists the backend and the owning boot for every recorded run", () => {
+    const html = readFileSync(INDEX_PATH, "utf8");
+    expect(html).toContain(
+      '<div><span class="text-slate-400">执行环境</span><div class="text-slate-600" x-text="runExecutionLabel(run)"></div></div>',
+    );
+    expect(html).toContain(
+      `<div><span class="text-slate-400">派发进程</span><div class="font-mono text-slate-600 break-all" x-text="run.instance_id || '—'"></div></div>`,
+    );
+  });
+
+  test("normalizes the mode instead of showing whatever the server sent", () => {
+    const app = loadState();
+    expect(app.projectExecution()).toEqual({ mode: null, container_name: null });
+    expect(app.projectExecutionLabel()).toBe("");
+    app.project = { execution: { mode: null, configured_mode: "container" } };
+    expect(app.projectExecutionLabel()).toBe("已选 Docker 容器");
+    expect(app.projectExecutionHint()).toContain("未启用调度器");
+
+    app.project = { execution: { mode: "local", container_name: "cairn-dispatch-proj_001" } };
+    expect(app.projectExecution()).toEqual({ mode: "local", container_name: null });
+    expect(app.projectExecutionLabel()).toBe("本地进程");
+    expect(app.projectExecutionBadgeClass()).toContain("teal");
+    expect(app.projectExecutionHint()).toContain("不提供容器隔离");
+
+    app.project = { execution: { mode: "container", container_name: "cairn-dispatch-proj_001" } };
+    expect(app.projectExecutionLabel()).toBe("Docker 容器");
+    expect(app.projectExecutionBadgeClass()).toContain("indigo");
+    expect(app.projectExecutionHint()).toContain("cairn-dispatch-proj_001");
+
+    // A backend this build does not know stays 未知 rather than colouring the badge wrongly.
+    app.project = { execution: { mode: "vm", container_name: "x" } };
+    expect(app.projectExecution()).toEqual({ mode: null, container_name: null });
+  });
+
+  test("marks runs whose backend was never recorded", () => {
+    const app = loadState();
+    expect(app.runExecutionLabel({ execution: "local" })).toBe("本地进程");
+    expect(app.runExecutionLabel({ execution: "container" })).toBe("Docker 容器");
+    expect(app.runExecutionLabel({ execution: null })).toBe("未记录");
+    expect(app.runExecutionLabel({})).toBe("未记录");
+  });
+
+  test("copies the container name and reports a refused clipboard", async () => {
+    const app = loadState();
+    const copied: string[] = [];
+    const toasts: any[] = [];
+    app.copyText = async (text: string) => {
+      copied.push(text);
+    };
+    app.showToast = (message: string, kind?: string) => {
+      toasts.push([message, kind]);
+    };
+    app.project = { execution: { mode: "container", container_name: "cairn-dispatch-proj_001" } };
+
+    await app.copyContainerName();
+    expect(copied).toEqual(["cairn-dispatch-proj_001"]);
+    expect(toasts).toEqual([["容器名已复制", undefined]]);
+
+    // Local mode has no name to copy, so the button never claims a blank string went through.
+    copied.length = 0;
+    toasts.length = 0;
+    app.project = { execution: { mode: "local", container_name: null } };
+    await app.copyContainerName();
+    expect(copied).toEqual([]);
+    expect(toasts).toEqual([]);
+
+    copied.length = 0;
+    app.project = { execution: { mode: "container", container_name: "cairn-dispatch-proj_001" } };
+    app.copyText = async () => {
+      throw new Error("denied");
+    };
+    await app.copyContainerName();
+    expect(toasts).toEqual([["复制失败", "error"]]);
+  });
+});
+
+describe("clone project", () => {
+  const SOURCE = "proj_007";
+  const realFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  function sourceDetail(): any {
+    return {
+      project: { id: SOURCE, title: "Web Recon", status: "active", bootstrap_enabled: false },
+      facts: [
+        { id: "origin", description: "start from handout.pdf" },
+        { id: "goal", description: "capture the flag" },
+      ],
+      intents: [],
+      hints: [
+        { id: "h001", content: "try /admin" },
+        { id: "h002", content: "" },
+      ],
+    };
+  }
+
+  function defaultPayloads(): Record<string, unknown> {
+    return {
+      [`GET /projects/${SOURCE}/scope`]: {
+        scope: { targets: ["10.0.0.5", "lab.internal:8080"], notes: "in-class lab" },
+      },
+      [`GET /projects/${SOURCE}/verification`]: {
+        policy: { kind: "challenge", challenge_code: "web-01" },
+        latest: null,
+      },
+      [`GET /projects/${SOURCE}/attachments`]: {
+        attachments: [
+          { id: 1, name: "handout.zip", size: 4, created_at: "2026-01-01T00:00:00Z" },
+          { id: 2, name: "capture.pcap", size: 6, created_at: "2026-01-02T00:00:00Z" },
+        ],
+        total_bytes: 10,
+        limits: { file_bytes: 1024, project_bytes: 4096 },
+        available: true,
+      },
+    };
+  }
+
+  interface Clone {
+    app: any;
+    calls: Array<{ key: string; body?: unknown }>;
+    toasts: any[];
+    uploads: Array<[string, string]>;
+    downloads: string[];
+  }
+
+  /**
+   * The clone reads the source through the routes the detail page already calls, so the
+   * harness only ever answers GETs plus the create that follows an edit.
+   */
+  function cloneApp(
+    payloads: Record<string, unknown> = defaultPayloads(),
+    options: { fail?: string[] } = {},
+  ): Clone {
+    const app = loadState();
+    const calls: Array<{ key: string; body?: unknown }> = [];
+    const toasts: any[] = [];
+    const uploads: Array<[string, string]> = [];
+    const downloads: string[] = [];
+    const failing = new Set(options.fail ?? []);
+
+    app.selectedProjectId = SOURCE;
+    app.project = sourceDetail();
+    app.api = async (method: string, path: string, body?: unknown) => {
+      const key = `${method} ${path}`;
+      calls.push({ key, ...(body === undefined ? {} : { body }) });
+      if (failing.has(key)) throw new Error(`${key} unavailable`);
+      if (key === "POST /projects") return { project: { id: "proj_new" } };
+      if (method === "PUT") return { scope: null };
+      if (Object.prototype.hasOwnProperty.call(payloads, key)) return payloads[key];
+      throw new Error(`unexpected ${key}`);
+    };
+    app.loadProjects = async () => {};
+    app.openProject = async () => {};
+    app.selectSideTab = () => {};
+    app.showToast = (message: string, kind?: string) => {
+      toasts.push([message, kind]);
+    };
+    app.$refs = {};
+    app.uploadAttachment = async (file: any, projectId: string) => {
+      uploads.push([file.name, projectId]);
+    };
+    globalThis.fetch = (async (input: any) => {
+      const url = String(input);
+      downloads.push(url);
+      const id = url.slice(-1);
+      if (id === "9") return { ok: false, status: 404 } as any;
+      const bodies: Record<string, string> = { "1": "AAAA", "2": "BBBBBB" };
+      return {
+        ok: true,
+        status: 200,
+        blob: async () => new Blob([bodies[id] ?? "x"]),
+      } as any;
+    }) as typeof fetch;
+    return { app, calls, toasts, uploads, downloads };
+  }
+
+  test("one click fills every section of the create form and leaves it editable", async () => {
+    const { app, calls, toasts, uploads, downloads } = cloneApp();
+
+    await app.cloneProjectFromCurrent();
+
+    expect(app.newProject).toMatchObject({
+      title: "Web Recon 副本",
+      origin: "start from handout.pdf",
+      goal: "capture the flag",
+      bootstrap: false,
+      targetsText: "10.0.0.5\nlab.internal:8080",
+      scopeNotes: "in-class lab",
+      verificationKind: "challenge",
+      challengeCode: "web-01",
+      clonedFrom: SOURCE,
+    });
+    expect(app.newProject.hints).toEqual([{ content: "try /admin" }]);
+    expect(app.newProject.files.map((file: any) => [file.name, file.size])).toEqual([
+      ["handout.zip", 4],
+      ["capture.pcap", 6],
+    ]);
+    expect(app.newProject.files.every((file: any) => file instanceof File)).toBe(true);
+    expect(app.newProject.files[0]!.lastModified).toBe(Date.parse("2026-01-01T00:00:00Z"));
+    expect(downloads).toEqual([
+      `/projects/${SOURCE}/attachments/1`,
+      `/projects/${SOURCE}/attachments/2`,
+    ]);
+    expect(app.showNewProject).toBe(true);
+    expect(app.newProjectShowErrors).toBe(false);
+    expect(app.isCloningProject).toBe(false);
+    expect(toasts).toEqual([["已复制 proj_007，2 个附件将在创建时上传", undefined]]);
+    expect(calls.every((call: any) => call.key.startsWith("GET"))).toBe(true);
+    // The copy is a valid form as soon as it opens, so the operator may create or keep editing.
+    expect(app.newProjectErrors()).toEqual({});
+
+    app.newProject.title = "Web Recon 副本 · 第二队";
+    app.newProject.targetsText = "10.0.0.9";
+    app.newProject.challengeCode = "web-02";
+    await app.createProject();
+
+    const create = calls.find((call: any) => call.key === "POST /projects")!;
+    expect(create.body).toEqual({
+      title: "Web Recon 副本 · 第二队",
+      origin: "start from handout.pdf",
+      goal: "capture the flag",
+      bootstrap_enabled: false,
+      verification: { kind: "challenge", challenge_code: "web-02" },
+      hints: [{ content: "try /admin", creator: app.actorName() }],
+    });
+    // Staged files keep the new project unauthorized until every upload lands.
+    expect((create.body as any).scope).toBeUndefined();
+    expect(uploads).toEqual([
+      ["handout.zip", "proj_new"],
+      ["capture.pcap", "proj_new"],
+    ]);
+    const authorize = calls.find((call: any) => call.key === "PUT /projects/proj_new/scope")!;
+    expect(authorize.body).toEqual({ targets: ["10.0.0.9"], notes: "in-class lab" });
+    // Creating clears the clone so the next 新建项目 starts empty again.
+    expect(app.newProject.clonedFrom).toBe("");
+  });
+
+  test("copies the selected execution mode and allows editing it before creation", async () => {
+    const { app, calls } = cloneApp();
+    app.project.execution = { mode: "container", container_name: "cairn-dispatch-proj_007", configured_mode: "container" };
+    await app.cloneProjectFromCurrent();
+    expect(app.newProject.execution).toBe("container");
+    app.newProject.execution = "local";
+    await app.createProject();
+    const create = calls.find((call) => call.key === "POST /projects");
+    expect(create?.body).toMatchObject({ execution: "local" });
+  });
+
+  test("copies the completion check the source uses", async () => {
+    for (const [policy, expected] of [
+      [{ kind: "off" }, { verificationKind: "off", challengeCode: "" }],
+      [{ kind: "evidence" }, { verificationKind: "evidence", challengeCode: "" }],
+      [{ kind: "auto" }, { verificationKind: "auto", challengeCode: "" }],
+    ] as const) {
+      const { app } = cloneApp({
+        ...defaultPayloads(),
+        [`GET /projects/${SOURCE}/verification`]: { policy, latest: null },
+      });
+      await app.cloneProjectFromCurrent();
+      expect([policy.kind, app.newProject.verificationKind, app.newProject.challengeCode]).toEqual([
+        policy.kind,
+        expected.verificationKind,
+        expected.challengeCode,
+      ]);
+    }
+  });
+
+  test("still opens an editable copy when a section cannot be read", async () => {
+    const payloads: Record<string, unknown> = {
+      ...defaultPayloads(),
+      [`GET /projects/${SOURCE}/attachments`]: {
+        attachments: [
+          { id: 1, name: "handout.zip", size: 4000, created_at: "2026-01-01T00:00:00Z" },
+          { id: 9, name: "gone.bin", size: 4, created_at: "2026-01-02T00:00:00Z" },
+        ],
+        total_bytes: 4004,
+        limits: { file_bytes: 1024, project_bytes: 4096 },
+        available: true,
+      },
+    };
+    const { app, toasts } = cloneApp(payloads, { fail: [`GET /projects/${SOURCE}/scope`] });
+
+    await app.cloneProjectFromCurrent();
+
+    expect(app.showNewProject).toBe(true);
+    expect(app.newProject.title).toBe("Web Recon 副本");
+    expect(app.newProject.targetsText).toBe("");
+    // Only the readable attachment is staged: the oversized one and the missing one are named.
+    expect(app.newProject.files.map((file: any) => file.name)).toEqual([]);
+    expect(app.newProject.verificationKind).toBe("challenge");
+    expect(toasts[0]![1]).toBe("error");
+    expect(toasts[0]![0]).toContain("有 3 项没带上");
+    expect(toasts[0]![0]).toContain("授权范围: GET /projects/proj_007/scope unavailable");
+    expect(app.newProjectErrors()).toEqual({ targets: "请至少填写一个授权目标" });
+  });
+
+  test("re-entrant clicks, missing selection and a plain 新建项目 cannot mix two forms", async () => {
+    const { app, calls } = cloneApp();
+
+    app.isCloningProject = true;
+    await app.cloneProjectFromCurrent();
+    expect(calls).toEqual([]);
+    expect(app.showNewProject).toBe(false);
+    app.isCloningProject = false;
+
+    app.selectedProjectId = "";
+    await app.cloneProjectFromCurrent();
+    expect(calls).toEqual([]);
+
+    app.selectedProjectId = SOURCE;
+    await app.cloneProjectFromCurrent();
+    expect(app.newProject.clonedFrom).toBe(SOURCE);
+    // The toolbar's own entry point must not reopen the half-filled clone.
+    app.openNewProject();
+    expect(app.newProject).toMatchObject({ title: "", origin: "", goal: "", clonedFrom: "", files: [] });
+    expect(app.showNewProject).toBe(true);
+  });
+
+  test("wires the toolbar button and renames the modal heading for a copy", () => {
+    const html = readFileSync(INDEX_PATH, "utf8");
+    const anchor = html.indexOf("data-clone-project");
+    expect(anchor).toBeGreaterThan(0);
+    const buttonStart = html.lastIndexOf("<button", anchor);
+    const button = html.slice(buttonStart, html.indexOf("</button>", anchor));
+    // Replaying a project is a read-only view, so copying is not offered there.
+    expect(button.slice(0, 60)).toContain('x-show="!replay.active"');
+    expect(button).toContain('@click="cloneProjectFromCurrent()"');
+    expect(button).toContain(':disabled="isCloningProject"');
+    expect(button).toContain('aria-label="复制题目"');
+    expect(button).toContain(`x-text="isCloningProject ? '复制中…' : '复制'"`);
+
+    expect(html).toContain(`x-text="newProject.clonedFrom ? '复制项目' : '新建项目'"`);
+    expect(html).toContain(
+      `复制自 <span class="font-mono text-slate-500" x-text="newProject.clonedFrom">`,
+    );
+    expect(html).toContain("可继续编辑后创建");
   });
 });

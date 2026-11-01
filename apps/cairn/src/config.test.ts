@@ -103,6 +103,8 @@ describe("dispatcher config", () => {
     expect(config.verification).toEqual({
       evidenceEnforcement: "completion",
       flagReview: "manual",
+      offCompletion: "manual",
+      evidenceCompletion: "manual",
       challenge: {
         baseUrlEnv: "TCH_CHALLENGE_API_BASE_URL",
         agentTokenEnv: "TCH_CHALLENGE_AGENT_TOKEN",
@@ -167,6 +169,46 @@ describe("dispatcher config", () => {
 `,
       ),
     ).toThrow("verification.evidence_enforcement");
+  });
+
+  test("parses the off completion review switch", () => {
+    expect(parse(BASE).verification.offCompletion).toBe("manual");
+    const config = parse(
+      BASE +
+        `verification:
+  off_completion: auto
+`,
+    );
+    expect(config.verification.offCompletion).toBe("auto");
+    expect(config.verification.evidenceEnforcement).toBe("completion");
+    expect(() =>
+      parse(
+        BASE +
+          `verification:
+  off_completion: trust-the-model
+`,
+      ),
+    ).toThrow("verification.off_completion");
+  });
+
+  test("parses the evidence completion review switch", () => {
+    expect(parse(BASE).verification.evidenceCompletion).toBe("manual");
+    const config = parse(
+      BASE +
+        `verification:
+  evidence_completion: auto
+`,
+    );
+    expect(config.verification.evidenceCompletion).toBe("auto");
+    expect(config.verification.offCompletion).toBe("manual");
+    expect(() =>
+      parse(
+        BASE +
+          `verification:
+  evidence_completion: trust-the-model
+`,
+      ),
+    ).toThrow("verification.evidence_completion");
   });
 
   test("defaults new projects to challenge when the environment names one", () => {
