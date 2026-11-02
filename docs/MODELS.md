@@ -11,6 +11,9 @@
   时只看后两者，纯 HTTP 模式同样可用。仍在使用默认目录时，首次启动会把旧版
   `~/.tch-agent/config` 的内容复制过来（只在目标为空时、绝不覆盖、绝不删除旧目录），
   因此升级后 provider 与密钥直接可用。
+- 本仓库的实验室把目录设成签出内的 `agent-config/`（`common_env.CAIRN_AGENT_CONFIG_DIR`），
+  其中 `prompts/`、`skills/`、`settings.json` 入库，`auth.json` 等凭据与 provider 接线文件
+  被 `.gitignore` 排除：克隆后提示词与技能就在，密钥要自己配。解析顺序与迁移逻辑不变。
 - 设置 `CAIRN_OPERATOR_TOKEN` 后，所有写路由要求 `X-Cairn-Operator-Token`；GET 保持
   开放。未设置时沿用本地单用户行为。跨源浏览器写请求一律 403。
 - 密钥只写不读：任何响应只返回掩码（`sk-...123456`）或 header 名称。真实值只落在

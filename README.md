@@ -74,7 +74,7 @@ cairn serve（控制面，一个进程）
         ▼  项目工作区（每项目绑定到 /cairn/workspace）
   cairn worker --task <task.json>（按任务拉起；容器模式下是 docker exec）
         ├─ solver：默认确定性 fake；CAIRN_SOLVER=breachweave 用 packages/agent
-        ├─ 模型/凭据：~/.cairnweave/config（旧 ~/.tch-agent/config 首启自动复制；容器内只读挂载到 /cairn/agent-config）
+        ├─ 模型/凭据：agent 配置目录（默认 ~/.cairnweave/config，CAIRN_AGENT_CONFIG_DIR 可指向仓库内 agent-config/；容器内只读挂载到 /cairn/agent-config）
         ├─ Host Bridge：每次 tool_call 前做 Scope 硬校验，逐条写 audit.jsonl
         ├─ Observer：主 Solver 只读项目看板；独立 sidecar 维护看板并提交候选
         ├─ 提案候选：<session>/observer/proposals/*.json（控制面在任务结束时导入）
@@ -232,6 +232,11 @@ CI 重新生成后 `git diff --exit-code` 校验它没有漂移。
 协议与模型，`model-prefs.json` 是短 ID 到模型的映射（`cairn-worker` 指向当前默认模型）。
 `worker_profiles` 把这些短 ID 组成命名 profile，交给统计驱动的派发选择。
 
+本部署把该目录放在签出内的 `agent-config/`：`prompts/`、`skills/` 与 `settings.json` 作为
+项目内容入库，凭据与 provider 接线文件仍被 `.gitignore` 排除，因此克隆仓库即得到可用的
+提示词与技能，密钥仍需操作员自行配置（见
+[docs/OPERATIONS.md](docs/OPERATIONS.md#仓库内的-agent-配置目录m44)）。
+
 ### 通过 API 与 UI 管理模型与密钥
 
 页头齿轮按钮打开「设置」，在「模型与密钥」页签里管理模型：后端是 `/settings/agent` 系列路由：provider 与模型
@@ -255,13 +260,15 @@ API key 只写不读（响应只回掩码），写入 `auth.json` 并按上游 S
   容器隔离（网络命名空间、不挂 socket、只读配置）来兜底。两者要同时启用。
 - **无内建认证**：UI 与 API 会直接修改控制面数据，默认只绑定 `127.0.0.1`；需要远程访问时
   放在受信网络或反向代理之后。
-- **凭据边界**：模型凭据只在本机配置目录；任务文件、日志、审计账本与数据库不保存明文
-  key。challenge oracle 只读计数，不读 flag 明文。
+- **凭据边界**：模型凭据只在 agent 配置目录，且该目录被 Host Bridge 登记为拒绝根，worker
+  工具读不到；仓库里的 `agent-config/` 只跟踪提示词、技能与 `settings.json`，`auth.json`
+  一类文件不入库。任务文件、日志、审计账本与数据库不保存明文 key。challenge oracle 只读
+  计数，不读 flag 明文。
 
 ## 测试与 CI
 
 ```bash
-bun test             # 1142 passed / 98 files（fake solver，不需凭据）
+bun test             # 1146 passed / 98 files（fake solver，不需凭据）
 bun run typecheck    # tsc --noEmit
 bun run eval         # 五个完成场景的 legacy / hardened 对照，写 runs/eval-<date>.json
 bun run ui:css       # 改了 index.html 的 class 后重新生成 static/app.css
@@ -324,6 +331,7 @@ tools/ui/                Tailwind 入口与配置：`bun run ui:css` 生成 stat
 docs/                    架构、配置、契约与各主题说明
 dispatch.example.yaml    调度器配置示例
 Dockerfile.worker        worker 镜像（bun + procps）
+agent-config/            本部署的 agent 配置目录：只跟踪 prompts/ 与 skills/、settings.json（M44）
 ```
 
 </details>

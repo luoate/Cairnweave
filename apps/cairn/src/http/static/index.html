@@ -3666,6 +3666,7 @@ function cairnApp() {
       error: '',
     },
     flagReviewBusy: false,
+    projectFlagReviewSig: '',
     completionReviewBusy: false,
     lastProjectListAt: 0,
     pollFailures: 0,
@@ -6405,7 +6406,8 @@ function cairnApp() {
         if (!this.projectFlag.loading &&
             (!this.projectFlag.found ||
              this.projectFlag.projectId !== this.selectedProjectId ||
-             this.projectFlagVerificationPending())) {
+             this.projectFlagVerificationPending() ||
+             this.flagReviewsSignature() !== this.projectFlagReviewSig)) {
           this.loadProjectFlag(this.selectedProjectId);
         }
         this.updateGraph();
@@ -7695,6 +7697,7 @@ function cairnApp() {
           source: '', occurrences: 0, sources: [], candidates: [], suspect: false,
           verification: { policy: null, latest: null }, error: '',
         };
+        this.projectFlagReviewSig = '';
         return;
       }
       if (this.projectFlag.loading && this.projectFlag.projectId === projectId) return;
@@ -7732,6 +7735,9 @@ function cairnApp() {
           },
           error: '',
         };
+        if (this.project?.project?.id === projectId) {
+          this.projectFlagReviewSig = this.flagReviewsSignature();
+        }
       } catch (e) {
         if (this.projectFlag.projectId !== projectId) return;
         this.projectFlag = {
@@ -7790,7 +7796,20 @@ function cairnApp() {
         if (!latest) return '证据校验：等待完成';
         return latest.ok ? '证据校验：通过' : '证据校验：未通过';
       }
-      return '校验已关闭';
+      return '完成校验：已关闭';
+    },
+
+    // A verdict recorded elsewhere (another tab, an API call) changes this signature, which
+    // is what tells the poller to re-read /flag and drop a now-rejected value from the banner.
+    flagReviewsSignature() {
+      const summary = this.project?.flag_reviews;
+      if (!summary || typeof summary !== 'object') return '';
+      const counts = summary.counts && typeof summary.counts === 'object' ? summary.counts : null;
+      const keys = (counts ? Object.keys(counts) : ['pending', 'verified', 'rejected']).sort();
+      return keys.map((key) => {
+        const value = counts ? counts[key] : (Array.isArray(summary[key]) ? summary[key].length : 0);
+        return `${key}=${value || 0}`;
+      }).join(':');
     },
 
     projectFlagVerificationPending() {

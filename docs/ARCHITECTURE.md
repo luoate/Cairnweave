@@ -386,7 +386,7 @@ scheduler 与 HTTP API 共用 `packages/graph/src/commands.ts` 的命令，不�
 | `.cairn/board/**` | Observer sidecar | 主 Solver（只读工具）、后续任务 | 项目工作区（跨任务持久） |
 | `observer-context.json` / `observer/**` | 控制面写 context；worker 写 review 状态 | review sidecar、人/审计 | `<sessionDir>/`（任务级） |
 | `observer/proposals/*.json` | Observer sidecar（主 Solver 结构化文件工具只读） | 控制面摄取 | `<sessionDir>/observer/proposals/`（任务级） |
-| 模型/凭据（`~/.cairnweave/config`） | 用户 | worker（只读使用） | 控制面主机（容器模式只读挂载） |
+| 模型/凭据（agent 配置目录：默认 `~/.cairnweave/config`，本部署为仓库内 `agent-config/`） | 用户（M44 起 `prompts/`、`skills/`、`settings.json` 随仓库分发） | worker（只读使用） | 控制面主机（容器模式只读挂载） |
 
 规则：worker 的任何输出都是**不可信输入**；控制面必须按契约校验后才写图。各文件的字段、
 校验与退出码见 [`CONTRACT.md`](./CONTRACT.md)。
@@ -1041,10 +1041,12 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
 - `Flag` 横幅（M18e/M18f/M18g/M21）读取 `GET /projects/{id}/flag`，在项目页头下方显示
   命中的 Flag、来源工件或 solver-session 路径与复制按钮；未命中时不占位。M18f 起
   同一响应带 `verification` 快照，横幅追加校验徽标（题目通过 n/n、失败原因或
-  “校验已关闭”），challenge 未通过时轮询继续刷新。M18g 起显示的是真实 flag 原文，
+  “完成校验：已关闭”），challenge 未通过时轮询继续刷新。M18g 起显示的是真实 flag 原文，
   而不是 `[REDACTED]` 占位符。M21 起横幅还会标注“另有 N 个候选”，并且在没有 Flag 但
   `placeholder_suspect` 为真时于其下方显示琥珀色「FLAG 可疑」条，逐字列出被拒的 flag 形状
-  文本（该条不给复制按钮，避免把掩码当答案提交）。它不进入报告页，避免把工件内容带进可分享快照。
+  文本（该条不给复制按钮，避免把掩码当答案提交）。M44 起轮询还会比较 `GET /projects/{id}`
+  中 `flag_reviews.counts` 的签名：判定发生在别处（另一个页签或直接调用 API）时，下一次轮询
+  会重取 `/flag`，被判假的值随即从横幅消失，不必刷新页面。它不进入报告页，避免把工件内容带进可分享快照。
 - `Flag 复核`（M32/M32b）读取 `GET /projects/{id}` 的 `flag_reviews`，在页头显示琥珀色
   复核条（“项目继续探索，判定前不会结束”）：每个 pending 值一行，带「真 · 还有更多 /
   真 · 停止 / 假 · 继续探索」按钮。提交期间所有按钮禁用，POST 成功后重载项目与 `/flag`
@@ -1463,8 +1465,9 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
   时的行为一致。
 - BreachWeave 的 `cairn-worker` 系统提示词位于
   `packages/agent/src/config/prompts/builtin/cairn-worker.md`，首次启动时由
-  `initBuiltinPrompts` 释放到 `~/.cairnweave/config/prompts/`；conclude 的会话恢复也使用
-  同一提示词配置。它的 frontmatter `model: "cairn-worker"` 指向 `model-prefs.json` 中的
+  `initBuiltinPrompts` 释放到 agent 配置目录的 `prompts/`（默认 `~/.cairnweave/config`，本
+  部署为仓库内 `agent-config/`，该副本入库）；conclude 的会话恢复也使用同一提示词配置。
+  它的 frontmatter `model: "cairn-worker"` 指向 `model-prefs.json` 中的
   同名条目。Observer 不依赖该 frontmatter 的 `observerEnabled`：启用与否由 scheduler
   注入的 `CAIRN_OBSERVER_ENABLED` 决定；启用时 `cairnObserverExtension` 另行附加
   “Cairn Observer”提示段。
@@ -1554,13 +1557,15 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
     `cwd`；项目目录为 `<root>/<project_id>`。
 - `serve --config` 在容器模式启动时检查 Docker，并先把内置 prompts/skills 释放到
   agent 配置目录，再以只读方式挂载进容器；容器内跳过写入内置 prompts/skills 的逻辑。
+- M44 起本部署把 agent 配置目录放在签出的 `agent-config/`：`common_env.CAIRN_AGENT_CONFIG_DIR`
+  指过去，代码里的默认值与 M26 迁移逻辑不变（指到别处就不迁移）。`.gitignore` 用
+  「整目录忽略 + `prompts/`、`skills/`、`settings.json` 白名单」让提示词与技能成为项目内容，
+  凭据与 provider 接线文件仍被忽略；该目录同时是 Host Bridge 的拒绝根，因此「入库的」不等于
+  「模型可读的」。容器侧不受影响：绑定挂载仍只读指向宿主目录，worker 环境被无条件重写成
+  `/cairn/agent-config`。
 - 模型与凭据：沿用 BreachWeave 的配置布局，默认目录 M26 起为 `~/.cairnweave/config`
   （`models.json`、`auth.json`、
   `model-prefs.json`、`provider-prefs.json`）与 prompt frontmatter 的 `model`。M15a 起
-  启用 `worker_profiles` 时，任务里的 `model` 覆盖 prompt frontmatter 的选择，但仍
-  解析到同一个 model-prefs 文件；没有任务级 `model` 时保持原行为。本地模式由
-  worker 在启动真实 Solver 前补齐内置 prompts/skills；容器模式由控制面在挂载前补齐，容器
-  内因 `CAIRN_AGENT_CONFIG_READONLY=1` 跳过写入。`CAIRN_AGENT_CONFIG_DIR` 可覆盖配置目录
   （测试用）。手工配置时 API key 通常只写 `auth.json`，`models.json` 的 `apiKey`
   写环境变量名（如 `CAIRN_MODEL_API_KEY`）作占位即可。M18a 的 API 创建的自定义
   provider 例外：SDK 按 provider 读取 `models.json` 的 `apiKey`，所以

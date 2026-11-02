@@ -309,4 +309,6 @@ dispatch.yaml，不在运行期可编辑视图里。
   内置删除跨重启持久化与恢复语义、跨源与 operator token 守卫；文件浏览的排序与截断标记、
   正文逐字节回传、嵌套目录读取、二进制与 256 KiB 截断、穿越/未知技能/缺失文件拒绝。
 - `apps/cairn/src/agent-config-dir.test.ts`：默认目录解析与环境变量覆盖、拒绝根同时覆盖
-  新旧两代、迁移只在目标为空时复制、跳过软链接、超过 64 MiB 上限、旧目录保持不变。
+  新旧两代、迁移只在目标为空时复制、跳过软链接、超过 64 MiB 上限、旧目录保持不变；M44 起
+  另加两例，用 `git check-ignore` 与 `git ls-files` 钉住仓库 `agent-config/` 的姿态——凭据与
+  provider 接线文件被忽略，`prompts/`、`skills/`、`settings.json` 作为项目内容入库。

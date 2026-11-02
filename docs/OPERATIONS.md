@@ -306,7 +306,9 @@ CAIRN_SOLVER=breachweave bun run cairn serve --port 8000 --db-path ./cairn.db \
 也可以在 `dispatch.yaml` 的 `common_env` 里设置 `CAIRN_SOLVER: breachweave`。真实 Solver
 读取 BreachWeave 的配置目录（默认 `~/.cairnweave/config`，`CAIRN_AGENT_CONFIG_DIR` 可
 覆盖；仍在使用默认目录时，首次启动会把旧版 `~/.tch-agent/config` 的内容复制过来，旧目录
-不删除），首次启动时会把内置 prompts/skills 补齐到该目录：
+不删除），首次启动时会把内置 prompts/skills 补齐到该目录。本仓库的实验室把该目录放在
+签出内的 `agent-config/`（由 `common_env.CAIRN_AGENT_CONFIG_DIR` 指过去），让提示词与技能
+作为项目内容入库，细节见[仓库内的 agent 配置目录](#仓库内的-agent-配置目录m44)：
 
 - `auth.json`：provider 凭据；手工配置时**API key 只保存在这里**；
 - `models.json`：provider、baseUrl、api 协议与模型列表。自定义 provider 的 `apiKey`
@@ -316,7 +318,8 @@ CAIRN_SOLVER=breachweave bun run cairn serve --port 8000 --db-path ./cairn.db \
   清除时两侧一起删除；
 - `model-prefs.json`：短 ID → 模型映射；`cairn-worker` 提示词的 frontmatter
   `model: "cairn-worker"` 引用同名条目；
-- `prompts/`、`skills/`：用户可覆盖内置资源。
+- `prompts/`、`skills/`：用户可覆盖内置资源；放在仓库 `agent-config/` 时这两项与
+  `settings.json` 是入库的项目内容。
 
 最小形状（示例，不含真实密钥）：
 
@@ -341,7 +344,8 @@ CAIRN_SOLVER=breachweave bun run cairn serve --port 8000 --db-path ./cairn.db \
 { "my-provider": { "type": "api_key", "key": "..." } }
 ```
 
-这些文件不属于仓库，也不会写进 `task.json`；权限应仅限本人。
+凭据与 provider 接线文件（`auth.json`、`models.json`、`model-prefs.json`、
+`provider-prefs.json`）不属于仓库，也不会写进 `task.json`；权限应仅限本人。
 
 ## 通过 API 与 UI 管理模型与密钥（M18a/M18b/M18d）
 
@@ -412,6 +416,26 @@ provider 与密钥，模型页签负责拉取/手工录入、设为默认、测�
 - Host Bridge 的拒绝根同时包含 `~/.cairnweave`、`~/.tch-agent` 与显式配置的目录，模型密钥不会因
   改名而变成可读的工作区文件。
 - BreachWeave 内核的 runtime、solvers 与 challenge 目录仍在 `~/.tch-agent` 下，未随本次改名迁移。
+
+## 仓库内的 agent 配置目录（M44）
+
+实验室把配置目录放进签出本身：`<repo>/agent-config/`，由 `dispatch.yaml` 的
+`common_env.CAIRN_AGENT_CONFIG_DIR`（Windows 启动脚本用 `%CD%\agent-config`）指过去，
+`~/.cairnweave/config` 因此不再创建。代码里的默认值与 M26 迁移逻辑不变——只有解析结果
+仍是默认目录才迁移，指到仓库目录就不会触发。
+
+- `.gitignore` 用「整目录忽略 + 白名单」：`/agent-config/*` 全忽略，只有 `prompts/`、
+  `skills/`、`settings.json` 反选回来。新增的密钥或本地状态文件默认仍是忽略的，不需要
+  每次补规则；`apps/cairn/src/agent-config-dir.test.ts` 用 `git check-ignore` 与
+  `git ls-files` 钉住这个姿态。
+- 这里的 `prompts/`、`skills/` 是内置播种层的副本：首次启动时内核把内置资源写进配置目录，
+  所以内容可以 fork 出差异。操作员在设置弹窗里改过的提示词或技能会表现为工作区 diff，
+  这是预期行为，不是漂移。
+- 安全边界不变：`agentConfigDeniedRoots()` 把解析后的目录连同两代旧家目录一起登记为拒绝根，
+  worker 的工具读不到 `agent-config/auth.json`；容器模式下宿主目录仍以 `readonly` 挂到
+  `/cairn/agent-config`，worker 环境被无条件重写成容器内路径，宿主绝对路径不会漏进容器。
+- 提交前照例扫描新增行：`agent-config/` 里被跟踪的只有提示词、技能与 `settings.json`，
+  凭据文件绝不允许进入 diff。
 
 ## 运行配置（M22 起，M24 统一入口，M24b 环境测试）
 

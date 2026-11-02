@@ -1475,9 +1475,74 @@ describe("model and key settings", () => {
     expect(app.projectFlagVerificationPending()).toBe(true);
 
     app.projectFlag.verification = { policy: { kind: "off" }, latest: null };
-    expect(app.projectFlagVerificationLabel()).toBe("校验已关闭");
+    expect(app.projectFlagVerificationLabel()).toBe("完成校验：已关闭");
     expect(app.projectFlagVerificationClass()).toContain("slate");
     expect(app.projectFlagVerificationPending()).toBe(false);
+  });
+
+  test("re-reads /flag when a verdict recorded elsewhere changes the review summary", async () => {
+    const app = loadState();
+    app.view = "graph";
+    app.selectedProjectId = "proj_1";
+    app.project = {
+      project: { id: "proj_1" },
+      flag_reviews: { counts: { pending: 1, verified: 0, rejected: 0 } },
+    };
+    app.loadProject = async () => {};
+    app.updateGraph = () => {};
+
+    let flagCalls = 0;
+    const response = { found: true, flag: "CTF2{ui_fixture}" };
+    app.api = async () => {
+      flagCalls += 1;
+      return {
+        found: response.found,
+        flag: response.flag,
+        source: response.found ? "findings.md" : null,
+        occurrences: response.found ? 1 : 0,
+        sources: response.found ? ["findings.md"] : [],
+        candidates: [],
+        placeholder_suspect: false,
+        verification: { policy: { kind: "off" }, latest: null },
+      };
+    };
+
+    // loadProjectFlag is fire-and-forget inside the poller, so yield a macrotask.
+    const poll = async () => {
+      await app.refreshCurrentView();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+
+    await poll();
+    expect(app.projectFlag.found).toBe(true);
+    expect(app.projectFlagReviewSig).toBe("pending=1:rejected=0:verified=0");
+
+    await poll();
+    expect(flagCalls).toBe(1);
+
+    // The operator answers `fake` in another tab: the displayed value must be re-read even
+    // though a flag is already on screen, and the server no longer returns it.
+    response.found = false;
+    response.flag = "";
+    app.project = {
+      project: { id: "proj_1" },
+      flag_reviews: { counts: { pending: 0, verified: 0, rejected: 1 } },
+    };
+    await poll();
+    expect(flagCalls).toBe(2);
+    expect(app.projectFlag.flag).toBe("");
+    expect(app.projectFlagReviewSig).toBe("pending=0:rejected=1:verified=0");
+  });
+
+  test("derives the review signature from counts, falling back to list lengths", () => {
+    const app = loadState();
+    expect(app.flagReviewsSignature()).toBe("");
+
+    app.project = { flag_reviews: { counts: { verified: 2, pending: 0, rejected: 1 } } };
+    expect(app.flagReviewsSignature()).toBe("pending=0:rejected=1:verified=2");
+
+    app.project = { flag_reviews: { pending: [{ id: 1 }], verified: [], rejected: [] } };
+    expect(app.flagReviewsSignature()).toBe("pending=1:rejected=0:verified=0");
   });
 
   test("shows the pending completion review and posts an operator decision", async () => {

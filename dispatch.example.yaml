@@ -249,7 +249,10 @@ retention:
 # common_env:
 #   CAIRN_SOLVER: "breachweave"
 #   # Local mode only. Container mode sets CAIRN_AGENT_CONFIG_DIR itself and
-#   # mounts the config read-only at /cairn/agent-config.
+#   # mounts the config read-only at /cairn/agent-config. M44: pointing it inside the
+#   # checkout (for example "C:/repo/agent-config") keeps the live prompts/skills as
+#   # project content — .gitignore tracks only prompts/, skills/ and settings.json there,
+#   # so auth.json and the provider wiring files stay out of git.
 #   CAIRN_AGENT_CONFIG_DIR: "C:/Users/me/.cairnweave/config"
 #   https_proxy: "http://127.0.0.1:7897"
 

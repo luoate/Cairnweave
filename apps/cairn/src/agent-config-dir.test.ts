@@ -114,3 +114,54 @@ test("migration refuses to copy a directory into itself", async () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// The repo's own live config directory is project content for prompts and skills only, so the
+// git rules are part of the contract: credentials must stay out even if a new secret-named file
+// appears, and the seeded content must be visible in `git status`.
+const REPO_ROOT = resolve(import.meta.dir, "..", "..", "..");
+const SECRET_FILES = [
+  "agent-config/auth.json",
+  "agent-config/models.json",
+  "agent-config/provider-prefs.json",
+  "agent-config/model-prefs.json",
+];
+const CONTENT_FILES = [
+  "agent-config/settings.json",
+  "agent-config/prompts/cairn-worker.md",
+  "agent-config/prompts/CHALLENGE_PLANNER.md",
+  "agent-config/skills/recon/SKILL.md",
+];
+
+function gitLines(args: string[]): string[] | null {
+  if (Bun.which("git") === null) return null;
+  const result = Bun.spawnSync(["git", ...args], {
+    cwd: REPO_ROOT,
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  if (result.exitCode > 1) return null;
+  return result.stdout
+    .toString()
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+}
+
+test("git ignores every credential file but none of the prompt or skill content", () => {
+  const ignored = gitLines(["check-ignore", ...SECRET_FILES, ...CONTENT_FILES, ".cairnweave/config/auth.json"]);
+  if (ignored === null) return;
+  const set = new Set(ignored);
+  for (const path of SECRET_FILES) expect(set.has(path)).toBe(true);
+  // The pre-move location keeps its rule, so a stray default dir never leaks either.
+  expect(set.has(".cairnweave/config/auth.json")).toBe(true);
+  for (const path of CONTENT_FILES) expect(set.has(path)).toBe(false);
+});
+
+test("the live prompts, skills and settings are listed as repository content", () => {
+  const listed = gitLines(["ls-files", "-co", "--exclude-standard", "--", "agent-config"]);
+  if (listed === null) return;
+  const set = new Set(listed);
+  for (const path of CONTENT_FILES) expect(set.has(path)).toBe(true);
+  for (const path of SECRET_FILES) expect(set.has(path)).toBe(false);
+  expect([...set].filter((path) => path.startsWith("agent-config/skills/")).length).toBeGreaterThan(50);
+});

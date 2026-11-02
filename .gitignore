@@ -11,6 +11,12 @@ __pycache__/
 .tch-agent/
 **/auth.json
 .env
+# The live agent config dir tracks prompts and skills as project content; everything else in
+# it (keys, provider wiring, local state) stays out of git.
+/agent-config/*
+!/agent-config/prompts/
+!/agent-config/skills/
+!/agent-config/settings.json
 # Local control-plane database.
 cairn.db
 cairn.db-*
