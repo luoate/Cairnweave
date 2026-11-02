@@ -2525,13 +2525,15 @@
 
 <!-- New Project -->
 <div x-show="showNewProject" x-cloak data-modal="newProject" x-effect="syncModal('newProject', showNewProject, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('newProject')">
-  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 border border-slate-200/60" @click.stop>
-    <h3 class="text-base font-semibold text-slate-700" :class="newProject.clonedFrom ? 'mb-1' : 'mb-4'"
-      x-text="newProject.clonedFrom ? '复制项目' : '新建项目'"></h3>
-    <template x-if="newProject.clonedFrom">
-      <p class="text-xs text-slate-400 mb-4">复制自 <span class="font-mono text-slate-500" x-text="newProject.clonedFrom"></span> · 标题、起点与目标、授权范围、执行环境、完成校验、提示和附件都已填好，可继续编辑后创建。</p>
-    </template>
-    <div class="space-y-3">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 border border-slate-200/60 flex flex-col max-h-[85vh]" @click.stop>
+    <div class="shrink-0 px-6 pt-6">
+      <h3 class="text-base font-semibold text-slate-700"
+        x-text="newProject.clonedFrom ? '复制项目' : '新建项目'"></h3>
+      <template x-if="newProject.clonedFrom">
+        <p class="text-xs text-slate-400 mt-1.5">复制自 <span class="font-mono text-slate-500" x-text="newProject.clonedFrom"></span> · 标题、起点与目标、授权范围、执行环境、完成校验、提示和附件都已填好，可继续编辑后创建。</p>
+      </template>
+    </div>
+    <div class="flex-1 min-h-0 overflow-y-auto px-6 py-4 space-y-3">
       <div>
         <input x-ref="newProjectTitle" data-autofocus x-model="newProject.title" placeholder="项目标题" aria-label="项目标题"
           class="w-full px-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"
@@ -2649,7 +2651,7 @@
         <p class="text-2xs text-slate-400">提示创建者使用本地操作者： <span class="font-medium text-slate-600" x-text="actorName()"></span></p>
       </div>
     </div>
-    <div class="flex justify-end gap-2 mt-5">
+    <div class="shrink-0 flex justify-end gap-2 px-6 py-4 border-t border-slate-100">
       <button @click="dismissModal('newProject')" :disabled="isCreatingProject" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition disabled:opacity-40 disabled:cursor-not-allowed">取消</button>
       <button @click="createProject()" :disabled="isCreatingProject"
         class="px-5 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition disabled:opacity-30 shadow-sm shadow-brand-200"

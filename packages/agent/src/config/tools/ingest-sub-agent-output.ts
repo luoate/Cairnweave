@@ -15,7 +15,7 @@ import {
 } from "./pentest-workspace"
 
 const IngestSubAgentOutputParams = Type.Object({
-    output_id: Type.String({ description: "Sub-agent output id, e.g. recon-001" }),
+    output_id: Type.String({ description: "子 agent 输出 id，例如 recon-001" }),
 })
 type IngestSubAgentOutputInput = Static<typeof IngestSubAgentOutputParams>
 
@@ -157,8 +157,8 @@ function buildFailureFeedbackRefs(backlog: Awaited<ReturnType<typeof readHypothe
 export const ingestSubAgentOutputTool = defineTool({
     name: "ingest_sub_agent_output",
     label: "Ingest Sub-Agent Output",
-    description: "Load sub-agents/<output_id>.json, validate it, and summarize hypotheses/findings for the orchestrator.",
-    promptSnippet: "ingest_sub_agent_output: parse output and summarize next actions",
+    description: "读取 sub-agents/<output_id>.json，校验后为编排器汇总假设与发现。",
+    promptSnippet: "ingest_sub_agent_output: 解析输出并汇总下一步动作",
     parameters: IngestSubAgentOutputParams,
     async execute(_toolCallId, params: IngestSubAgentOutputInput, _signal, _onUpdate, ctx) {
         await ensurePentestWorkspace(ctx.cwd)

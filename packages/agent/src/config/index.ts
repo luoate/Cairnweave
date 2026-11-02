@@ -974,7 +974,7 @@ export class ConfigManager {
         const resourceLoader = new DefaultResourceLoader({
             agentDir: this.dir,
             settingsManager: this.settings,
-            systemPromptOverride: () => "You are a test assistant. Respond with exactly: OK",
+            systemPromptOverride: () => "你是一个连通性测试助手。请只回复：OK",
         })
         try {
             await resourceLoader.reload()

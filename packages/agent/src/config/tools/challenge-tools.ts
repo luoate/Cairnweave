@@ -5,8 +5,8 @@ import { requestHostBridge } from "../../challenge/host-bridge-client"
 
 const EmptyParams = Type.Object({})
 const SubmitFlagParams = Type.Object({
-    flag: Type.String({ description: "Flag value to submit" }),
-    writeup: Type.Optional(Type.String({ description: "Optional concise route summary for how this flag was obtained" })),
+    flag: Type.String({ description: "要提交的 flag 值" }),
+    writeup: Type.Optional(Type.String({ description: "可选的简要利用路径说明，描述这枚 flag 是如何取得的" })),
 })
 const ChallengeHintParams = Type.Object({})
 
@@ -15,8 +15,8 @@ type SubmitFlagInput = Static<typeof SubmitFlagParams>
 export const challengeSubmitFlagTool = defineTool({
     name: "challenge_submit_flag",
     label: "Challenge Submit Flag",
-    description: "Submit flag for current challenge. Include a concise writeup when you know the route so other solvers can avoid repeating it.",
-    promptSnippet: "challenge_submit_flag: submit one flag, optionally with a concise route writeup",
+    description: "为当前题目提交 flag。若已知利用路径，请附上简要 writeup，方便其他 solver 避免重复。",
+    promptSnippet: "challenge_submit_flag: 提交一枚 flag，可附带简要的利用路径 writeup",
     parameters: SubmitFlagParams,
     async execute(_toolCallId, params: SubmitFlagInput) {
         const details = await requestHostBridge<{
@@ -45,8 +45,8 @@ export const challengeSubmitFlagTool = defineTool({
 export const challengeGetHintTool = defineTool({
     name: "challenge_get_hint",
     label: "Challenge Get Hint",
-    description: "Fetch or read persisted hint for current challenge .",
-    promptSnippet: "challenge_get_hint: fetch hint for current challenge",
+    description: "获取或读取当前题目已持久化的 hint。",
+    promptSnippet: "challenge_get_hint: 获取当前题目的 hint",
     parameters: ChallengeHintParams,
     async execute() {
         const details = await requestHostBridge<{

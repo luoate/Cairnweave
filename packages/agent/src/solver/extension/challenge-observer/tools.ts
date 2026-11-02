@@ -218,8 +218,8 @@ const observerSidecarBoardTools = [
     defineTool({
         name: "memory_list",
         label: "Memory List",
-        description: "List current durable memory entries. Use first, and re-check before deleting or merging entries.",
-        promptSnippet: "memory_list: inspect current durable memory before curating it",
+        description: "列出当前的 durable memory 条目。先用它查看，删除或合并条目前再核对一次。",
+        promptSnippet: "memory_list: 整理前先查看当前 durable memory",
         parameters: EmptyParams,
         async execute() {
             const items = await listSolverBoardMemory()
@@ -232,8 +232,8 @@ const observerSidecarBoardTools = [
     defineTool({
         name: "memory_add",
         label: "Memory Add",
-        description: "Add one durable memory entry. Use only for facts, evidence, failure boundaries, hints, or important constraints worth keeping.",
-        promptSnippet: "memory_add: add durable fact/evidence/failure/hint/constraint",
+        description: "新增一条 durable memory 条目。只用于值得长期保留的 fact、evidence、失败边界、hint 或重要约束。",
+        promptSnippet: "memory_add: 新增 durable 的 fact/evidence/failure/hint/约束",
         parameters: memoryAddToolParams,
         async execute(_toolCallId, params: MemoryAddToolInput) {
             const entry = await appendSolverBoardMemory({
@@ -251,8 +251,8 @@ const observerSidecarBoardTools = [
     defineTool({
         name: "memory_update",
         label: "Memory Update",
-        description: "Update one memory entry by id or id prefix. Use when a memory entry should be tightened, merged, or rewritten into a stronger durable conclusion.",
-        promptSnippet: "memory_update: tighten or merge an existing memory entry",
+        description: "按 id 或 id 前缀更新一条 memory 条目。当某条 memory 需要收紧、合并，或改写成更强的 durable 结论时使用。",
+        promptSnippet: "memory_update: 收紧或合并已有的 memory 条目",
         parameters: memoryUpdateToolParams,
         async execute(_toolCallId, params: MemoryUpdateToolInput) {
             const entry = await updateSolverBoardMemory(params.entry_id, {
@@ -270,8 +270,8 @@ const observerSidecarBoardTools = [
     defineTool({
         name: "memory_delete",
         label: "Memory Delete",
-        description: "Delete one memory entry by id or id prefix. Use for duplicates, low-value action logs, stale entries, or memory superseded by a stronger record.",
-        promptSnippet: "memory_delete: remove duplicate, noisy, stale, or superseded memory",
+        description: "按 id 或 id 前缀删除一条 memory 条目。用于重复项、低价值的操作日志、过期条目，或已被更强记录取代的 memory。",
+        promptSnippet: "memory_delete: 删除重复、嘈杂、过期或已被取代的 memory",
         parameters: memoryDeleteToolParams,
         async execute(_toolCallId, params: MemoryDeleteToolInput) {
             const entry = await deleteSolverBoardMemory(params.entry_id)
@@ -284,8 +284,8 @@ const observerSidecarBoardTools = [
     defineTool({
         name: "idea_list",
         label: "Idea List",
-        description: "List current strategy ideas. Use first to inspect the existing attack hypothesis board.",
-        promptSnippet: "idea_list: inspect current attack hypotheses before curation",
+        description: "列出当前的策略 idea。先用它查看现有的攻击假设看板。",
+        promptSnippet: "idea_list: 整理前先查看当前攻击假设",
         parameters: EmptyParams,
         async execute() {
             const items = await listSolverBoardIdeas()
@@ -298,8 +298,8 @@ const observerSidecarBoardTools = [
     defineTool({
         name: "idea_search",
         label: "Idea Search",
-        description: "Search strategy ideas by keyword. Use before adding a new idea to avoid near-duplicate attack hypotheses.",
-        promptSnippet: "idea_search: check whether a similar attack hypothesis already exists",
+        description: "按关键词搜索策略 idea。在新增 idea 前使用，避免出现近似重复的攻击假设。",
+        promptSnippet: "idea_search: 检查是否已存在相似的攻击假设",
         parameters: ideaSearchToolParams,
         async execute(_toolCallId, params: IdeaSearchToolInput) {
             const items = await searchSolverBoardIdeas(params.query)
@@ -312,8 +312,8 @@ const observerSidecarBoardTools = [
     defineTool({
         name: "idea_add",
         label: "Idea Add",
-        description: "Add one strategy idea. You can set status/result at creation time. Use only for concrete attack hypotheses, not for observations or completed actions.",
-        promptSnippet: "idea_add: add one concrete attack hypothesis with optional status/result",
+        description: "新增一条策略 idea。创建时可直接设定 status/result。只用于具体的攻击假设，不要用于观察记录或已完成的动作。",
+        promptSnippet: "idea_add: 新增一条具体的攻击假设，可选带 status/result",
         parameters: ideaAddToolParams,
         async execute(_toolCallId, params: IdeaAddToolInput) {
             const result = await addSolverBoardIdea({
@@ -330,8 +330,8 @@ const observerSidecarBoardTools = [
     defineTool({
         name: "idea_update",
         label: "Idea Update",
-        description: "Update one strategy idea status and result by id or id prefix. Use when a hypothesis starts testing or reaches verified/failed/skipped.",
-        promptSnippet: "idea_update: advance hypothesis lifecycle and record result",
+        description: "按 id 或 id 前缀更新某条策略 idea 的 status 与 result。当假设进入测试，或达到 verified/failed/skipped 时使用。",
+        promptSnippet: "idea_update: 推进假设生命周期并记录 result",
         parameters: ideaUpdateToolParams,
         async execute(_toolCallId, params: IdeaUpdateToolInput) {
             const item = await updateSolverBoardIdea(params.idea_id, {
@@ -365,9 +365,9 @@ export function createObserverSidecarToolsWithOptions(options?: {
                   name: "send_efficiency_reminder",
                   label: "Efficiency Reminder",
                   description:
-                      "Send one short efficiency reminder only when the solver is clearly and persistently stuck in a low-efficiency mode. Do not interrupt healthy ongoing work, and do not use this as a substitute for ideas or memory.",
+                      "只有当 solver 明显且持续陷入低效率模式时，才发送一条简短的效率提醒。不要打断正常推进中的工作，也不要用它代替 idea 或 memory。",
                   promptSnippet:
-                      "send_efficiency_reminder: use sparingly, only for clear persistent low-efficiency behavior; do not interrupt healthy ongoing work",
+                      "send_efficiency_reminder: 谨慎使用，仅针对明显且持续的低效率行为；不要打断正常推进中的工作",
                   parameters: steerToolParams,
                   async execute(_toolCallId, params: SteerToolInput) {
                       const delivered = (await sendCorrectionNotice?.(params.message)) !== false
@@ -392,9 +392,9 @@ export function createObserverSidecarToolsWithOptions(options?: {
             name: "query_solver_history",
             label: "Query Solver History",
             description:
-                "Inspect recent solver history when compressed context is insufficient. Pages through user instructions, assistant outputs, tool calls, and tool results.",
+                "当压缩后的上下文不够用时，查看最近的 solver 历史。可分页浏览用户指令、assistant 输出、工具调用与工具结果。",
             promptSnippet:
-                "query_solver_history: page through recent user instructions, assistant outputs, and tool activity when compressed context is insufficient",
+                "query_solver_history: 上下文压缩后不够用时，分页查看最近的用户指令、assistant 输出与工具活动",
             parameters: querySolverHistoryToolParams,
             async execute(_toolCallId, params: QuerySolverHistoryToolInput, _signal, _onUpdate, ctx) {
                 const baseEntries = (await getSolverEntries?.()) ?? ctx.sessionManager.getEntries()
@@ -419,8 +419,8 @@ export const challengeObserverAgentTools = [
     defineTool({
         name: "memory_add",
         label: "Memory Add",
-        description: "Append one durable memory entry. Use after you confirm a durable fact, evidence, failure boundary, or hint worth surviving compaction.",
-        promptSnippet: "memory_add: persist durable fact/evidence/failure/hint after confirming it",
+        description: "追加一条 durable memory 条目。在你确认了值得跨压缩保留的 fact、evidence、失败边界或 hint 之后使用。",
+        promptSnippet: "memory_add: 确认后把 durable 的 fact/evidence/failure/hint 落库",
         parameters: hiddenMemoryAddToolParams,
         async execute(_toolCallId, params: HiddenMemoryAddToolInput) {
             const entry = await appendSolverBoardMemory({
@@ -438,8 +438,8 @@ export const challengeObserverAgentTools = [
     defineTool({
         name: "memory_list",
         label: "Memory List",
-        description: "List durable memory. Use at the start, after compaction, or before retrying a line of attack when context may be stale.",
-        promptSnippet: "memory_list: review durable facts/evidence/failures before choosing next step",
+        description: "列出 durable memory。在开始时、压缩后，或上下文可能已过期的重试攻击路线前使用。",
+        promptSnippet: "memory_list: 选择下一步前先查看 durable 的 fact/evidence/failure",
         parameters: EmptyParams,
         async execute() {
             const items = await listSolverBoardMemory()
@@ -452,8 +452,8 @@ export const challengeObserverAgentTools = [
     defineTool({
         name: "idea_list",
         label: "Idea List",
-        description: "List current attack hypotheses. Use it as read-only input before choosing or switching direction.",
-        promptSnippet: "idea_list: review current attack hypotheses before choosing direction",
+        description: "列出当前的攻击假设。在选择或切换方向前作为只读输入使用。",
+        promptSnippet: "idea_list: 选择方向前查看当前攻击假设",
         parameters: EmptyParams,
         async execute() {
             const items = await listSolverBoardIdeas()
@@ -466,8 +466,8 @@ export const challengeObserverAgentTools = [
     defineTool({
         name: "idea_search",
         label: "Idea Search",
-        description: "Search current attack hypotheses by keyword before retrying a specific vector such as SQLi, upload, SSRF, RCE, format string, or overflow.",
-        promptSnippet: "idea_search: check whether this vector is already on the current board",
+        description: "在重试某个具体攻击向量（如 SQLi、upload、SSRF、RCE、format string、overflow）前，按关键词搜索当前的攻击假设。",
+        promptSnippet: "idea_search: 检查该向量是否已在当前看板上",
         parameters: ideaSearchToolParams,
         async execute(_toolCallId, params: IdeaSearchToolInput) {
             const items = await searchSolverBoardIdeas(params.query)

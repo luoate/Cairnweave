@@ -12,9 +12,8 @@ const PROMPT_NAME = "cairn-worker";
 
 /** Same wrap-up wording as the Phase 0 bridge, sent when the soft deadline arrives. */
 const STEER_MESSAGE =
-  "The task time budget is nearly exhausted. Stop starting new exploration, " +
-  "consolidate the results you have already confirmed, and reply now with the exact " +
-  "final JSON object required by the task. Do not call any more tools after this message.";
+  "任务时间预算即将耗尽。不要再开始新的探索，把已经确认的结果整理收敛，" +
+  "并立刻按任务要求回复那个最终的 JSON 对象。在这条消息之后不要再调用任何工具。";
 
 /**
  * Real BreachWeave solver, called in-process.
@@ -186,16 +185,13 @@ function prepareConfigDir(sourceDir: string, taskId: string): PreparedConfig {
  */
 function solverText(task: WorkerTask): string {
   const notes = task.scope.notes === undefined ? "" : ` (${task.scope.notes})`;
-  const scope = `Authorized scope (hard limit): ${task.scope.targets.join(", ")}${notes}.
-Only interact with these targets. Anything outside this list is out of scope; do not
-attempt it.`;
-  const evidence = `Evidence contract: completion is verified, so every fact you report must
-cite file evidence. Put an "evidence_refs" array at the top level of the final JSON
-envelope; each entry is a path relative to the workspace (for example
-"artifacts/scan.log") for a file you created that supports the reported fact. Use paths
-inside the workspace only; the control plane rejects absolute paths, parent traversal,
-symlinks and missing files. A fact without evidence will not be accepted as proof of
-completion. Never write flag values or credentials into evidence files or output.`;
+  const scope = `授权范围（硬约束）：${task.scope.targets.join(", ")}${notes}。
+只与这些目标交互。清单之外的一律不在授权范围内，不要去尝试。`;
+  const evidence = `证据契约：完成状态是要校验的，所以你上报的每条事实都必须引用文件证据。
+在最终 JSON 信封的顶层放一个 "evidence_refs" 数组；每一项都是相对于工作区的路径（例如
+"artifacts/scan.log"），指向你自己创建的、能支撑该事实的文件。只能使用工作区内部的路径；控制面会拒绝
+绝对路径、上级目录穿越、符号链接以及不存在的文件。没有证据的事实不能作为完成的证明。
+绝不把 flag 的值或凭据写进证据文件或输出里。`;
   return `${scope}\n\n${evidence}\n\n${task.prompt}`;
 }
 

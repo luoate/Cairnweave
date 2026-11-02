@@ -254,9 +254,9 @@ reason 的 intent 条目可以多带三个可选字段：
 ### prompt 扩展
 
 默认 `reason.md` 模板保持与 Python Cairn 逐字一致（golden 测试锁定）。M14b 在渲染后
-追加 `# Strategist Output Extensions`，说明 intents+hints 的 JSON 形状、priority 范围、
+追加 `# 策略师输出扩展`，说明 intents+hints 的 JSON 形状、priority 范围、
 budget 只能收紧限制、dedupe key 的稳定性要求、Hint 不是证据以及禁止写 flag/凭据。
-配置了 token 或成本上限时再追加 `# Resource Budget`，列出已结束 run 的用量与上限；
+配置了 token 或成本上限时再追加 `# 资源预算`，列出已结束 run 的用量与上限；
 在途任务尚未上报，不参与该数字。open intent 上下文也带上 `priority` / `budget` /
 `dedupe_key` / `source`，模型可以据此避免重复方向。
 
@@ -720,7 +720,7 @@ Alpine 侧边栏新增“成本”页签：顶部显示项目总量与归因完�
   未归因对账、证据与来源事实、缺失来源时归因停在上层、零 run 项目与未知项目。
 - `apps/cairn/src/scheduler/tasks.test.ts`：`max_seconds` 收紧硬截止、不会延长，
   `maxToolCalls` 写入任务；reason prompt 含输出扩展、open intent 元数据与
-  Resource Budget 数字，无预算快照时省略该段。
+  `# 资源预算` 数字，无预算快照时省略该段。
 - `apps/cairn/src/scheduler/loop.test.ts`：Hint 落图并按内容去重、重复 open dedupe key
   跳过（人工重规划后不新增意图/提示）、`manual_replan` 触发与标记清除。
 - `apps/cairn/src/host-bridge/bridge.test.ts`：工具上限拒绝、`tool_budget_exhausted`

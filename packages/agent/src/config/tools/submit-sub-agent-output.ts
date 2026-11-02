@@ -11,8 +11,8 @@ const DEFAULT_EXPECTED_OUTPUT_SCHEMA =
 export const submitSubAgentOutputTool = defineTool({
     name: "submit_sub_agent_output",
     label: "Submit Sub-Agent Output",
-    description: "Write canonical structured sub-agent output into sub-agents/<output_id>.json in the current workspace.",
-    promptSnippet: "submit_sub_agent_output: submit assets/hypotheses/candidate_findings/evidence_refs/coverage_gaps",
+    description: "将规范化的结构化子 agent 输出写入当前工作区的 sub-agents/<output_id>.json。",
+    promptSnippet: "submit_sub_agent_output: 提交 assets/hypotheses/candidate_findings/evidence_refs/coverage_gaps",
     parameters: SubmitSubAgentOutputParams,
     async execute(_toolCallId, params: SubmitSubAgentOutputInput, _signal, _onUpdate, ctx) {
         await ensurePentestWorkspace(ctx.cwd)

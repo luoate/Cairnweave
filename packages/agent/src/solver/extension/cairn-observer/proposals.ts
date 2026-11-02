@@ -255,9 +255,9 @@ export function createProposeGraphChangeTool(options: ProposalToolOptions) {
         name: "propose_graph_change",
         label: "Propose Graph Change",
         description:
-            "Submit one candidate fact, intent, or hint for the control plane to review. This does not change the graph; it only queues a proposal that may be rejected, deduplicated, or applied after evidence checks.",
+            "提交一条候选 fact、intent 或 hint，交控制面审查。这不会改动图；只是把提案排入队列，经证据校验后可能被拒绝、去重或应用。",
         promptSnippet:
-            "propose_graph_change: queue one evidence-backed fact/intent/hint for review; never assume it was applied",
+            "propose_graph_change: 排入一条有证据支撑的 fact/intent/hint 供审查；不要假定它已被应用",
         parameters: proposeGraphChangeParams,
         async execute(_toolCallId, params: ProposeGraphChangeInput) {
             try {

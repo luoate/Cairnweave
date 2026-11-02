@@ -773,7 +773,7 @@ describe("scheduler with the fake solver", () => {
       const task = JSON.parse(
         readFileSync(join(sessions, reasonDirs[0]!, "task.json"), "utf8"),
       ) as { prompt: string };
-      expect(task.prompt).toContain("# Investigation State");
+      expect(task.prompt).toContain("# 调查状态");
       expect(task.prompt).toContain("agent-context.yaml");
     },
     30_000,
@@ -809,7 +809,7 @@ describe("scheduler with the fake solver", () => {
         const task = JSON.parse(
           readFileSync(join(sessions, name, "task.json"), "utf8"),
         ) as { prompt: string };
-        expect(task.prompt).not.toContain("# Investigation State");
+        expect(task.prompt).not.toContain("# 调查状态");
       }
     },
     30_000,

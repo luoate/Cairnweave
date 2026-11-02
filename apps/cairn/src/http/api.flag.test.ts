@@ -642,7 +642,7 @@ describe("tool-result spill fallback", () => {
       "explore-111111111111",
       "session.jsonl",
       toolLine(
-        "Tool result too large (40000 chars). Full result saved to: /cairn/workspace/.tool-results/1730000000000-bash-call_0006.md",
+        "工具结果过大（40000 个字符）。完整结果已保存到：/cairn/workspace/.tool-results/1730000000000-bash-call_0006.md",
       ),
     );
 

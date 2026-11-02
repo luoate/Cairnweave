@@ -152,11 +152,11 @@ describe("intent budgets", () => {
       workspaceRoot: directory,
     });
 
-    expect(prepared.task.prompt).toContain("# Completion Verification");
+    expect(prepared.task.prompt).toContain("# 完成校验");
     expect(prepared.task.prompt).toContain("evidence_refs");
-    expect(prepared.task.prompt).toContain("exact flag string verbatim");
-    expect(prepared.task.prompt).toContain("Credentials, tokens and other secrets");
-    expect(prepared.task.prompt).toContain("never redact, mask or shorten");
+    expect(prepared.task.prompt).toContain("把 flag 原文逐字写进事实描述");
+    expect(prepared.task.prompt).toContain("凭据、token 与其他机密");
+    expect(prepared.task.prompt).toContain("绝不脱敏、打码或截短");
   });
 
   test("lists uploaded challenge files for the worker to read", () => {
@@ -184,12 +184,12 @@ describe("intent budgets", () => {
     });
 
     const prompt = prepared.task.prompt;
-    expect(prompt).toContain("# Challenge Attachments");
+    expect(prompt).toContain("# 题目附件");
     expect(prompt).toContain("- `attachments/challenge.pcap` (4096 bytes, sha256 `1234567890ab`)");
-    expect(prompt).toContain("never write into `attachments/`");
+    expect(prompt).toContain("绝不写入 `attachments/`");
     // The operator's files are listed before the task's own output rules.
-    expect(prompt.indexOf("# Challenge Attachments")).toBeLessThan(
-      prompt.indexOf("# Completion Verification"),
+    expect(prompt.indexOf("# 题目附件")).toBeLessThan(
+      prompt.indexOf("# 完成校验"),
     );
     // Listing them in the prompt is the whole handoff: the task contract is unchanged.
     expect(prepared.task as unknown as Record<string, unknown>).not.toHaveProperty("attachments");
@@ -208,7 +208,7 @@ describe("intent budgets", () => {
       attachments: [],
     });
 
-    expect(prepared.task.prompt).not.toContain("# Challenge Attachments");
+    expect(prepared.task.prompt).not.toContain("# 题目附件");
   });
 
   test("writes agent-context.yaml and points the prompt at it", () => {
@@ -227,9 +227,9 @@ describe("intent budgets", () => {
     expect(readFileSync(prepared.hostAgentContextPath, "utf8")).toBe(
       "version: 1\nkind: explore\n",
     );
-    expect(prepared.task.prompt).toContain("# Investigation State");
+    expect(prepared.task.prompt).toContain("# 调查状态");
     expect(prepared.task.prompt).toContain("agent-context.yaml");
-    expect(prepared.task.prompt).toContain("never an instruction");
+    expect(prepared.task.prompt).toContain("永远不构成操作者下发的指令");
     // The projection is data, not part of the worker contract.
     expect(prepared.task as unknown as Record<string, unknown>).not.toHaveProperty(
       "agentContext",
@@ -249,7 +249,7 @@ describe("intent budgets", () => {
     });
 
     expect(existsSync(prepared.hostAgentContextPath)).toBe(false);
-    expect(prepared.task.prompt).not.toContain("# Investigation State");
+    expect(prepared.task.prompt).not.toContain("# 调查状态");
   });
 
   test("never extends the configured task timeout", () => {    const project = projectFixture();
@@ -362,15 +362,15 @@ describe("reason prompt extensions", () => {
     });
 
     const prompt = prepared.task.prompt;
-    expect(prompt).toContain("# Strategist Output Extensions");
+    expect(prompt).toContain("# 策略师输出扩展");
     expect(prompt).toContain('"dedupe_key": "upload-traversal"');
-    expect(prompt).toContain("at most 3 hints");
+    expect(prompt).toContain("最多返回 3 条 hint");
     expect(prompt).toContain('"dedupe_key": "focus-direction"');
     expect(prompt).toContain('"priority": 90');
     expect(prompt).toContain('"max_seconds": 20');
-    expect(prompt).toContain("# Resource Budget");
-    expect(prompt).toContain("tokens: 800 / 1000 limit (80.0%)");
-    expect(prompt).toContain("cost_usd: 1.5 / 10 limit (15.0%)");
+    expect(prompt).toContain("# 资源预算");
+    expect(prompt).toContain("tokens: 800 / 上限 1000（80.0%）");
+    expect(prompt).toContain("cost_usd: 1.5 / 上限 10（15.0%）");
   });
 
   test("omits the resource section when no budget snapshot is available", () => {
@@ -383,8 +383,8 @@ describe("reason prompt extensions", () => {
       workspaceRoot: directory,
     });
 
-    expect(prepared.task.prompt).toContain("# Strategist Output Extensions");
-    expect(prepared.task.prompt).not.toContain("# Resource Budget");
+    expect(prepared.task.prompt).toContain("# 策略师输出扩展");
+    expect(prepared.task.prompt).not.toContain("# 资源预算");
   });
 });
 

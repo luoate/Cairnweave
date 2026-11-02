@@ -5,17 +5,17 @@ import { Type } from "@sinclair/typebox"
 import { ensurePentestWorkspace, pentestSubAgentPath, readHypothesisBacklog, readRunState } from "./pentest-workspace"
 
 const DocumentFindingParams = Type.Object({
-    target: Type.String({ description: "Target URL, host, or IP" }),
-    kind: Type.String({ description: "Vulnerability type, e.g. xss, sqli, idor" }),
-    entry_point: Type.String({ description: "Entry point, path, parameter, or trigger" }),
-    hypothesis: Type.String({ description: "Hypothesis description" }),
-    hypothesis_id: Type.String({ description: "Hypothesis ID for traceability" }),
+    target: Type.String({ description: "目标 URL、主机或 IP" }),
+    kind: Type.String({ description: "漏洞类型，例如 xss、sqli、idor" }),
+    entry_point: Type.String({ description: "入口点、路径、参数或触发方式" }),
+    hypothesis: Type.String({ description: "假设描述" }),
+    hypothesis_id: Type.String({ description: "用于溯源的假设 ID" }),
     status: Type.Union([Type.Literal("candidate"), Type.Literal("verified"), Type.Literal("rejected")]),
-    evidence: Type.String({ description: "Evidence summary" }),
-    evidence_refs: Type.Array(Type.String(), { description: "Evidence paths or references" }),
-    source_agent: Type.String({ description: "Source agent identifier" }),
-    source_artifact: Type.String({ description: "Source artifact path, e.g. sub-agents/recon-001.json" }),
-    notes: Type.String({ description: "Additional notes" }),
+    evidence: Type.String({ description: "证据摘要" }),
+    evidence_refs: Type.Array(Type.String(), { description: "证据路径或引用" }),
+    source_agent: Type.String({ description: "来源 agent 标识" }),
+    source_artifact: Type.String({ description: "来源产物路径，例如 sub-agents/recon-001.json" }),
+    notes: Type.String({ description: "补充说明" }),
 })
 type DocumentFindingInput = Static<typeof DocumentFindingParams>
 
@@ -104,8 +104,8 @@ function normalizeSourceArtifact(cwd: string, sourceArtifact: string): string {
 export const documentFindingTool = defineTool({
     name: "document_finding",
     label: "Document Finding",
-    description: "Record a structured finding into findings.ndjson and rebuild findings.md in the current workspace.",
-    promptSnippet: "document_finding: record a structured finding with source and evidence references",
+    description: "将结构化发现写入 findings.ndjson，并在当前工作区重建 findings.md。",
+    promptSnippet: "document_finding: 记录一条结构化发现，附带来源与证据引用",
     parameters: DocumentFindingParams,
     async execute(_toolCallId, params: DocumentFindingInput, _signal, _onUpdate, ctx) {
         await ensurePentestWorkspace(ctx.cwd)

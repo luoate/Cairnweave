@@ -8,7 +8,7 @@ const KIMI_MAX_ROUNDS = 6
 const KIMI_REQUIRED_TEMPERATURE = 0.6
 
 const KimiSecuritySearchParams = Type.Object({
-    query: Type.String({ description: "Security research query, e.g. CVE PoC, EXP chain, or bypass technique." }),
+    query: Type.String({ description: "安全研究检索词，例如 CVE PoC、EXP 利用链或绕过技巧。" }),
 })
 
 interface KimiSecuritySearchInput {
@@ -571,11 +571,11 @@ async function runQwenSource(query: string, state: MountedConfigState, signal: A
 export const securityKimiSearchTool: ToolDefinition = {
     name: "security_kimi_search",
     label: "Security Kimi Search",
-    description: "Search cybersecurity intelligence with multi-source web search (Kimi + Qwen) for CVE PoC, EXP chains, and bypass techniques.",
+    description: "通过多源联网检索（Kimi + Qwen）查询网络安全情报，覆盖 CVE PoC、EXP 利用链与绕过技巧。",
     promptSnippet: "security_kimi_search:联网检索安全情报（Kimi+Qwen 双源）并汇总关键线索",
     promptGuidelines: [
-        "When exploit intelligence may be outdated or uncertain, call security_kimi_search first.",
-        "Prefer concrete evidence: affected versions, prerequisites, exploit chain, and mitigation clues.",
+        "当利用情报可能已过时或不确定时，先调用 security_kimi_search 检索。",
+        "优先寻找具体证据：受影响版本、前置条件、利用链与缓解线索。",
     ],
     parameters: KimiSecuritySearchParams,
     async execute(_toolCallId, params: KimiSecuritySearchInput, signal, _onUpdate, ctx: ExtensionContext) {

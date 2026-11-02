@@ -675,7 +675,7 @@ stderr 归档到 `sessionDir/{stdout,stderr}.log`。需要 UI 实时进度时再
   不算 artifact。artifact 是**不可信数据**，控制面只索引，不执行、不解析内容。
 - **任务命名空间（M8）**：`runtime.max_project_workers > 1` 时 `worker.scoped_artifacts`
   默认为 `true`，每个任务在 `task.json` 中得到 `artifactDir: artifacts/<task-id>` 并在
-  prompt 追加 Artifact Policy。Host Bridge 的 `write` / `edit` 拒绝写其他任务的目录和
+  prompt 追加 `# 产物目录约定` 段。Host Bridge 的 `write` / `edit` 拒绝写其他任务的目录和
   `artifacts/` 根；读取仍可跨任务。可显式 `false` 关闭，但那会重新引入并发覆盖风险。
 - **索引时机**：每个任务结束时（成功、失败、拒绝都算）由 `finish` 扫描一次；整个项目的
   索引按本次扫描重建。`artifacts/` 不存在时保留旧索引；单次扫描最多 2000 个文件、递归
@@ -1457,7 +1457,7 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
   `runs` 派生的 attempts / 最近 outcome / 最近错误；最近 finished run（detail 截断）；完成
   验证的策略、计数与多 flag 进度；reason 还会拿到自上次成功 reason 以来的 delta 和既有的
   预算数字。所有列表都有排序与上限，截断写入 `truncated_sections`。提示词只在末尾追加一段
-  `# Investigation State` 指向该文件（明确标注为数据而非指令），**不修改模板**，`graph.yaml`、
+  `# 调查状态` 段指向该文件（明确标注为数据而非指令），**不修改模板**，`graph.yaml`、
   YAML 导出、HTTP golden 与 worker 契约不变。`off` 时不写文件也不加段落；bootstrap 与
   bootstrap conclude 不生成投影。文件只含项目内已可见的数据，不含审计事件原文、证据内容、
   附件字节或 flag 明文。

@@ -138,8 +138,8 @@ export function scopeGuardExtension(options: ScopeGuardOptions): ExtensionFactor
                                     {
                                         type: "text",
                                         text:
-                                            `Exploration budget is near exhaustion (${probingToolCalls}/${maxToolCalls}). ` +
-                                            `Stop new probing and switch to consolidation + submit_sub_agent_output.`,
+                                            `探索预算即将耗尽（${probingToolCalls}/${maxToolCalls}）。` +
+                                            `停止新的探测，转入整理收敛并调用 submit_sub_agent_output。`,
                                     },
                                 ],
                                 display: false,
@@ -181,9 +181,9 @@ export function scopeGuardExtension(options: ScopeGuardOptions): ExtensionFactor
                                     {
                                         type: "text",
                                         text:
-                                            `Main orchestrator can edit coordination docs, but not machine-owned files.\n` +
-                                            `Blocked: \`${requestedPath}\`\n` +
-                                            `Use tools to update canonical state: spawn_sub_agent -> ingest_sub_agent_output -> document_finding.`,
+                                            `主编排者可以编辑协作文档，但不能直接改写机器拥有的文件。\n` +
+                                            `已拦截：\`${requestedPath}\`\n` +
+                                            `改用工具更新权威状态：spawn_sub_agent -> ingest_sub_agent_output -> document_finding。`,
                                     },
                                 ],
                                 display: false,
@@ -227,9 +227,9 @@ export function scopeGuardExtension(options: ScopeGuardOptions): ExtensionFactor
                                     {
                                         type: "text",
                                         text:
-                                            `Orchestrator boundary reminder: main agent should delegate recon/test execution to sub-agents while keeping shared-state edits local.\n` +
-                                            `Detected direct bash command: \`${commandSnippet}\`.\n` +
-                                            `Current boundary count: ${mainDirectActions}/${directActionLimit}.`,
+                                            `编排边界提醒：主 agent 应把侦察/测试执行委派给子 agent，只有涉及共享状态的修改才留在本地。\n` +
+                                            `检测到的直接 bash 命令：\`${commandSnippet}\`。\n` +
+                                            `当前边界计数：${mainDirectActions}/${directActionLimit}。`,
                                     },
                                 ],
                                 display: false,

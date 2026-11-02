@@ -69,7 +69,7 @@ describe("large tool result spill", () => {
         const message = patch.content[0].text as string
         // The pointer names the absolute path first: subagents run with their own cwd.
         expect(message).toContain(join(workspace, ".tool-results", spills[0]!))
-        expect(message).toContain(`Tool result too large (${body.length} chars)`)
+        expect(message).toContain(`工具结果过大（${body.length} 个字符）`)
         expect(message).toContain(text(600))
         expect(message).not.toContain("flag{spill_probe}")
     })

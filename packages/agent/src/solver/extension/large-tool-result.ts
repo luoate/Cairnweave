@@ -54,19 +54,19 @@ function shouldBypassForSkillMarkdown(toolName: string, input: unknown): boolean
 
 function buildSpillFileBody(toolName: string, toolCallId: string, input: unknown, serializedText: string): string {
     return [
-        "# Tool Result Spill",
+        "# 工具结果溢出文件",
         "",
         `- time: ${formatNow()}`,
         `- tool: ${toolName}`,
         `- toolCallId: ${toolCallId}`,
         `- originalChars: ${serializedText.length}`,
         "",
-        "## Input",
+        "## 输入",
         "```json",
         JSON.stringify(input ?? {}, null, 2),
         "```",
         "",
-        "## Full Content",
+        "## 完整内容",
         "```text",
         serializedText,
         "```",
@@ -80,14 +80,14 @@ function buildTruncatedMessage(relPath: string, absPath: string, serializedText:
     // Subagent sessions run with their own cwd under the workspace, where the relative pointer
     // would not resolve, so the absolute path is the one worth quoting first.
     return [
-        `Tool result too large (${serializedText.length} chars).`,
-        `Full result saved to: ${absPath}`,
-        `Workspace-relative path: ${relPath}`,
-        `This is a function-call spill file. Do not read the whole file blindly.`,
-        `Use grep/find to locate relevant sections first, then read in chunks with offset/limit.`,
-        `Examples: grep pattern in ${absPath}; read {"path":"${absPath}","offset":1,"limit":200}`,
+        `工具结果过大（${serializedText.length} 个字符）。`,
+        `完整结果已保存到：${absPath}`,
+        `工作区相对路径：${relPath}`,
+        `这是一个函数调用的溢出文件。不要盲目整读整个文件。`,
+        `先用 grep/find 定位相关片段，再按 offset/limit 分块读取。`,
+        `示例：在 ${absPath} 上 grep 目标模式；读取 {"path":"${absPath}","offset":1,"limit":200}`,
         "",
-        `Preview: ${preview}${suffix}`,
+        `预览：${preview}${suffix}`,
     ].join("\n")
 }
 

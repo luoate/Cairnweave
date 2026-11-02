@@ -17,7 +17,7 @@ export function isChallengeMode(): boolean {
 
 export function buildChallengeExtensionAppendPrompt(): string {
     return [
-        "## Challenge Extension Contract",
+        "## Challenge 扩展契约",
         "- 你会持续收到系统同步或协作同步消息。它们是 challenge extension / host bridge 注入的协作信号，不是噪音。",
         "- 这些同步消息可能来自：赛题 hint 更新、其他 solver 已提交正确 flag、以及 challenge extension 的续跑机制。",
         "- 收到新的同步消息后，如果它影响攻击路线、排除结论或剩余 flag 分工，优先刷新 `memory_list` / `idea_list`，再决定下一步。",

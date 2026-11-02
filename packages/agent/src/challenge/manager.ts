@@ -1387,15 +1387,15 @@ export class ChallengeManager {
         const activeSolverIds = snapshot.activeSolvers.map((solver) => solver.id)
         const snapshotChallenges = new Map(snapshot.challenges.map((challenge) => [challenge.id, challenge]))
         const snapshotSolvers = new Map(snapshot.activeSolvers.map((solver) => [solver.id, solver]))
-        const challengeIdSchema = challengeIds.length > 0 ? Type.Union(challengeIds.map((id) => Type.Literal(id))) : Type.String({ description: "challenge id" })
-        const promptNameSchema = solverPromptNames.length > 0 ? Type.Union(solverPromptNames.map((name) => Type.Literal(name))) : Type.String({ description: "solver prompt name" })
-        const solverIdSchema = activeSolverIds.length > 0 ? Type.Union(activeSolverIds.map((id) => Type.Literal(id))) : Type.String({ description: "solver id" })
+        const challengeIdSchema = challengeIds.length > 0 ? Type.Union(challengeIds.map((id) => Type.Literal(id))) : Type.String({ description: "题目的 id" })
+        const promptNameSchema = solverPromptNames.length > 0 ? Type.Union(solverPromptNames.map((name) => Type.Literal(name))) : Type.String({ description: "solver 使用的提示词名称" })
+        const solverIdSchema = activeSolverIds.length > 0 ? Type.Union(activeSolverIds.map((id) => Type.Literal(id))) : Type.String({ description: "solver 的 id" })
 
         return [
             defineTool({
                 name: "planner_get_state",
                 label: "Get Planner State",
-                description: "Get current unsolved challenges, active challenge instances, solver allocation, attempts, submissions and stale indicators.",
+                description: "获取当前未解题目、活动题目实例、solver 分配、尝试次数、提交情况与过期标记。",
                 parameters: emptyObject,
                 execute: async () => {
                     const snapshot = await this.buildPlannerSnapshot("challenge-planner:tool-state")
@@ -1408,7 +1408,7 @@ export class ChallengeManager {
             defineTool({
                 name: "planner_start_challenge",
                 label: "Start Challenge",
-                description: "Start a challenge instance. Use when you want to occupy one of the 3 challenge-instance slots.",
+                description: "启动一个题目实例。当你想占用 3 个题目实例槽位之一时使用。",
                 parameters: Type.Object({
                     challengeId: challengeIdSchema,
                 }),
@@ -1424,7 +1424,7 @@ export class ChallengeManager {
             defineTool({
                 name: "planner_stop_challenge",
                 label: "Stop Challenge",
-                description: "Stop a challenge instance and free one of the 3 challenge-instance slots.",
+                description: "停止一个题目实例，并释放 3 个题目实例槽位中的一个。",
                 parameters: Type.Object({
                     challengeId: challengeIdSchema,
                 }),
@@ -1445,14 +1445,14 @@ export class ChallengeManager {
                 name: "planner_launch_solver",
                 label: "Launch Solver",
                 description:
-                    "Launch a solver for a challenge. Always include solverHandoff: a concise solver-facing startup brief distilled from user strategy and current challenge state. Do not paste scheduling rules verbatim.",
+                    "为某道题启动一个 solver。务必带上 solverHandoff：一份面向 solver 的简明启动说明，从用户策略和当前题目状态提炼而来。不要原样照搬调度规则。",
                 parameters: Type.Object({
                     challengeId: challengeIdSchema,
                     promptName: promptNameSchema,
                     solverHandoff: Type.String({
                         minLength: 1,
                         maxLength: 1200,
-                        description: "Short solver-facing startup note. Include only solver-executable guidance relevant to this challenge.",
+                        description: "简短的、面向 solver 的启动说明。只写与本道题相关、solver 可执行的指引。",
                     }),
                 }),
                 execute: async (_toolCallId, params) => {
@@ -1474,7 +1474,7 @@ export class ChallengeManager {
             defineTool({
                 name: "planner_stop_solver",
                 label: "Stop Solver",
-                description: "Stop a running solver to free a solver slot.",
+                description: "停止一个正在运行的 solver，以释放一个 solver 槽位。",
                 parameters: Type.Object({
                     solverId: solverIdSchema,
                 }),

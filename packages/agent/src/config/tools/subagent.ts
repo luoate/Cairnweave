@@ -376,20 +376,20 @@ async function runSingleAgent(
 }
 
 const TaskItem = Type.Object({
-    agent: Type.String({ description: "Name of the agent to invoke" }),
-    task: Type.String({ description: "Task to delegate to the agent" }),
+    agent: Type.String({ description: "要调用的 agent 名称" }),
+    task: Type.String({ description: "委派给该 agent 的任务" }),
 })
 
 const ChainItem = Type.Object({
-    agent: Type.String({ description: "Name of the agent to invoke" }),
-    task: Type.String({ description: "Task with optional {previous} placeholder for prior output" }),
+    agent: Type.String({ description: "要调用的 agent 名称" }),
+    task: Type.String({ description: "任务描述，可用 {previous} 占位符引用上一步输出" }),
 })
 
 const SubagentParams = Type.Object({
-    agent: Type.Optional(Type.String({ description: "Name of the agent to invoke (for single mode)" })),
-    task: Type.Optional(Type.String({ description: "Task to delegate (for single mode)" })),
-    tasks: Type.Optional(Type.Array(TaskItem, { description: "Array of {agent, task} for parallel execution" })),
-    chain: Type.Optional(Type.Array(ChainItem, { description: "Array of {agent, task} for sequential execution" })),
+    agent: Type.Optional(Type.String({ description: "要调用的 agent 名称（single 模式）" })),
+    task: Type.Optional(Type.String({ description: "委派的任务（single 模式）" })),
+    tasks: Type.Optional(Type.Array(TaskItem, { description: "用于并行执行的 {agent, task} 数组" })),
+    chain: Type.Optional(Type.Array(ChainItem, { description: "用于顺序执行的 {agent, task} 数组" })),
 })
 type SubagentInput = Static<typeof SubagentParams>
 
@@ -403,7 +403,7 @@ export function createSubagentTool(subagentList: PromptFile[]): ToolDefinition {
                   ...subagentList.flatMap((prompt) => [
                       "  <subagent>",
                       `    <name>${escapeXml(prompt.name)}</name>`,
-                      `    <description>${escapeXml(prompt.meta.description ?? "No description")}</description>`,
+                      `    <description>${escapeXml(prompt.meta.description ?? "无描述")}</description>`,
                       "  </subagent>",
                   ]),
                   "</available_subagents>",
@@ -412,9 +412,9 @@ export function createSubagentTool(subagentList: PromptFile[]): ToolDefinition {
         name: "subagent",
         label: "Subagent",
         description: [
-            "Delegate tasks to specialized subagents with isolated context.",
-            "Modes: single (agent + task), parallel (tasks array), chain (sequential with {previous} placeholder).",
-            "Detailed subagent session artifacts live under the current main agent workspace at .subagents/<agent>-<toolCallId>[-step]/ (for example session/ and startup.json) if you need to inspect the full run.",
+            "把任务委派给拥有独立上下文的专用子 agent。",
+            "模式：single（agent + task）、parallel（tasks 数组）、chain（顺序执行，用 {previous} 占位符衔接）。",
+            "子 agent 的详细会话产物位于当前主 agent 工作区的 .subagents/<agent>-<toolCallId>[-step]/ 下（例如 session/ 和 startup.json），需要查看完整运行过程时可到这里找。",
             availableSubagents,
         ].join(" "),
         parameters: SubagentParams,
