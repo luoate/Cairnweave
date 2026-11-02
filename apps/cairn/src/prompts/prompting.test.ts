@@ -42,7 +42,7 @@ const golden: PromptGolden = JSON.parse(
 
 describe("prompt golden", () => {
   for (const promptCase of golden.cases) {
-    test(`${promptCase.group}/${promptCase.name} matches Python Cairn`, () => {
+    test(`${promptCase.group}/${promptCase.name} matches the golden snapshot`, () => {
       expect(loadPrompt(promptCase.group, promptCase.name)).toBe(promptCase.template);
       expect(renderPrompt(promptCase.template, promptCase.replacements)).toBe(
         promptCase.rendered,
@@ -62,7 +62,7 @@ describe("prompt golden", () => {
     );
   });
 
-  test("required-token tables match the Python config", () => {
+  test("required-token tables match the golden config", () => {
     expect(DEFAULT_PROMPT_REQUIRED_TOKENS).toEqual(golden.required_tokens.default);
     expect(PROMPT_REQUIRED_TOKENS_BY_GROUP.mock).toEqual(golden.required_tokens.mock);
   });
@@ -88,13 +88,12 @@ describe("prompt rendering", () => {
 
   test("graph reference is a path, not inline YAML", () => {
     expect(graphSnapshotReference("/tmp/cairn-prompts/explore_execute-abc/graph.yaml")).toBe(
-      "The graph YAML snapshot is stored in this file inside the current container:\n\n" +
+      "图的 YAML 快照存放在当前容器中的这个文件里：\n\n" +
         "/tmp/cairn-prompts/explore_execute-abc/graph.yaml\n\n" +
-        "Before using the graph, read the entire file and treat its contents as the YAML snapshot " +
-        "for this Graph section.",
+        "使用图之前，先完整读取该文件，并把其内容当作本「图」一节的 YAML 快照。",
     );
     expect(graphSnapshotReference("/workspace/graph.yaml", "sandbox")).toContain(
-      "inside the current sandbox:",
+      "当前沙箱中的这个文件里：",
     );
   });
 });

@@ -17,7 +17,7 @@
 | `dispatcher/config.py` | — | `apps/cairn/src/config.ts` | 保留 `server/runtime/tasks/container/local/common_env`；删除 `workers` 与 `WORKER_ENV_KEYS`；新增 `worker` 段（软截止比例、任务文件保留、结果宽限）、可选的 `tasks.graph_slice`（M4b）与 `observer`（M4c；M22 起默认开启） |
 | `dispatcher/contracts.py` | — | `packages/contracts/src/` | 任务/结果契约（M0 已建立，按此扩充） |
 | `dispatcher/output_parser.py` | — | `packages/contracts/src/parse.ts` | 宽容 JSON 提取；算法与测试逐条移植 |
-| `dispatcher/prompting.py` + `prompts/{default,mock}/*.md` | — | `apps/cairn/src/prompts/` | 模板逐字复制；渲染顺序与 `json.dumps(indent=2, ensure_ascii=False)` 一致；golden 对照 |
+| `dispatcher/prompting.py` + `prompts/{default,mock}/*.md` | — | `apps/cairn/src/prompts/` | 模板已中文化（M46）；渲染顺序与 `json.dumps(indent=2, ensure_ascii=False)` 一致；golden 快照对照 |
 | `dispatcher/tasks/{bootstrap,reason,explore,common}.py` | — | `apps/cairn/src/scheduler/{tasks,loop}.ts` | prompt/graph 落盘在 `tasks.ts`；结果应用与租约释放在 `loop.ts`；`conclude` 在 M4a 落地为独立任务（恢复失败会话）；M4b 的可选切片只作用于 explore/explore-conclude；M4c 的 observer context 与 `CAIRN_OBSERVER_*` env 也在 `tasks.ts` |
 | `dispatcher/scheduler/loop.py` | — | `apps/cairn/src/scheduler/loop.ts` | Python 线程池 → 单进程异步 supervisor；leases/heartbeat/超时语义保持 |
 | `dispatcher/scheduler/worker_select.py` | — | **删除** | 只剩一个 worker 实现，固定名 `cairn-worker`；槽位由 `max_workers` / `max_project_workers` 控制 |
@@ -57,11 +57,11 @@
   只在 `tasks.graph_slice.enabled` 时用于 explore 快照；默认全图导出与 golden 逐字不变。切片
   文件额外带 `slice:` 顶层段，仍由同一 YAML emitter 生成。
 - **Prompt 渲染**：五个模板（reason / explore / explore_conclude / bootstrap /
-  bootstrap_conclude）的占位符替换结果（含换行）必须一致；M4a 起五个模板都会被实际派发
-  使用。替换按 dict 插入顺序逐 token 执行（值里出现的后续 token 也会被替换，与 Python
+  bootstrap_conclude）的占位符替换机制（含换行处理）与 Python 一致；M4a 起五个模板都会被
+  实际派发使用（M46 起正文为中文翻译，渲染结果由 golden 快照锁定）。替换按 dict 插入顺序
+  逐 token 执行（值里出现的后续 token 也会被替换，与 Python
   相同）。`graph_yaml` 仍替换为文件路径
-  说明，而非内联内容；M2c 本地模式用 `sandbox` 作为文字，容器模式与 Python 一样用
-  `container`。
+  说明，而非内联内容；本地模式文字用「沙箱」，容器模式用「容器」。
 - **结果契约**：`{"accepted":true,"data":{...}}` / `{"accepted":false,"reason":"..."}`，以及
   宽容提取（fence、前后散文）的接受范围。
 - **超时与租约**：软截止、硬截止、heartbeat 失效、intent 释放/失败边界。
@@ -73,8 +73,8 @@ M1 已记录的偏离（均不影响合法客户端）：
 - PyYAML 对含控制字符的超长标量会折行；本实现的双引号标量不折行（语义等价）。
 - **配置更严格**：顶层未知键直接报错，旧的 `workers` 段给出明确迁移错误；数值与布尔字段
   不做 pydantic 式强制转换。
-- **Prompt 的 graph 位置文字**：本地模式写 `sandbox`，容器模式写 `container`；模板和其余
-  替换内容逐字一致。
+- **Prompt 的 graph 位置文字**：本地模式写「沙箱」，容器模式写「容器」（M46 中文化）；
+  模板和其余替换内容由 golden 快照锁定。
 - **控制面与 worker 的通信**：Python 版 scheduler 通过 HTTP 调用同一个 Cairn API；合并版
   的 scheduler 在控制面进程内直接调用 `packages/graph/src/commands.ts`，worker 只读
   `task.json`、只写 `result.json`。HTTP API 与 scheduler 共用同一组命令，golden 保证
@@ -102,7 +102,7 @@ M1 已记录的偏离（均不影响合法客户端）：
    | `apps/cairn/src/http/testdata/api.golden.json` | 60 步请求/响应 + 固定时钟 + 直接 SQL 步骤 | 状态码、content-type、正文 |
    | `packages/graph/testdata/export.golden.json` | 固定行集、YAML 与 timeline 原文 | 逐字 |
    | `packages/graph/testdata/scalars.golden.json` | 61 条 PyYAML 标量用例 | 逐字 |
-   | `apps/cairn/src/prompts/testdata/prompts.golden.json` | 10 个模板 + 替换结果 + 格式化输入输出 + 必需 token 表 | 逐字 |
+   | `apps/cairn/src/prompts/testdata/prompts.golden.json` | 10 个模板 + 替换结果 + 格式化输入输出 + 必需 token 表 | 自快照（M46 起中文模板不再逐字对照 Python） |
 
    **重新生成**（`tools/golden/generate.py`，只读取上游源码）：
 

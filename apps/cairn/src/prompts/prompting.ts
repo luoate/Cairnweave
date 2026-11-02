@@ -1,9 +1,10 @@
 /**
  * Prompt loading and rendering, ported from Cairn's `dispatcher/prompting.py`.
  *
- * Templates are copied verbatim from Cairn so the placeholders, whitespace and
- * newlines stay stable. `graph_yaml` is always replaced with a short "read this
- * file" reference; the full graph is never inlined into the prompt.
+ * Default templates are the Chinese translations of Cairn's English prompts (M46);
+ * placeholders, whitespace and newlines stay stable, and the golden snapshot locks
+ * the rendered output. `graph_yaml` is always replaced with a short "read this file"
+ * reference; the full graph is never inlined into the prompt.
  */
 
 import { readFileSync, statSync } from "node:fs";
@@ -88,11 +89,11 @@ export function graphSnapshotReference(
   path: string,
   location: "container" | "sandbox" = "container",
 ): string {
+  const place = location === "sandbox" ? "沙箱" : "容器";
   return (
-    `The graph YAML snapshot is stored in this file inside the current ${location}:\n\n` +
+    `图的 YAML 快照存放在当前${place}中的这个文件里：\n\n` +
     `${path}\n\n` +
-    "Before using the graph, read the entire file and treat its contents as the YAML snapshot " +
-    "for this Graph section."
+    "使用图之前，先完整读取该文件，并把其内容当作本「图」一节的 YAML 快照。"
   );
 }
 

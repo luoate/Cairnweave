@@ -1432,11 +1432,12 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
 
 ## 7. 提示词与图快照
 
-- 已把 Cairn `prompts/default/*.md` 原样移植为 `apps/cairn/src/prompts/default/*.md`，占位符
-  保持 `{graph_yaml}`、`{intent_id}`、`{origin}`、`{hints}` 等不变；`mock/` 同步复制用于
-  确定性测试。10 个模板的渲染结果与 Python 版逐字对照（M2a）。
-- `graph_yaml` 仍替换为“文件路径 + 先读整个文件”的说明，**不内联**图内容。默认导出全图，
-  与 Phase 0 / Python Cairn 一致；本地模式文字用 “sandbox”，容器模式用 “container”。
+- 已把 Cairn `prompts/default/*.md` 移植为 `apps/cairn/src/prompts/default/*.md`（M46 起正文
+  为中文翻译），占位符保持 `{graph_yaml}`、`{intent_id}`、`{origin}`、`{hints}` 等不变；
+  `mock/` 同步复制用于确定性测试。10 个模板的渲染结果由 golden 快照锁定（M2a 建立，
+  M46 随中文模板重基线）。
+- `graph_yaml` 仍替换为“文件路径 + 先读整个文件”的说明，**不内联**图内容。默认导出全图；
+  本地模式文字用“沙箱”，容器模式用“容器”。
 - **可选切片（M4b）**：`tasks.graph_slice.enabled: true` 时，explore 与 explore-conclude
   的 `graph.yaml` 只含与当前 intent 相关的子图。硬保留：`origin`、`goal`、focus intent、
   所有其他未结束 intent 及其来源 Fact——这些不受 caps 限制，保证并行 worker 仍能看到

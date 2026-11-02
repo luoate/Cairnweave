@@ -363,12 +363,12 @@ describe("cross-process task claims", () => {
     expect(runs(localProject.project.id)[0]?.execution).toBe("local");
     expect(runs(containerProject.project.id)[0]?.execution).toBe("container");
     for (const [projectId, location] of [
-      [localProject.project.id, "sandbox"],
-      [containerProject.project.id, "container"],
+      [localProject.project.id, "沙箱"],
+      [containerProject.project.id, "容器"],
     ]) {
       const session = runs(projectId!)[0]!.session!;
       const task = JSON.parse(readFileSync(join(directory, "workspace", projectId!, session, "task.json"), "utf8")) as { prompt: string };
-      expect(task.prompt).toContain(`inside the current ${location}`);
+      expect(task.prompt).toContain(`当前${location}中的这个文件里`);
     }
     expect(loop.runningCount).toBe(2);
     local.releaseAll();

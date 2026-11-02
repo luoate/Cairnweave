@@ -253,7 +253,7 @@ reason 的 intent 条目可以多带三个可选字段：
 
 ### prompt 扩展
 
-默认 `reason.md` 模板保持与 Python Cairn 逐字一致（golden 测试锁定）。M14b 在渲染后
+默认 `reason.md` 模板已中文化（M46；渲染结果由 golden 快照锁定）。M14b 在渲染后
 追加 `# 策略师输出扩展`，说明 intents+hints 的 JSON 形状、priority 范围、
 budget 只能收紧限制、dedupe key 的稳定性要求、Hint 不是证据以及禁止写 flag/凭据。
 配置了 token 或成本上限时再追加 `# 资源预算`，列出已结束 run 的用量与上限；
