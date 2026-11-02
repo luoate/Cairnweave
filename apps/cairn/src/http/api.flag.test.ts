@@ -304,6 +304,12 @@ describe("findFlags", () => {
       "CTF2{a1b2c3d4-49xx-...}",
       "flag{partial_value}",
       "flag{****}",
+      "flag{已脱敏}",
+      "flag{已隐藏}",
+      "CTF2{此处省略}",
+      "flag{你的flag}",
+      "flag{待补充}",
+      "CTF2{已打码}",
     ]) {
       expect(findFlags(placeholder)).toEqual([]);
     }
@@ -315,6 +321,8 @@ describe("findFlags", () => {
       "flag{deadbeefcafe1x}",
       "flag{1f7c2a90-3b64-4d2e-8a15-0c9bd7e6f421}",
       "CTF2{maxi_xx_service}",
+      "flag{空格是必要的}",
+      "flag{期待已久的shell}",
     ]) {
       expect(findFlags(value)).toEqual([value]);
     }
