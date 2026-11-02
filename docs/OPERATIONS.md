@@ -97,6 +97,25 @@ curl -s localhost:8000/projects/proj_001/artifacts
 
 索引是扫描结果而非信任边界；artifacts 目录不存在时保留上一版索引。
 
+## 工具结果溢出（M43）
+
+模型看到的单次工具输出有长度上限：超过 `tasks.tool_result_spill.max_inline_chars`（默认
+32000 字符）的原文写到 `<workspace>/.tool-results/<毫秒>-<工具>-<调用id>.md`，上下文里只留
+绝对路径 + 600 字符预览。排障时那里才是完整的 `curl` / `nmap` 输出，但它是工作区文件、
+**不是 artifact**：不出现在 `/artifacts` 索引、附件包或报告里，也不受 `retention` 清理，
+随项目工作区长存。指针里的绝对路径是 worker 视角的（容器模式为 `/cairn/workspace/…`），
+在宿主上按工作区相对路径 `.tool-results/` 找即可。
+
+```bash
+ls "<workspace>/.tool-results" | tail          # 最近溢出的工具结果
+grep -l "flag{" "<workspace>/.tool-results"/*.md
+```
+
+`/flag` 的兜底扫描会把这里算作取证来源（先于会话目录、共用字节与条目额度），所以开启溢出
+不会让 flag 从横幅里消失；M29 的 ≤10 s 缓存按工件指纹失效，新落盘的溢出文件要等 TTL 到期。
+完全关掉外置换回内联：`tasks.tool_result_spill.enabled: false`，或经
+`PUT /settings/runtime` 热改（下一次派发生效）。
+
 ## 证据、内容校验与 runs（M5a + M5b）
 
 worker 可以在 `result.json` 根级返回工作区相对的 `evidence_refs`（不进入 Cairn

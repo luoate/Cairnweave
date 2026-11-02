@@ -178,6 +178,21 @@ function ssrfScheduler(): Scheduler {
   });
 }
 
+function spillScheduler(spill: Record<string, unknown>): Scheduler {
+  const fixture = join(import.meta.dir, "testdata", "spill-env-worker.ts");
+  return new Scheduler({
+    db,
+    config: parseDispatchConfig({
+      ...CONFIG,
+      tasks: { ...CONFIG.tasks, tool_result_spill: spill },
+    }),
+    workspaceRoot: join(directory, "workspace"),
+    log: (message) => logs.push(message),
+    leaseIntervalMs: 500,
+    workerArgv: (taskPath) => [process.execPath, fixture, taskPath],
+  });
+}
+
 function concurrentScheduler(): Scheduler {
   const fixture = join(import.meta.dir, "testdata", "concurrent-worker.ts");
   return new Scheduler({
@@ -885,6 +900,55 @@ describe("scheduler with the fake solver", () => {
         expect(audit.events[0]!.event).toMatchObject({
           event: "ssrf_candidate",
           detail: "ssrf_markers=block protected=cairn-control.test,internal-lab.test",
+        });
+      }
+    },
+    30_000,
+  );
+
+  test(
+    "hands the tool-result spill contract down to the worker",
+    async () => {
+      const project = createProjectRow(false);
+      const loop = spillScheduler({ enabled: false, max_inline_chars: 4096 });
+      await loop.runUntilIdle();
+
+      expect(load(project.project.id).project.status).toBe("completed");
+      const summaries = db.withConn((conn) =>
+        listProjectAudit(conn, project.project.id),
+      );
+      expect(summaries.length).toBeGreaterThan(0);
+      for (const summary of summaries) {
+        const audit = db.withConn((conn) =>
+          getTaskAudit(conn, project.project.id, summary.task_id),
+        );
+        expect(audit.events[0]!.event).toMatchObject({
+          event: "tool_result_spill_contract",
+          detail: "spill_enabled=0 max_chars=4096",
+        });
+      }
+    },
+    30_000,
+  );
+
+  test(
+    "keeps spilling on by default for every task kind",
+    async () => {
+      const project = createProjectRow(false);
+      const loop = spillScheduler({});
+      await loop.runUntilIdle();
+
+      const summaries = db.withConn((conn) =>
+        listProjectAudit(conn, project.project.id),
+      );
+      expect(summaries.length).toBeGreaterThan(0);
+      for (const summary of summaries) {
+        const audit = db.withConn((conn) =>
+          getTaskAudit(conn, project.project.id, summary.task_id),
+        );
+        expect(audit.events[0]!.event).toMatchObject({
+          event: "tool_result_spill_contract",
+          detail: "spill_enabled=1 max_chars=32000",
         });
       }
     },

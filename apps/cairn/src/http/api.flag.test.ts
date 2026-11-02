@@ -258,6 +258,13 @@ function writeSession(taskId: string, name: string, lines: string): void {
   writeFileSync(join(directory, name), lines, "utf8");
 }
 
+/** One worker-side spill file: the full text the context pointer replaced. */
+function writeSpill(name: string, body: string): void {
+  const directory = join(workspaceRoot, projectId, ".tool-results");
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(join(directory, name), body, "utf8");
+}
+
 describe("findFlags", () => {
   test("accepts common CTF prefixes and ignores unrelated braces", () => {
     expect(findFlags(`a ${FIXTURE_FLAG} b picoCTF{ok_value} c flag{also_ok}`)).toEqual([
@@ -582,5 +589,66 @@ describe("operator-rejected flag filtering", () => {
     expect(filtered.flag).toBeNull();
     expect(filtered.candidates).toEqual([]);
     expect(filtered.placeholder_suspect).toBe(false);
+  });
+});
+
+describe("tool-result spill fallback", () => {
+  test("recovers a flag that only survives in a spill file", () => {
+    writeSpill("1730000000000-bash-call_0001.md", `HTTP 200 body\n${FIXTURE_FLAG}\n`);
+
+    const result = scanSolverSessionFlags({ workspace: join(workspaceRoot, projectId) });
+    expect(result).toMatchObject({
+      found: true,
+      flag: FIXTURE_FLAG,
+      source: ".tool-results/1730000000000-bash-call_0001.md",
+      scanned_files: 1,
+      truncated: false,
+    });
+  });
+
+  test("skips binary and non-markdown spill entries", () => {
+    writeSpill("1730000000000-bash-call_0002.md", `${FIXTURE_FLAG}\n`);
+    writeSpill("1730000000001-bash-call_0003.md", "ignored\n");
+    writeSpill("notes.txt", `${SECOND_FLAG}\n`);
+    writeFileSync(
+      join(workspaceRoot, projectId, ".tool-results", "1730000000002-read-call_0004.md"),
+      `binary ${String.fromCharCode(0)} ${FIXTURE_FLAG}\n`,
+      "utf8",
+    );
+
+    const result = scanSolverSessionFlags({ workspace: join(workspaceRoot, projectId) });
+    expect(result.flag).toBe(FIXTURE_FLAG);
+    expect(result.scanned_files).toBe(2);
+  });
+
+  test("spill files count against the shared file budget", () => {
+    writeSpill("1730000000000-bash-call_0005.md", `${FIXTURE_FLAG}\n`);
+    writeSession("explore-111111111111", "session.jsonl", toolLine(SECOND_FLAG));
+
+    const result = scanSolverSessionFlags({
+      workspace: join(workspaceRoot, projectId),
+      maxFiles: 1,
+    });
+    expect(result.flag).toBe(FIXTURE_FLAG);
+    expect(result.truncated).toBe(true);
+    expect(result.scanned_files).toBe(1);
+  });
+
+  test("the pointer plus its spill answers /flag for redacted artifacts", async () => {
+    writeFileSync(join(artifacts, "findings.md"), "captured CTF2{[REDACTED]}\n", "utf8");
+    record();
+    writeSpill("1730000000000-bash-call_0006.md", `body\n${FIXTURE_FLAG}\n`);
+    writeSession(
+      "explore-111111111111",
+      "session.jsonl",
+      toolLine(
+        "Tool result too large (40000 chars). Full result saved to: /cairn/workspace/.tool-results/1730000000000-bash-call_0006.md",
+      ),
+    );
+
+    const body = (await (await get(`/projects/${projectId}/flag`)).json()) as ProjectFlagResult;
+    expect(body.found).toBe(true);
+    expect(body.flag).toBe(FIXTURE_FLAG);
+    expect(body.sources).toContain(".tool-results/1730000000000-bash-call_0006.md");
   });
 });

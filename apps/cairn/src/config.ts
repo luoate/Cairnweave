@@ -69,12 +69,24 @@ export interface EvidenceConfig {
   minBytes: number;
 }
 
+export interface ToolResultSpillConfig {
+  /**
+   * Writes an oversized tool result to `<workspace>/.tool-results/` and hands the model a
+   * preview plus the pointer instead of the raw text. On by default: one verbose HTTP dump
+   * otherwise stays in the context for the rest of the task.
+   */
+  enabled: boolean;
+  /** Serialized tool result at or below this many characters is passed through untouched. */
+  maxInlineChars: number;
+}
+
 export interface TasksConfig {
   bootstrap: BootstrapTaskConfig;
   reason: ReasonTaskConfig;
   explore: ExploreTaskConfig;
   graphSlice: GraphSliceConfig;
   evidence: EvidenceConfig;
+  toolResultSpill: ToolResultSpillConfig;
 }
 
 export const DEFAULT_GRAPH_SLICE: GraphSliceConfig = {
@@ -84,6 +96,12 @@ export const DEFAULT_GRAPH_SLICE: GraphSliceConfig = {
 };
 
 export const DEFAULT_EVIDENCE: EvidenceConfig = { minBytes: 1 };
+
+/** `PREVIEW_CHARS` in the worker-side spill extension stays at 600 and is not configurable. */
+export const DEFAULT_TOOL_RESULT_SPILL: ToolResultSpillConfig = {
+  enabled: true,
+  maxInlineChars: 32_000,
+};
 
 export type ObserverTaskKind = "bootstrap" | "reason" | "explore" | "conclude";
 
@@ -582,7 +600,7 @@ const EDITABLE_OVERRIDE_KEYS: Record<string, readonly string[]> = {
     "max_project_workers",
     "interval",
   ],
-  tasks: ["bootstrap", "reason", "explore", "graph_slice", "evidence"],
+  tasks: ["bootstrap", "reason", "explore", "graph_slice", "evidence", "tool_result_spill"],
   worker: [
     "soft_deadline_ratio",
     "retain_task_files",
@@ -628,6 +646,7 @@ const EDITABLE_TASK_KEYS: Record<string, readonly string[]> = {
   explore: ["timeout", "conclude_timeout"],
   graph_slice: ["enabled", "max_facts", "max_intents"],
   evidence: ["min_bytes"],
+  tool_result_spill: ["enabled", "max_inline_chars"],
 };
 
 /** Snake_case patch accepted by `RuntimeConfigStore.apply`; see `EDITABLE_OVERRIDE_KEYS`. */
@@ -803,6 +822,21 @@ function parseTasks(value: unknown): TasksConfig {
     evidence: has(tasks, "evidence")
       ? parseEvidence(tasks["evidence"])
       : { ...DEFAULT_EVIDENCE },
+    toolResultSpill: has(tasks, "tool_result_spill")
+      ? parseToolResultSpill(tasks["tool_result_spill"])
+      : { ...DEFAULT_TOOL_RESULT_SPILL },
+  };
+}
+
+function parseToolResultSpill(value: unknown): ToolResultSpillConfig {
+  const spill = recordAt(value, "tasks.tool_result_spill");
+  return {
+    enabled: has(spill, "enabled")
+      ? booleanAt(spill["enabled"], "tasks.tool_result_spill.enabled")
+      : DEFAULT_TOOL_RESULT_SPILL.enabled,
+    maxInlineChars: has(spill, "max_inline_chars")
+      ? requiredPositiveInt(spill, "max_inline_chars", "tasks.tool_result_spill")
+      : DEFAULT_TOOL_RESULT_SPILL.maxInlineChars,
   };
 }
 

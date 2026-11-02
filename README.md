@@ -40,6 +40,7 @@ worker 在项目沙箱里跑真实模型，每个任务启动一次进程，只�
 | --- | --- |
 | 图内核与调度 | projects / facts / intents / hints、SQLite 单一写者、bootstrap / reason / explore / conclude 四类任务，保留 Cairn 语义并用 Python 版做 golden 对照 |
 | Agent 上下文 | 任务级 `agent-context.yaml` 把 Fact 的当前/被取代状态、证据可用性、最近尝试、完成验证进度与 reason 增量交给决策层；只读投影，不改图与导出，`runtime.strategy_context: off` 可关闭 |
+| 上下文预算 | 超过 `tasks.tool_result_spill.max_inline_chars`（默认 32000）字符的工具输出落盘 `<workspace>/.tool-results/`，上下文里换成文件路径 + 600 字符预览与「先 grep 再分片读」的提示；solver 与 subagent 共用，`enabled: false` 回到全量内联。原文仍在项目工作区，`/flag` 兜底会读它 |
 | 意图生命周期 | 操作员（或开启 `strategist.reason_abandon` 后的 reason）可放弃已经尝试且从未成功的 open 意图；状态存 `intent_meta` 旁路，派发、提示、水位与报告都排除它，UI 提供原因输入与二次确认 |
 | Scope 硬校验 | `Host Bridge` 在每次模型工具调用前检查网络端点与文件路径，越界即拒绝，allow/block 全量写 `audit.jsonl`；无 `scope` 的项目不派发 |
 | 证据门控 | worker 声明的 `evidence_refs` 在写图前逐条校验（存在、非目录、非符号链接、不越界、最小字节），并固化 SHA-256 以便事后比对 |
@@ -48,7 +49,7 @@ worker 在项目沙箱里跑真实模型，每个任务启动一次进程，只�
 | 图提案 | Observer 只能写候选文件，控制面是唯一审核者与写图者；默认 `dry_run`（完整校验、记录结果、不写图），改 `apply` 才落图 |
 | 中文 Writeup | 从图中数据确定性渲染中文 Markdown 草稿，可由模型重写；附带载荷（payload）章节、附件 zip 打包与「AI 撰写 / 恢复草稿」 |
 | 题目附件 | 操作员把题目给的二进制 / pcap / 源码包上传进项目工作区 `attachments/`（单文件 32 MiB、每项目 256 MiB），Worker 的任务提示直接列出文件清单，按只读输入读取；「附件」页签负责上传、下载与二次确认删除 |
-| Flag 与校验 | `/flag` 从已索引工件与会话工具输出中提取真实 flag，拒绝占位符与掩码；会话兜底遍历有目录/条目上界，结果按工作区短缓存；challenge 项目按外部计分校验 |
+| Flag 与校验 | `/flag` 从已索引工件、`.tool-results` 溢出文件与会话工具输出中提取真实 flag，拒绝占位符与掩码；兜底遍历有目录/条目上界，结果按工作区短缓存；challenge 项目按外部计分校验 |
 | 人工 Flag 复核 | `verification.flag_review: manual`（默认）时，worker 写回的 flag 形状值会登记为后台复核，项目照常探索但不会在判定前结束，由操作员随时判定「真·还有更多 / 真·停止 / 假·继续」；判定写旁路表、驱动完成或提示，假 flag 不会二次入队、也不能成为结束项目的理由（引用它的完成声明会被拒绝，reason 继续跑）；设置里「运行与执行 → 图切片与校验」有「Flag 人工复核」开关（默认开），关闭即不再登记新复核 |
 | 成本与预算 | `runs` 记录模型 / Token / 成本；意图级 priority 与预算、单项目 token/成本配额、逐 Fact 与逐意图的成本归因与因果边 |
 | 只读运维视图 | 运行、慢层、审计、证据、提案、看板、成本、统计、报告、Writeup、附件十一个侧栏页签，除人工重规划与附件上传/删除外全部只发 GET |
@@ -260,7 +261,7 @@ API key 只写不读（响应只回掩码），写入 `auth.json` 并按上游 S
 ## 测试与 CI
 
 ```bash
-bun test             # 1122 passed / 97 files（fake solver，不需凭据）
+bun test             # 1142 passed / 98 files（fake solver，不需凭据）
 bun run typecheck    # tsc --noEmit
 bun run eval         # 五个完成场景的 legacy / hardened 对照，写 runs/eval-<date>.json
 bun run ui:css       # 改了 index.html 的 class 后重新生成 static/app.css

@@ -53,6 +53,28 @@ function readInjectedPath(name: string): string | undefined {
     return value ? value : undefined
 }
 
+/** Mirrors `DEFAULT_TOOL_RESULT_SPILL.max_inline_chars` in the Cairn config layer. */
+const DEFAULT_TOOL_SPILL_MAX_CHARS = 32000
+
+/**
+ * Reads the tool-result spill contract (`tasks.tool_result_spill`) that the scheduler exports as
+ * CAIRN_TOOL_SPILL_*. Only the scheduler writes these; an absent pair falls back to the config
+ * default (spill on, 32000 chars) so a hand-started worker behaves like a dispatched one.
+ */
+export function readToolSpillFromEnv(): { enabled: boolean; maxInlineChars: number } {
+    const enabled = process.env.CAIRN_TOOL_SPILL_ENABLED?.trim() !== "0"
+    const raw = process.env.CAIRN_TOOL_SPILL_MAX_CHARS?.trim()
+    const parsed = raw ? Number(raw) : Number.NaN
+    const maxInlineChars = Number.isInteger(parsed) && parsed > 0 ? parsed : DEFAULT_TOOL_SPILL_MAX_CHARS
+    return { enabled, maxInlineChars }
+}
+
+function toolSpillExtensions(workspaceDir: string): ExtensionFactory[] {
+    const spill = readToolSpillFromEnv()
+    if (!spill.enabled) return []
+    return [largeToolResultExtension({ workspaceRoot: workspaceDir, maxInlineChars: spill.maxInlineChars })]
+}
+
 /**
  * Loads the host-side scope gate when the worker injected one.
  *
@@ -183,7 +205,9 @@ export async function createSolverSession(init: SolverInitPayload): Promise<Solv
     const extensions = [
         // The gate must run before any other extension can touch the tool call.
         ...(hostBridge ? [hostBridge] : []),
-        // largeToolResultExtension({ workspaceRoot: workspaceDir }),
+        // Registered after the gate so scope auditing still sees the full result, and before the
+        // observers so the context carries a pointer instead of a dump.
+        ...toolSpillExtensions(workspaceDir),
         cairnObserver ? cairnObserver.extension : challengeObserverExtension({ observerEnabled, observerModel }),
         // rtkRewriteExtension(),
     ]
@@ -246,8 +270,10 @@ export async function createSubagentSession(promptName: string, task: string): P
     const hostBridge = await loadHostBridgeExtension()
     const extensionFactories: ExtensionFactory[] = [
         ...(hostBridge ? [hostBridge] : []),
+        // Subagents inherit CAIRN_TOOL_SPILL_* through process.env and share the solver workspace,
+        // so their spills land in the same scan root as the parent's.
+        ...toolSpillExtensions(workspaceDir),
         // rtkRewriteExtension(),
-        // largeToolResultExtension({ workspaceRoot: workspaceDir }),
         // pentestCompactionExtension(),
         // scopeGuardExtension({ workspaceRoot: workspaceDir, agentRole: "subagent" }),
     ]

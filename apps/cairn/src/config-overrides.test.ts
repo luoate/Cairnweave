@@ -107,6 +107,17 @@ describe("runtime override patches", () => {
     ).toEqual(["proposals.allow_kinds", "tasks.reason.max_intents"]);
   });
 
+  test("keeps tool-result spilling editable", () => {
+    expect(() =>
+      parseRuntimeOverridePatch({
+        tasks: { tool_result_spill: { enabled: false, max_inline_chars: 4096 } },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      parseRuntimeOverridePatch({ tasks: { tool_result_spill: { min_bytes: 1 } } }),
+    ).toThrow("overrides.tasks.tool_result_spill has unsupported key: min_bytes");
+  });
+
   test("keeps the SSRF marker mode editable and the protected hosts fixed", () => {
     expect(() => parseRuntimeOverridePatch({ scope: { ssrf_markers: "block" } })).not.toThrow();
     // Deployment identity is not a dial: the protected list only comes from dispatch.yaml.
@@ -222,6 +233,32 @@ describe("RuntimeConfigStore", () => {
 
     expect(store.reset().editable.scope.ssrf_markers).toBe("observe");
     expect(config.scope.ssrfMarkers).toBe("observe");
+  });
+
+  test("toggles tool-result spilling on the live config", () => {
+    const store = newStore();
+    expect(store.view().editable.tasks.tool_result_spill).toEqual({
+      enabled: true,
+      max_inline_chars: 32_000,
+    });
+
+    const view = store.apply({ tasks: { tool_result_spill: { enabled: false } } });
+    expect(config.tasks.toolResultSpill).toEqual({ enabled: false, maxInlineChars: 32_000 });
+    expect(view.overrides).toEqual(["tasks.tool_result_spill.enabled"]);
+    expect(
+      JSON.parse(db.withConn((conn) => getRuntimeConfigOverrides(conn)).overrides),
+    ).toEqual({ tasks: { tool_result_spill: { enabled: false } } });
+
+    expect(() =>
+      store.apply({ tasks: { tool_result_spill: { max_inline_chars: 0 } } }),
+    ).toThrow("tool_result_spill.max_inline_chars must be a positive integer");
+    expect(config.tasks.toolResultSpill.enabled).toBe(false);
+
+    expect(store.reset().editable.tasks.tool_result_spill).toEqual({
+      enabled: true,
+      max_inline_chars: 32_000,
+    });
+    expect(config.tasks.toolResultSpill).toEqual({ enabled: true, maxInlineChars: 32_000 });
   });
 
   test("replays stored overrides on a fresh config after restart", () => {

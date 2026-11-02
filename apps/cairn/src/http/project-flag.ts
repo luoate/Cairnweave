@@ -197,68 +197,163 @@ export function scanSolverSessionFlags(options: SessionFlagScanOptions): Project
   return scanSolverSession(options, undefined);
 }
 
+/** Bounds for one fallback walk; the spill root and the session roots share them. */
+interface WalkCaps {
+  maxFiles: number;
+  maxFileBytes: number;
+  maxTotalBytes: number;
+  maxDirectories: number;
+  maxEntries: number;
+}
+
+/** Mutable progress of one fallback walk. */
+interface WalkBudget {
+  groups: FlagGroups;
+  scannedFiles: number;
+  totalBytes: number;
+  truncated: boolean;
+  examinedDirectories: number;
+  examinedEntries: number;
+}
+
 function scanSolverSession(
   options: SessionFlagScanOptions,
   filter: FlagFilter | undefined,
 ): ProjectFlagResult {
-  const maxFiles = options.maxFiles ?? SESSION_MAX_FILES;
-  const maxFileBytes = options.maxFileBytes ?? SESSION_MAX_FILE_BYTES;
-  const maxTotalBytes = options.maxTotalBytes ?? SESSION_MAX_TOTAL_BYTES;
-  const maxDirectories = options.maxDirectories ?? SESSION_MAX_DIRECTORIES;
-  const maxEntries = options.maxEntries ?? SESSION_MAX_ENTRIES;
-  const root = resolve(options.workspace, ".cairn", "sessions");
+  const caps: WalkCaps = {
+    maxFiles: options.maxFiles ?? SESSION_MAX_FILES,
+    maxFileBytes: options.maxFileBytes ?? SESSION_MAX_FILE_BYTES,
+    maxTotalBytes: options.maxTotalBytes ?? SESSION_MAX_TOTAL_BYTES,
+    maxDirectories: options.maxDirectories ?? SESSION_MAX_DIRECTORIES,
+    maxEntries: options.maxEntries ?? SESSION_MAX_ENTRIES,
+  };
+  const budget: WalkBudget = {
+    groups: newFlagGroups(),
+    scannedFiles: 0,
+    totalBytes: 0,
+    truncated: false,
+    examinedDirectories: 0,
+    examinedEntries: 0,
+  };
 
-  const rootStats = lstatSync(root, { throwIfNoEntry: false });
-  if (rootStats === undefined || !rootStats.isDirectory() || rootStats.isSymbolicLink()) {
-    return emptyFlagResult();
+  scanSpillFiles(options.workspace, caps, budget);
+  const roots = sessionRoots(options.workspace);
+  if (roots !== null) scanSessionDirs(roots.realRoot, roots.names, caps, budget);
+
+  return rankMatches(budget.groups, budget.scannedFiles, budget.truncated, filter);
+}
+
+/**
+ * Reads the tool-result spill files. An oversized result reaches the session log only as a
+ * 600-char preview plus a pointer, so these files hold output the logs no longer carry. Walking
+ * them first keeps them from being starved by the session walk, and sharing the session budgets
+ * keeps the whole fallback bounded.
+ */
+function scanSpillFiles(workspace: string, caps: WalkCaps, budget: WalkBudget): void {
+  const realRoot = spillDirectoryRoot(workspace);
+  if (realRoot === null) return;
+  let names: string[];
+  try {
+    names = readdirSync(realRoot).sort().reverse();
+  } catch {
+    return;
   }
+
+  for (const name of names) {
+    if (isBudgetExhausted(budget, caps)) {
+      budget.truncated = true;
+      break;
+    }
+    if (budget.examinedEntries >= caps.maxEntries) {
+      budget.truncated = true;
+      break;
+    }
+    budget.examinedEntries += 1;
+    if (!name.endsWith(".md")) continue;
+    const target = resolve(realRoot, name);
+    if (!isInside(realRoot, target)) continue;
+    const stats = lstatSync(target, { throwIfNoEntry: false });
+    if (stats === undefined || !stats.isFile() || stats.isSymbolicLink()) continue;
+    if (stats.size === 0 || stats.size > caps.maxFileBytes) continue;
+    if (budget.totalBytes + stats.size > caps.maxTotalBytes) {
+      budget.truncated = true;
+      break;
+    }
+    const buffer = readPlainFile(target);
+    if (buffer === null) continue;
+    budget.totalBytes += stats.size;
+    budget.scannedFiles += 1;
+    recordFlags(budget.groups, buffer.toString("utf8"), `.tool-results/${name}`);
+  }
+}
+
+/**
+ * Resolves the sessions root and its task directories, newest first, or null when the root is
+ * missing, symlinked, or unreadable. Names only: on Windows `withFileTypes` stats every entry up
+ * front, which costs more than the walk this budget is meant to bound.
+ */
+function sessionRoots(workspace: string): { realRoot: string; names: string[] } | null {
+  const root = resolve(workspace, ".cairn", "sessions");
+  const stats = lstatSync(root, { throwIfNoEntry: false });
+  if (stats === undefined || !stats.isDirectory() || stats.isSymbolicLink()) return null;
   let realRoot: string;
   try {
     realRoot = realpathSync(root);
   } catch {
-    return emptyFlagResult();
+    return null;
   }
-
-  let sessionNames: string[];
   try {
-    // Names only: on Windows `withFileTypes` stats every entry up front, which costs more
-    // than the walk this budget is meant to bound.
-    sessionNames = readdirSync(realRoot).sort().reverse();
+    return { realRoot, names: readdirSync(realRoot).sort().reverse() };
   } catch {
-    return emptyFlagResult();
+    return null;
   }
+}
 
-  const groups = newFlagGroups();
-  let scannedFiles = 0;
-  let totalBytes = 0;
-  let truncated = false;
-  let examinedDirectories = 0;
-  let examinedEntries = 0;
+function isBudgetExhausted(budget: WalkBudget, caps: WalkCaps): boolean {
+  return budget.scannedFiles >= caps.maxFiles || budget.totalBytes >= caps.maxTotalBytes;
+}
 
+/** Reads a spill file, rejecting anything that looks binary. Null on any failure. */
+function readPlainFile(target: string): Buffer | null {
+  let buffer: Buffer;
+  try {
+    buffer = readFileSync(target);
+  } catch {
+    return null;
+  }
+  return buffer.includes(0) ? null : buffer;
+}
+
+function scanSessionDirs(
+  realRoot: string,
+  sessionNames: string[],
+  caps: WalkCaps,
+  budget: WalkBudget,
+): void {
   for (const name of sessionNames) {
-    if (scannedFiles >= maxFiles || totalBytes >= maxTotalBytes) {
-      truncated = true;
+    if (isBudgetExhausted(budget, caps)) {
+      budget.truncated = true;
       break;
     }
-    if (examinedDirectories >= maxDirectories || examinedEntries >= maxEntries) {
-      truncated = true;
+    if (budget.examinedDirectories >= caps.maxDirectories || budget.examinedEntries >= caps.maxEntries) {
+      budget.truncated = true;
       break;
     }
     const sessionDir = resolve(realRoot, name);
     if (!isInside(realRoot, sessionDir)) continue;
-    examinedEntries += 1;
+    budget.examinedEntries += 1;
     const sessionStats = lstatSync(sessionDir, { throwIfNoEntry: false });
     if (sessionStats === undefined || !sessionStats.isDirectory() || sessionStats.isSymbolicLink()) {
       continue;
     }
-    examinedDirectories += 1;
+    budget.examinedDirectories += 1;
 
     const solverDir = resolve(sessionDir, "solver-session");
-    if (examinedEntries >= maxEntries) {
-      truncated = true;
+    if (budget.examinedEntries >= caps.maxEntries) {
+      budget.truncated = true;
       break;
     }
-    examinedEntries += 1;
+    budget.examinedEntries += 1;
     const solverStats = lstatSync(solverDir, { throwIfNoEntry: false });
     if (solverStats === undefined || !solverStats.isDirectory() || solverStats.isSymbolicLink()) {
       continue;
@@ -286,21 +381,21 @@ function scanSolverSession(
     }
 
     for (const file of files) {
-      if (scannedFiles >= maxFiles || totalBytes >= maxTotalBytes) {
-        truncated = true;
+      if (isBudgetExhausted(budget, caps)) {
+        budget.truncated = true;
         break;
       }
-      if (examinedEntries >= maxEntries) {
-        truncated = true;
+      if (budget.examinedEntries >= caps.maxEntries) {
+        budget.truncated = true;
         break;
       }
-      examinedEntries += 1;
+      budget.examinedEntries += 1;
       const target = resolve(realSolverDir, file);
       const stats = lstatSync(target, { throwIfNoEntry: false });
       if (stats === undefined || !stats.isFile() || stats.isSymbolicLink()) continue;
-      if (stats.size === 0 || stats.size > maxFileBytes) continue;
-      if (totalBytes + stats.size > maxTotalBytes) {
-        truncated = true;
+      if (stats.size === 0 || stats.size > caps.maxFileBytes) continue;
+      if (budget.totalBytes + stats.size > caps.maxTotalBytes) {
+        budget.truncated = true;
         break;
       }
       let realTarget: string;
@@ -318,20 +413,18 @@ function scanSolverSession(
       }
       if (buffer.includes(0)) continue;
       const content = buffer.toString("utf8");
-      totalBytes += stats.size;
-      scannedFiles += 1;
+      budget.totalBytes += stats.size;
+      budget.scannedFiles += 1;
 
       const path = `.cairn/sessions/${name}/solver-session/${file}`;
       for (const line of content.split(/\r?\n/)) {
         if (line.length === 0) continue;
         const text = sessionToolText(line);
         if (text === null) continue;
-        recordFlags(groups, text, path);
+        recordFlags(budget.groups, text, path);
       }
     }
   }
-
-  return rankMatches(groups, scannedFiles, truncated, filter);
 }
 
 /**
@@ -572,6 +665,22 @@ function mergeCandidates(left: FlagCandidate[], right: FlagCandidate[]): FlagCan
 /** Realpath of `<workspace>/artifacts`; null when it is absent, symlinked or not a directory. */
 export function openArtifactRoot(workspace: string): string | null {
   const root = resolve(workspace, "artifacts");
+  try {
+    const stats = lstatSync(root);
+    if (!stats.isDirectory() || stats.isSymbolicLink()) return null;
+    return realpathSync(root);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The worker-side tool-result spill directory for a workspace, or null when it is absent or not
+ * a real directory. `<workspace>/.tool-results` is where `largeToolResultExtension` writes the
+ * full text it replaced in the context; container tasks write it through the workspace mount.
+ */
+function spillDirectoryRoot(workspace: string): string | null {
+  const root = resolve(workspace, ".tool-results");
   try {
     const stats = lstatSync(root);
     if (!stats.isDirectory() || stats.isSymbolicLink()) return null;

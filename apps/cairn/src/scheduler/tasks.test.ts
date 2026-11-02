@@ -6,7 +6,7 @@ import { join } from "node:path";
 import type { ProjectDetail } from "@cairn/graph";
 
 import { parseDispatchConfig } from "../config";
-import { observerEnvironment, prepareTask } from "./tasks";
+import { observerEnvironment, prepareTask, toolSpillEnvironment } from "./tasks";
 
 const CONFIG = {
   server: "http://127.0.0.1:8000",
@@ -619,5 +619,25 @@ describe("Observer task preparation", () => {
     expect(prepared.observer.enabled).toBe(true);
     expect(existsSync(join(directory, "p1", ".cairn", "board"))).toBe(true);
     expect(observerEnvironment(prepared.observer)["CAIRN_OBSERVER_ENABLED"]).toBe("1");
+  });
+});
+
+describe("tool-result spill environment", () => {
+  test("exports the config section as the worker-side contract", () => {
+    expect(toolSpillEnvironment({ enabled: true, maxInlineChars: 32_000 })).toEqual({
+      CAIRN_TOOL_SPILL_ENABLED: "1",
+      CAIRN_TOOL_SPILL_MAX_CHARS: "32000",
+    });
+    expect(toolSpillEnvironment({ enabled: false, maxInlineChars: 1200 })).toEqual({
+      CAIRN_TOOL_SPILL_ENABLED: "0",
+      CAIRN_TOOL_SPILL_MAX_CHARS: "1200",
+    });
+  });
+
+  test("dispatch defaults spill oversized results at 32k chars", () => {
+    expect(toolSpillEnvironment(parseDispatchConfig(CONFIG).tasks.toolResultSpill)).toEqual({
+      CAIRN_TOOL_SPILL_ENABLED: "1",
+      CAIRN_TOOL_SPILL_MAX_CHARS: "32000",
+    });
   });
 });

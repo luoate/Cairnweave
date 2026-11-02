@@ -48,6 +48,7 @@ export interface EditableRuntimeConfig {
     reason: { timeout: number; max_intents: number };
     explore: { timeout: number; conclude_timeout: number };
     graph_slice: { enabled: boolean; max_facts: number; max_intents: number };
+    tool_result_spill: { enabled: boolean; max_inline_chars: number };
     evidence: { min_bytes: number };
   };
   worker: {
@@ -357,6 +358,10 @@ function editableView(config: DispatchConfig): EditableRuntimeConfig {
         max_intents: config.tasks.graphSlice.maxIntents,
       },
       evidence: { min_bytes: config.tasks.evidence.minBytes },
+      tool_result_spill: {
+        enabled: config.tasks.toolResultSpill.enabled,
+        max_inline_chars: config.tasks.toolResultSpill.maxInlineChars,
+      },
     },
     worker: {
       soft_deadline_ratio: config.worker.softDeadlineRatio,

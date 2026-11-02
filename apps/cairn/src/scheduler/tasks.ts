@@ -23,7 +23,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import type { DispatchConfig } from "../config";
+import type { DispatchConfig, ToolResultSpillConfig } from "../config";
 import { mapScopeTargetForWorker } from "../runtime/paths";
 import {
   formatFactIds,
@@ -485,6 +485,17 @@ export function observerEnvironment(observer: PreparedObserver): Record<string, 
       observer.proposals.requireEvidenceForFact ? "1" : "0";
   }
   return env;
+}
+
+/**
+ * Environment contract for the worker-side tool-result spill (`tasks.tool_result_spill`).
+ * The extension lives in `@cairn/agent`; this is the only channel that reaches it.
+ */
+export function toolSpillEnvironment(spill: ToolResultSpillConfig): Record<string, string> {
+  return {
+    CAIRN_TOOL_SPILL_ENABLED: spill.enabled ? "1" : "0",
+    CAIRN_TOOL_SPILL_MAX_CHARS: String(spill.maxInlineChars),
+  };
 }
 
 function hardDeadline(

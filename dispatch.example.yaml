@@ -67,6 +67,14 @@ tasks:
   # placeholders, so the default is 1; set 0 to accept empty evidence.
   evidence:
     min_bytes: 1
+  # M43: tool results longer than max_inline_chars are written to
+  # <workspace>/.tool-results/ and replaced in the context by the absolute path plus a
+  # short preview, so a single 30k-char curl no longer stays in every later turn. The
+  # file itself is untouched and /flag still scans it. Set enabled: false to put full
+  # dumps back inline.
+  tool_result_spill:
+    enabled: true
+    max_inline_chars: 32000
 
 worker:
   # Fraction of the hard deadline written as softDeadlineSeconds in task.json.

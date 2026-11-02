@@ -130,6 +130,7 @@ import {
   prepareTask,
   projectWorkspace,
   resolveWorkspaceRoot,
+  toolSpillEnvironment,
   type ConcludeOf,
   type PreparedTask,
   type RunnableTaskKind,
@@ -1334,6 +1335,7 @@ export class Scheduler {
     const startedAtMs = Date.now();
 
     const extraEnv = observerEnvironment(prepared.observer);
+    Object.assign(extraEnv, toolSpillEnvironment(this.config.tasks.toolResultSpill));
     if (task.maxToolCalls !== undefined) {
       extraEnv["CAIRN_TASK_MAX_TOOL_CALLS"] = String(task.maxToolCalls);
     }

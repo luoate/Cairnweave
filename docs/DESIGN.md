@@ -924,6 +924,41 @@ H1 是安全门，H2 是完成契约的正确形态，H3 是测量与体验收�
   新增 `tools/eval/run.test.ts` 5 例、`GET /verification/defaults` 3 例、创建页预览与
   徽标 4 例；`bun run eval` 可重复产出上述基线。
 
+### 15.13 M43 实现记录（工具结果溢出）
+
+- **动机**：合并版继承了 BreachWeave 的 `largeToolResultExtension`，但从未注册进任何会话，
+  于是 `tool_result` 的溢出路径一直是死代码——一次 30k 字符的 `curl`/`nmap` 会整段留在
+  上下文里，随每个后续轮次重复计费。M43 把它接上，这是项目内最省 token 的一处改动。
+- **配置**：新增可选段 `tasks.tool_result_spill`（`enabled` 默认 `true`、
+  `max_inline_chars` 默认 `32000`，正整数）。走 `EDITABLE_TASK_KEYS` 因此可经
+  `/settings/runtime` 热改；M43 不加设置弹窗控件，YAML 与 API 两条路都够。
+- **契约传递**：仿 M33，不进 `task.json`，由 scheduler 在派发时导出
+  `CAIRN_TOOL_SPILL_ENABLED` / `CAIRN_TOOL_SPILL_MAX_CHARS`；worker 进程内的 Solver 会话
+  读取，subagent 经 `process.env` 继承同一份。环境变量缺失时回退配置默认值，手写启动的
+  worker 与被派发的 worker 行为一致。
+- **注册顺序**：Host Bridge → 溢出扩展 → Observer。SDK 的 `tool_result` 钩子按加载顺序
+  串联并接力内容，所以顺序决定“谁看到全文”：Bridge 在前，范围闸门与审计行仍拿到完整工具
+  结果；溢出在后，落进会话 JSONL 的是绝对路径 + 工作区相对路径 + 600 字符预览的指针。
+  Observer 读 `tool_execution_end` 的原始 result，不受影响。
+- **指针形态**：绝对路径排第一，因为 subagent 会话有自己的 cwd，相对指针在那里不解析；
+  `details.path` 仍是工作区相对路径，供控制面与审计使用。`read` 一个 `SKILL.md` 被绕过，
+  否则技能正文会被折成指针。
+- **取证补偿**：`.tool-results/*.md` 不进 artifact 索引，工件计数与「附件」页签不变；
+  但 M18g/M21 的 `/flag` 兜底依赖会话 JSONL 里的原始工具输出，开启溢出后那部分内容只剩预览。
+  因此兜底扫描增加 `.tool-results` 根（先走溢出、再走会话，共用同一套文件/字节/条目额度），
+  来源以 `.tool-results/<文件名>` 上报。M29 的 ≤10 s 缓存按工件指纹失效，新落盘的溢出文件
+  要等 TTL 到期才反映。
+- **已知边界**：溢出文件不受 `retention` sweep 回收（sweep 只清 `.cairn/sessions/**`），
+  随项目工作区长存；内容是原始工具输出，属于不可信数据，与 artifacts 同级；
+  `worker.scoped_artifacts` 的任务命名空间不适用于它。M43 不引入清理策略。
+- **验证**：`bun run check` 通过（1142 tests / 98 files / 4741 expects，2026-11-02）。
+  新增 `packages/agent/src/solver/extension/large-tool-result.test.ts` 5 例（内联阈值、
+  溢出落盘与指针、非文本块、SKILL.md 绕过、32000 边界）；`session.test.ts` 3 例覆盖环境
+  解析与回退；`config.test.ts` / `config-overrides.test.ts` 覆盖默认值、校验与热改；
+  `tasks.test.ts` 2 例覆盖 env 映射与派发默认；`scheduler/loop.test.ts` 用
+  `testdata/spill-env-worker.ts` 断言配置→worker 环境这一跳；`api.flag.test.ts` 4 例覆盖
+  溢出兜底（含共享预算与 `/flag` 端到端）。
+
 ## 附录 A：当前提示词输入
 
 | 模板 | 占位符 |

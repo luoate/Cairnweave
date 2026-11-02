@@ -74,15 +74,18 @@ function buildSpillFileBody(toolName: string, toolCallId: string, input: unknown
     ].join("\n")
 }
 
-function buildTruncatedMessage(relPath: string, serializedText: string): string {
+function buildTruncatedMessage(relPath: string, absPath: string, serializedText: string): string {
     const preview = serializedText.slice(0, PREVIEW_CHARS)
     const suffix = serializedText.length > PREVIEW_CHARS ? "..." : ""
+    // Subagent sessions run with their own cwd under the workspace, where the relative pointer
+    // would not resolve, so the absolute path is the one worth quoting first.
     return [
         `Tool result too large (${serializedText.length} chars).`,
-        `Full result saved to: ${relPath}`,
+        `Full result saved to: ${absPath}`,
+        `Workspace-relative path: ${relPath}`,
         `This is a function-call spill file. Do not read the whole file blindly.`,
         `Use grep/find to locate relevant sections first, then read in chunks with offset/limit.`,
-        `Examples: grep pattern in ${relPath}; read {"path":"${relPath}","offset":1,"limit":200}`,
+        `Examples: grep pattern in ${absPath}; read {"path":"${absPath}","offset":1,"limit":200}`,
         "",
         `Preview: ${preview}${suffix}`,
     ].join("\n")
@@ -109,7 +112,7 @@ export function largeToolResultExtension(options: LargeToolResultOptions): Exten
             await Bun.write(absPath, fileBody)
 
             return {
-                content: [{ type: "text", text: buildTruncatedMessage(relPath, serialized.text) }],
+                content: [{ type: "text", text: buildTruncatedMessage(relPath, absPath, serialized.text) }],
                 details: {
                     type: "large_tool_result_spill",
                     truncated: true,

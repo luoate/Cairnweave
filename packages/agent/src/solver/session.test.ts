@@ -1,6 +1,6 @@
-import { describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, test } from "bun:test"
 
-import { buildSolverStartupSnapshot, buildSubagentStartupSnapshot } from "./session"
+import { buildSolverStartupSnapshot, buildSubagentStartupSnapshot, readToolSpillFromEnv } from "./session"
 
 const init = { solverId: "solver-1", promptName: "cairn-worker", task: "task" }
 const prompt = { name: "cairn-worker", meta: {}, content: "prompt" }
@@ -42,5 +42,34 @@ describe("solver startup snapshots", () => {
         expect(serialized).not.toContain("SECRET-VALUE")
         expect(serialized).not.toContain("SECOND-SECRET")
         expect(serialized).toContain("[REDACTED]")
+    })
+})
+
+describe("tool-result spill environment", () => {
+    afterEach(() => {
+        delete process.env["CAIRN_TOOL_SPILL_ENABLED"]
+        delete process.env["CAIRN_TOOL_SPILL_MAX_CHARS"]
+    })
+
+    test("defaults to spilling at 32000 characters", () => {
+        expect(readToolSpillFromEnv()).toEqual({ enabled: true, maxInlineChars: 32_000 })
+    })
+
+    test("honours the scheduler switch and inline budget", () => {
+        process.env["CAIRN_TOOL_SPILL_ENABLED"] = "0"
+        expect(readToolSpillFromEnv().enabled).toBe(false)
+
+        process.env["CAIRN_TOOL_SPILL_ENABLED"] = "1"
+        process.env["CAIRN_TOOL_SPILL_MAX_CHARS"] = " 8000 "
+        expect(readToolSpillFromEnv()).toEqual({ enabled: true, maxInlineChars: 8000 })
+    })
+
+    test("falls back to the default budget for a nonsense value", () => {
+        process.env["CAIRN_TOOL_SPILL_MAX_CHARS"] = "0"
+        expect(readToolSpillFromEnv().maxInlineChars).toBe(32_000)
+        process.env["CAIRN_TOOL_SPILL_MAX_CHARS"] = "many"
+        expect(readToolSpillFromEnv().maxInlineChars).toBe(32_000)
+        process.env["CAIRN_TOOL_SPILL_MAX_CHARS"] = "1.5"
+        expect(readToolSpillFromEnv().maxInlineChars).toBe(32_000)
     })
 })

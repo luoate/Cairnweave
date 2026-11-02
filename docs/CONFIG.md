@@ -150,6 +150,7 @@ Docker 模式需要本机 Docker 和镜像；创建时不启动容器，派发�
 | `graph_slice.enabled` | false | explore 及其 conclude 是否拿切片 |
 | `graph_slice.max_facts` / `graph_slice.max_intents` | 80 / 60 | 软上限；`max_facts ≥ 2` |
 | `evidence.min_bytes` | 1 | 0 表示接受空证据 |
+| `tool_result_spill.enabled` / `.max_inline_chars` | true / 32000 | M43：工具结果序列化后超过 `max_inline_chars` 字符就落盘 `<workspace>/.tool-results/<毫秒>-<工具>-<调用id>.md`，上下文里换成「绝对路径 + 工作区相对路径 + 600 字符预览 + 先 grep 再分片读」的指针。`max_inline_chars` 必须为正整数（1 也合法，等于全部外置）；`enabled: false` 回到全量内联。solver 与 subagent 共用同一份开关和同一个工作区，指针因此总是绝对路径在前。溢出文件不进 `project_artifacts` 索引，但 `/flag` 的兜底扫描把它算作取证来源 |
 
 ### Worker `worker` / `worker_selection`
 
@@ -232,6 +233,7 @@ dispatch.yaml，不在运行期可编辑视图里。
 | `verification.off_completion` | 重启；`off` 项目的完成声明在任务结果落图时直接走人工确认或自动完成 |
 | `verification.evidence_completion` | 重启；仅有 `evidence` 条件的完成声明在 oracle 通过后走人工确认或自动完成 |
 | `scope.ssrf_markers` | 下一次任务准备的 worker 环境（`CAIRN_SSRF_POLICY` 折进 `CAIRN_SCOPE_POLICY`）；已启动的 worker 沿用注入时的模式 |
+| `tasks.tool_result_spill` | 下一次任务派发的 worker 环境（`CAIRN_TOOL_SPILL_ENABLED` / `CAIRN_TOOL_SPILL_MAX_CHARS`）；已启动的 worker 与其 subagent 沿用注入时的值。关闭只影响新会话是否注册溢出扩展，不删已落盘的 `.tool-results/` |
 | `worker.*` | 下一次 `prepareTask`；运行中的任务沿用已经写好的 `task.json` |
 
 正在运行的任务不会被改写或中断；新配置只影响之后的派发。
@@ -285,7 +287,8 @@ dispatch.yaml，不在运行期可编辑视图里。
 - `apps/cairn/src/config-overrides.test.ts`：键白名单、深合并、视图形状、原地同步保持
   引用、持久化与重启重放、非法值不改配置、跨字段冲突、重置、坏数据清理、执行模式切换
   （容器默认值注入）、`Flag 人工复核` 开关的覆盖/重置与非法枚举、`scope.ssrf_markers`
-  的覆盖/重置与非法枚举、`protected_hosts` 被白名单挡在运行期之外、`validateNext` 拒绝。
+  的覆盖/重置与非法枚举、`tasks.tool_result_spill` 的覆盖/重置、非法枚举与 `min_bytes`
+  这类未知子键被白名单挡下、`protected_hosts` 被白名单挡在运行期之外、`validateNext` 拒绝。
 - `apps/cairn/src/http/api.settings-runtime.test.ts`：GET/PUT/DELETE、409、400（未知键 /
   越界 / 非法 JSON / 非法执行模式）、413、operator token、跨源拒绝、错误不落库、执行模式
   切换与 `validateNext` 400、`verification.flag_review` 的读写与落库、`scope.ssrf_markers`

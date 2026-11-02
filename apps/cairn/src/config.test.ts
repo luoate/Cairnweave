@@ -431,6 +431,37 @@ describe("dispatcher config", () => {
     );
   });
 
+  test("defaults tool-result spilling on with a 32k inline budget", () => {
+    expect(parse(BASE).tasks.toolResultSpill).toEqual({
+      enabled: true,
+      maxInlineChars: 32_000,
+    });
+  });
+
+  test("parses and validates tool-result spilling", () => {
+    const config = parse(
+      BASE +
+        `  tool_result_spill:
+    enabled: false
+    max_inline_chars: 8000
+`,
+    );
+    expect(config.tasks.toolResultSpill).toEqual({
+      enabled: false,
+      maxInlineChars: 8000,
+    });
+    expect(parse(BASE + "  tool_result_spill: {max_inline_chars: 1}\n").tasks.toolResultSpill).toEqual({
+      enabled: true,
+      maxInlineChars: 1,
+    });
+    expect(() => parse(BASE + '  tool_result_spill: {enabled: "yes"}\n')).toThrow(
+      "tasks.tool_result_spill.enabled must be a boolean",
+    );
+    expect(() => parse(BASE + "  tool_result_spill: {max_inline_chars: 0}\n")).toThrow(
+      "tasks.tool_result_spill.max_inline_chars must be a positive integer",
+    );
+  });
+
   test("parses and validates retention", () => {
     const config = parse(
       BASE +

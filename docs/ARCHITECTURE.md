@@ -209,6 +209,13 @@ reason 车道一起退避掉），bootstrap 保留已产出的 Fact 并保持 ac
 `recordRejectedCitationHint` 按内容去重写一条控制面 Hint 说明拒绝理由。这道门禁不看
 `verification.flag_review`：和 `/flag` 的展示过滤一样，判过“假”的值在任何模式下都不该成为结束
 项目的理由；校验语义（evidence / challenge / oracle）与 `flag_reviews` 的写入路径都没变。
+M43 打开工具结果溢出（`tasks.tool_result_spill`，见 §2 Worker 与 §8），这会改掉上面那条回退的前提：
+超过 `max_inline_chars` 的工具输出不再整段进会话，`solver-session/*.jsonl` 里只剩 600 字符预览加一行
+指针，全文落在 `<workspace>/.tool-results/<毫秒>-<工具>-<调用id>.md`。所以兜底扫描多了一个根目录：
+`scanSolverSession` 先走 `.tool-results`（只认 `.md`、普通文件、拒绝符号链接与含 NUL 的内容，路径以
+`.tool-results/…` 上报为来源），再走原来的会话目录，两趟共用同一套文件/字节/条目额度且溢出优先，
+不会被会话遍历饿死。`.tool-results` 不进 `project_artifacts` 索引，所以工件计数与「附件」页签不受影响；
+但它也不在 M29 缓存的工件指纹里，新落盘的溢出文件要等 ≤10 s TTL 到期才反映到 `/flag`。
 M29 收掉两处后端热点，两处都先量后改。其一，`facts` 的主键是 `(id, project_id)`，所以项目列表里
 `(SELECT COUNT(*) FROM facts WHERE project_id = p.id)` 与 `GET /projects/{id}` 的按项目读 Fact
 都用不上主键，只能整表扫描；`packages/graph/src/db.ts` 增加
@@ -338,12 +345,21 @@ scheduler 与 HTTP API 共用 `packages/graph/src/commands.ts` 的命令，不�
   （读不限）；Observer 复核通过项目级租约串行。容器模式下同一项目共用一个容器，
   结束单个任务用任务文件路径做 `pkill`，不会杀掉同项目的其它进程。
 - 不访问数据库，不调用控制面 API；只读 `task.json` 与引用的图快照，只写 `result.json`
-  和 `sessionDir` 内文件。
+  和 `sessionDir` 内文件——M43 的工具结果溢出是唯一例外，它写 `<workspace>/.tool-results/`（见 §5.5）。
 - 通过 `Solver` 接口执行任务：默认是确定性 fake solver（`solver/fake.ts`）；
   `CAIRN_SOLVER=breachweave` 时使用 `solver/breachweave.ts`，以库方式启动
   `packages/agent` 中的 BreachWeave 会话（无 RPC 适配进程、无 Python 桥）。
 - 所有模型工具调用经过 Host Bridge；未知工具、无效 scope、审计不可写都**fail closed**。
   Bridge 通过环境变量注入 Solver 与 subagent 会话，子代理不能绕过。
+- **工具结果溢出（M43）**：`tasks.tool_result_spill` 不进 `task.json`，按 M33 的先例经
+  `extraEnv` 导出为 `CAIRN_TOOL_SPILL_ENABLED` / `CAIRN_TOOL_SPILL_MAX_CHARS`；worker 进程内
+  的 Solver 会话与它派生的 subagent（继承 `process.env`）读同一份。两个变量都缺失时回退到
+  配置默认（开、32000 字符），手写启动的 worker 因此与被派发的 worker 行为一致。
+  `packages/agent/src/solver/session.ts` 的注册顺序是 Host Bridge → 溢出扩展 → Observer：
+  SDK 的 `tool_result` 钩子按加载顺序串联并逐段接力内容，Bridge 在前保证闸门与审计仍看到
+  全文，溢出在后保证进上下文（以及落进 `solver-session/*.jsonl`）的是绝对路径 + 相对路径 +
+  600 字符预览的指针，而不是一坨 dump。读取 `SKILL.md` 的 `read` 调用被绕过，避免技能正文
+  被折成指针。
 - Observer（M22 起默认开启，可显式关闭）在 Solver 会话旁运行一个独立 review 会话。主 Solver 只拿到
   只读看板工具；sidecar 只维护项目级看板，不执行验证、不写图，也不影响 `result.json`。
   同项目并发时，review 先获取 `<board>/locks/review.lock` 项目级租约（心跳 + 过期接管
@@ -365,6 +381,7 @@ scheduler 与 HTTP API 共用 `packages/graph/src/commands.ts` 的命令，不�
 | `stdout.log` / `stderr.log` | 控制面（进程退出后归档） | 人/审计 | `sessionDir` |
 | `audit.jsonl` | worker 内的 Host Bridge | 人/审计 | `sessionDir` |
 | `artifacts/**` | worker | 控制面扫描后只记索引 | 项目工作区 |
+| `.tool-results/**` | worker（M43 工具结果溢出扩展） | 模型（按指针 grep/read）、控制面 `/flag` 兜底 | 项目工作区（跨任务持久，不进索引） |
 | `solver-session/**` | BreachWeave 会话 | 人/审计 | `<sessionDir>/solver-session/` |
 | `.cairn/board/**` | Observer sidecar | 主 Solver（只读工具）、后续任务 | 项目工作区（跨任务持久） |
 | `observer-context.json` / `observer/**` | 控制面写 context；worker 写 review 状态 | review sidecar、人/审计 | `<sessionDir>/`（任务级） |
@@ -675,6 +692,12 @@ stderr 归档到 `sessionDir/{stdout,stderr}.log`。需要 UI 实时进度时再
   `artifacts/` 相反——它是 worker 的只读输入，不是任务产出。附件不进 artifact 索引、不进
   Writeup 附件包，`attachments/` 不会被重建或清理；每个任务的 prompt 末尾列出该目录下的
   文件清单（名称、字节数、`sha256` 前 12 位）并声明它们只读。
+- **溢出目录（M43）**：`<workspace>/.tool-results/**` 既不是 artifact 也不是附件——它是被
+  挤出上下文的工具结果原文，不进索引、不进 `/report`、不进 Writeup 附件包，也不受
+  `worker.scoped_artifacts` 的任务命名空间约束（solver 与 subagent 共用同一目录，文件名带
+  毫秒时间戳与调用 id 所以不会互相覆盖）。`retention` 的 sweep 只清理
+  `.cairn/sessions/**`，不会回收它；M43 没有加清理策略，一个项目的溢出文件随工作区一直留着。
+  唯一把它当数据读的路径是 `/flag` 的兜底扫描。
 - 索引失败只记日志，不影响任务结果；下一次扫描会重建。
 
 ### 5.6 旁路表：runs、fact_meta、fact_evidence、pending_concludes、audit_events、audit_stream_lost、intent_meta、strategist_state、verification、project_goal_conditions、project_writeups、project_attachments、scheduler_instances 与 task_claims
@@ -1253,7 +1276,8 @@ Writeup 是面向人的中文复盘文本，分两层，全部逻辑在 `package
   两张表）与证据文件附录（≤200 项，超出标记 `artifacts_truncated`）。除 `generated_at`
   外输出确定；不写图、不写旁路、不改调度。
 - **Flag 一致性**：草稿的 Flag 与校验段复用 `/flag` 的 `collectProjectFlag`（artifacts
-  优先、solver-session 的工具输出回退），两个视图不会给出不同结论；M18g 的原文展示策略同样适用
+  优先、solver-session 的工具输出回退，M43 起该回退还包括 `.tool-results` 溢出文件），
+  两个视图不会给出不同结论；M18g 的原文展示策略同样适用
   于 Writeup，草稿与 prompt 都保留 flag 原文，不做脱敏。M21 起扫描结果里的 `candidates` 也接进
   草稿：命中时把较弱的同前缀值列成「其他候选」（`flag.alternatives`），只扫到掩码时列
   `flag_suspects` 并把结论改成「尚未记录到可信 Flag」，prompt 明确禁止把占位串当答案或自己拼出
@@ -1460,6 +1484,10 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
   在启动时以 `ConfigError` 拒绝。
 - `tasks.evidence.min_bytes` 控制接受证据的最小字节数（非负整数，默认 `1`，`0` 关闭）。
   缺省拒绝 0 字节文件；非法值在启动时以 `ConfigError` 拒绝。
+- `tasks.tool_result_spill` 是新增的可选段（M43）：`enabled`（布尔，默认 `true`）、
+  `max_inline_chars`（正整数，默认 `32000`；没有上限约束，但设得比典型工具输出还大等于关闭）。
+  两个键都可省略；`"yes"`、`0`、负值、非整数以 `ConfigError` 拒绝。运行期覆盖走
+  `EDITABLE_TASK_KEYS`，因此 `/settings/runtime` 能改（M43 没做设置弹窗控件）；生效方式见 §2。
 - `retention` 是新增的可选段（M6）：`session_max_age_days`（非负整数，默认 `0` 关闭）、
   `session_keep_per_project`（非负整数，默认 `0` 关闭）、`sweep_interval_seconds`
   （非负整数，默认 `3600`，`0` 只保留启动 sweep）、`refresh_artifacts`（布尔，默认
@@ -1595,6 +1623,10 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
   `CAIRN_AGENT_CONFIG_DIR=/cairn/agent-config` 与 `CAIRN_AGENT_CONFIG_READONLY=1`。
 - **exec 环境**：只传白名单（`common_env` 与固定的 `CAIRN_*` 变量），不把控制面完整环境
   带进容器；模型凭据只通过只读配置挂载，不进入 `task.json`、镜像或工作区。
+- **溢出目录**：M43 的 `.tool-results/` 是 worker 用容器内路径
+  `/cairn/workspace/.tool-results/` 写进 bind mount 的，所以宿主侧同一目录就是控制面 `/flag`
+  兜底扫到的那个，不需要额外映射；代价是指针里的**绝对路径是 worker 视角**（本地模式=宿主
+  路径，容器模式=`/cairn/...`），操作员在宿主上要按工作区相对路径去找。
 - **路径**：`runtime/paths.ts` 负责宿主 ↔ worker 映射。工作区内路径映射到
   `/cairn/workspace/...`，工作区外调用 `mapPath` 直接抛错；`mapPathIfUnderWorkspace` 用于
   可选项。`file:` scope 目标按同一规则重写，`workerFileUrl` 不假设 worker 平台。
