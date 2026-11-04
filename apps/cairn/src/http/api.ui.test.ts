@@ -147,7 +147,11 @@ describe("static operations UI", () => {
     expect(html).toContain("无法刷新项目列表");
     expect(html).toContain("无法刷新项目：");
     expect(appScript).toContain("projectError");
-    expect(html).toContain("flex overflow-x-auto");
+    expect(html).toContain('aria-label="工作区导航"');
+    expect(html).toContain('aria-label="切换详情面板"');
+    expect(html).toContain("探索与决策");
+    expect(html).toContain("执行与溯源");
+    expect(html).toContain("分析与交付");
     expect(appScript).toContain("document.addEventListener('visibilitychange'");
     expect(appScript).toContain("document.hidden");
     expect(appScript).toContain("Math.min(5000 * 2 ** failures, 60000)");
@@ -3286,5 +3290,118 @@ describe("verification policy preview and badge (M42)", () => {
     expect(calls).toEqual([{ method: "GET", path: "/verification/defaults" }]);
     expect(app.verificationDefaults.policy).toEqual({ kind: "off", challenge_code: null });
     expect(app.verificationDefaults.warning).toContain("关闭自动校验");
+  });
+});
+
+describe("workspace layout and navigation", () => {
+  test("keeps every inspector destination reachable through grouped navigation and a select", () => {
+    const html = readFileSync(INDEX_PATH, "utf8");
+    const nav = html.slice(html.indexOf('<aside id="workspaceNavigation"'), html.indexOf("</aside>"));
+    for (const tab of ["detail", "hints", "log", ...loadState().opsTabs()]) {
+      expect(nav).toContain(`selectSideTab('${tab}')`);
+      expect(html).toContain(`<option value="${tab}">`);
+    }
+    expect(html).toContain('aria-controls="workspaceNavigation"');
+    expect(html).toContain('aria-label="搜索项目"');
+    expect(html).toContain('aria-label="工作区视图"');
+  });
+
+  test("selecting a destination opens its pane and loads it once", () => {
+    const app = loadState();
+    const calls: string[] = [];
+    app.saveSideTab = () => calls.push("save");
+    app.loadActiveOpsTab = () => calls.push(app.sideTab);
+    app.selectSideTab("runs");
+    expect(app.sideTab).toBe("runs");
+    expect(app.workspacePane).toBe("panel");
+    expect(app.sidebarOpen).toBe(false);
+    expect(calls).toEqual(["save", "runs"]);
+    app.selectSideTab("unknown");
+    expect(app.sideTab).toBe("runs");
+    expect(calls).toHaveLength(2);
+  });
+
+  test("mobile graph switching resizes the mounted graph without discarding the selected tab", () => {
+    const app = loadState();
+    const calls: string[] = [];
+    app.sideTab = "evidence";
+    app.$nextTick = (callback: () => void) => callback();
+    app.cy = { resize: () => calls.push("resize"), fit: () => calls.push("fit") };
+    app.setWorkspacePane("panel");
+    expect(calls).toEqual([]);
+    app.setWorkspacePane("graph");
+    expect(calls).toEqual(["resize", "fit"]);
+    expect(app.sideTab).toBe("evidence");
+    app.setWorkspacePane("invalid");
+    expect(app.workspacePane).toBe("graph");
+    expect(app.workspacePanelTitle()).toBe("证据文件");
+  });
+
+  test("the drawer restores trigger focus and focuses the inspector after navigation", () => {
+    const app = loadState();
+    const focused: string[] = [];
+    app.focusAfterRender = () => focused.push("scheduled");
+    app.toggleSidebar({ currentTarget: { focus: () => focused.push("trigger") } });
+    expect(app.sidebarOpen).toBe(true);
+    expect(focused).toEqual(["scheduled"]);
+    app.closeSidebar();
+    expect(app.sidebarOpen).toBe(false);
+    expect(focused).toEqual(["scheduled", "trigger"]);
+    app.sidebarOpen = true;
+    app.saveSideTab = () => {};
+    app.loadActiveOpsTab = () => {};
+    app.selectSideTab("detail");
+    expect(app.sidebarOpen).toBe(false);
+    expect(focused).toEqual(["scheduled", "trigger", "scheduled"]);
+  });
+
+  test("keyboard resizing is bounded and mobile does not overwrite the saved desktop width", () => {
+    const app = loadState();
+    const globals = globalThis as Record<string, any>;
+    const previous = { document: globals.document, window: globals.window };
+    let saved = 0;
+    app.saveSidePanelWidth = () => { saved += 1; };
+    try {
+      globals.document = { getElementById: () => ({ getBoundingClientRect: () => ({ width: 1000 }) }) };
+      globals.window = { innerWidth: 1440 };
+      expect(app.panelMaxWidth()).toBe(700);
+      app.sidePanelWidth = 400;
+      app.resizePanelBy(32);
+      expect(app.sidePanelWidth).toBe(432);
+      app.resizePanelBy(1000);
+      expect(app.sidePanelWidth).toBe(700);
+      app.resizePanelBy(-1000);
+      expect(app.sidePanelWidth).toBe(260);
+      expect(saved).toBe(3);
+      globals.window.innerWidth = 390;
+      expect(app.clampPanelWidth(432)).toBe(432);
+    } finally {
+      Object.assign(globals, previous);
+    }
+  });
+
+  test("dialogs and live feedback expose semantics while the workspace is inert", () => {
+    const html = readFileSync(INDEX_PATH, "utf8");
+    const modalRoots = [...html.matchAll(/<div x-show="show[^>]*data-modal="[^>]+>/g)];
+    expect(modalRoots).toHaveLength(13);
+    for (const [root] of modalRoots) {
+      expect(root).toContain('role="dialog"');
+      expect(root).toContain('aria-modal="true"');
+      expect(root).toContain("aria-label=");
+    }
+    expect(html).toContain(':inert="modalOrder.length > 0"');
+    expect(html).toContain('role="status" aria-live="polite" aria-atomic="true"');
+    expect(html).toContain('role="separator" tabindex="0"');
+    expect(html).toContain('@keydown.left.prevent="resizePanelBy(32)"');
+  });
+
+  test("the stylesheet provides single-pane mobile layout and reduced-motion support", () => {
+    const css = readFileSync(APP_CSS_PATH, "utf8");
+    expect(css).toContain("@media (max-width:720px)");
+    expect(css).toContain(".graph-layout.show-panel .graph-canvas{display:none}");
+    expect(css).toContain(".graph-layout.show-panel .inspector-panel{display:flex}");
+    expect(css).toContain("prefers-reduced-motion:reduce");
+    expect(css).toContain("forced-colors:active");
+    expect(css).toContain(".workspace-topbar{position:relative;z-index:30");
   });
 });

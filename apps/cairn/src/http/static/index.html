@@ -210,45 +210,64 @@
 </head>
 <body class="bg-slate-50 text-slate-800 h-screen flex flex-col overflow-hidden" :class="{ 'select-none cursor-col-resize': isResizingPanel }" x-data="cairnApp()" x-effect="syncDocumentTitle()">
 
+<div class="app-shell" :inert="modalOrder.length > 0">
+  <div x-show="sidebarOpen" x-cloak class="sidebar-scrim" @click="closeSidebar()" aria-hidden="true"></div>
+  <aside id="workspaceNavigation" class="app-sidebar" :class="{ 'is-open': sidebarOpen }" aria-label="工作区导航" @keydown.escape.stop="closeSidebar()" @keydown.tab="if (sidebarOpen && window.innerWidth <= 960) trapModalFocus($el, $event)">
+    <a href="#/" @click.prevent="if (view !== 'list') backToList(); sidebarOpen = false" class="sidebar-brand" aria-label="Cairnweave 项目工作台">
+      <span class="brand-symbol"><img src="/static/favicon.svg" alt="" width="24" height="24"></span>
+      <span class="brand-wordmark">Cairnweave<span>AGENT WORKSPACE</span></span>
+    </a>
+    <div class="sidebar-scroll">
+      <div class="nav-section-label">工作区</div>
+      <button type="button" class="nav-item" :class="{ 'is-active': view === 'list' && listStatusFilter === 'all' }" :aria-current="view === 'list' ? 'page' : null" @click="if (view !== 'list') backToList(); setListStatusFilter('all'); sidebarOpen = false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+        <span>全部项目</span><span class="nav-count" x-text="projects.length"></span>
+      </button>
+      <div x-show="view === 'list'" class="nav-status-list" aria-label="项目状态筛选">
+        <button type="button" class="nav-item" :class="{ 'is-active': listStatusFilter === 'active' }" @click="setListStatusFilter('active'); sidebarOpen = false" :aria-pressed="listStatusFilter === 'active'"><span class="status-dot status-active"></span><span>进行中</span><span class="nav-count" x-text="countProjectsByStatus('active')"></span></button>
+        <button type="button" class="nav-item" :class="{ 'is-active': listStatusFilter === 'stopped' }" @click="setListStatusFilter('stopped'); sidebarOpen = false" :aria-pressed="listStatusFilter === 'stopped'"><span class="status-dot status-stopped"></span><span>已停止</span><span class="nav-count" x-text="countProjectsByStatus('stopped')"></span></button>
+        <button type="button" class="nav-item" :class="{ 'is-active': listStatusFilter === 'completed' }" @click="setListStatusFilter('completed'); sidebarOpen = false" :aria-pressed="listStatusFilter === 'completed'"><span class="status-dot status-completed"></span><span>已完成</span><span class="nav-count" x-text="countProjectsByStatus('completed')"></span></button>
+        <button type="button" class="nav-item nav-reset" @click="setListStatusFilter('all'); sidebarOpen = false" :aria-pressed="listStatusFilter === 'all'">显示所有状态</button>
+      </div>
+      <div x-show="view === 'graph'" x-cloak class="space-y-0">
+        <div class="nav-project-label"><span>当前项目</span><code x-text="selectedProjectId"></code></div>
+        <div class="nav-section-label">探索与决策</div>
+        <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'detail' }" :aria-pressed="sideTab === 'detail'" @click="selectSideTab('detail')"><span class="nav-glyph">◎</span><span>项目详情</span></button>
+        <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'hints' }" :aria-pressed="sideTab === 'hints'" @click="selectSideTab('hints')"><span class="nav-glyph">◇</span><span>提示</span></button>
+        <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'board' }" :aria-pressed="sideTab === 'board'" @click="selectSideTab('board')"><span class="nav-glyph">▤</span><span>观察看板</span></button>
+        <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'strategist' }" :aria-pressed="sideTab === 'strategist'" @click="selectSideTab('strategist')"><span class="nav-glyph">⌘</span><span>慢层决策</span></button>
+        <div class="nav-section-label">执行与溯源</div>
+        <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'runs' }" :aria-pressed="sideTab === 'runs'" @click="selectSideTab('runs')"><span class="nav-glyph">▷</span><span>任务运行</span></button>
+        <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'log' }" :aria-pressed="sideTab === 'log'" @click="selectSideTab('log')"><span class="nav-glyph">≡</span><span>事件日志</span></button>
+        <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'evidence' }" :aria-pressed="sideTab === 'evidence'" @click="selectSideTab('evidence')"><span class="nav-glyph">▧</span><span>证据文件</span></button>
+        <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'audit' }" :aria-pressed="sideTab === 'audit'" @click="selectSideTab('audit')"><span class="nav-glyph">⊡</span><span>工具审计</span></button>
+        <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'proposals' }" :aria-pressed="sideTab === 'proposals'" @click="selectSideTab('proposals')"><span class="nav-glyph">↗</span><span>图提案</span></button>
+        <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'attachments' }" :aria-pressed="sideTab === 'attachments'" @click="selectSideTab('attachments')"><span class="nav-glyph">⊞</span><span>题目附件</span></button>
+        <div class="nav-section-label">分析与交付</div>
+        <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'cost' }" :aria-pressed="sideTab === 'cost'" @click="selectSideTab('cost')"><span class="nav-glyph">＄</span><span>成本归因</span></button>
+        <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'stats' }" :aria-pressed="sideTab === 'stats'" @click="selectSideTab('stats')"><span class="nav-glyph">▥</span><span>运行统计</span></button>
+        <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'report' }" :aria-pressed="sideTab === 'report'" @click="selectSideTab('report')"><span class="nav-glyph">▣</span><span>项目报告</span></button>
+        <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'writeup' }" :aria-pressed="sideTab === 'writeup'" @click="selectSideTab('writeup')"><span class="nav-glyph">✎</span><span>Writeup</span></button>
+      </div>
+    </div>
+    <div class="sidebar-footer">
+      <button type="button" class="nav-item" @click="openSettings(); sidebarOpen = false" data-settings-button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m9 3-1 3-3 1v4l-2 1 2 2v3l3 1 1 3h6l1-3 3-1v-3l2-2-2-1V7l-3-1-1-3Z"/><circle cx="12" cy="12" r="3"/></svg><span>工作区设置</span></button>
+      <div class="sidebar-footnote"><span class="connection-dot"></span><span>本地控制台</span><span class="key-hint">/ 搜索</span></div>
+    </div>
+  </aside>
 <!-- ═══════════ PROJECT LIST VIEW ═══════════ -->
-<div x-show="view === 'list'" x-cloak class="flex-1 flex flex-col overflow-hidden">
-  <header class="bg-white/80 backdrop-blur border-b border-slate-200/60 px-4 py-2.5 flex items-center gap-3 shrink-0">
-    <div class="flex items-center gap-2.5 min-w-0">
+<div x-show="view === 'list'" x-cloak class="workspace-view flex-1 flex flex-col overflow-hidden">
+  <header class="workspace-topbar list-topbar bg-white/80 backdrop-blur border-b border-slate-200/60 px-4 py-2.5 flex items-center gap-3 shrink-0">
+    <button type="button" class="mobile-nav-toggle" @click="toggleSidebar($event)" :aria-expanded="sidebarOpen" aria-controls="workspaceNavigation" aria-label="切换工作区导航"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+    <div class="list-topbar-brand flex items-center gap-2.5 min-w-0">
       <div class="h-8 w-8 rounded-lg border border-slate-200 bg-white shadow-sm shadow-slate-200/40 flex items-center justify-center shrink-0 overflow-hidden">
         <img src="/static/favicon.svg" alt="" class="w-5 h-5 block">
       </div>
       <span class="font-semibold text-slate-700 tracking-tight">Cairnweave</span>
     </div>
+    <div class="workspace-breadcrumb">工作区 <span>/</span> 项目</div>
     <div class="flex-1"></div>
-    <div class="flex items-center gap-1 text-2xs text-slate-400">
-      <button type="button" @click="setListStatusFilter('all')" :aria-pressed="listStatusFilter === 'all'"
-        class="inline-flex items-center gap-1.5 shrink-0 rounded-lg border px-2 py-1 transition"
-        :class="listStatusFilter === 'all' ? 'border-slate-300 bg-white text-slate-700 shadow-sm' : 'border-transparent text-slate-400 hover:text-slate-600'"
-        title="筛选：全部项目">
-        <span class="font-medium uppercase tracking-[0.12em]">全部</span>
-        <span class="font-semibold tabular-nums" x-text="projects.length"></span>
-      </button>
-      <button type="button" @click="setListStatusFilter('active')" :aria-pressed="listStatusFilter === 'active'"
-        class="inline-flex items-center gap-1.5 shrink-0 rounded-lg border px-2 py-1 transition"
-        :class="listStatusFilter === 'active' ? 'border-teal-200 bg-teal-50 text-teal-700' : 'border-transparent text-slate-400 hover:text-slate-600'"
-        title="筛选：进行中的项目">
-        <span class="h-1.5 w-1.5 rounded-full bg-teal-500"></span>
-        <span class="font-semibold tabular-nums" x-text="countProjectsByStatus('active')"></span>
-      </button>
-      <button type="button" @click="setListStatusFilter('stopped')" :aria-pressed="listStatusFilter === 'stopped'"
-        class="inline-flex items-center gap-1.5 shrink-0 rounded-lg border px-2 py-1 transition"
-        :class="listStatusFilter === 'stopped' ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-transparent text-slate-400 hover:text-slate-600'"
-        title="筛选：已停止的项目">
-        <span class="h-1.5 w-1.5 rounded-full bg-amber-500"></span>
-        <span class="font-semibold tabular-nums" x-text="countProjectsByStatus('stopped')"></span>
-      </button>
-      <button type="button" @click="setListStatusFilter('completed')" :aria-pressed="listStatusFilter === 'completed'"
-        class="inline-flex items-center gap-1.5 shrink-0 rounded-lg border px-2 py-1 transition"
-        :class="listStatusFilter === 'completed' ? 'border-slate-300 bg-slate-100 text-slate-700' : 'border-transparent text-slate-400 hover:text-slate-600'"
-        title="筛选：已完成的项目">
-        <span class="h-1.5 w-1.5 rounded-full bg-slate-400"></span>
-        <span class="font-semibold tabular-nums" x-text="countProjectsByStatus('completed')"></span>
-      </button>
+    <div class="list-quick-actions flex items-center gap-1">
       <button type="button"
         @click="requestStopAllProjects()"
         :disabled="!hasActiveProjects() || isStoppingAllProjects"
@@ -259,7 +278,7 @@
       </button>
     </div>
     <div class="flex items-center gap-1.5">
-      <button @click="openNewProject()" class="h-7 px-2.5 rounded-lg border border-brand-200 text-xs text-brand-600 hover:bg-brand-50 transition inline-flex items-center gap-1.5">
+      <button @click="openNewProject()" class="primary-create h-7 px-2.5 rounded-lg border border-brand-200 text-xs text-brand-600 hover:bg-brand-50 transition inline-flex items-center gap-1.5">
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
         新建项目
       </button>
@@ -271,13 +290,23 @@
     </div>
   </header>
 
-  <div x-ref="projectListScroll" @scroll.passive="rememberProjectListScroll()" class="flex-1 overflow-y-auto p-4">
-    <div class="sticky top-0 z-10 -mx-4 -mt-4 mb-3 border-b border-slate-200/60 bg-slate-50/95 px-4 py-2 backdrop-blur">
+  <main x-ref="projectListScroll" @scroll.passive="rememberProjectListScroll()" class="project-list-content flex-1 overflow-y-auto p-4">
+    <section class="workspace-intro" aria-labelledby="workspaceTitle">
+      <div><p class="eyebrow">EXPLORE · VERIFY · DELIVER</p><h1 id="workspaceTitle">项目工作台</h1><p class="intro-description">从探索到验证，让每一步都有迹可循。</p></div>
+      <span class="intro-index" aria-hidden="true">CW / WORKSPACE</span>
+    </section>
+    <div class="project-summary" aria-label="项目概览">
+      <button type="button" class="summary-tile" :class="{ 'is-selected': listStatusFilter === 'all' }" @click="setListStatusFilter('all')" :aria-pressed="listStatusFilter === 'all'"><span class="summary-label">全部项目 <span aria-hidden="true">↗</span></span><span class="summary-value" x-text="projects.length"></span><span class="summary-caption">工作区内所有探索</span></button>
+      <button type="button" class="summary-tile" :class="{ 'is-selected': listStatusFilter === 'active' }" @click="setListStatusFilter('active')" :aria-pressed="listStatusFilter === 'active'"><span class="summary-label"><span class="status-dot status-active"></span>进行中</span><span class="summary-value" x-text="countProjectsByStatus('active')"></span><span class="summary-caption">正在探索与等待派发</span></button>
+      <button type="button" class="summary-tile" :class="{ 'is-selected': listStatusFilter === 'stopped' }" @click="setListStatusFilter('stopped')" :aria-pressed="listStatusFilter === 'stopped'"><span class="summary-label"><span class="status-dot status-stopped"></span>已停止</span><span class="summary-value" x-text="countProjectsByStatus('stopped')"></span><span class="summary-caption">保留现场，随时恢复</span></button>
+      <button type="button" class="summary-tile" :class="{ 'is-selected': listStatusFilter === 'completed' }" @click="setListStatusFilter('completed')" :aria-pressed="listStatusFilter === 'completed'"><span class="summary-label"><span class="status-dot status-completed"></span>已完成</span><span class="summary-value" x-text="countProjectsByStatus('completed')"></span><span class="summary-caption">已结束的项目</span></button>
+    </div>
+    <div class="list-toolbar sticky top-0 z-10 mb-3 bg-slate-50/95 py-2 backdrop-blur">
       <div class="flex flex-wrap items-center gap-2">
         <div class="relative min-w-[12rem] flex-1">
           <svg class="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2"/></svg>
           <input x-ref="listSearch" data-list-search x-model="listQuery" @keydown.escape="listQuery = ''" type="search"
-            placeholder="搜索标题、ID 或状态（按 / 聚焦）"
+            placeholder="搜索项目名称、ID 或状态…" aria-label="搜索项目"
             class="h-8 w-full rounded-lg border border-slate-200 bg-white pl-8 pr-3 text-xs text-slate-600 placeholder:text-slate-300 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100">
         </div>
         <select x-model="listSort" @change="saveListPrefs()"
@@ -320,13 +349,14 @@
       </div>
     </template>
 
-    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+    <div class="project-results-heading"><h2>项目列表 <span x-text="visibleProjects().length"></span></h2><button type="button" x-show="listQuery || listStatusFilter !== 'all'" @click="clearListFilters()">清除筛选</button></div>
+    <div class="project-card-grid">
       <template x-for="p in visibleProjects()" :key="p.id">
         <div x-bind:data-project-card="p.id" @click="openProject(p.id)"
           @keydown.enter.self.prevent="openProject(p.id)"
           @keydown.space.self.prevent="openProject(p.id)"
           role="button" tabindex="0"
-          class="group h-full flex flex-col bg-white rounded-2xl border border-slate-200/60 p-5 cursor-pointer transition-all duration-200 hover:shadow-lg hover:shadow-slate-200/50 hover:border-slate-300 hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-300 focus-visible:ring-offset-2">
+          class="project-card group h-full flex flex-col bg-white rounded-2xl border border-slate-200/60 p-5 cursor-pointer transition-all duration-200 hover:shadow-lg hover:shadow-slate-200/50 hover:border-slate-300 hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-300 focus-visible:ring-offset-2">
           <div class="flex items-start justify-between mb-3">
             <span class="text-2xs font-mono text-slate-400 tracking-wide" x-text="p.id"></span>
             <div class="flex items-center gap-1.5 shrink-0">
@@ -368,11 +398,11 @@
           <div class="flex items-center gap-3 text-2xs text-slate-400">
             <span class="flex items-center gap-1">
               <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v4m0 12v4m10-10h-4M6 12H2m15.07-7.07l-2.83 2.83M9.76 14.24l-2.83 2.83m11.14 0l-2.83-2.83M9.76 9.76L6.93 6.93"/></svg>
-              <span x-text="p.fact_count"></span>
+              <span x-text="p.fact_count"></span><span>事实</span>
             </span>
             <span class="flex items-center gap-1">
               <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3"/></svg>
-              <span x-text="p.intent_count"></span>
+              <span x-text="p.intent_count"></span><span>意图</span>
             </span>
             <template x-if="p.working_intent_count > 0">
               <span class="flex items-center gap-1 text-amber-500">
@@ -388,7 +418,7 @@
             </template>
             <span class="flex items-center gap-1">
               <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 1 1 7.072 0l-.548.547A3.374 3.374 0 0 0 14 18.469V19a2 2 0 1 1-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547Z"/></svg>
-              <span x-text="p.hint_count"></span>
+              <span x-text="p.hint_count"></span><span>提示</span>
             </span>
           </div>
           <div class="mt-1.5 flex items-center gap-1.5 text-2xs text-slate-400">
@@ -436,18 +466,19 @@
         </div>
       </template>
     </div>
-  </div>
+  </main>
 </div>
 
 <!-- ═══════════ GRAPH VIEW ═══════════ -->
 <template x-if="view === 'graph'">
-<div class="flex-1 flex flex-col overflow-hidden">
-  <header class="bg-white/80 backdrop-blur border-b border-slate-200/60 px-4 py-2.5 flex items-center gap-3 shrink-0 z-20">
+<div class="workspace-view flex-1 flex flex-col overflow-hidden">
+  <header class="workspace-topbar project-topbar bg-white/80 backdrop-blur border-b border-slate-200/60 px-4 py-2.5 flex items-center gap-3 shrink-0 z-20">
+    <button type="button" class="mobile-nav-toggle" @click="toggleSidebar($event)" :aria-expanded="sidebarOpen" aria-controls="workspaceNavigation" aria-label="切换工作区导航"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
     <button @click="backToList()" class="p-1.5 rounded-lg hover:bg-slate-100 transition text-slate-400 hover:text-slate-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
       title="返回项目列表" aria-label="返回项目列表">
       <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M15 19l-7-7 7-7"/></svg>
     </button>
-    <div class="title-action-trigger flex items-center gap-2 min-w-0">
+    <div class="project-identity title-action-trigger flex items-center gap-2 min-w-0">
       <span class="text-2xs font-mono text-slate-400" x-text="project.project.id"></span>
       <h2 id="graphHeading" tabindex="-1" class="text-base font-semibold text-slate-700 truncate focus:outline-none" x-text="project.project.title"></h2>
       <button x-show="!replay.active" @click="openRenameProject(project.project.id, project.project.title)"
@@ -461,7 +492,7 @@
         x-text="projectStatusLabel(project.project.status)"></span>
     </div>
     <div class="flex-1"></div>
-    <div class="flex items-center gap-4 text-xs text-slate-400">
+    <div class="project-metadata flex items-center gap-4 text-xs text-slate-400">
       <span x-text="`${project.facts.length} 个事实`"></span>
       <span x-text="`${project.intents.length} 个意图${intentLifecycleCount() ? `（${intentLifecycleCount()} 已放弃）` : ''}`"></span>
       <span x-show="projectExecutionLabel()" data-project-execution
@@ -473,7 +504,9 @@
         :class="projectVerificationBadgeClass()" :title="projectVerificationBadgeTitle()"
         x-text="projectVerificationBadgeLabel()"></span>
     </div>
-    <div class="flex items-center gap-1.5">
+    <details class="project-action-menu" @click.outside="$el.open = false" @keydown.escape.stop="$el.open = false">
+      <summary>项目操作 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m7 10 5 5 5-5"/></svg></summary>
+      <div class="project-action-popover flex items-center gap-1.5">
       <template x-if="!replay.active">
         <button @click="startProjectReplay()" class="px-2.5 py-1 rounded-lg border border-violet-200 text-xs text-violet-600 hover:bg-violet-50 transition flex items-center gap-1.5">
           <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7V5Z"/><path d="M4 5v14"/></svg>
@@ -532,7 +565,8 @@
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4.75A1.75 1.75 0 0 1 9.75 3h4.5A1.75 1.75 0 0 1 16 4.75V6"/><path d="M19 6l-.63 11.338A2 2 0 0 1 16.37 19.5H7.63a2 2 0 0 1-1.997-2.162L5 6"/><path d="M10 10.5v5"/><path d="M14 10.5v5"/></svg>
         删除
       </button>
-    </div>
+      </div>
+    </details>
     <div class="flex items-center gap-1.5 ml-1">
       <button @click="openSettings()" class="h-7 w-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition inline-flex items-center justify-center shrink-0" title="设置" aria-label="设置" data-settings-button>
         <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7 7 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a7 7 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a7 7 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a7 7 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.28Z"/><path d="M15 12a3 3 0 1 1-6 0-3 3 0 0 1 6 0Z"/></svg>
@@ -610,14 +644,18 @@
     </div>
   </template>
 
-  <div class="flex-1 flex overflow-hidden" id="graphLayout">
+  <div class="workspace-pane-switch" role="group" aria-label="工作区视图">
+    <button type="button" @click="setWorkspacePane('graph')" :aria-pressed="workspacePane === 'graph'">探索图</button>
+    <button type="button" @click="setWorkspacePane('panel')" :aria-pressed="workspacePane === 'panel'" x-text="workspacePanelTitle()"></button>
+  </div>
+  <div class="graph-layout flex-1 flex overflow-hidden" id="graphLayout" :class="{ 'show-panel': workspacePane === 'panel' }">
     <!-- Graph -->
-    <div class="flex-1 relative min-w-0">
-      <div class="absolute top-3 left-3 z-10 flex items-center gap-1.5">
+    <div class="graph-canvas flex-1 relative min-w-0">
+      <div class="canvas-layout-tools absolute top-3 left-3 z-10 flex items-center gap-1.5">
         <button @click="fitGraph()" class="h-7 w-7 bg-white/90 backdrop-blur rounded-lg shadow-sm border border-slate-200/60 text-slate-500 hover:text-slate-700 hover:bg-white transition inline-flex items-center justify-center" title="适应画布" aria-label="适应画布">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
         </button>
-        <select x-model="layoutMode" @change="applySelectedLayout()"
+        <select x-model="layoutMode" @change="applySelectedLayout()" aria-label="图布局方向"
           class="h-7 bg-white/90 backdrop-blur rounded-lg shadow-sm border border-slate-200/60 px-2.5 text-xs text-slate-600 hover:bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-300 transition">
           <option value="dagre_tb">Dagre ↓</option>
           <option value="dagre_lr">Dagre →</option>
@@ -655,8 +693,8 @@
         </div>
       </template>
 
-      <div class="absolute top-3 right-3 z-10 flex flex-wrap justify-end gap-2">
-        <div class="flex gap-1.5" x-show="projectIsActive()">
+      <div class="canvas-action-tools absolute top-3 right-3 z-10 flex flex-wrap justify-end gap-2">
+        <div class="flex gap-1.5" x-show="projectIsActive() && selectedFacts.length > 0">
           <button @click="openCreateIntent()" :disabled="!canActOnSelectedFacts()"
             class="px-3 py-1.5 bg-white/90 backdrop-blur border border-brand-200 text-brand-600 rounded-lg shadow-sm text-xs font-medium hover:bg-brand-50 transition disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-1">
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>
@@ -675,7 +713,7 @@
             提示
           </button>
         </div>
-        <div class="flex gap-1.5" x-show="projectIsActive()">
+        <div class="flex gap-1.5" x-show="projectIsActive() && selectedNode && selectedNode.type === 'intent'">
           <button @click="sendHeartbeatForSelectedIntent()" :disabled="!selectedActionableOpenIntentRecord()"
             class="px-3 py-1.5 bg-white/90 backdrop-blur border border-slate-200 text-slate-600 rounded-lg shadow-sm text-xs font-medium hover:bg-slate-50 transition disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-1">
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M3 12h3.5l2.75-6 3.5 12 2.75-7H21"/></svg>
@@ -694,70 +732,23 @@
         </div>
       </div>
 
-      <div id="cy" class="relative z-0 flex-1 h-full"></div>
+      <div id="cy" class="relative z-0 flex-1 h-full" role="img" aria-label="项目探索关系图；事实和意图的文字信息可在详情及事件日志中查看"></div>
+      <div class="canvas-caption"><span>探索关系图</span><span>选择节点查看详情 · 拖动画布平移</span></div>
     </div>
 
-    <div @pointerdown.prevent="startPanelResize($event)" class="w-2 shrink-0 cursor-col-resize group flex items-stretch justify-center touch-none relative z-20">
+    <div role="separator" tabindex="0" aria-orientation="vertical" aria-label="调整详情面板宽度" :aria-valuenow="sidePanelWidth" :aria-valuemin="260" :aria-valuemax="panelMaxWidth()" @keydown.left.prevent="resizePanelBy(32)" @keydown.right.prevent="resizePanelBy(-32)" @pointerdown.prevent="startPanelResize($event)" class="panel-splitter w-2 shrink-0 cursor-col-resize group flex items-stretch justify-center touch-none relative z-20">
       <div class="w-px bg-slate-200/70 transition group-hover:bg-brand-300" :class="{ 'bg-brand-400': isResizingPanel }"></div>
     </div>
 
     <!-- Side panel -->
-    <div class="border-l border-slate-200/60 bg-white flex flex-col overflow-hidden shrink-0 relative z-20" :style="{ width: sidePanelWidth + 'px', minWidth: sidePanelWidth + 'px', flexBasis: sidePanelWidth + 'px' }">
-      <div class="border-b border-slate-100 shrink-0">
-        <div class="grid grid-cols-3">
-          <button @click="selectSideTab('detail')" class="px-2 py-2.5 text-2xs font-medium transition border-b-2"
-            :class="sideTab === 'detail' ? 'text-brand-600 border-brand-500' : 'text-slate-400 border-transparent hover:text-slate-600'">详情</button>
-          <button @click="selectSideTab('hints')" class="px-2 py-2.5 text-2xs font-medium transition border-b-2"
-            :class="sideTab === 'hints' ? 'text-brand-600 border-brand-500' : 'text-slate-400 border-transparent hover:text-slate-600'">
-            提示 <span class="ml-0.5 text-2xs opacity-60" x-text="project.hints.length"></span>
-          </button>
-          <button @click="selectSideTab('log')" class="px-2 py-2.5 text-2xs font-medium transition border-b-2"
-            :class="sideTab === 'log' ? 'text-brand-600 border-brand-500' : 'text-slate-400 border-transparent hover:text-slate-600'">日志</button>
-        </div>
-        <div class="flex overflow-x-auto border-t border-slate-100 bg-slate-50/60">
-          <button @click="selectSideTab('runs')" class="shrink-0 whitespace-nowrap px-2.5 py-2 text-2xs font-medium transition border-b-2"
-            :class="sideTab === 'runs' ? 'text-brand-600 border-brand-500 bg-white' : 'text-slate-400 border-transparent hover:text-slate-600'">
-            运行 <span class="ml-0.5 text-2xs opacity-60" x-show="runsPanel.loadedFor && runsPanel.items.length" x-text="runsPanel.items.length"></span>
-          </button>
-          <button @click="selectSideTab('strategist')" class="shrink-0 whitespace-nowrap px-2.5 py-2 text-2xs font-medium transition border-b-2"
-            :class="sideTab === 'strategist' ? 'text-brand-600 border-brand-500 bg-white' : 'text-slate-400 border-transparent hover:text-slate-600'">
-            慢层 <span class="ml-0.5 text-2xs opacity-60" x-show="strategistPanel.data" x-text="strategistPanel.data ? strategistPanel.data.intents.length : ''"></span>
-          </button>
-          <button @click="selectSideTab('audit')" class="shrink-0 whitespace-nowrap px-2.5 py-2 text-2xs font-medium transition border-b-2"
-            :class="sideTab === 'audit' ? 'text-brand-600 border-brand-500 bg-white' : 'text-slate-400 border-transparent hover:text-slate-600'">
-            审计 <span class="ml-0.5 text-2xs opacity-60" x-show="auditPanel.loadedFor && auditPanel.summaries.length" x-text="auditPanel.summaries.length"></span>
-          </button>
-          <button @click="selectSideTab('evidence')" class="shrink-0 whitespace-nowrap px-2.5 py-2 text-2xs font-medium transition border-b-2"
-            :class="sideTab === 'evidence' ? 'text-brand-600 border-brand-500 bg-white' : 'text-slate-400 border-transparent hover:text-slate-600'">证据</button>
-          <button @click="selectSideTab('proposals')" class="shrink-0 whitespace-nowrap px-2.5 py-2 text-2xs font-medium transition border-b-2"
-            :class="sideTab === 'proposals' ? 'text-brand-600 border-brand-500 bg-white' : 'text-slate-400 border-transparent hover:text-slate-600'">
-            提案 <span class="ml-0.5 text-2xs opacity-60" x-show="proposalsPanel.loadedFor && proposalsPanel.items.length" x-text="proposalsPanel.items.length"></span>
-          </button>
-          <button @click="selectSideTab('board')" class="shrink-0 whitespace-nowrap px-2.5 py-2 text-2xs font-medium transition border-b-2"
-            :class="sideTab === 'board' ? 'text-brand-600 border-brand-500 bg-white' : 'text-slate-400 border-transparent hover:text-slate-600'">
-            看板 <span class="ml-0.5 text-2xs opacity-60" x-show="boardPanel.data && boardPanel.data.available" x-text="boardPanel.data ? (boardPanel.data.ideas.length + boardPanel.data.memory.length) : ''"></span>
-          </button>
-          <button @click="selectSideTab('cost')" class="shrink-0 whitespace-nowrap px-2.5 py-2 text-2xs font-medium transition border-b-2"
-            :class="sideTab === 'cost' ? 'text-brand-600 border-brand-500 bg-white' : 'text-slate-400 border-transparent hover:text-slate-600'">
-            成本 <span class="ml-0.5 text-2xs opacity-60" x-show="costPanel.data && costPanel.data.runs.length" x-text="costPanel.data ? costPanel.data.runs.length : ''"></span>
-          </button>
-          <button @click="selectSideTab('stats')" class="shrink-0 whitespace-nowrap px-2.5 py-2 text-2xs font-medium transition border-b-2"
-            :class="sideTab === 'stats' ? 'text-brand-600 border-brand-500 bg-white' : 'text-slate-400 border-transparent hover:text-slate-600'">
-            统计 <span class="ml-0.5 text-2xs opacity-60" x-show="statsPanel.data && statsPanel.data.totals.runs" x-text="statsPanel.data ? statsPanel.data.totals.runs : ''"></span>
-          </button>
-          <button @click="selectSideTab('report')" class="shrink-0 whitespace-nowrap px-2.5 py-2 text-2xs font-medium transition border-b-2"
-            :class="sideTab === 'report' ? 'text-brand-600 border-brand-500 bg-white' : 'text-slate-400 border-transparent hover:text-slate-600'">
-            报告 <span class="ml-0.5 text-2xs opacity-60" x-show="reportPanel.loadedFor && reportPanel.data" x-text="reportPanel.data ? reportPanel.data.graph.current_facts : ''"></span>
-          </button>
-          <button @click="selectSideTab('writeup')" class="shrink-0 whitespace-nowrap px-2.5 py-2 text-2xs font-medium transition border-b-2"
-            :class="sideTab === 'writeup' ? 'text-brand-600 border-brand-500 bg-white' : 'text-slate-400 border-transparent hover:text-slate-600'">
-            Writeup <span class="ml-0.5 text-2xs opacity-60" x-show="writeupPanel.loadedFor" x-text="writeupPanel.data ? (writeupPanel.data.source === 'model' ? 'AI' : '草稿') : ''"></span>
-          </button>
-          <button @click="selectSideTab('attachments')" class="shrink-0 whitespace-nowrap px-2.5 py-2 text-2xs font-medium transition border-b-2"
-            :class="sideTab === 'attachments' ? 'text-brand-600 border-brand-500 bg-white' : 'text-slate-400 border-transparent hover:text-slate-600'">
-            附件 <span class="ml-0.5 text-2xs opacity-60" x-show="attachmentsPanel.loadedFor" x-text="attachmentsPanel.items.length"></span>
-          </button>
-        </div>
+    <section class="inspector-panel border-l border-slate-200/60 bg-white flex flex-col overflow-hidden shrink-0 relative z-20" aria-label="项目详情面板" :style="{ width: sidePanelWidth + 'px', minWidth: sidePanelWidth + 'px', flexBasis: sidePanelWidth + 'px' }">
+      <div class="inspector-header">
+        <div><p class="eyebrow">INSPECTOR</p><h2 tabindex="-1" x-text="workspacePanelTitle()"></h2></div>
+        <select class="inspector-select" aria-label="切换详情面板" :value="sideTab" @change="selectSideTab($event.target.value)">
+          <optgroup label="探索与决策"><option value="detail">项目详情</option><option value="hints">提示</option><option value="board">观察看板</option><option value="strategist">慢层决策</option></optgroup>
+          <optgroup label="执行与溯源"><option value="runs">任务运行</option><option value="log">事件日志</option><option value="evidence">证据文件</option><option value="audit">工具审计</option><option value="proposals">图提案</option><option value="attachments">题目附件</option></optgroup>
+          <optgroup label="分析与交付"><option value="cost">成本归因</option><option value="stats">运行统计</option><option value="report">项目报告</option><option value="writeup">Writeup</option></optgroup>
+        </select>
       </div>
 
       <!-- Detail -->
@@ -2516,48 +2507,54 @@
 
         <p class="text-2xs text-slate-400 leading-relaxed" x-text="attachmentsPolicyLabel()"></p>
       </div>
-    </div>
+    </section>
   </div>
 </div>
 </template>
+</div>
 
 <!-- ═══════════ MODALS ═══════════ -->
 
 <!-- New Project -->
-<div x-show="showNewProject" x-cloak data-modal="newProject" x-effect="syncModal('newProject', showNewProject, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('newProject')">
-  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 border border-slate-200/60 flex flex-col max-h-[85vh]" @click.stop>
-    <div class="shrink-0 px-6 pt-6">
+<div x-show="showNewProject" x-cloak data-modal="newProject" role="dialog" aria-modal="true" aria-label="新建项目" x-effect="syncModal('newProject', showNewProject, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('newProject')">
+  <div class="new-project-dialog bg-white rounded-2xl shadow-2xl w-full mx-4 border border-slate-200/60 flex flex-col max-h-[85vh]" @click.stop>
+    <div class="dialog-heading shrink-0 px-6 pt-6">
+      <p class="eyebrow">NEW EXPLORATION</p>
+      <button type="button" class="dialog-close" @click="dismissModal('newProject')" :disabled="isCreatingProject" aria-label="关闭新建项目">&times;</button>
       <h3 class="text-base font-semibold text-slate-700"
         x-text="newProject.clonedFrom ? '复制项目' : '新建项目'"></h3>
       <template x-if="newProject.clonedFrom">
         <p class="text-xs text-slate-400 mt-1.5">复制自 <span class="font-mono text-slate-500" x-text="newProject.clonedFrom"></span> · 标题、起点与目标、授权范围、执行环境、完成校验、提示和附件都已填好，可继续编辑后创建。</p>
       </template>
     </div>
-    <div class="flex-1 min-h-0 overflow-y-auto px-6 py-4 space-y-3">
-      <div>
-        <input x-ref="newProjectTitle" data-autofocus x-model="newProject.title" placeholder="项目标题" aria-label="项目标题"
+    <div class="new-project-fields flex-1 min-h-0 overflow-y-auto px-6 py-4">
+      <div class="form-full">
+        <label for="newProjectTitle" class="field-label">项目名称 <span>必填</span></label>
+        <input id="newProjectTitle" x-ref="newProjectTitle" data-autofocus x-model="newProject.title" placeholder="项目标题" aria-label="项目标题"
           class="w-full px-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"
           :class="newProjectShowErrors && newProjectErrors().title ? 'border-rose-300' : 'border-slate-200'">
         <p x-show="newProjectShowErrors && newProjectErrors().title" class="text-2xs text-rose-500 mt-1" x-text="newProjectErrors().title"></p>
       </div>
       <div>
-        <textarea x-ref="newProjectOrigin" x-model="newProject.origin" placeholder="起点 — 起始状态" rows="2" aria-label="起点"
+        <label for="newProjectOrigin" class="field-label">起点</label>
+        <textarea id="newProjectOrigin" x-ref="newProjectOrigin" x-model="newProject.origin" placeholder="起点 — 起始状态" rows="2" aria-label="起点"
           class="w-full px-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"
           :class="newProjectShowErrors && newProjectErrors().origin ? 'border-rose-300' : 'border-slate-200'"></textarea>
         <p x-show="newProjectShowErrors && newProjectErrors().origin" class="text-2xs text-rose-500 mt-1" x-text="newProjectErrors().origin"></p>
       </div>
       <div>
-        <textarea x-ref="newProjectGoal" x-model="newProject.goal" placeholder="目标 — 期望达成" rows="2" aria-label="目标"
+        <label for="newProjectGoal" class="field-label">目标</label>
+        <textarea id="newProjectGoal" x-ref="newProjectGoal" x-model="newProject.goal" placeholder="目标 — 期望达成" rows="2" aria-label="目标"
           class="w-full px-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"
           :class="newProjectShowErrors && newProjectErrors().goal ? 'border-rose-300' : 'border-slate-200'"></textarea>
         <p x-show="newProjectShowErrors && newProjectErrors().goal" class="text-2xs text-rose-500 mt-1" x-text="newProjectErrors().goal"></p>
       </div>
-      <div>
+      <div class="form-full form-section">
         <div class="flex items-center justify-between mb-1">
-          <label class="text-2xs text-slate-400 font-medium uppercase tracking-wider">授权范围 <span class="text-rose-500">*</span></label>
+          <label for="newProjectTargets" class="text-2xs text-slate-400 font-medium uppercase tracking-wider">授权范围 <span class="text-rose-500">*</span></label>
           <span class="text-2xs text-slate-300">每行一个目标</span>
         </div>
-        <textarea x-ref="newProjectTargets" x-model="newProject.targetsText" rows="3" placeholder="127.0.0.1:8080&#10;https://lab.example" aria-label="授权目标"
+        <textarea id="newProjectTargets" x-ref="newProjectTargets" x-model="newProject.targetsText" rows="3" placeholder="127.0.0.1:8080&#10;https://lab.example" aria-label="授权目标"
           class="w-full px-3 py-2 border rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"
           :class="newProjectShowErrors && newProjectErrors().targets ? 'border-rose-300' : 'border-slate-200'"></textarea>
         <p x-show="newProjectShowErrors && newProjectErrors().targets" class="text-2xs text-rose-500 mt-1" x-text="newProjectErrors().targets"></p>
@@ -2579,10 +2576,10 @@
       </div>
       <div>
         <div class="flex items-center justify-between mb-1">
-          <label class="text-2xs text-slate-400 font-medium uppercase tracking-wider">完成校验</label>
+          <label for="newProjectVerification" class="text-2xs text-slate-400 font-medium uppercase tracking-wider">完成校验</label>
           <span class="text-2xs text-slate-300">创建后固定</span>
         </div>
-        <select x-model="newProject.verificationKind" aria-label="完成校验"
+        <select id="newProjectVerification" x-model="newProject.verificationKind" aria-label="完成校验"
           class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
           <option value="auto">自动（题目环境优先，否则证据校验）</option>
           <option value="challenge">题目 / Flag 自动校验</option>
@@ -2632,12 +2629,12 @@
         </template>
         <p class="text-2xs text-slate-400 mt-1">附件先写入项目工作区 attachments/，上传完成前不会派发任务。</p>
       </div>
-      <label class="flex items-center gap-2 px-1 text-sm text-slate-600">
+      <label class="bootstrap-option flex items-center gap-2 px-1 text-sm text-slate-600">
         <input type="checkbox" x-model="newProject.bootstrap" class="h-4 w-4 rounded border-slate-300 text-brand-500 focus:ring-brand-200">
         <span>立即执行初始探索</span>
       </label>
 
-      <div>
+      <div class="form-full form-section">
         <div class="flex items-center justify-between mb-2">
           <span class="text-2xs text-slate-400 font-medium uppercase tracking-wider">提示（可选）</span>
           <button type="button" @click="newProject.hints.push({ content: '' })" class="text-2xs text-brand-500 hover:text-brand-600 font-medium">+ 添加</button>
@@ -2661,7 +2658,7 @@
 </div>
 
 <!-- Project Scope -->
-<div x-show="showScopeModal" x-cloak data-modal="scope" x-effect="syncModal('scope', showScopeModal, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('scope')">
+<div x-show="showScopeModal" x-cloak data-modal="scope" role="dialog" aria-modal="true" aria-label="授权范围" x-effect="syncModal('scope', showScopeModal, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('scope')">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 border border-slate-200/60" @click.stop>
     <h3 class="text-base font-semibold text-slate-700 mb-1">授权范围</h3>
     <p class="text-xs text-slate-400 font-mono mb-4" x-text="scopeForm.projectTitle ? `${scopeForm.projectId} - ${scopeForm.projectTitle}` : scopeForm.projectId"></p>
@@ -2689,7 +2686,7 @@
 </div>
 
 <!-- Create Intent -->
-<div x-show="showIntentModal" x-cloak data-modal="intent" x-effect="syncModal('intent', showIntentModal, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('intent')">
+<div x-show="showIntentModal" x-cloak data-modal="intent" role="dialog" aria-modal="true" aria-label="创建意图" x-effect="syncModal('intent', showIntentModal, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('intent')">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 border border-slate-200/60" @click.stop>
     <h3 class="text-base font-semibold text-slate-700 mb-1">新建意图</h3>
     <div class="mb-4">
@@ -2719,7 +2716,7 @@
 </div>
 
 <!-- Conclude -->
-<div x-show="showConcludeModal" x-cloak data-modal="conclude" x-effect="syncModal('conclude', showConcludeModal, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('conclude')">
+<div x-show="showConcludeModal" x-cloak data-modal="conclude" role="dialog" aria-modal="true" aria-label="结束意图" x-effect="syncModal('conclude', showConcludeModal, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('conclude')">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 border border-slate-200/60" @click.stop>
     <h3 class="text-base font-semibold text-slate-700 mb-1">结束意图</h3>
     <p class="text-xs text-slate-400 mb-4 font-mono" x-text="concludeForm.intentId"></p>
@@ -2739,7 +2736,7 @@
 </div>
 
 <!-- Complete Project -->
-<div x-show="showCompleteModal" x-cloak data-modal="complete" x-effect="syncModal('complete', showCompleteModal, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('complete')">
+<div x-show="showCompleteModal" x-cloak data-modal="complete" role="dialog" aria-modal="true" aria-label="完成项目" x-effect="syncModal('complete', showCompleteModal, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('complete')">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 border border-slate-200/60" @click.stop>
     <h3 class="text-base font-semibold text-slate-700 mb-1">完成项目</h3>
     <p class="text-xs text-slate-400 mb-4">将项目标记为已完成</p>
@@ -2767,7 +2764,7 @@
 </div>
 
 <!-- Hint -->
-<div x-show="showHintModal" x-cloak data-modal="hint" x-effect="syncModal('hint', showHintModal, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('hint')">
+<div x-show="showHintModal" x-cloak data-modal="hint" role="dialog" aria-modal="true" aria-label="添加提示" x-effect="syncModal('hint', showHintModal, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('hint')">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 border border-slate-200/60" @click.stop>
     <h3 class="text-base font-semibold text-slate-700 mb-4">添加提示</h3>
     <div class="space-y-3">
@@ -2786,7 +2783,7 @@
 </div>
 
 <!-- Reopen -->
-<div x-show="showReopenModal" x-cloak data-modal="reopen" x-effect="syncModal('reopen', showReopenModal, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('reopen')">
+<div x-show="showReopenModal" x-cloak data-modal="reopen" role="dialog" aria-modal="true" aria-label="重新打开项目" x-effect="syncModal('reopen', showReopenModal, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('reopen')">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 border border-slate-200/60" @click.stop>
     <h3 class="text-base font-semibold text-slate-700 mb-1">重新打开项目</h3>
     <p class="text-xs text-slate-400 mb-4" x-text="projectLabel(reopenForm.projectId, reopenForm.projectTitle)"></p>
@@ -2806,7 +2803,7 @@
 </div>
 
 <!-- Rename Project -->
-<div x-show="showRenameModal" x-cloak data-modal="rename" x-effect="syncModal('rename', showRenameModal, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('rename')">
+<div x-show="showRenameModal" x-cloak data-modal="rename" role="dialog" aria-modal="true" aria-label="重命名项目" x-effect="syncModal('rename', showRenameModal, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('rename')">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 border border-slate-200/60" @click.stop>
     <h3 class="text-base font-semibold text-slate-700 mb-1">重命名项目</h3>
     <p class="text-xs text-slate-400 mb-4" x-text="projectLabel(renameForm.projectId, renameForm.originalTitle)"></p>
@@ -2827,7 +2824,7 @@
 </div>
 
 <!-- Settings (M24): runtime mode, model keys, local prefs and server config in one dialog -->
-<div x-show="showSettings" x-cloak data-modal="settings" x-effect="syncModal('settings', showSettings, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('settings')">
+<div x-show="showSettings" x-cloak data-modal="settings" role="dialog" aria-modal="true" aria-label="工作区设置" x-effect="syncModal('settings', showSettings, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('settings')">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-4xl mx-4 border border-slate-200/60 overflow-hidden" @click.stop>
     <div class="px-5 py-4 border-b border-slate-200/80 flex items-start justify-between gap-4">
       <div class="min-w-0">
@@ -3377,7 +3374,7 @@
 </div>
 
 <!-- Skill Detail (M26) -->
-<div x-show="showSkillDetail" x-cloak data-modal="skillDetail" x-effect="syncModal('skillDetail', showSkillDetail, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('skillDetail')">
+<div x-show="showSkillDetail" x-cloak data-modal="skillDetail" role="dialog" aria-modal="true" aria-label="技能详情" x-effect="syncModal('skillDetail', showSkillDetail, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('skillDetail')">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl mx-4 border border-slate-200/60 overflow-hidden flex flex-col max-h-[85vh]" @click.stop>
     <div class="px-5 py-4 border-b border-slate-200/80 flex items-start justify-between gap-4">
       <div class="min-w-0">
@@ -3438,7 +3435,7 @@
 </div>
 
 <!-- Export Preview -->
-<div x-show="showYamlModal" x-cloak data-modal="yaml" x-effect="syncModal('yaml', showYamlModal, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('yaml')">
+<div x-show="showYamlModal" x-cloak data-modal="yaml" role="dialog" aria-modal="true" aria-label="项目快照" x-effect="syncModal('yaml', showYamlModal, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('yaml')">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-4xl mx-4 border border-slate-200/60 overflow-hidden" @click.stop>
     <div class="px-5 py-4 border-b border-slate-200/80 flex items-center justify-between gap-4">
       <div class="min-w-0 flex items-center gap-3">
@@ -3464,7 +3461,7 @@
 </div>
 
 <!-- Danger Confirmation -->
-<div x-show="showConfirmModal" x-cloak data-modal="confirm" x-effect="syncModal('confirm', showConfirmModal, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('confirm')">
+<div x-show="showConfirmModal" x-cloak data-modal="confirm" role="dialog" aria-modal="true" aria-label="确认操作" x-effect="syncModal('confirm', showConfirmModal, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('confirm')">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 border border-slate-200/60" @click.stop>
     <div class="flex items-start gap-3">
       <div class="w-10 h-10 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
@@ -3486,7 +3483,7 @@
 </div>
 
 <!-- Delete Project -->
-<div x-show="showDeleteModal" x-cloak data-modal="delete" x-effect="syncModal('delete', showDeleteModal, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('delete')">
+<div x-show="showDeleteModal" x-cloak data-modal="delete" role="dialog" aria-modal="true" aria-label="删除项目" x-effect="syncModal('delete', showDeleteModal, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('delete')">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 border border-slate-200/60" @click.stop>
     <div class="flex items-start gap-3">
       <div class="w-10 h-10 rounded-2xl bg-rose-50 text-rose-500 flex items-center justify-center shrink-0">
@@ -3511,7 +3508,7 @@
 </div>
 
 <!-- Toast -->
-<div x-show="toast.show" x-cloak
+<div x-show="toast.show" x-cloak role="status" aria-live="polite" aria-atomic="true"
   x-transition:enter="transition ease-out duration-300"
   x-transition:enter-start="opacity-0 translate-y-2"
   x-transition:enter-end="opacity-100 translate-y-0"
@@ -3536,11 +3533,13 @@ function cairnApp() {
     pollTimer: null,
     cy: null,
     sideTab: 'detail',
+    sidebarOpen: false,
+    workspacePane: 'graph',
     selectedNode: null,
     selectedFacts: [],
     selectedTimelineEntryId: null,
     layoutMode: 'dagre_tb',
-    sidePanelWidth: 320,
+    sidePanelWidth: 400,
     isResizingPanel: false,
 
     showNewProject: false,
@@ -4635,9 +4634,58 @@ function cairnApp() {
       }
     },
 
+    toggleSidebar(event) {
+      if (this.sidebarOpen) {
+        this.closeSidebar();
+        return;
+      }
+      this._sidebarReturnFocus = event?.currentTarget || null;
+      this.sidebarOpen = true;
+      this.focusAfterRender(
+        () => document.querySelector('#workspaceNavigation .nav-item'),
+        () => this.sidebarOpen,
+      );
+    },
+
+    closeSidebar() {
+      this.sidebarOpen = false;
+      this._sidebarReturnFocus?.focus();
+    },
+
+    workspacePanelTitle() {
+      return {
+        detail: '项目详情', hints: '提示', log: '事件日志', runs: '任务运行',
+        strategist: '慢层决策', audit: '工具审计', evidence: '证据文件',
+        proposals: '图提案', board: '观察看板', attachments: '题目附件',
+        cost: '成本归因', stats: '运行统计', report: '项目报告', writeup: 'Writeup',
+      }[this.sideTab] || '项目详情';
+    },
+
+    setWorkspacePane(pane) {
+      if (!['graph', 'panel'].includes(pane)) return;
+      this.workspacePane = pane;
+      if (pane === 'graph') {
+        this.$nextTick(() => {
+          if (this.cy) {
+            this.cy.resize();
+            this.cy.fit(undefined, 50);
+          }
+        });
+      }
+    },
+
     selectSideTab(tab) {
       if (!['detail', 'hints', 'log', ...this.opsTabs()].includes(tab)) return;
+      const openedFromDrawer = this.sidebarOpen;
       this.sideTab = tab;
+      this.workspacePane = 'panel';
+      this.sidebarOpen = false;
+      if (openedFromDrawer) {
+        this.focusAfterRender(
+          () => document.querySelector('.inspector-header h2'),
+          () => this.view === 'graph' && !this.sidebarOpen,
+        );
+      }
       this.saveSideTab();
       this.loadActiveOpsTab();
     },
@@ -6353,6 +6401,8 @@ function cairnApp() {
       await this.loadIntentLifecycle(id);
       this.loadProjectFlag(id);
       this.view = 'graph';
+      this.workspacePane = 'graph';
+      this.sidebarOpen = false;
       this.focusGraphHeading();
       if (this.opsTabs().includes(this.sideTab)) this.loadActiveOpsTab();
       if (location.hash !== `#/projects/${id}`) location.hash = `/projects/${id}`;
@@ -6383,6 +6433,7 @@ function cairnApp() {
         this.polling = true;
       }
       this.view = 'list';
+      this.sidebarOpen = false;
       this.shouldRestoreProjectListScroll = true;
       this.project = null;
       this.projectError = '';
@@ -6896,11 +6947,21 @@ function cairnApp() {
       }
     },
 
-    clampPanelWidth(width) {
+    panelMaxWidth() {
       const containerWidth = document.getElementById('graphLayout')?.getBoundingClientRect().width || window.innerWidth;
-      const min = 260;
-      const max = Math.max(min, containerWidth - 260);
-      return Math.min(max, Math.max(min, width));
+      // Reserve canvas space on desktop; mobile uses a full-width pane in CSS.
+      return Math.max(260, containerWidth - 300);
+    },
+
+    clampPanelWidth(width) {
+      // Keep the operator's desktop width when the mobile full-width pane is active.
+      if (window.innerWidth <= 720) return Math.max(260, width);
+      return Math.min(this.panelMaxWidth(), Math.max(260, width));
+    },
+
+    resizePanelBy(delta) {
+      this.sidePanelWidth = this.clampPanelWidth(this.sidePanelWidth + delta);
+      this.saveSidePanelWidth();
     },
 
     startPanelResize(e) {
