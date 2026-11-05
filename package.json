@@ -1,6 +1,6 @@
 {
   "name": "cairnweave",
-  "version": "0.69.0-m46",
+  "version": "0.72.0-m49",
   "private": true,
   "type": "module",
   "workspaces": [
@@ -13,6 +13,8 @@
     "typecheck": "bun x tsc --noEmit",
     "check": "bun run typecheck && bun test",
     "eval": "bun run tools/eval/run.ts",
+    "eval:context": "bun run tools/eval/context.ts",
+    "eval:context-pack": "bun run tools/eval/context-pack.ts",
     "ui:css": "tailwindcss -c tools/ui/tailwind.config.mjs -i tools/ui/input.css -o apps/cairn/src/http/static/app.css --minify",
     "ui:css:check": "bun run ui:css && git diff --exit-code -- apps/cairn/src/http/static/app.css"
   },

@@ -16,6 +16,8 @@ export {
   type StoredRuntimeOverrides,
 } from "./runtime-config";
 
+export type { AgentContextAudit, ContextSelection, GraphExportAudit } from "./context-audit";
+
 export { HttpError, RequestValidationError } from "./errors";
 export type { ValidationIssue, ValidationLocation } from "./errors";
 
@@ -439,3 +441,8 @@ export {
 } from "./export";
 
 export { emitScalar, map, renderYaml, type YamlMap, type YamlValue } from "./yaml";
+
+export { buildTaskContextSnapshot, type TaskContextSnapshot, type SnapshotFact, type SnapshotIntent } from "./context-snapshot";
+
+export { registerCheckpointRun, acceptTaskCheckpoint, finalizeCheckpointRun, attachAttemptMemories,
+  type CheckpointTermination, type CheckpointIngestStatus, type AttemptMemory, type AttemptMemoryOptions } from "./checkpoints";

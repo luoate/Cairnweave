@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 
+import type { GraphExportAudit } from "./context-audit";
 import { all } from "./db";
 import { HttpError } from "./errors";
 import type { FactRow, HintRow, IntentRow, ProjectRow } from "./services";
@@ -89,6 +90,8 @@ export interface GraphSliceOptions {
   focusIntentId: string;
   maxFacts: number;
   maxIntents: number;
+  /** Observes this selection without changing the exported YAML. */
+  onAudit?: (audit: GraphExportAudit) => void;
 }
 
 export function exportProjectSliceYaml(
@@ -216,10 +219,30 @@ export function exportProjectSliceYaml(
     ]);
   }
 
+  options.onAudit?.({
+    sliced: true,
+    legacy_truncated: truncated,
+    mandatory_over_cap:
+      includedFacts.size > options.maxFacts || includedIntents.size > options.maxIntents,
+    selections: [
+      { section: "facts", scope: "project", candidates: facts.length,
+        selected: includedFacts.size, limits: { maxFacts: options.maxFacts },
+        policy: "focus_and_all_open_intents_with_bounded_provenance" },
+      { section: "intents", scope: "project", candidates: intents.length,
+        selected: includedIntents.size, limits: { maxIntents: options.maxIntents },
+        policy: "focus_and_all_open_intents_with_bounded_provenance" },
+      { section: "hints", scope: "project", candidates: hints.length,
+        selected: hints.length, limits: {}, policy: "all" },
+    ],
+  });
   return renderYaml(map(entries));
 }
 
-export function exportProjectYaml(conn: Database, projectId: string): string {
+export function exportProjectYaml(
+  conn: Database,
+  projectId: string,
+  onAudit?: (audit: GraphExportAudit) => void,
+): string {
   const { project, facts, hints, intents, sourcesByIntent } = loadProjectData(
     conn,
     projectId,
@@ -250,6 +273,19 @@ export function exportProjectYaml(conn: Database, projectId: string): string {
     ]);
   }
 
+  onAudit?.({
+    sliced: false,
+    legacy_truncated: false,
+    mandatory_over_cap: false,
+    selections: [
+      { section: "facts", scope: "project", candidates: facts.length,
+        selected: facts.length, limits: {}, policy: "all" },
+      { section: "intents", scope: "project", candidates: intents.length,
+        selected: intents.length, limits: {}, policy: "all" },
+      { section: "hints", scope: "project", candidates: hints.length,
+        selected: hints.length, limits: {}, policy: "all" },
+    ],
+  });
   return renderYaml(map(entries));
 }
 

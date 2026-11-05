@@ -230,6 +230,17 @@ CREATE TABLE IF NOT EXISTS runs (
 
 CREATE INDEX IF NOT EXISTS runs_project_started ON runs(project_id, started_at);
 
+-- M49: one latest accepted checkpoint per run, independent of session retention.
+CREATE TABLE IF NOT EXISTS task_checkpoints (
+    run_id TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
+    sequence INTEGER NOT NULL DEFAULT 0,
+    payload TEXT,
+    sha256 TEXT,
+    accepted_at TEXT,
+    termination_reason TEXT,
+    scope_targets TEXT
+);
+
 -- One row per scheduler boot. A runs row is opened at dispatch time and only closed by the
 -- process that owns the task, so a restart strands rows nobody can finish. The heartbeat
 -- makes process liveness visible in the database: a new boot reconciles those rows only when

@@ -153,6 +153,7 @@ const HTTP_TOOLS = new Set([
  * load this bridge at all.
  */
 const LOCAL_TOOLS = new Set([
+  "save_task_checkpoint",
   "subagent",
   "document_finding",
   "ingest_sub_agent_output",

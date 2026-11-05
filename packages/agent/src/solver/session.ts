@@ -95,6 +95,22 @@ async function loadHostBridgeExtension(): Promise<ExtensionFactory | undefined> 
     return factory()
 }
 
+/** Main solver only: one cumulative checkpoint writer per task, never per subagent. */
+async function loadTaskCheckpointExtension(): Promise<ExtensionFactory | undefined> {
+    if (process.env["CAIRN_TASK_CHECKPOINT"] !== "1") return undefined
+    const modulePath = readInjectedPath("CAIRN_CHECKPOINT_MODULE")
+    if (!modulePath) return undefined
+    try {
+        const module = (await import(modulePath)) as {
+            createTaskCheckpointExtensionFromEnv?: () => ExtensionFactory
+        }
+        return module.createTaskCheckpointExtensionFromEnv?.()
+    } catch {
+        console.warn("[checkpoint] extension unavailable; task continues")
+        return undefined
+    }
+}
+
 export function buildSolverStartupSnapshot(
     init: SolverInitPayload,
     prompt: PromptFile,
@@ -202,9 +218,11 @@ export async function createSolverSession(init: SolverInitPayload): Promise<Solv
         : undefined
 
     const hostBridge = await loadHostBridgeExtension()
+    const checkpoint = await loadTaskCheckpointExtension()
     const extensions = [
         // The gate must run before any other extension can touch the tool call.
         ...(hostBridge ? [hostBridge] : []),
+        ...(checkpoint ? [checkpoint] : []),
         // Registered after the gate so scope auditing still sees the full result, and before the
         // observers so the context carries a pointer instead of a dump.
         ...toolSpillExtensions(workspaceDir),

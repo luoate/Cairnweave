@@ -1,0 +1,202 @@
+import { checkpoint } from "../../../../packages/contracts/src/testdata/checkpoint";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
+import {
+  buildAgentContext, buildTaskContextSnapshot, configureDatabase, concludeIntent, createHint, createIntent,
+  createProject, exportProjectSliceYaml, exportProjectYaml, getProjectDetail, recordFactMeta,
+  renderAgentContextYaml, startRun, finishRun, registerCheckpointRun, acceptTaskCheckpoint, type AgentContextAudit, type CairnDatabase, type GraphExportAudit,
+} from "@cairn/graph";
+import { parseDispatchConfig } from "../config";
+import { prepareTask, type PrepareTaskInput } from "./tasks";
+import { recoverContextRecord } from "./context-store";
+const BASE = { server: "http://127.0.0.1:8000",
+  runtime: { execution: "local", max_workers: 2, max_running_projects: 2, max_project_workers: 1,
+    interval: 1, healthcheck_timeout: 5, worker_healthcheck: "disabled", prompt_group: "default" },
+  tasks: { bootstrap: { timeout: 30, conclude_timeout: 10 }, reason: { timeout: 30 }, explore: { timeout: 30, conclude_timeout: 10 } },
+  observer: { enabled: true, kernel_tasks: ["reason", "explore"] },
+};
+let dir: string; let db: CairnDatabase; let projectId: string; let focus: string;
+beforeEach(() => {
+  dir = mkdtempSync(join(tmpdir(), "cairn-pack-tasks-")); db = configureDatabase(join(dir, "db.sqlite"));
+  db.withConn((conn) => {
+    projectId = createProject(conn, { title: "pack integration", origin: "授权起点", goal: "已确认目标",
+      scope: { targets: ["127.0.0.1:8080"] }, bootstrap_enabled: false, hints: null }).project.id;
+    for (let index = 0; index < 100; index += 1) {
+      const intent = createIntent(conn, projectId, { from: ["origin"], description: `历史方向 ${index}`, creator: "test", worker: null });
+      concludeIntent(conn, projectId, intent.id, "test", `客观结果 ${index} ${"事实内容 ".repeat(10)}`);
+    }
+    for (let index = 0; index < 30; index += 1) createHint(conn, projectId, { content: `相关提示 ${index} ${"提示 ".repeat(30)}`, creator: "test" });
+    focus = createIntent(conn, projectId, { from: ["f001"], description: "焦点任务", creator: "test", worker: null }).id;
+    recordFactMeta(conn, { projectId, factId: "f100", evidenceStatus: "provided", supersedes: ["f001"], evidenceRefs: ["artifacts/proof.txt"] });
+  });
+});
+afterEach(() => rmSync(dir, { recursive: true, force: true }));
+function prepare(mode: "off" | "shadow" | "apply", extra: Partial<PrepareTaskInput> = {}, slice = false) {
+  return db.withConn((conn) => {
+    const project = getProjectDetail(conn, projectId); const kind = extra.kind ?? "reason";
+    let graphAudit: GraphExportAudit | undefined; let agentContextAudit: AgentContextAudit | undefined;
+    const exportYaml = slice ? exportProjectSliceYaml(conn, projectId, { focusIntentId: focus, maxFacts: 3, maxIntents: 3, onAudit: (value) => { graphAudit = value; } })
+      : exportProjectYaml(conn, projectId, (value) => { graphAudit = value; });
+    const agentContextYaml = renderAgentContextYaml(buildAgentContext(conn, projectId, { kind: kind === "bootstrap" ? "reason" : kind,
+      focusIntentId: focus, generatedAt: "2026-11-05T00:00:00Z", onAudit: (value) => { agentContextAudit = value; } }));
+    return prepareTask({ config: parseDispatchConfig({ ...BASE, tasks: { ...BASE.tasks, context_pack: { mode } } }),
+      project, kind, exportYaml, agentContextYaml, graphAudit: graphAudit!, agentContextAudit: agentContextAudit!,
+      contextSnapshot: buildTaskContextSnapshot(conn, projectId), intent: project.intents.find((intent) => intent.id === focus)!,
+      scope: { targets: ["127.0.0.1:8080"] }, workspaceRoot: dir,
+      ...(kind === "conclude" ? { concludeOf: "explore" as const, resumeFromHostSessionDir: join(dir, "previous") } : {}), ...extra });
+  });
+}
+const canonical = (prepared: ReturnType<typeof prepare>) => JSON.stringify(prepared.task).replaceAll(prepared.task.taskId, "TASK");
+
+describe("M48 task rollout and actual delivery", () => {
+  test("literal placeholder-shaped directory names survive compact prompt rendering", () => {
+    const applied = prepare("apply", { workspaceRoot: join(dir, "{intent_id}-{max_intents}") });
+    expect(applied.contextPack.status).toBe("applied");
+    expect(applied.task.prompt).toContain(join(applied.hostSessionDir, "context-pack.yaml"));
+  });
+
+  test("off has no new artifacts; shadow preserves exact worker inputs and v1 actual accounting", () => {
+    const off = prepare("off"); const shadow = prepare("shadow");
+    expect(canonical(shadow)).toBe(canonical(off));
+    for (const name of ["context-pack.yaml", "context-store", "context-selection.json", "context-candidate.json"]) expect(existsSync(join(off.hostSessionDir, name))).toBe(false);
+    expect(shadow.contextPack.status).toBe("shadow");
+    expect(existsSync(join(shadow.hostSessionDir, "context-candidate.json"))).toBe(true);
+    expect(shadow.contextPlan.status === "written" && shadow.contextPlan.plan.version).toBe(1);
+    expect(readFileSync(off.hostGraphSnapshotPath)).toEqual(readFileSync(shadow.hostGraphSnapshotPath));
+    expect(readFileSync(off.hostAgentContextPath)).toEqual(readFileSync(shadow.hostAgentContextPath));
+  });
+
+  test("apply replaces mandatory duplicates, reports v2 actual bytes and preserves task authority", () => {
+    const off = prepare("off"); const applied = prepare("apply");
+    expect(applied.contextPack.status).toBe("applied");
+    expect(applied.task.prompt).toContain("context-pack.yaml");
+    expect(applied.task.prompt).not.toContain("先完整读取该文件");
+    expect(applied.task.prompt).not.toContain("# 调查状态");
+    expect(applied.task.scope).toEqual(off.task.scope);
+    expect(applied.task.hardDeadlineSeconds).toBe(off.task.hardDeadlineSeconds);
+    expect(applied.task.softDeadlineSeconds).toBe(off.task.softDeadlineSeconds);
+    expect(Object.keys(applied.task)).toEqual(Object.keys(off.task));
+    expect(applied.contextPlan.status).toBe("written");
+    if (applied.contextPlan.status !== "written") return;
+    const plan = applied.contextPlan.plan;
+    expect(plan.version).toBe(2);
+    expect(plan.sources.filter((source) => source.consumer === "solver" && source.read_requirement === "required").map((source) => source.id)).toEqual(["prompt", "context_pack"]);
+    expect(plan.totals.solver.required_initial_bytes).toBe(Buffer.byteLength(applied.task.prompt) + readFileSync(join(applied.hostSessionDir, "context-pack.yaml")).length);
+    expect(plan.totals.solver.required_initial_bytes).toBe(applied.contextPack.actual_initial_bytes);
+    expect(plan.totals.solver.required_initial_bytes).toBeLessThan(applied.contextPack.legacy_initial_bytes);
+    if (off.contextPlan.status !== "written") throw new Error("missing legacy plan");
+    expect(plan.totals.observer).toEqual(off.contextPlan.plan.totals.observer);
+    expect(JSON.stringify(plan)).not.toContain(dir);
+    expect(JSON.parse(readFileSync(applied.hostTaskPath, "utf8"))).not.toHaveProperty("contextPack");
+  });
+
+  test("explore pins direct sources and replacement facts; store is not built from a graph slice", () => {
+    const applied = prepare("apply", { kind: "explore" });
+    expect(applied.contextPack.status).toBe("applied");
+    const pack = Bun.YAML.parse(readFileSync(join(applied.hostSessionDir, "context-pack.yaml"), "utf8")) as any;
+    expect(pack.facts.find((fact: any) => fact.id === "f001")).toMatchObject({ status: "superseded", superseded_by: "f100" });
+    expect(pack.facts.find((fact: any) => fact.id === "f100")).toMatchObject({ status: "current", evidence_refs: ["artifacts/proof.txt"] });
+    const sliced = prepare("shadow", { kind: "explore" }, true);
+    // A small legacy slice may beat the compact pack; both outcomes must be honest.
+    if (sliced.contextPack.status === "shadow") {
+      const recovered = recoverContextRecord(join(sliced.hostSessionDir, "context-store"), projectId, sliced.contextPack.snapshot_id!, "facts", "f050");
+      expect(recovered).toMatchObject({ id: "f050", description: expect.stringContaining("客观结果 49") });
+    } else expect(sliced.contextPack.fallback_reason).toBe("no_benefit");
+  });
+
+  test("over-budget core falls back to byte-equivalent legacy inputs without losing deadlines or scope", () => {
+    const config = parseDispatchConfig({ ...BASE, tasks: { ...BASE.tasks, context_pack: { mode: "apply" }, context_plan: { max_initial_bytes: 1 } } });
+    const applied = prepare("apply", { config }); const off = prepare("off");
+    expect(applied.contextPack).toMatchObject({ status: "fallback", fallback_reason: "pinned_content_over_budget" });
+    expect(canonical(applied)).toBe(canonical(off));
+    expect(applied.contextPlan.status === "written" && applied.contextPlan.plan.budget.status).toBe("over_budget");
+  });
+
+  test("snapshot failure preserves legacy input and does not expose the failed path", () => {
+    const applied = prepare("apply", { pathMapper: (path) => {
+      if (basename(path).startsWith("reason-")) mkdirSync(join(path, "context-store"), { recursive: true });
+      return path;
+    } });
+    expect(applied.contextPack).toMatchObject({ status: "fallback", fallback_reason: "snapshot_write_failed" });
+    expect(canonical(applied)).toBe(canonical(prepare("off")));
+    expect(existsSync(applied.hostTaskPath)).toBe(true);
+    expect(JSON.stringify(applied.contextPack)).not.toContain(dir);
+  });
+
+  test("missing snapshot falls back rather than claiming existing capped input is recoverable", () => {
+    const applied = prepare("apply", { contextSnapshot: undefined });
+    expect(applied.contextPack.fallback_reason).toBe("snapshot_unavailable");
+    expect(canonical(applied)).toBe(canonical(prepare("off")));
+  });
+
+  test("diagnostic write errors do not undo a fully validated compact input", () => {
+    const applied = prepare("apply", { pathMapper: (path) => {
+      if (basename(path).startsWith("reason-")) {
+        mkdirSync(join(path, "context-selection.json"), { recursive: true });
+        mkdirSync(join(path, "context-plan.json"), { recursive: true });
+      }
+      return path;
+    } });
+    expect(applied.contextPack.status).toBe("applied");
+    expect(applied.contextPlan.status).toBe("unavailable");
+    expect(applied.task.prompt).toContain("context-pack.yaml");
+    expect(existsSync(join(applied.hostSessionDir, "context-store", "catalog.json"))).toBe(true);
+  });
+
+  test("bootstrap, conclude and custom templates retain their legacy prompts", () => {
+    for (const kind of ["bootstrap", "conclude"] as const) {
+      const applied = prepare("apply", { kind });
+      expect(applied.contextPack.fallback_reason).toBe("not_applicable");
+      expect(canonical(applied)).toBe(canonical(prepare("off", { kind })));
+    }
+    const config = parseDispatchConfig({ ...BASE, runtime: { ...BASE.runtime, prompt_group: "mock" }, tasks: { ...BASE.tasks, context_pack: { mode: "apply" } } });
+    const applied = prepare("apply", { config });
+    expect(applied.contextPack.fallback_reason).toBe("unsupported_template");
+    expect(existsSync(join(applied.hostSessionDir, "context-pack.yaml"))).toBe(false);
+  });
+
+  test("container mapping uses worker paths and attachments remain optional bodies", () => {
+    const config = parseDispatchConfig({ ...BASE, runtime: { ...BASE.runtime, execution: "container" },
+      container: { image: "test", network_mode: "bridge", completed_action: "stop", workspace_root: dir },
+      tasks: { ...BASE.tasks, context_pack: { mode: "apply" } } });
+    const applied = prepare("apply", { config,
+      pathMapper: (path) => `/workspace/${path.slice(dir.length).replaceAll("\\", "/").replace(/^\//, "")}`,
+      attachments: [{ id: 1, project_id: projectId, name: "input.bin", path: "attachments/input.bin", size: 32000000,
+        sha256: "a".repeat(64), creator: "test", created_at: "2026-11-05T00:00:00Z" }] });
+    expect(applied.contextPack.status).toBe("applied");
+    expect(applied.task.prompt).toContain("/workspace/");
+    expect(applied.task.prompt).not.toContain(dir);
+    expect(applied.contextPack.actual_initial_bytes).toBeLessThan(131072);
+    expect(applied.contextPlan.status === "written" && applied.contextPlan.plan.sources.find((source) => source.id === "attachments")!.bytes).toBe(32000000);
+  });
+});
+
+
+describe("M49 prepared task byte accounting", () => {
+  test("checkpoint guidance and complete attempt memory enter the actual M48 byte budget, not an unbounded mandatory file", () => {
+    const snapshot = db.withConn((conn) => {
+      startRun(conn, { id: "checkpoint-run", projectId, taskId: "explore-old", intentId: focus, kind: "explore", worker: "test", startedAt: "2026-11-05T00:00:00Z" });
+      registerCheckpointRun(conn, "checkpoint-run", ["127.0.0.1:8080"]);
+      acceptTaskCheckpoint(conn, { runId: "checkpoint-run", projectId, taskId: "explore-old", bytes: Buffer.from(JSON.stringify(checkpoint({ project_id: projectId, task_id: "explore-old", intent_id: focus }))) });
+      finishRun(conn, "checkpoint-run", { outcome: "failed", finishedAt: "2026-11-05T00:01:00Z", durationMs: 1 });
+      return buildTaskContextSnapshot(conn, projectId, { checkpoint: {} });
+    });
+    const config = parseDispatchConfig({ ...BASE, tasks: { ...BASE.tasks, checkpoint: { enabled: true }, context_pack: { mode: "apply" } } });
+    const prepared = prepare("apply", { config, contextSnapshot: snapshot });
+    expect(prepared.contextPack.status).toBe("applied");
+    expect(prepared.task.prompt).toContain("save_task_checkpoint");
+    const pack = Bun.YAML.parse(readFileSync(join(prepared.hostSessionDir, "context-pack.yaml"), "utf8")) as any;
+    expect(pack.attempts[0].memory.trust).toBe("worker_claim_not_verified");
+    expect(prepared.contextPlan.status).toBe("written");
+    if (prepared.contextPlan.status !== "written") throw new Error("no plan");
+    const plan = prepared.contextPlan.plan;
+    expect(plan.totals.solver.required_initial_bytes).toBe(Buffer.byteLength(prepared.task.prompt) + readFileSync(join(prepared.hostSessionDir, "context-pack.yaml")).length);
+    expect(plan.totals.solver.required_initial_bytes).toBeLessThanOrEqual(config.tasks.contextPlan.maxInitialBytes);
+    expect(plan.sources.filter((s) => s.read_requirement === "required" && s.consumer === "solver").map((s) => s.id)).toEqual(["prompt", "context_pack"]);
+    expect(plan.sources.find((s) => s.id === "context_pack")?.selections.find((s) => s.section === "attempts")?.policy).toBe("structured_attempt_memory_balanced_v1");
+    expect(recoverContextRecord(join(prepared.hostSessionDir, "context-store"), projectId, prepared.contextPack.snapshot_id!, "attempts", "checkpoint-run")).toEqual(snapshot.attempts[0]);
+    expect(prepared.task).not.toHaveProperty("checkpoint");
+  });
+});

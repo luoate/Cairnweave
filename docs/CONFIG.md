@@ -151,6 +151,72 @@ Docker 模式需要本机 Docker 和镜像；创建时不启动容器，派发�
 | `graph_slice.max_facts` / `graph_slice.max_intents` | 80 / 60 | 软上限；`max_facts ≥ 2` |
 | `evidence.min_bytes` | 1 | 0 表示接受空证据 |
 | `tool_result_spill.enabled` / `.max_inline_chars` | true / 32000 | M43：工具结果序列化后超过 `max_inline_chars` 字符就落盘 `<workspace>/.tool-results/<毫秒>-<工具>-<调用id>.md`，上下文里换成「绝对路径 + 工作区相对路径 + 600 字符预览 + 先 grep 再分片读」的指针。`max_inline_chars` 必须为正整数（1 也合法，等于全部外置）；`enabled: false` 回到全量内联。solver 与 subagent 共用同一份开关和同一个工作区，指针因此总是绝对路径在前。溢出文件不进 `project_artifacts` 索引，但 `/flag` 的兜底扫描把它算作取证来源 |
+| `context_plan.mode` | audit | M47：`off` / `audit`；生成任务级 `context-plan.json`。审计不改变输入、不阻断派发；没有 `enforce` 模式 |
+| `context_plan.max_initial_bytes` | 131072 | 正整数；Solver 提示词 + 必读文件的 UTF-8 字节审计阈值，严格大于才告警；不是项目 token 配额或模型窗口 |
+| `context_pack.mode` | off | M48：`off` / `shadow` / `apply`；仅新 default reason/explore。shadow 不改变实际输入，apply 成功时改用 ContextPack，否则回退 legacy |
+| `checkpoint.enabled` | false | M49：同任务文件检查点与 SQLite 结构化尝试记忆；不新增模型调用；复用需要 M48 成功 apply |
+| `checkpoint.interval_seconds` | 5 | 整数 1–60；worker 重发和控制面接收间隔，不保证最后一个动作已保存 |
+| `context_pack.shard_max_bytes` | 8192 | 整数 1024–65536；恢复记录分片、索引页、目录及描述符的最终字节上限，不是会话总上限 |
+
+`context_plan` 的两个键可经现有 `/settings/runtime` 覆盖与重置，下一次任务准备生效（本阶段
+不加弹窗控件）。文件在 `<workspace>/.cairn/sessions/<task-id>/context-plan.json`，不进入
+WorkerTask、prompt 或环境；与 session 一起保留/回收。`off` 不做诊断读写或记录相关日志。
+读写审计失败只记固定 `unavailable` 并继续派发；普通 task/graph 写失败仍按原语义失败。
+
+账单分别显示 Solver 与 Observer 的 `prompt_bytes` / `required_file_bytes` /
+`required_initial_bytes` / `optional_known_bytes`。附件正文按账本声明大小列为可选（清单文字
+已计入提示词），Observer 看板、恢复会话历史未知则保留 `null`；恢复 conclude 不能只统计新
+提示词后宣称全会话很小。默认 token 估算为 `null`，不猜 tokenizer，也不调用计数 API。
+选择器元数据缺失时 `status: incomplete`，不伪造截断数量；审计范围不含 SDK system/tools、
+未来工具结果或真实窗口占用。完整字段与恢复说明见 [DESIGN §16](DESIGN.md#16-m47contextplan-v1已实现)。
+
+### ContextPack（M48）
+
+`context_pack` 两个键支持既有运行配置覆盖/重放/重置，下一任务生效，没有新增 UI 控件或 API 路由。
+shadow/apply 要求 `runtime.strategy_context: on` 且 `tasks.context_plan.mode: audit`；不符合时配置拒绝，
+不会偷偷重开功能。关闭审计前需在同一 override 中关闭 pack；既有运行配置 API 是**替换整份 override**，
+不是累积 patch。
+
+apply 共享 `max_initial_bytes`，限制最终 task.prompt + 首次必读 ContextPack 的 UTF-8 字节。
+核心状态、目标条件/审核/资源预算与 explore 直接依赖不能裁剪；核心超限、无净收益或快照写失败时
+回退原始输入并记录固定原因，任务仍可派发。成功 apply 必须在预算内且比 legacy 更小；不保证回退任务
+也在阈值内。不把该阈值当作 SDK 窗口或费用限制，solver 的 scope/evidence 前缀和后续工具读取仍未计入。
+
+成功 apply 的 ContextPlan 为 v2，必读源是 prompt/context_pack，旧 graph/investigation_state 与恢复目录
+是 optional；未 apply 的任务保持 v1。shadow 的候选指标另在 `context-candidate.json`，不能冒充实际账单。
+pack/store 在 session 中保留回收，不进入 WorkerTask 或证据账本；恢复资料是同次事务中的完整授权投影，
+原始日志/凭据/附件和证据正文不采集，旧 500 字符 detail 边界仍保留为 `control_plane_only`。
+bootstrap、conclude/已有会话及非 default 模板保持 legacy；`graph_slice` 仍控制兼容图/回退路径，不决定恢复库内容。
+Observer 输入不变。完整选择/分片/失败规则见 [DESIGN §17](DESIGN.md#17-m48contextpack-v1已实现)。
+
+### TaskCheckpoint（M49）
+
+```yaml
+tasks:
+  checkpoint:
+    enabled: true
+    interval_seconds: 5
+  # 若要自动把已结束尝试记忆交给后续新 default reason/explore：
+  context_pack: {mode: apply, shard_max_bytes: 8192}
+  context_plan: {mode: audit, max_initial_bytes: 131072}
+runtime:
+  strategy_context: on
+```
+
+`checkpoint` 可独立开启用于采集，不强制开启 pack。文件位于本任务 session 的 `checkpoint.json`；
+原子发布、周期接收、退出前后尽力补接，最后有效版本落 `task_checkpoints`，删除 session 不删除记忆。
+模型通过 `save_task_checkpoint` 完整替换累计进度；最多 65536 UTF-8 字节、32 个唯一 attempt，
+非法新版本不覆盖旧版本。工具与已有 Host Bridge/调用预算兼容，只有主 solver 注册，不给 subagent 并发写权限。
+
+复用只在成功 apply 的 M48 输入中发生，`attempts.memory` 是 worker 未验证声明，不是 Fact、证据验证
+或执行授权；整体纳入原字节预算和恢复分片。pack off/fallback、bootstrap/conclude、自定义模板不会偷偷
+多读一份完整历史文件。Scope/意图/事实替代链/证据存在性重新标注，使用本次 core 的当前预算，
+旧 next_steps 不会自动执行。运行中检查点持久化不等于实时交给其他并行任务。
+
+两个键支持现有运行配置覆盖、重放和重置，下一任务生效；已运行任务沿用派发时的采集开关和间隔。
+检查点文件权限为 `0600`；Linux 容器/宿主 UID 不同的环境需在部署层保证控制面可读，不可读时记忆接收
+不可用但原任务照常结束。本次未放宽文件权限、未运行真实 Docker 跨 UID gate。
+没有新增 UI 控件、HTTP 写入接口、WorkerTask 字段或 SDK 恢复策略。完整边界见 DESIGN §18 与 CONTRACT §9。
 
 ### Worker `worker` / `worker_selection`
 
@@ -234,6 +300,9 @@ dispatch.yaml，不在运行期可编辑视图里。
 | `verification.evidence_completion` | 重启；仅有 `evidence` 条件的完成声明在 oracle 通过后走人工确认或自动完成 |
 | `scope.ssrf_markers` | 下一次任务准备的 worker 环境（`CAIRN_SSRF_POLICY` 折进 `CAIRN_SCOPE_POLICY`）；已启动的 worker 沿用注入时的模式 |
 | `tasks.tool_result_spill` | 下一次任务派发的 worker 环境（`CAIRN_TOOL_SPILL_ENABLED` / `CAIRN_TOOL_SPILL_MAX_CHARS`）；已启动的 worker 与其 subagent 沿用注入时的值。关闭只影响新会话是否注册溢出扩展，不删已落盘的 `.tool-results/` |
+| `tasks.context_plan` | 下一次任务准备的控制面审计；不改变 worker 输入，关闭不删除既有清单，超限也不阻断 |
+| `tasks.checkpoint` | 下一任务的检查点采集与尝试记忆复用开关/间隔；已运行任务保持派发设置 |
+| `tasks.context_pack` | 下一次新 default reason/explore 的选择模式与恢复分片；默认 off，成功 apply 改变首次输入，失败回退；不改已有会话 |
 | `worker.*` | 下一次 `prepareTask`；运行中的任务沿用已经写好的 `task.json` |
 
 正在运行的任务不会被改写或中断；新配置只影响之后的派发。

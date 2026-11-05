@@ -1,7 +1,7 @@
 # Worker 契约
 
 控制面与 worker 之间只通过**文件**通信：`task.json` → `result.json` + `usage.json` +
-`audit.jsonl`。worker 不连接 SQLite，也不通过 RPC 回传结果。本文件是这些文件的字段、
+`audit.jsonl`（M49 可选另有 `checkpoint.json`）。worker 不连接 SQLite，也不通过 RPC 回传结果。本文件是这些文件的字段、
 校验与边界的权威说明；任务生命周期与目录布局见
 [`ARCHITECTURE.md`](./ARCHITECTURE.md) 第 3–4 节。
 
@@ -150,3 +150,61 @@ agent 配置目录（`~/.cairnweave/config`，M26 前为 `~/.tch-agent/config`�
 model-prefs 条目名。Host Bridge 是工具调用层的闸门，不是代码沙箱；对抗不可信代码时以
 容器网络/文件系统命名空间为准。控制面 API 与 UI 没有身份认证，默认只绑定回环地址，
 远程部署必须加网络层访问控制。
+
+## 9. checkpoint.json（M49，可选、未验证进度）
+
+任务协议仍是 `protocol:1`，WorkerTask 不加字段。控制面由固定环境
+`CAIRN_TASK_CHECKPOINT=1`、`CAIRN_CHECKPOINT_INTERVAL_SECONDS=1..60` 启用本任务采集；默认关闭。
+本文件是与 result/usage 分开的**数据通道**，不能改变 accepted、outcome 或完成判定。
+
+```json
+{
+  "version": 1,
+  "project_id": "proj_example",
+  "task_id": "explore-example",
+  "intent_id": "i001",
+  "sequence": 3,
+  "stage": "working",
+  "progress": "请求尚未执行",
+  "attempts": [{
+    "id": "a1",
+    "action": "测试候选入口",
+    "observation": "依赖不可用，工具没有启动",
+    "interpretation": "尚不能检验或否定该假设",
+    "result": "environment_failure",
+    "fact_refs": ["origin"],
+    "evidence_refs": ["artifacts/task-example/test.log"]
+  }],
+  "unresolved": ["依赖缺失"],
+  "next_steps": ["仅供后续重新判断，不自动执行"]
+}
+```
+
+所有字段必填，intent_id 可以为 null；version 固定 1，sequence 为正 safe integer；身份必须与控制面
+run/project/task/focus 完全一致。stage 仅 `started/working/soft_deadline/solver_returned/solver_failed`，
+也是 worker 自报，不是控制面终止原因。
+
+每条 attempt 的 result 仅 `observed/negative_observation/tool_failure/environment_failure/timeout/cancelled/
+scope_denied/not_executed/inconclusive`；非执行/工具失败/超时不能被解释成假设反证。
+字符上限：project_id/intent_id 128、task_id 192、progress 4096、attempt id 96（非空且本快照唯一）、
+action 2048（非空）、observation 4096、interpretation 2048；最多 32 个 attempts、每条 32 个非空 fact refs
+（每个最多 128 字符）、16 个 evidence refs（每个最多 512 字符）、unresolved/next_steps 各 16 条
+（每条 1024 字符）。evidence refs 必须是工作区相对文件路径，不能含空路径段、点/父目录、控制字符、
+冒号或反斜线。最终文件上限 65536 UTF-8 字节；不是字符数上限。未知字段拒绝，不能夹带 complete/授权字段。
+
+原子发布仅替换同 session 的固定 `checkpoint.json`，临时文件不接收。文件保持 `0600`；Linux 容器/宿主
+不同 UID 部署需确保控制面读取权限，本阶段不自动放宽权限。控制面进行有界普通文件读取与严格
+schema 校验，只返回固定状态，不输出原始解析异常；与旧 task/result 的字段错误列表口径不同。
+同 sequence 同语义 payload 为 duplicate，同 sequence 不同内容为 conflict，更低为 stale；三者都不覆盖
+最后有效版本。最终化后拒绝新版本，坏/缺/半写文件不清空已有记录。每个 run 一条最新 SQLite sidecar。
+
+主 solver 的 `save_task_checkpoint({json})` 只接受 progress/attempts/unresolved/next_steps，身份、sequence
+和 stage 由发布器填写；每次完整替换，模型负责保留相关累计记录。工具走原 gate 与工具预算，不注册给
+subagent，不执行正文中的任何建议。CLI 启动、周期重发、软截止和结束更新尽力而为；硬杀不保证最后一个
+动作已保存。模型未调用保存工具时可能只有空进度与生命周期标记，不能伪称已保存完整执行语义。
+
+复用时 `attempts.memory.trust=worker_claim_not_verified`，control 字段独立取自 runs/sidecar；reuse 标注
+当前意图状态、Scope 变化、项目状态、事实替代/缺失与证据 available/missing/unavailable，并明确当前预算
+应取 pack core、automatic_execution 为 false。available 仅表示当前文件存在且在项目内，不代表验证通过。
+正文按 M48 预算整体选择或省略，完整授权记录在 attempts 恢复分区；原 AgentContext/graph 形状不变。
+不调用模型做摘要，不自动改图/完成状态，不把 SDK 历史持久化当成检查点接收成功。

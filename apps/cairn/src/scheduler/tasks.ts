@@ -1,3 +1,4 @@
+import { CHECKPOINT_INSTRUCTIONS } from "../checkpoint/prompt";
 /**
  * Turns a project snapshot into one worker task: renders the Cairn prompt, writes the
  * graph snapshot and task.json into the project's session directory, and returns the
@@ -12,18 +13,25 @@ import {
   type WorkerTask,
 } from "@cairn/contracts";
 import type {
+  AgentContextAudit,
+  ContextSelection,
+  GraphExportAudit,
   Intent,
   IntentBudget,
   IntentMeta,
   ProjectAttachment,
   ProjectDetail,
   ProjectScope,
+  TaskContextSnapshot,
 } from "@cairn/graph";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { DispatchConfig, ToolResultSpillConfig } from "../config";
+import { auditTaskContext, type ContextPlanOutcome } from "./context-plan";
+import { prepareContextPack } from "./prepare-context-pack";
+import type { ContextPackReport } from "./context-pack";
 import { mapScopeTargetForWorker } from "../runtime/paths";
 import {
   formatFactIds,
@@ -87,6 +95,9 @@ export interface PreparedTask {
   /** Reason needs to know whether the graph had open intents when it was dispatched. */
   openIntentsEmpty: boolean;
   observer: PreparedObserver;
+  /** M47: control-plane diagnostics, never serialized into WorkerTask. */
+  contextPlan: ContextPlanOutcome;
+  contextPack: ContextPackReport;
 }
 
 export interface PrepareTaskInput {
@@ -114,6 +125,11 @@ export interface PrepareTaskInput {
    * snapshot, so both files describe one state.
    */
   agentContextYaml?: string;
+  /** Emitted by the selectors in the same snapshot transaction (not recomputed here). */
+  graphAudit?: GraphExportAudit;
+  agentContextAudit?: AgentContextAudit;
+  /** M48: uncapped authorized projection from the same dispatch transaction. */
+  contextSnapshot?: TaskContextSnapshot;
   /** Profile selected for this dispatch; absent in prompt-mode deployments. */
   workerProfile?: PreparedWorkerProfile;
   /** Test hook; otherwise resolved from config.local/container.workspace_root or cwd. */
@@ -204,7 +220,9 @@ export function prepareTask(input: PrepareTaskInput): PreparedTask {
     writeFileSync(hostAgentContextPath, input.agentContextYaml, "utf8");
   }
 
+  let graphRequired = false;
   const basePrompt = renderTaskPrompt(config, project, kind, input.intent, {
+    onGraphReference: () => { graphRequired = true; },
     graphSnapshotPath: workerGraphSnapshotPath,
     openIntents: openIntents.map((intent) => {
       const meta = intentMeta.get(intent.id);
@@ -225,15 +243,14 @@ export function prepareTask(input: PrepareTaskInput): PreparedTask {
     input.agentContextYaml === undefined
       ? basePrompt
       : withAgentContextPolicy(basePrompt, workerAgentContextPath);
-  const attachmentPrompt =
-    input.attachments === undefined || input.attachments.length === 0
-      ? contextPrompt
-      : withAttachmentPolicy(contextPrompt, input.attachments);
-  const prompt = withCompletionPolicy(
-    artifactDir === undefined
-      ? attachmentPrompt
-      : withArtifactPolicy(attachmentPrompt, artifactDir),
-  );
+  const decorate = (context: string): string => {
+    const attachmentPrompt = input.attachments === undefined || input.attachments.length === 0
+      ? context : withAttachmentPolicy(context, input.attachments);
+    const completed = withCompletionPolicy(artifactDir === undefined
+      ? attachmentPrompt : withArtifactPolicy(attachmentPrompt, artifactDir));
+    return config.tasks.checkpoint.enabled ? completed + CHECKPOINT_INSTRUCTIONS : completed;
+  };
+  const prompt = decorate(contextPrompt);
 
   const mapScopePath = (hostPath: string): string | null => {
     try {
@@ -256,7 +273,7 @@ export function prepareTask(input: PrepareTaskInput): PreparedTask {
           notes: input.scope.notes,
         };
 
-  const task: WorkerTask = {
+  let task: WorkerTask = {
     protocol: TASK_PROTOCOL_VERSION,
     taskId,
     kind,
@@ -284,6 +301,32 @@ export function prepareTask(input: PrepareTaskInput): PreparedTask {
         }),
   };
 
+  const legacyInitialBytes = Buffer.byteLength(task.prompt) +
+    (graphRequired ? Buffer.byteLength(input.exportYaml.trim()) : 0) +
+    (input.agentContextYaml === undefined ? 0 : Buffer.byteLength(input.agentContextYaml));
+  const pack = prepareContextPack({ config, task, hostSessionDir, legacyInitialBytes,
+    ...(input.contextSnapshot === undefined ? {} : { snapshot: input.contextSnapshot }),
+    renderCompactPrompt: () => {
+      const name = kind === "reason" ? "reason_context.md" : "explore_context.md";
+      const replacements: Record<string, string> = {
+        context_pack_path: mapPath(join(hostSessionDir, "context-pack.yaml")),
+        intent_id: input.intent?.id ?? "", max_intents: String(config.tasks.reason.maxIntents),
+      };
+      // One pass: a legal workspace name containing a later placeholder must not be
+      // rewritten after insertion. Legacy templates retain their historical renderer.
+      const compactBase = loadPrompt("default", name).replace(
+        /\{(context_pack_path|intent_id|max_intents)\}/g, (_token, key: string) => replacements[key]!,
+      );
+      return decorate(kind === "reason" ? withReasonOutputPolicy(compactBase, undefined,
+        config.tasks.reason.maxIntents, config.strategist.reasonAbandon === "on") : compactBase);
+    },
+  });
+  if (pack.applied !== undefined) {
+    task = { ...task, prompt: pack.applied.prompt };
+    graphRequired = false;
+  }
+
+  const observerSelections: ContextSelection[] = [];
   const observer = prepareObserver(
     config,
     project,
@@ -296,9 +339,26 @@ export function prepareTask(input: PrepareTaskInput): PreparedTask {
       hostSessionDir,
     },
     intentMeta,
+    observerSelections,
   );
 
   writeFileSync(hostTaskPath, `${JSON.stringify(task, null, 2)}\n`, "utf8");
+  const contextPlan = auditTaskContext({
+    config: config.tasks.contextPlan,
+    hostSessionDir,
+    task,
+    graphRequired,
+    ...(input.graphAudit === undefined ? {} : { graphAudit: input.graphAudit }),
+    agentContextEnabled: input.agentContextYaml !== undefined,
+    ...(pack.applied === undefined ? {} : { pack: {
+      report: pack.report, storeBytes: pack.applied.store.bytes,
+    } }),
+    ...(input.agentContextAudit === undefined ? {} : { agentContextAudit: input.agentContextAudit }),
+    strategyContext: config.runtime.strategyContext,
+    observerEnabled: observer.enabled,
+    observerSelections,
+    ...(input.attachments === undefined ? {} : { attachments: input.attachments }),
+  });
   return {
     task,
     taskPath: hostTaskPath,
@@ -312,6 +372,8 @@ export function prepareTask(input: PrepareTaskInput): PreparedTask {
     hostTaskPath,
     openIntentsEmpty: openIntents.length === 0,
     observer,
+    contextPlan,
+    contextPack: pack.report,
   };
 }
 
@@ -348,6 +410,7 @@ function prepareObserver(
   scope: ScopePolicy,
   paths: ObserverPaths,
   intentMeta: ReadonlyMap<string, IntentMeta>,
+  audit: ContextSelection[],
 ): PreparedObserver {
   const enabled =
     config.observer.enabled && config.observer.kernelTasks.includes(kind);
@@ -440,6 +503,17 @@ function prepareObserver(
         created_at: hint.created_at,
       })),
   };
+  audit.push(
+    { section: "facts", scope: "project", candidates: project.facts.length,
+      selected: context.facts.length, limits: { maxFacts: OBSERVER_FACT_LIMIT },
+      policy: "origin_and_goal_then_recent_facts" },
+    { section: "intents", scope: "project", candidates: orderedOpenIntents.length,
+      selected: context.open_intents.length, limits: { maxIntents: OBSERVER_OPEN_INTENT_LIMIT },
+      policy: "focus_first_then_open_intents" },
+    { section: "hints", scope: "project", candidates: project.hints.length,
+      selected: context.hints.length, limits: { maxHints: OBSERVER_HINT_LIMIT },
+      policy: "recent_hints" },
+  );
   writeFileSync(hostContextPath, `${JSON.stringify(context, null, 2)}\n`, "utf8");
   return observer;
 }
@@ -536,6 +610,7 @@ function softDeadline(config: DispatchConfig, hard: number): number | undefined 
 
 interface PromptContext {
   graphSnapshotPath: string;
+  onGraphReference?: () => void;
   openIntents: Record<string, unknown>[];
   projectBudget?: ProjectBudgetSnapshot;
 }
@@ -653,13 +728,20 @@ function renderTaskPrompt(
   const group = config.runtime.promptGroup;
   const location = config.runtime.execution === "local" ? "sandbox" : "container";
   const graphYaml = graphSnapshotReference(context.graphSnapshotPath, location);
+  const render = (name: string, replacements: Record<string, string>): string => {
+    const template = loadPrompt(group, name);
+    if (template.includes("{graph_yaml}") && replacements["graph_yaml"] !== undefined) {
+      context.onGraphReference?.();
+    }
+    return renderPrompt(template, replacements);
+  };
 
   switch (kind) {
     case "reason": {
       const factIds = project.facts
         .map((fact) => fact.id)
         .filter((id) => id !== "goal");
-      const prompt = renderPrompt(loadPrompt(group, "reason.md"), {
+      const prompt = render("reason.md", {
         graph_yaml: graphYaml,
         fact_ids: formatFactIds(factIds),
         open_intents: formatOpenIntents(context.openIntents),
@@ -676,7 +758,7 @@ function renderTaskPrompt(
       if (intent === undefined) {
         throw new Error("explore task requires an intent");
       }
-      return renderPrompt(loadPrompt(group, "explore.md"), {
+      return render("explore.md", {
         graph_yaml: graphYaml,
         intent_id: intent.id,
         intent_description: intent.description,
@@ -684,7 +766,7 @@ function renderTaskPrompt(
     }
     case "bootstrap": {
       const { origin, goal } = bootstrapContext(project);
-      return renderPrompt(loadPrompt(group, "bootstrap.md"), {
+      return render("bootstrap.md", {
         origin,
         goal,
         hints: formatHints(
@@ -702,7 +784,7 @@ function renderTaskPrompt(
       // intent, a bootstrap conclude summarizes Origin/Goal/Hints without a graph.
       if (concludeOf === "bootstrap") {
         const { origin, goal } = bootstrapContext(project);
-        return renderPrompt(loadPrompt(group, "bootstrap_conclude.md"), {
+        return render("bootstrap_conclude.md", {
           origin,
           goal,
           hints: formatHints(
@@ -718,7 +800,7 @@ function renderTaskPrompt(
       if (intent === undefined) {
         throw new Error("conclude task requires an intent");
       }
-      return renderPrompt(loadPrompt(group, "explore_conclude.md"), {
+      return render("explore_conclude.md", {
         graph_yaml: graphYaml,
         intent_id: intent.id,
         intent_description: intent.description,

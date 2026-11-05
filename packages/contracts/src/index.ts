@@ -44,3 +44,7 @@ export {
   taskUsageErrors,
   type TaskUsage,
 } from "./usage";
+
+export { TASK_CHECKPOINT_FILE, MAX_CHECKPOINT_BYTES, ATTEMPT_RESULTS, safeCheckpointRef,
+  isCheckpointProgress, isTaskCheckpoint, parseTaskCheckpoint,
+  type AttemptResult, type CheckpointAttempt, type CheckpointProgress, type TaskCheckpoint } from "./checkpoint";

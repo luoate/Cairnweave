@@ -957,6 +957,291 @@ H1 是安全门，H2 是完成契约的正确形态，H3 是测量与体验收�
   `testdata/spill-env-worker.ts` 断言配置→worker 环境这一跳；`api.flag.test.ts` 4 例覆盖
   溢出兜底（含共享预算与 `/flag` 端到端）。
 
+## 16. M47：ContextPlan v1（已实现）
+
+### 16.1 目标与边界
+
+每次任务准备都产生可比较的输入账单：要求 Solver 读哪些内容、序列化后有多大、原有选择器
+省略了多少、哪些信息有当前快照可恢复。**先审计，不压缩**：M47 不改事实/意图排序、不裁剪图、
+不修改 SDK compaction、不引入摘要模型或向量库、不改变 Observer 与完成门禁。
+
+权威状态仍在图与 sidecar；`context-plan.json` 是派生诊断文件，不进 DB、不进 WorkerTask、
+不加环境变量、不要求模型读取、不改任务提示词或模板 golden。
+
+### 16.2 生成位置与一致性
+
+`prepareTask` 写完 `graph.yaml`、可选 `agent-context.yaml`、可选 `observer-context.json` 和
+`task.json` 后，在同一 session 目录写 `context-plan.json`。审计读取这些**最终文件字节**，
+因此图的 `.trim()`、JSON/YAML 换行和 UTF-8 编码都纳入计量；不重新查询数据库。
+
+图导出器的 `onAudit` 与 AgentContext 构建器的 `onAudit` 在原有选择代码内生成元数据，
+scheduler 在原先的准备事务中接收并传给审计层。Observer 的选择统计也从实际生成的快照取数。
+回调不进入 YAML，未启用审计时 scheduler 不接收它们。直接调用 `prepareTask` 却没有提供
+选择元数据时，仍记录准确的文件大小，但 `status: incomplete`、coverage unknown，并写固定
+warning，绝不根据项目总数或 YAML 重新猜测另一套选择结果。
+
+### 16.3 计量口径
+
+| 指标 | 定义 |
+| --- | --- |
+| `prompt_bytes` | 最终 `task.prompt` 的 UTF-8 字节数，不是整个 task.json 文件大小 |
+| `required_file_bytes` | 被本次提示明确要求读取的文件字节数 |
+| `required_initial_bytes` | 前两者之和；是输入计划，不证明模型实际读过，也不是 SDK 窗口占用 |
+| `optional_known_bytes` | 可选快照的实际字节与附件账本声明的正文大小之和；各 source 标明 measurement |
+| `unknown_sources` | 已恢复历史、Observer 看板等不能准确计量的输入；未知不记作 0 |
+
+`totals.solver` 和 `totals.observer` 分开。Observer 这里只统计准备出的项目快照，不含复盘
+system prompt、工具定义、未来活动窗口、history 查询与看板内容；Solver 也不含 SDK system
+prompt、工具 schema、后续工具输出和整体会话占用。上述排除项在 `unmeasured` 明示。
+
+图是否必读由**实际渲染的模板是否引用 `{graph_yaml}`**决定；默认 reason/explore/
+explore-conclude 为必读，bootstrap/bootstrap-conclude 为可选。`mock` 不引用图时也不能
+把落在磁盘上的图误算成必读。启用的 AgentContext 始终由追加政策段要求读取。
+
+相同内容通过不同必读来源交付时分别计数，不按哈希做“物理去重”：模型可能重复读取这些信息。
+附件正文不读盘，只记账本声明大小（`measurement: declared_bytes`），文件名清单已经包含在
+prompt 的字节中。所有源保存 SHA-256（仅有真实字节者）、固定的任务相对文件名与计量方式，
+不复制正文、用户标题、凭据、宿主机绝对路径或异常原文。
+
+默认 `estimated_tokens` / `estimator` 都是 `null`，不使用字符除以四。纯构建器支持显式的
+本地 token estimator 适配器：必须匹配 `task.model` 条目名，输出非负安全整数，并标注
+adapter ID；不匹配、抛错或非法结果回到 unknown。按来源求和只是估算，不是 SDK 的正式请求
+计数。生产派发不自动猜 tokenizer、不调用计数 API。
+
+### 16.4 选择、截断与恢复
+
+每条 selection 保存 `section`、候选范围 `scope`（project/focus/since_last_reason）、
+`candidates`、`selected`、`omitted`、实际使用的 `limits` 与 `policy`。reason 意图额外分列
+open/abandoned/concluded 在**所有上限应用后**的数量，说明历史是否被开放意图挤掉；这些是
+父项的子分组，不能与父项再相加。
+
+AgentContext 的详情字段另记 `max_chars`、`examined_fields`、`clipped_fields`，沿用旧的
+单行化与 JS 字符长度规则，不改截断结果；Fact/Intent 的完整 description 仍不新增限长。
+图切片分别记录实际覆盖与旧 YAML 的 `slice.truncated`：即使一个不相关历史分支被排除、旧
+flag 仍为 false，project coverage 也应为 partial；必选项超过 soft caps 仍然保留，另记
+`mandatory_over_cap`，不借审计改变既有切片语义。
+
+恢复引用明确区分：
+
+- `snapshot_file`：当前 session 确有完整来源。完整 graph 可恢复被省略 Fact/Intent 的
+  description/边，但只标 `includes: graph_content`，**不宣称能恢复 sidecar 状态与证据元数据**。
+- `control_plane_only`：选择时这些数据在控制面，但当前没有完整 worker 读取入口。例如
+  run 历史、详情字段原文、delta 元数据、部分图中省略的分支；不能把“还在 DB”当作 worker
+  已能恢复。
+- `unavailable`：类型保留给无法确认来源的情况，不伪造路径。
+
+Observer 没有注册原始 graph/read 工具，所以不能沿用 Solver 的文件恢复引用。M47 不开放
+新路由，也不把诊断清单加进模型提示；实际按需恢复与提示词变更留给 M48。
+
+### 16.5 配置、故障与保留
+
+```yaml
+tasks:
+  context_plan:
+    mode: audit                 # off | audit，默认 audit；没有 enforce
+    max_initial_bytes: 131072    # 正整数；默认 128 KiB，UTF-8 字节审计阈值
+```
+
+阈值比较 `solver.required_initial_bytes > max_initial_bytes`，等于阈值仍 within_budget。
+超限记 `over_budget` 与固定 warning，`enforced: false`，原输入原样派发。阈值不是项目 token/
+费用配额，不替代 SDK context window，也不是 Host Bridge/完成门禁。
+
+两个键可走现有运行配置覆盖，下一次准备生效；没有新增设置弹窗控件。`off` 不做诊断读写、
+不生成文件、不记录 context-plan 日志，不重新打开关闭的 strategy_context。
+
+审计读/写/构建异常返回 `unavailable`，scheduler 只打印固定诊断，不输出原始异常（可能含
+路径或敏感内容），继续派发；正常任务文件写入失败仍是任务准备失败。审计日志只含固定来源
+ID、大小、阈值、warning 代码与任务标识。诊断文件随 session 保留与回收，不索引为证据。
+
+### 16.6 验收与后续
+
+- 单测覆盖中文/emoji UTF-8、最终文件哈希、重复交付、阈值边界、consumer 隔离、附件可选、
+  token unknown/适配器失败、恢复引用、缺失 metadata、off 零 I/O、故障不泄漏。
+- 实际 `prepareTask` 回归全部 phase、mock、local/container 路径映射、恢复历史 unknown、
+  strategy_context off、审计失败不阻断，以及 audit/off 的 WorkerTask 与图/投影逐字节一致。
+- 真 scheduler + 确定性 worker 验证 over-budget/off/写失败/strategy_context off，不调用模型，
+  工作器仍成功结束，项目仍 active；既有完成契约回归维持原语义。
+- `bun run eval:context` 跑八个准备场景：小项目、大量事实、大量开放意图、超长描述、大量 hints、
+  AgentContext 截断、图切片、conclude 恢复。逐场景报告输入账单、截断/恢复缺口、审计告警和
+  audit/off 兼容性；不运行 worker，不声称测量了压缩质量、真实费用或完成率。
+- 2026-11-04 验收：`bun run check` 全量通过（1201 tests / 103 files / 5255 expects），
+  `bun run ui:css:check` 无 diff，CLI 版本为 `0.70.0-m47`；八类上下文评估兼容性全部通过。
+  既有 `bun run eval` 仍为 legacy 错误完成 2/5、hardened 0/5；该评估的 token/费用为
+  fake worker 合成使用量，不是此次上下文审计的真实模型花费。
+- M48 已在这些基线上实现预算驱动选择与按需恢复（§17）；M49 已继续实现结构化尝试记忆与 TaskCheckpoint（§18）。
+
+## 17. M48：ContextPack v1（已实现）
+
+**版本：`0.71.0-m48`。** M47 负责计量，M48 才开始确定性地选择首次输入，并给省略资料留下任务内的恢复入口。
+不是模型生成的项目摘要，不引入模型调用、向量库或第二份状态真相。
+
+### 17.1 范围与权威
+
+- 首版接入内置 default 模板的新 reason/explore；bootstrap、conclude/恢复会话及 mock/自定义模板保持 legacy 路径。默认 `off`，不迁移旧任务。
+- 图与 sidecar 仍是权威。scheduler 在原准备事务中通过 `buildTaskContextSnapshot` 捕获完整的**授权投影**，再执行选择；不是从已截断的 AgentContext 或 graph slice 反向补资料。
+- 完整指记录条数不受旧 caps 限制，不是任意 DB 原文导出。复用 AgentContext 的 detail 单行/500 字符可见性；原始 run 日志、session、审计、凭据、附件及证据正文不采集。flag/completion review 仅交付状态计数，不导出原始候选值、说明和 note。
+- 事实保留状态、替代关系、证据状态/run/安全的工作区相对引用、因果来源与时间；意图保留 from/to、归属、dedupe_key、状态、预算与尝试。`metadata_created_at` 是现有 timestamp delta 的精确依据，`created_at` 可回退生产意图的结束时间用于排序；两者不可混淆。
+- Scope/Host Bridge、预算派发门禁、证据和完成校验保持原实现。pack 是不可信数据，不能扩大授权、把 pending 当通过、把 timeout 当反证，或把预算耗尽当完成。目标条件仍按 AND 解释。
+
+### 17.2 首次输入与必保留状态
+
+任务目录新增：
+
+```text
+context-pack.yaml             # 成功 apply 时首次必读
+context-store/catalog.json    # 分类计数、分页规则、快照身份
+context-store/{facts,intents,attempts,hints}/...
+context-selection.json        # 控制面选择/回退记录，含选入 ID；不要求模型读
+context-candidate.json        # 仅 shadow 的候选指标，不冒充实际交付账单
+context-plan.json             # 实际交付账单
+```
+
+apply 使用独立的 `reason_context.md` / `explore_context.md`，保留输出、产物、附件及完成契约；紧凑模板采用单遍变量替换，工作区路径中形如 `{intent_id}` 的合法字面量不会被二次改写；移除重复的全量 fact ID/开放意图正文和旧 `# 调查状态` 必读段。
+`graph.yaml` / `agent-context.yaml` 按原路径与原字节继续生成，作为可选兼容资料，**不再要求首次完整读取**。WorkerTask/环境变量/数据库/HTTP 协议不新增字段或路由。
+
+核心输入必须完整保留：项目目标与起点、任务/焦点身份、完整目标条件（包括 flag_count.min）、校验进度、审核计数、Scope、项目资源用量与限制、任务 deadline/tool ceiling、delta 概览、快照/恢复入口；explore 额外保留焦点意图全文、全部直接来源事实及其完整 superseded_by 链。核心自身超预算则回退，不能删除或前缀裁剪。
+
+### 17.3 选择与预算
+
+共享 `tasks.context_plan.max_initial_bytes`，没有第二个总字节阈值。预算定义仍是**最终 task.prompt 的 UTF-8 字节 + 所有首次必读任务文件**；每次加入内容都重新序列化后计算，不是字符数、条数或字符/token 比例。
+
+- reason：当前事实优先，按最近变化、证据状态和稳定 ID 排序；开放方向按优先级/时间，历史方向按结束/放弃时间；非成功尝试优先并保留原 outcome/detail。
+- explore：直接依赖/替代链必保留，额外选择两层有界来源邻域、焦点尝试及共享来源的相关方向。
+- 各组轮流选择，避免开放方向挤掉失败、退役历史与 hints。二级条数上限：reason 80 条可选事实/16 条开放方向/4 条 abandoned/4 条 concluded/12 次尝试/8 条 hints；explore 24/8/4/4/8/4。种子、焦点与必须保留的替代链不因软条数上限被裁掉。
+- 不能放入预算的可选记录整体省略，绝不把省略正文写成完整结论；概览给全项目候选/选入数。查找能力代替无限增长的全局列表；提出新方向前要求检索相关开放/放弃/结束路线，但不把提示词要求当语义去重的强保证，原控制面去重不变。
+- 使用 `min(max_initial_bytes, legacy_initial_bytes - 1)` 限制候选。小项目若没有净收益则 `no_benefit` 回退；成功 apply 的账单一定在阈值内且小于 legacy。
+
+计量不覆盖 solver 附加的 scope/evidence 前缀、SDK system/tools、未来工具结果、已有历史或真实会话窗口；这些明确列为 unmeasured。首轮少读不等于整个会话或实际模型费用必然下降。
+
+### 17.4 恢复协议与一致性
+
+- `catalog.json` 只列分类、记录数、索引页数、定位模式和快照身份，不内联无限增长的 ID/正文列表。索引是有界 `index-N.jsonl`；每行包含 ID、固定定位、状态/dedupe_key 与短预览。预览仅定位，正文深处可搜索记录/分片，不把预览当完整数据。
+- 普通记录是完整 JSON；超长记录的主文件是带 `chunked / bytes / sha256 / parts / part_pattern` 的描述符。`part-0..N-1.txt` 是连续 JSON 字节片段，不是独立 JSON 记录；拼接后按摘要验证。以 Unicode 边界切片，不损坏中文/emoji，JSON 转义后的索引也受相同字节上限约束。
+- 默认每个恢复文件（含 catalog、索引和描述符）最多 8192 字节，配置范围 1024–65536；不限制整条可恢复正文的总大小，也不保证现有文件工具每次只读一片。
+- 记录文件名是 ID 的 SHA-256，而不是把 ID 拼成路径；写入只允许生成的相对路径。离线恢复/验证 helper 校验 project + snapshot、真实路径 containment（含 symlink/junction）及长记录摘要；没有暴露新的网络读取/写入接口。
+- store 在独立临时目录写完并逐文件验证后发布，已有目录不覆盖；pack 也必须写入并验证后才改变 task.prompt。源图切片不影响恢复目录完整性。
+- snapshot_id 是授权投影的内容摘要，**不是数据库 revision cursor、数字签名或实时状态保证**。文件视为只读输入约定，而不是宣称能阻止持有文件写工具的 worker 修改它们。目录与 session 一起保留/回收，不自动进入证据或 artifact 账本。
+- 旧 detail 截断仍为 `control_plane_only`；恢复目录只能还原授权投影，不能还原被安全边界排除的原文。Observer 没有获得 solver 的新文件读取能力，输入与计量完全独立。
+
+### 17.5 模式、账单与失败
+
+```yaml
+tasks:
+  context_plan:
+    mode: audit
+    max_initial_bytes: 131072
+  context_pack:
+    mode: off                 # off | shadow | apply；默认 off
+    shard_max_bytes: 8192
+```
+
+- off：不生成新增 pack/store/selection/candidate 文件，不记录 pack 日志，原 worker 输入不变。
+- shadow：构建、验证候选和恢复目录，但发送原 WorkerTask。实际 ContextPlan 仍是 v1，候选指标单独记录，不能把候选节省当作已生效。
+- apply：符合范围且安全时使用新输入，ContextPlan 升级 v2；新增 `context_pack` required、`context_store` optional，旧图与调查状态 optional，并记录实际选择和恢复来源。旧 v1 清单继续可读。ContextPlan 自身仍是审计器，`budget.enforced:false` 不表示选择器没有预算约束，也不表示调度被阻断。
+- shadow/apply 必须同时配置 strategy_context:on 和 context_plan.mode:audit；配置解析和热覆盖均拒绝不一致组合，不默默重开功能。通过既有运行配置覆盖下一任务生效，不加设置弹窗控件；该 API 的 apply 是替换整份 override，改变单个键时需保留其余 override。
+- 核心超预算、无净收益、快照缺失/不一致/写失败均恢复 legacy prompt，保留原 Scope、deadline、配额与完成语义。不适用的任务或模板也不替换。回退可产生超预算的 legacy 账单，不能宣称所有派发都被压到阈值内。
+- 普通 graph/task 写失败仍是准备失败；安全输入已发布后的 selection/plan 诊断写失败不反向影响任务。日志只有固定状态/原因与数字，不含正文、宿主路径或原始异常。
+
+### 17.6 验收与后续
+
+`bun run check` 最终通过：**1243 passed / 109 files / 5771 expects**（2026-11-05）；版本命令为 `cairn 0.71.0-m48`，CSS 无生成差异，M42 完成评估与 M47 八场景兼容性回归通过。
+
+新增纯选择/字节边界、长记录/索引/Unicode、全量授权投影恢复、跨项目/快照/路径边界、off/shadow/apply、container 路径、回退、热覆盖与实际 Scheduler + LocalRuntime + 确定性 worker 测试。worker 实际读取 pack、通过普通文件读取恢复省略事实；seed-only 完成声明仍被拒绝。
+
+`bun run eval:context-pack` 复用 M47 同一组八类图夹具，比较 legacy/shadow/apply 的实际文件与账单，逐条恢复授权记录并对照；输出每场景的初始必读字节、候选/实际状态、回退原因、恢复成功数、核心状态保留及 Observer/兼容快照不变性。大量事实/意图/hints 的固定夹具要求减少至少 30%；小项目不增大，无收益可回退，恢复 conclude 保持 unknown。
+
+2026-11-05 本机离线对照（同一环境，字节不是 token）：
+
+| 场景 | legacy 初始必读 B | 实际 B | 状态 / 授权记录恢复 |
+| --- | ---: | ---: | --- |
+| small | 10104 | 9917 | applied；10/10 |
+| many_facts | 97974 | 31589 | applied；525/525，减少 67.76% |
+| many_intents | 74147 | 15294 | applied；138/138，减少 79.37% |
+| long_description | 1268419 | 8712 | applied；5/5（正文按需恢复） |
+| many_hints | 227547 | 32384 | applied；90/90，减少 85.77% |
+| agent_context_truncated | 177432 | 56409 | applied；602/602 |
+| graph_slice | 6049 | 6049 | no_benefit 回退；未生成 store |
+| conclude_resume | 6004 | 6004 | not_applicable；历史仍 unknown |
+
+六个 applied 场景合计 1370/1370 条授权记录比对通过；其余两场景不宣称恢复率。shadow 实际 worker 输入、旧快照与 Observer 对照不变。
+
+本评估不调用 SDK/模型/网络，也不把 fake worker 用量当真实节省。真实模型完成率、语义重复率、全会话费用需另外授权评估；SDK 会话压缩、结构化尝试记忆、TaskCheckpoint 留给后续里程碑。
+
+## 18. M49：TaskCheckpoint v1 与结构化尝试记忆（已实现）
+
+版本 `0.72.0-m49`。解决「只有最终回答能交接，任务中断后观察丢失」的问题，不是 SDK 会话恢复或
+自动重试系统。默认关闭；不新增模型调用、依赖、HTTP 路由或 WorkerTask 字段。
+
+### 18.1 数据与权限
+
+- `packages/contracts/src/checkpoint.ts` 定义 v1：`project_id/task_id/intent_id/sequence/stage`、
+  `progress`、`attempts`、`unresolved`、`next_steps`。身份由 worker 发布器填充，控制面再对照真实 runs 行。
+- 每个 attempt 分开保存 `action / observation / interpretation / result / fact_refs / evidence_refs`。
+  result 区分 `observed / negative_observation / tool_failure / environment_failure / timeout / cancelled /
+  scope_denied / not_executed / inconclusive`；负观察不等于完整方向已被反证，工具失败/超时更不是反证。
+- 完整文件最多 65536 UTF-8 字节；最多 32 个唯一 attempt ID；progress/action/observation/interpretation
+  各有字符限制，未决/建议各最多 16 条。未知字段、非法版本/sequence、非法 UTF-8、越界引用一律拒绝。
+  evidence refs 仅为安全工作区相对路径；模型不得填写凭据。没有自动脱敏或「模型绝不会写入秘密」的保证。
+- 所有检查点正文都是 `worker_claim_not_verified`，包括 stage。控制面 `runs.outcome` 和单独保存的
+  `termination_reason` 才是执行结束状态。检查点不能写 Fact、Hint、意图生命周期、验证结果或项目完成状态。
+
+### 18.2 发布与接收
+
+`tasks.checkpoint: {enabled: false, interval_seconds: 5}`，间隔必须为 1–60 秒。开启后：
+
+1. worker 开始求解前发布 started；主 solver 获得固定本地工具 `save_task_checkpoint({json})`。
+   关键观察/失败/方向变化后显式保存累计快照，每次完整替换而不是追加；模型负责在上限内合并相关历史。
+2. 只有主 solver 注册该工具，subagent 不注册，避免多个累计写者互相覆盖。subagent 仍继承原 Host Bridge，
+   由主 solver 汇总其返回的观察。工具走原 gate 和工具调用预算，不提供网络、执行或任意路径写能力。
+3. 发布器写随机临时文件、fsync、关闭、原子 rename 到本任务 `checkpoint.json`；定时重新发布最近结构化
+   状态，不凭空创造观察。soft deadline 与 solver 返回/失败增加 worker stage；工具不可用不阻断原结果契约。
+4. 控制面定时读取，取消/硬截止/租约丢失前尽力接收，进程退出后与清理目录前再次接收。只读取固定文件名，
+   拒绝 session 路径重定向、符号链接/非普通文件；限制 stat 大小与实际读取上限，不扫描临时文件。
+5. 新 `task_checkpoints` sidecar 每个 run 仅保留最后有效版本：sequence 必须增加；同版本同语义内容去重
+   （对象键顺序/空白不影响身份），同版本不同内容为 conflict，旧版本为 stale。无效新文件不覆盖旧记录。
+6. 结束时持久化控制面终止原因：hard_deadline/cancelled/lease_lost/worker_exit/result_missing/
+   result_invalid/finished/control_plane_restart/supervision_failed/spawn_failed。原因不会被 worker 覆盖；
+   finalized run 不接受更高版本，历史重复仍可识别。`finished` 表示收到并处理了结果，不等于任务成功。
+7. 沿用启动对账的「没有活跃 peer」门禁；对 orphan 的固定任务目录尽力补接最后完整文件，再冻结 restart
+   原因。sidecar 接收/终结失败不改变任务结果，只记固定状态，不输出检查点正文或原始异常路径。
+
+不是每次工具调用都强制要求模型保存，也不保证硬杀前最后一个动作已被捕获；定时重复旧结构化内容不会
+补回未显式上报的语义。原子 rename/文件 fsync 不是跨文件系统、设备断电或恶意 worker 的不可变存储保证。
+未接受的数据与异常诊断没有可靠交付保证；已经落入 SQLite 的最后有效版本独立于 session 留存。
+检查点文件保持 owner-only `0600`。Linux 容器/宿主 UID 不同的部署必须另行确保控制面可读；
+本阶段没有放宽权限，也未验证真实 Docker 的跨 UID 读取。不可读时接收 unavailable，不影响原任务结果。
+
+### 18.3 复用与 M48 接入
+
+- 只有显式开启 checkpoint 时，调度器才丰富完整 TaskContextSnapshot 的**已结束** `attempts`，附加 `memory`。
+  正在执行的 checkpoint 已持久化，但此阶段不是并行 worker 的实时协调看板。不改变原 AgentContext YAML。
+- 在同次派发事务重新标注意图 open/abandoned/concluded/missing、事实 current/superseded/missing 与替代指向；
+  对照原派发 Scope targets，显示 unchanged/changed/unknown，三者都要求当前授权，均不是可执行许可证。
+- 证据 refs 重新检查当前工作区文件存在性与路径范围，显示 available/missing/unavailable；不读文件正文，
+  available 不是证据验证通过。项目状态重新读取；预算明确要求使用本次 pack core 的当前资源/任务限制。
+- memory 沿用 M48 `attempts` 选择与恢复分区，不新增无限必读文件。reason 优先有记忆的近期尝试；explore
+  优先本焦点，也可选与 pinned 事实相关的历史尝试。记忆整体计入 UTF-8 预算；装不下则整条省略而不是剪尾。
+- 同次快照的 store 保存完整授权 memory，长记录走原有有界连续分片；索引只提供短 progress 定位预览和
+  intent/终止原因元数据。旧 run.detail 的 500 字符边界保持不变；新 checkpoint 正文使用其独立字段/64 KiB
+  契约上限，catalog/recovery 另标 `checkpoint_policy`，不是偷偷扩展旧 raw detail 可见性。ContextPlan v2 的 attempts selection 标记 `structured_attempt_memory_balanced_v1`。
+- 仅 collection 开启而 pack off/fallback/custom/bootstrap/conclude 时，仍可保存检查点，但**不会偷偷新增历史
+  必读源**。自动复用只发生于 M48 成功 apply 的新 default reason/explore；shadow 仍给 worker legacy 输入。
+- 删除 session 后正文记忆仍在 SQLite，旧证据/session 文件不被假装保留。删除 run/project 时 sidecar 按外键
+  级联删除；每个 run 一个有界最新快照，不保留每次周期写出的完整历史，也不依赖 SDK session 永久保存。
+
+`next_steps` 只作为数据供当前任务重新判断，不自动创建任务或执行命令。Scope、证据强制、目标条件 AND、
+flag/completion review、预算耗尽不关项目等既有门禁完全保留。本阶段不修改 SDK compaction、任意 explore
+会话 resume、Observer 最终 flush 机制或跨项目经验数据库。
+
+### 18.4 离线验收
+
+覆盖 schema/大小/路径边界、原子发布与周期重发、真实进程运行中导入、正常/崩溃/硬截止/取消/半写入、
+版本去重/冲突/陈旧、重启补接、session 删除后保留、项目隔离、生命周期/替代事实/证据丢失复核、预算内整条
+选择与有界分片恢复、实际 ContextPlan 字节核算和默认关闭兼容性。真实 `cairn worker --task` CLI 用 fake solver
+验证 started → solver_returned 和 result 输出；没有调用真实模型，也未执行真实 Docker gate。
+最终 `bun run check`：**1279 pass / 0 fail / 115 files / 6143 expects**；相对 M48 新增 36 个测试、
+6 个新测试文件。M47/M48 的两组八场景离线评估与 M42 完成契约评估均通过，UI CSS 无差异。
+
 ## 附录 A：当前提示词输入
 
 | 模板 | 占位符 |

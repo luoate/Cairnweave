@@ -34,6 +34,7 @@ import type {
 import { listProjectIntentMeta } from "./proposals";
 import { listProjectRuns } from "./runs";
 import { buildIntents, getProjectOr404, utcnow } from "./services";
+import type { AgentContextAudit } from "./context-audit";
 import { getStrategistState } from "./strategist";
 import { listFactSupersessions } from "./supersedes";
 import { summarizeProjectVerification } from "./verification";
@@ -83,6 +84,8 @@ export interface BuildAgentContextOptions {
   /** Reason only: finished-run usage and the configured limits. */
   budget?: AgentContextBudgetInput | null;
   limits?: Partial<AgentContextLimits>;
+  /** Task-local diagnostics; emitted from the actual selection, never added to YAML. */
+  onAudit?: (audit: AgentContextAudit) => void;
 }
 
 interface FactRow {
@@ -149,6 +152,10 @@ export function buildAgentContext(
   );
   const state = options.kind === "reason" ? getStrategistState(conn, projectId) : null;
 
+  const audit: AgentContextAudit = {
+    selections: [],
+    details: { max_chars: limits.maxDetailChars, examined_fields: 0, clipped_fields: 0 },
+  };
   const truncatedSections: string[] = [];
   const facts = selectFacts({
     kind: options.kind,
@@ -158,6 +165,7 @@ export function buildAgentContext(
       ? undefined
       : intentById.get(options.focusIntentId),
     limits,
+    audit,
     truncatedSections,
   }).flatMap((id) => {
     const view = factView(id, factById, metaByFact, supersededBy);
@@ -171,6 +179,7 @@ export function buildAgentContext(
     runs,
     focusIntentId: options.focusIntentId,
     limits,
+    audit,
     truncatedSections,
   });
 
@@ -179,6 +188,7 @@ export function buildAgentContext(
     runs,
     focusIntentId: options.focusIntentId,
     limits,
+    audit,
     truncatedSections,
   });
 
@@ -204,9 +214,12 @@ export function buildAgentContext(
     hints,
     runs,
     limits,
+    audit,
     truncatedSections,
   });
 
+  const goalVerification = verificationView(verification, limits, audit);
+  options.onAudit?.(audit);
   return {
     version: 1,
     kind: options.kind,
@@ -218,7 +231,7 @@ export function buildAgentContext(
     },
     goal: {
       description: factById.get("goal")?.description ?? "",
-      verification: verificationView(verification, limits),
+      verification: goalVerification,
     },
     facts,
     intents: intentsView,
@@ -393,6 +406,7 @@ function selectFacts(input: {
   supersessions: readonly FactSupersession[];
   focus: Intent | undefined;
   limits: AgentContextLimits;
+  audit: AgentContextAudit;
   truncatedSections: string[];
 }): string[] {
   if (input.kind === "reason") {
@@ -414,6 +428,11 @@ function selectFacts(input: {
     if (current.length + replaced.length > selected.length) {
       input.truncatedSections.push("facts");
     }
+    input.audit.selections.push({
+      section: "facts", scope: "project", candidates: current.length + replaced.length,
+      selected: selected.length, limits: { maxFacts: input.limits.maxFacts },
+      policy: "current_ids_then_recently_superseded",
+    });
     return selected;
   }
 
@@ -424,7 +443,12 @@ function selectFacts(input: {
   if (sources.length > input.limits.maxFacts) {
     input.truncatedSections.push("facts");
   }
-  return sources.slice(0, input.limits.maxFacts);
+  const selected = sources.slice(0, input.limits.maxFacts);
+  input.audit.selections.push({
+    section: "facts", scope: "focus", candidates: sources.length, selected: selected.length,
+    limits: { maxFacts: input.limits.maxFacts }, policy: "direct_source_facts",
+  });
+  return selected;
 }
 
 function selectIntents(input: {
@@ -434,13 +458,18 @@ function selectIntents(input: {
   runs: readonly Run[];
   focusIntentId: string | undefined;
   limits: AgentContextLimits;
+  audit: AgentContextAudit;
   truncatedSections: string[];
 }): AgentContextIntent[] {
   if (input.kind !== "reason") {
     const focus = input.intents.find((intent) => intent.id === input.focusIntentId);
+    input.audit.selections.push({
+      section: "intents", scope: "focus", candidates: focus === undefined ? 0 : 1,
+      selected: focus === undefined ? 0 : 1, limits: {}, policy: "focus_only",
+    });
     return focus === undefined
       ? []
-      : [intentView(focus, input.intentMeta, input.runs, input.limits)];
+      : [intentView(focus, input.intentMeta, input.runs, input.limits, input.audit)];
   }
 
   const isAbandoned = (intent: Intent): boolean =>
@@ -480,9 +509,32 @@ function selectIntents(input: {
   ) {
     input.truncatedSections.push("intents");
   }
-  return selected
-    .slice(0, input.limits.maxIntents)
-    .map((intent) => intentView(intent, input.intentMeta, input.runs, input.limits));
+  const final = selected.slice(0, input.limits.maxIntents);
+  input.audit.selections.push({
+    section: "intents", scope: "project",
+    candidates: allOpen.length + allAbandoned.length + allConcluded.length,
+    selected: final.length,
+    limits: { maxIntents: input.limits.maxIntents,
+      maxAbandonedIntents: input.limits.maxAbandonedIntents,
+      maxConcludedIntents: input.limits.maxConcludedIntents },
+    policy: "priority_open_then_recent_abandoned_then_recent_concluded",
+  });
+  for (const [section, candidates] of [
+    ["intents.open", allOpen], ["intents.abandoned", allAbandoned],
+    ["intents.concluded", allConcluded],
+  ] as const) {
+    const ids = new Set(candidates.map((intent) => intent.id));
+    input.audit.selections.push({
+      section, scope: "project", candidates: candidates.length,
+      selected: final.filter((intent) => ids.has(intent.id)).length,
+      limits: { maxIntents: input.limits.maxIntents,
+        ...(section === "intents.abandoned" ? { maxAbandonedIntents: input.limits.maxAbandonedIntents } : {}),
+        ...(section === "intents.concluded" ? { maxConcludedIntents: input.limits.maxConcludedIntents } : {}) },
+      policy: "subgroup_after_overall_intent_cap",
+    });
+  }
+  return final.map((intent) =>
+    intentView(intent, input.intentMeta, input.runs, input.limits, input.audit));
 }
 
 function compareOpenIntents(
@@ -506,6 +558,7 @@ function intentView(
   intentMeta: ReadonlyMap<string, IntentMeta>,
   runs: readonly Run[],
   limits: AgentContextLimits,
+  audit: AgentContextAudit,
 ): AgentContextIntent {
   const attempts = runs.filter((run) => run.intent_id === intent.id);
   const last = finishedRuns(attempts)[0] ?? null;
@@ -523,7 +576,7 @@ function intentView(
     last_outcome: last?.outcome ?? null,
     last_error:
       last !== null && last.outcome !== "success" && last.detail !== null
-        ? truncate(last.detail, limits.maxDetailChars)
+        ? truncate(last.detail, limits.maxDetailChars, audit)
         : null,
     priority: meta?.priority ?? null,
   };
@@ -534,6 +587,7 @@ function selectAttempts(input: {
   runs: readonly Run[];
   focusIntentId: string | undefined;
   limits: AgentContextLimits;
+  audit: AgentContextAudit;
   truncatedSections: string[];
 }): AgentContextAttempt[] {
   const scoped =
@@ -544,7 +598,13 @@ function selectAttempts(input: {
   if (finished.length > input.limits.maxAttempts) {
     input.truncatedSections.push("attempts");
   }
-  return finished.slice(0, input.limits.maxAttempts).map((run) => ({
+  const selected = finished.slice(0, input.limits.maxAttempts);
+  input.audit.selections.push({
+    section: "recent_attempts", scope: input.kind === "reason" ? "project" : "focus",
+    candidates: finished.length, selected: selected.length,
+    limits: { maxAttempts: input.limits.maxAttempts }, policy: "newest_finished_runs",
+  });
+  return selected.map((run) => ({
     run_id: run.id,
     kind: run.kind,
     intent_id: run.intent_id,
@@ -552,7 +612,7 @@ function selectAttempts(input: {
     started_at: run.started_at,
     duration_ms: run.duration_ms,
     tokens: run.total_tokens,
-    detail: run.detail === null ? null : truncate(run.detail, input.limits.maxDetailChars),
+    detail: run.detail === null ? null : truncate(run.detail, input.limits.maxDetailChars, input.audit),
   }));
 }
 
@@ -592,6 +652,7 @@ function factView(
 function verificationView(
   verification: ReturnType<typeof summarizeProjectVerification>,
   limits: AgentContextLimits,
+  audit: AgentContextAudit,
 ): AgentContextVerification {
   const { policy, checks, latest, goal_conditions: goalConditions } = verification;
   const challenge = policy.kind === "challenge" ? latest : null;
@@ -632,7 +693,7 @@ function verificationView(
         kind: condition.kind,
         ok: result?.ok ?? null,
         detail:
-          result === null ? null : truncate(result.detail, limits.maxDetailChars),
+          result === null ? null : truncate(result.detail, limits.maxDetailChars, audit),
         challenge_code: condition.challenge_code,
         progress: {
           found: result?.flag_got_count ?? null,
@@ -645,7 +706,7 @@ function verificationView(
         ? null
         : {
             ok: latest.ok,
-            detail: truncate(latest.detail, limits.maxDetailChars),
+            detail: truncate(latest.detail, limits.maxDetailChars, audit),
             checked_at: latest.checked_at,
           },
   };
@@ -660,6 +721,7 @@ function buildDelta(input: {
   hints: readonly HintRow[];
   runs: readonly Run[];
   limits: AgentContextLimits;
+  audit: AgentContextAudit;
   truncatedSections: string[];
 }): AgentContextDelta | null {
   if (input.kind !== "reason" || input.state === null) return null;
@@ -691,10 +753,19 @@ function buildDelta(input: {
   ) {
     input.truncatedSections.push("delta");
   }
+  const selectedFacts = newFacts.slice(0, input.limits.maxDeltaIds);
+  const selectedIntents = concludedIntents.slice(0, input.limits.maxDeltaIds);
+  for (const [section, candidates, selected] of [
+    ["delta.new_facts", newFacts.length, selectedFacts.length],
+    ["delta.concluded_intents", concludedIntents.length, selectedIntents.length],
+  ] as const) {
+    input.audit.selections.push({ section, scope: "since_last_reason", candidates, selected,
+      limits: { maxDeltaIds: input.limits.maxDeltaIds }, policy: "timestamp_delta_sorted_ids" });
+  }
   return {
     since,
-    new_facts: newFacts.slice(0, input.limits.maxDeltaIds),
-    concluded_intents: concludedIntents.slice(0, input.limits.maxDeltaIds),
+    new_facts: selectedFacts,
+    concluded_intents: selectedIntents,
     new_hints: newHints,
     failed_attempts: failedAttempts,
   };
@@ -716,8 +787,10 @@ function countRefs(raw: string): number {
 }
 
 /** One-line, bounded detail: the file is read by a model, not a log collector. */
-function truncate(value: string, maxChars: number): string {
+function truncate(value: string, maxChars: number, audit: AgentContextAudit): string {
   const oneLine = value.replace(/\s+/g, " ").trim();
+  audit.details.examined_fields += 1;
+  if (oneLine.length > maxChars) audit.details.clipped_fields += 1;
   return oneLine.length <= maxChars
     ? oneLine
     : `${oneLine.slice(0, Math.max(0, maxChars - 1))}…`;

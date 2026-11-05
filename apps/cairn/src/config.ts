@@ -80,6 +80,31 @@ export interface ToolResultSpillConfig {
   maxInlineChars: number;
 }
 
+export interface ContextPlanConfig {
+  /** Audit only: never trims input or blocks dispatch. */
+  mode: "off" | "audit";
+  /** UTF-8 bytes of prompt + required initial files, not the SDK context window. */
+  maxInitialBytes: number;
+}
+
+export const DEFAULT_CONTEXT_PLAN: ContextPlanConfig = {
+  mode: "audit",
+  maxInitialBytes: 128 * 1024,
+};
+
+export interface TaskCheckpointConfig {
+  enabled: boolean;
+  intervalSeconds: number;
+}
+export const DEFAULT_TASK_CHECKPOINT: TaskCheckpointConfig = { enabled: false, intervalSeconds: 5 };
+
+export interface ContextPackConfig {
+  mode: "off" | "shadow" | "apply";
+  shardMaxBytes: number;
+}
+
+export const DEFAULT_CONTEXT_PACK: ContextPackConfig = { mode: "off", shardMaxBytes: 8192 };
+
 export interface TasksConfig {
   bootstrap: BootstrapTaskConfig;
   reason: ReasonTaskConfig;
@@ -87,6 +112,9 @@ export interface TasksConfig {
   graphSlice: GraphSliceConfig;
   evidence: EvidenceConfig;
   toolResultSpill: ToolResultSpillConfig;
+  contextPlan: ContextPlanConfig;
+  contextPack: ContextPackConfig;
+  checkpoint: TaskCheckpointConfig;
 }
 
 export const DEFAULT_GRAPH_SLICE: GraphSliceConfig = {
@@ -600,7 +628,7 @@ const EDITABLE_OVERRIDE_KEYS: Record<string, readonly string[]> = {
     "max_project_workers",
     "interval",
   ],
-  tasks: ["bootstrap", "reason", "explore", "graph_slice", "evidence", "tool_result_spill"],
+  tasks: ["bootstrap", "reason", "explore", "graph_slice", "evidence", "tool_result_spill", "context_plan", "context_pack", "checkpoint"],
   worker: [
     "soft_deadline_ratio",
     "retain_task_files",
@@ -647,6 +675,9 @@ const EDITABLE_TASK_KEYS: Record<string, readonly string[]> = {
   graph_slice: ["enabled", "max_facts", "max_intents"],
   evidence: ["min_bytes"],
   tool_result_spill: ["enabled", "max_inline_chars"],
+  context_plan: ["mode", "max_initial_bytes"],
+  context_pack: ["mode", "shard_max_bytes"],
+  checkpoint: ["enabled", "interval_seconds"],
 };
 
 /** Snake_case patch accepted by `RuntimeConfigStore.apply`; see `EDITABLE_OVERRIDE_KEYS`. */
@@ -825,6 +856,47 @@ function parseTasks(value: unknown): TasksConfig {
     toolResultSpill: has(tasks, "tool_result_spill")
       ? parseToolResultSpill(tasks["tool_result_spill"])
       : { ...DEFAULT_TOOL_RESULT_SPILL },
+    contextPlan: has(tasks, "context_plan")
+      ? parseContextPlan(tasks["context_plan"])
+      : { ...DEFAULT_CONTEXT_PLAN },
+    checkpoint: has(tasks, "checkpoint") ? parseTaskCheckpointConfig(tasks["checkpoint"]) : { ...DEFAULT_TASK_CHECKPOINT },
+    contextPack: has(tasks, "context_pack")
+      ? parseContextPack(tasks["context_pack"])
+      : { ...DEFAULT_CONTEXT_PACK },
+  };
+}
+
+function parseTaskCheckpointConfig(value: unknown): TaskCheckpointConfig {
+  const checkpoint = recordAt(value, "tasks.checkpoint");
+  checkOverrideKeys(checkpoint, ["enabled", "interval_seconds"], "tasks.checkpoint");
+  const intervalSeconds = has(checkpoint, "interval_seconds")
+    ? requiredPositiveInt(checkpoint, "interval_seconds", "tasks.checkpoint") : DEFAULT_TASK_CHECKPOINT.intervalSeconds;
+  if (!Number.isSafeInteger(intervalSeconds) || intervalSeconds > 60) throw new ConfigError("tasks.checkpoint.interval_seconds must be an integer from 1 to 60");
+  return { enabled: has(checkpoint, "enabled") ? booleanAt(checkpoint["enabled"], "tasks.checkpoint.enabled") : false, intervalSeconds };
+}
+
+function parseContextPack(value: unknown): ContextPackConfig {
+  const pack = recordAt(value, "tasks.context_pack");
+  checkOverrideKeys(pack, ["mode", "shard_max_bytes"], "tasks.context_pack");
+  const shardMaxBytes = has(pack, "shard_max_bytes")
+    ? requiredPositiveInt(pack, "shard_max_bytes", "tasks.context_pack") : DEFAULT_CONTEXT_PACK.shardMaxBytes;
+  if (!Number.isSafeInteger(shardMaxBytes) || shardMaxBytes < 1024 || shardMaxBytes > 65536) {
+    throw new ConfigError("tasks.context_pack.shard_max_bytes must be an integer from 1024 to 65536");
+  }
+  return { mode: has(pack, "mode")
+    ? oneOf(pack["mode"], "tasks.context_pack.mode", ["off", "shadow", "apply"] as const)
+    : DEFAULT_CONTEXT_PACK.mode, shardMaxBytes };
+}
+
+function parseContextPlan(value: unknown): ContextPlanConfig {
+  const plan = recordAt(value, "tasks.context_plan");
+  return {
+    mode: has(plan, "mode")
+      ? oneOf(plan["mode"], "tasks.context_plan.mode", ["off", "audit"] as const)
+      : DEFAULT_CONTEXT_PLAN.mode,
+    maxInitialBytes: has(plan, "max_initial_bytes")
+      ? requiredPositiveInt(plan, "max_initial_bytes", "tasks.context_plan")
+      : DEFAULT_CONTEXT_PLAN.maxInitialBytes,
   };
 }
 
@@ -1331,6 +1403,10 @@ export function parseDispatchConfig(value: unknown, options: ConfigOptions = {})
 
   const runtime = parseRuntime(requiredValue(root, "runtime", "config"));
   const tasks = parseTasks(requiredValue(root, "tasks", "config"));
+  if (tasks.contextPack.mode !== "off" &&
+      (tasks.contextPlan.mode !== "audit" || runtime.strategyContext !== "on")) {
+    throw new ConfigError("tasks.context_pack requires tasks.context_plan.mode audit and runtime.strategy_context on");
+  }
 
   let container: ContainerConfig | null = null;
   if (has(root, "container")) {

@@ -8,7 +8,7 @@
 没有 Python ↔ TypeScript 桥，没有 JSONL RPC。
 
 [![CI](https://github.com/luoate/Cairnweave/actions/workflows/ci.yml/badge.svg)](https://github.com/luoate/Cairnweave/actions/workflows/ci.yml)
-[![tests](https://img.shields.io/badge/tests-1038%20passed-brightgreen.svg)](docs/MILESTONES.md)
+[![tests](https://img.shields.io/badge/tests-1279%20passed-brightgreen.svg)](docs/MILESTONES.md)
 [![license](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![runtime](https://img.shields.io/badge/runtime-Bun%201.4.4-black.svg)](package.json)
 
@@ -41,6 +41,9 @@ worker 在项目沙箱里跑真实模型，每个任务启动一次进程，只�
 | 图内核与调度 | projects / facts / intents / hints、SQLite 单一写者、bootstrap / reason / explore / conclude 四类任务，保留 Cairn 语义并用 Python 版做 golden 对照 |
 | Agent 上下文 | 任务级 `agent-context.yaml` 把 Fact 的当前/被取代状态、证据可用性、最近尝试、完成验证进度与 reason 增量交给决策层；只读投影，不改图与导出，`runtime.strategy_context: off` 可关闭 |
 | 上下文预算 | 超过 `tasks.tool_result_spill.max_inline_chars`（默认 32000）字符的工具输出落盘 `<workspace>/.tool-results/`，上下文里换成文件路径 + 600 字符预览与「先 grep 再分片读」的提示；solver 与 subagent 共用，`enabled: false` 回到全量内联。原文仍在项目工作区，`/flag` 兜底会读它 |
+| 上下文审计（M47） | 每个任务生成 `context-plan.json`，分别统计 Solver/Observer 的提示词、必读快照、可选资料、原有截断数量与恢复缺口；UTF-8 字节计量，默认 128 KiB 审计阈值，超限告警但不裁剪、不拦派发。`tasks.context_plan.mode: off` 关闭；`bun run eval:context` 离线跑八类准备场景，不调用模型，不把审计当作 SDK 窗口占用或压缩收益 |
+| 任务记忆（M49） | `tasks.checkpoint.enabled: false` 默认关闭；原子/定时任务检查点 + SQLite 最后有效版本，区分动作、观察、解释和执行失败；已结束任务记忆经 M48 字节预算选择/恢复，复用前标注生命周期、Scope、替代事实和证据可用性，不自动执行建议或提升为 Fact |
+| 上下文选择（M48） | `tasks.context_pack.mode: off/shadow/apply`（默认 off），新 default reason/explore 使用预算内 ContextPack + 可恢复的任务快照；省略不等于不存在，核心超预算或无净收益回退原输入。`bun run eval:context-pack` 对比八类场景的初始必读字节与完整授权投影恢复，不调用模型，不宣称真实费用/完成率收益 |
 | 意图生命周期 | 操作员（或开启 `strategist.reason_abandon` 后的 reason）可放弃已经尝试且从未成功的 open 意图；状态存 `intent_meta` 旁路，派发、提示、水位与报告都排除它，UI 提供原因输入与二次确认 |
 | Scope 硬校验 | `Host Bridge` 在每次模型工具调用前检查网络端点与文件路径，越界即拒绝，allow/block 全量写 `audit.jsonl`；无 `scope` 的项目不派发 |
 | 证据门控 | worker 声明的 `evidence_refs` 在写图前逐条校验（存在、非目录、非符号链接、不越界、最小字节），并固化 SHA-256 以便事后比对 |
@@ -274,9 +277,11 @@ API key 只写不读（响应只回掩码），写入 `auth.json` 并按上游 S
 ## 测试与 CI
 
 ```bash
-bun test             # 1146 passed / 98 files（fake solver，不需凭据）
+bun test             # 1279 passed / 115 files（fake solver，不需凭据）
 bun run typecheck    # tsc --noEmit
 bun run eval         # 五个完成场景的 legacy / hardened 对照，写 runs/eval-<date>.json
+bun run eval:context # M47 八类任务准备场景：上下文账单、截断/恢复说明与 audit/off 兼容性
+bun run eval:context-pack # M48 同图 off/shadow/apply 选择、字节减少与按需恢复对照
 bun run ui:css       # 改了 index.html 的 class 后重新生成 static/app.css
 bun run check        # typecheck + test；CI 还会校验 app.css 与 index.html 不漂移
 ```
@@ -292,7 +297,7 @@ gate 放在 `tools/gate/`，手动执行、不计入 CI，命令与环境变量�
 | 文档 | 内容 |
 | --- | --- |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | 角色、数据所有权、时序、沙箱与失败语义 |
-| [DESIGN.md](docs/DESIGN.md) | 设计草案：AgentContext 投影层、意图生命周期、调度真相与完成契约 |
+| [DESIGN.md](docs/DESIGN.md) | 设计与实现记录：AgentContext、意图生命周期、调度真相、完成契约、M47 上下文预算审计、M48 选择/恢复与 M49 检查点/尝试记忆 |
 | [CONFIG.md](docs/CONFIG.md) | 运行配置字段、SQLite 覆盖、热生效范围与只读项 |
 | [OPERATIONS.md](docs/OPERATIONS.md) | 容器模式、Host Bridge、artifacts、证据、切片、Observer、提案、预算、真实模型 gate |
 | [CONTRACT.md](docs/CONTRACT.md) | worker 契约：task / result / usage / audit、退出码与校验边界 |
@@ -303,7 +308,7 @@ gate 放在 `tools/gate/`，手动执行、不计入 CI，命令与环境变量�
 | [WRITEUP.md](docs/WRITEUP.md) | 中文 Writeup：草稿组成、载荷、附件包、Flag 置信度与模型撰写 |
 | [MODELS.md](docs/MODELS.md) | 模型与密钥的一页操作手册 |
 | [PORTING.md](docs/PORTING.md) | Python Cairn → TypeScript 的模块映射与对照测试策略 |
-| [MILESTONES.md](docs/MILESTONES.md) | M1–M39 实现记录、完整验证清单与里程碑表 |
+| [MILESTONES.md](docs/MILESTONES.md) | M1–M49 实现记录、完整验证清单与里程碑表 |
 
 ## 仓库结构
 

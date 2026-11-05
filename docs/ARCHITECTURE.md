@@ -1462,6 +1462,17 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
   YAML 导出、HTTP golden 与 worker 契约不变。`off` 时不写文件也不加段落；bootstrap 与
   bootstrap conclude 不生成投影。文件只含项目内已可见的数据，不含审计事件原文、证据内容、
   附件字节或 flag 明文。
+- **ContextPlan（M47，默认 audit）**：`prepareTask` 写完正常输入文件后，从最终 prompt 与文件
+  字节生成 `context-plan.json`。图/AgentContext 的选择元数据来自同一准备事务中的原选择器，
+  不再查一次数据库；Observer 的统计来自其实际快照。清单只含大小、SHA-256、固定任务相对路径、
+  候选/选入数量、限制/策略、恢复引用，不复制正文或宿主机绝对路径。Solver/Observer 独立计量；
+  必读与可选资料分开。默认模板引用的图算必读，bootstrap 或 mock 未引用的图不算；附件正文
+  只列账本声明大小。恢复历史与看板无法准确计量时保留 unknown，不当成 0；SDK system/tools、
+  未来轮次与真实窗口占用明确排除。`off` 不做诊断读写。超预算/审计不可用都不阻断派发，原始
+  worker 契约、提示词、图导出、完成门禁不变。恢复说明不等于新读取工具：graph 只能恢复图内容，
+  sidecar/历史仍可能只有控制面可用，Observer 也没有原图读取工具。详见 [DESIGN §16](DESIGN.md#16-m47contextplan-v1已实现)。
+- **ContextPack（M48，默认 off）**：仅新 default reason/explore。scheduler 同事务捕获未受记录条数 caps 限制的授权投影；选择器 pin 目标/条件/校验审核状态/Scope/资源预算及 explore 焦点与直接依赖/替代链，再按最终 prompt + pack UTF-8 字节选择近期事实、失败/退役历史、相关方向与 hints。模型首读 `context-pack.yaml`，不再同时首读完整图/调查状态或全量内联列表。省略记录由任务级 `context-store` 的有界 catalog/index/JSON 分片恢复，复用文件工具，不开放 DB 或新 HTTP 路由。store 先 staging 写入/验证再发布，路径哈希化，恢复 helper 验证项目/快照/真实路径与长记录摘要；快照摘要不是实时 revision 或授权凭据。旧 detail 500 字符可见性和原始日志隔离不变。
+  `shadow` 只记录候选、实际仍按 v1 legacy 账单交付；`apply` 成功后实际账单 v2 把 pack 列为 required、graph/AgentContext/store 列 optional。核心超预算、无净收益、快照不可用均回退；正常 task/graph 错误仍失败，诊断错误不阻断。WorkerTask/worker env、Scope/完成门禁、Observer、bootstrap/conclude 与旧会话不变。按需读取可能再次增加上下文，未测 solver scope/evidence 前缀、SDK system/tools 和真实会话窗口。详见 [DESIGN §17](DESIGN.md#17-m48contextpack-v1已实现)。
 - 替换按配置字典的插入顺序逐 token 执行；这与 Python `render_prompt` 在替换值含后续 token
   时的行为一致。
 - BreachWeave 的 `cairn-worker` 系统提示词位于
@@ -1474,6 +1485,21 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
   “Cairn Observer”提示段。
 - 提示词分组（`default` / `mock`）暂时保留，兼容现有配置；`mock` 供确定性测试与 fake
   solver 使用，worker 类型维度的提示词选择消失。
+
+### M49：检查点与结构化尝试记忆
+
+`tasks.checkpoint` 默认关闭，走原任务文件通道，不新增网络写入口。worker 在 session 中原子发布
+`checkpoint.json`，主 solver 用 `save_task_checkpoint` 提交累计的动作/观察/解释/未决问题；周期重发只是
+最近结构化状态，不能补回模型未上报的动作。subagent 不注册累计写工具，但原 Host Bridge 仍继承。
+控制面定时、终止前后及启动 orphan 对账补接，校验身份、字节/结构/引用与单调 sequence，同版本去重/冲突
+分开，坏新版本不覆盖旧版本。`task_checkpoints` 每个 run 一条最新记录，生命周期独立于 session 留存。
+
+Worker stage 和内容均为声明，`runs.outcome` 与控制面 termination_reason 单独持久化。已结束尝试的
+memory 在同次快照重新标注意图/项目状态、Scope 变化、事实替代链与证据存在性；通过 M48 attempts 分区
+预算选择与有界恢复，ContextPlan 实际计量包含该正文与固定提示词。scope unchanged 也不授权，available
+也不是证据通过；当前 pack core 的 Scope/预算以及原完成门禁继续生效，不自动执行 next_steps、不写 Fact。
+检查点不可用只损失诊断/记忆，不改变原任务结果；不承诺硬杀前最后动作已保存，不改 SDK compaction/resume
+或 Observer flush。详见 DESIGN §18、CONTRACT §9。
 
 ## 8. 配置、模型与密钥
 
@@ -1492,6 +1518,10 @@ scope 是快照，修改项目 scope 只影响之后的派发，不影响正在�
   `max_inline_chars`（正整数，默认 `32000`；没有上限约束，但设得比典型工具输出还大等于关闭）。
   两个键都可省略；`"yes"`、`0`、负值、非整数以 `ConfigError` 拒绝。运行期覆盖走
   `EDITABLE_TASK_KEYS`，因此 `/settings/runtime` 能改（M43 没做设置弹窗控件）；生效方式见 §2。
+- `tasks.context_plan`（M47）：`mode: off|audit`（默认 audit），`max_initial_bytes`（正整数，
+  默认 131072）。只审计 Solver 必需初始输入的 UTF-8 字节，超限仅告警；不是 SDK 窗口限制。
+  通过既有运行配置覆盖热改，下一任务生效；不加 WorkerTask 字段、worker 环境或设置弹窗控件。
+- `tasks.context_pack`（M48）：`mode: off|shadow|apply`（默认 off）、`shard_max_bytes: 1024..65536`（默认 8192），共享 ContextPlan 的总字节阈值；shadow/apply 强制要求 strategy_context:on 与 context_plan:audit。既有运行配置可覆盖下一任务的值，不新增设置控件。
 - `retention` 是新增的可选段（M6）：`session_max_age_days`（非负整数，默认 `0` 关闭）、
   `session_keep_per_project`（非负整数，默认 `0` 关闭）、`sweep_interval_seconds`
   （非负整数，默认 `3600`，`0` 只保留启动 sweep）、`refresh_artifacts`（布尔，默认

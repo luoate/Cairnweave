@@ -1,3 +1,4 @@
+import { startWorkerCheckpoint, markWorkerCheckpoint, stopWorkerCheckpoint } from "../checkpoint/worker";
 import {
   extractJsonObject,
   isTaskResult,
@@ -73,15 +74,19 @@ export async function runWorker(args: readonly string[]): Promise<number> {
     return WORKER_EXIT.USAGE;
   }
 
+  startWorkerCheckpoint(task);
   let output: string;
   try {
     output = await solver.solve(task);
+    markWorkerCheckpoint("solver_returned");
   } catch (error) {
+    markWorkerCheckpoint("solver_failed");
     console.error(`[worker] solver failed: ${describe(error)}`);
     return WORKER_EXIT.NO_ANSWER;
   } finally {
     // The CLI exits explicitly, so pending live-audit requests must be drained here; the
     // scheduler's finish-time import backfills anything still missing.
+    stopWorkerCheckpoint();
     await flushHostBridgeAudit();
     // Usage is a sidecar so a solver failure or a rejected answer still counts against
     // the project's token/cost budget. It never changes the task outcome.

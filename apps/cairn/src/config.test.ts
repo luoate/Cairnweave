@@ -114,6 +114,31 @@ describe("dispatcher config", () => {
     });
   });
 
+  test("defaults and parses audit-only task context planning", () => {
+    expect(parse(BASE).tasks.contextPlan).toEqual({ mode: "audit", maxInitialBytes: 131072 });
+    const document = Bun.YAML.parse(BASE) as Record<string, unknown>;
+    const tasks = document["tasks"] as Record<string, unknown>;
+    tasks["context_plan"] = { mode: "off", max_initial_bytes: 4096 };
+    expect(parseDispatchConfig(document).tasks.contextPlan).toEqual({ mode: "off", maxInitialBytes: 4096 });
+    tasks["context_plan"] = {};
+    expect(parseDispatchConfig(document).tasks.contextPlan).toEqual({ mode: "audit", maxInitialBytes: 131072 });
+  });
+
+  test("rejects enforcement mode and invalid context audit budgets", () => {
+    const document = Bun.YAML.parse(BASE) as Record<string, unknown>;
+    const tasks = document["tasks"] as Record<string, unknown>;
+    for (const mode of ["enforce", "on", true, null]) {
+      tasks["context_plan"] = { mode };
+      expect(() => parseDispatchConfig(document)).toThrow("tasks.context_plan.mode");
+    }
+    for (const bytes of [0, -1, 1.5, "131072", null]) {
+      tasks["context_plan"] = { max_initial_bytes: bytes };
+      expect(() => parseDispatchConfig(document)).toThrow("tasks.context_plan.max_initial_bytes");
+    }
+    tasks["context_plan"] = null;
+    expect(() => parseDispatchConfig(document)).toThrow("tasks.context_plan");
+  });
+
   test("parses the strategy context switch", () => {
     const off = parse(
       BASE.replace(
@@ -873,5 +898,58 @@ describe("SSRF marker scope", () => {
     const config = parse(`${BASE}scope: {ssrf_markers: off, protected_hosts: ["Host.test"]}\n`);
     expect(config.scope.ssrfMarkers).toBe("off");
     expect(protectedTargetHosts(config)).toEqual(["host.test"]);
+  });
+});
+
+describe("M48 ContextPack configuration", () => {
+  const document = () => Bun.YAML.parse(BASE) as { runtime: Record<string, unknown>; tasks: Record<string, unknown> };
+  test("defaults off and reuses the context-plan byte threshold", () => {
+    expect(parse(BASE).tasks.contextPack).toEqual({ mode: "off", shardMaxBytes: 8192 });
+    for (const mode of ["off", "shadow", "apply"] as const) {
+      const value = document(); value.tasks["context_pack"] = { mode, shard_max_bytes: 1024 };
+      expect(parseDispatchConfig(value).tasks.contextPack).toEqual({ mode, shardMaxBytes: 1024 });
+    }
+  });
+  test("rejects invalid switches, unknown options and unbounded shard sizes", () => {
+    for (const mode of ["on", "enforce", true, null]) {
+      const value = document(); value.tasks["context_pack"] = { mode };
+      expect(() => parseDispatchConfig(value)).toThrow("tasks.context_pack.mode");
+    }
+    for (const size of [0, 4, 1023, 65537, 1.5, "8192", null, Number.MAX_SAFE_INTEGER + 1]) {
+      const value = document(); value.tasks["context_pack"] = { shard_max_bytes: size };
+      expect(() => parseDispatchConfig(value)).toThrow("tasks.context_pack.shard_max_bytes");
+    }
+    const value = document(); value.tasks["context_pack"] = { max_initial_bytes: 5 };
+    expect(() => parseDispatchConfig(value)).toThrow("unsupported key");
+  });
+  test("never silently enables strategy context or audit", () => {
+    for (const mode of ["shadow", "apply"]) {
+      const value = document(); value.tasks["context_pack"] = { mode };
+      value.runtime["strategy_context"] = "off";
+      expect(() => parseDispatchConfig(value)).toThrow("context_pack requires");
+      value.runtime["strategy_context"] = "on"; value.tasks["context_plan"] = { mode: "off" };
+      expect(() => parseDispatchConfig(value)).toThrow("context_pack requires");
+    }
+  });
+});
+
+
+describe("M49 task checkpoint configuration", () => {
+  test("defaults off and is independently opt-in for collection", () => {
+    expect(parse(BASE).tasks.checkpoint).toEqual({ enabled: false, intervalSeconds: 5 });
+    const value = Bun.YAML.parse(BASE) as any;
+    value.tasks.checkpoint = { enabled: true, interval_seconds: 1 };
+    value.tasks.context_pack = { mode: "off" };
+    expect(parseDispatchConfig(value).tasks.checkpoint).toEqual({ enabled: true, intervalSeconds: 1 });
+  });
+  test("rejects invalid intervals, booleans and unknown options", () => {
+    for (const interval_seconds of [0, -1, 1.5, 61, "5", Infinity]) {
+      const value = Bun.YAML.parse(BASE) as any; value.tasks.checkpoint = { interval_seconds };
+      expect(() => parseDispatchConfig(value)).toThrow();
+    }
+    for (const checkpoint of [{ enabled: "true" }, { automatic_execution: true }, { max_bytes: 999999 }]) {
+      const value = Bun.YAML.parse(BASE) as any; value.tasks.checkpoint = checkpoint;
+      expect(() => parseDispatchConfig(value)).toThrow();
+    }
   });
 });

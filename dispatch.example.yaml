@@ -75,6 +75,24 @@ tasks:
   tool_result_spill:
     enabled: true
     max_inline_chars: 32000
+  # M47: record context-plan.json beside task.json. Audit only: do not trim inputs
+  # or block dispatch, even above this UTF-8 byte threshold. This is NOT the model
+  # context window; optional attachment bodies and Observer inputs are separate.
+  # Set mode: off to disable diagnostic reads/writes. No worker contract/env changes.
+  context_plan:
+    mode: audit
+    max_initial_bytes: 131072
+  # M48: fresh default reason/explore only. Shadow validates a candidate while keeping
+  # legacy worker input; apply uses the pack or falls back safely. Reuses the above
+  # byte threshold, not the SDK context window. Requires strategy_context: on + audit.
+  context_pack:
+    mode: off
+    shard_max_bytes: 8192  # 1024..65536, including catalog and lookup pages
+  # M49: atomic same-task progress + durable structured attempt memory. No model calls
+  # of its own. Reuse only through an applied M48 pack; collection can be enabled alone.
+  checkpoint:
+    enabled: false
+    interval_seconds: 5  # 1..60; worker publication and control-plane ingestion cadence
 
 worker:
   # Fraction of the hard deadline written as softDeadlineSeconds in task.json.

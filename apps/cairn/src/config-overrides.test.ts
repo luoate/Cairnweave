@@ -107,6 +107,11 @@ describe("runtime override patches", () => {
     ).toEqual(["proposals.allow_kinds", "tasks.reason.max_intents"]);
   });
 
+  test("context planning exposes only the audit switch and byte threshold", () => {
+    expect(() => parseRuntimeOverridePatch({ tasks: { context_plan: { mode: "off", max_initial_bytes: 4096 } } })).not.toThrow();
+    expect(() => parseRuntimeOverridePatch({ tasks: { context_plan: { tokenizer: "guess" } } })).toThrow("overrides.tasks.context_plan has unsupported key: tokenizer");
+  });
+
   test("keeps tool-result spilling editable", () => {
     expect(() =>
       parseRuntimeOverridePatch({
@@ -233,6 +238,22 @@ describe("RuntimeConfigStore", () => {
 
     expect(store.reset().editable.scope.ssrf_markers).toBe("observe");
     expect(config.scope.ssrfMarkers).toBe("observe");
+  });
+
+  test("context audit edits persist, replay and reset without accepting enforcement", () => {
+    const store = newStore();
+    expect(store.view().editable.tasks.context_plan).toEqual({ mode: "audit", max_initial_bytes: 131072 });
+    const view = store.apply({ tasks: { context_plan: { mode: "off", max_initial_bytes: 4096 } } });
+    expect(config.tasks.contextPlan).toEqual({ mode: "off", maxInitialBytes: 4096 });
+    expect(view.overrides).toEqual(["tasks.context_plan.max_initial_bytes", "tasks.context_plan.mode"]);
+    const restarted = parseDispatchConfig(source());
+    newStore({ config: restarted });
+    expect(restarted.tasks.contextPlan).toEqual(config.tasks.contextPlan);
+    for (const patch of [{ mode: "enforce" }, { max_initial_bytes: 0 }]) {
+      expect(() => store.apply({ tasks: { context_plan: patch } })).toThrow();
+      expect(config.tasks.contextPlan).toEqual({ mode: "off", maxInitialBytes: 4096 });
+    }
+    expect(store.reset().editable.tasks.context_plan).toEqual({ mode: "audit", max_initial_bytes: 131072 });
   });
 
   test("toggles tool-result spilling on the live config", () => {
@@ -373,5 +394,42 @@ describe("RuntimeConfigStore", () => {
     expect(messages[0]).toContain("ignoring invalid stored runtime overrides");
     expect(store.view().overrides).toEqual([]);
     expect(db.withConn((conn) => getRuntimeConfigOverrides(conn)).overrides).toBe("{}");
+  });
+});
+
+describe("M48 ContextPack hot overrides", () => {
+  test("validates, persists, replays and resets rollout settings", () => {
+    const store = newStore();
+    store.apply({ tasks: { context_pack: { mode: "shadow", shard_max_bytes: 4096 } } });
+    expect(config.tasks.contextPack).toEqual({ mode: "shadow", shardMaxBytes: 4096 });
+    const fresh = parseDispatchConfig(source()); newStore({ config: fresh });
+    expect(fresh.tasks.contextPack).toEqual(config.tasks.contextPack);
+    expect(store.view().editable.tasks.context_pack).toEqual({ mode: "shadow", shard_max_bytes: 4096 });
+    expect(() => store.apply({ tasks: { context_pack: { mode: "shadow" }, context_plan: { mode: "off" } } })).toThrow("context_pack requires");
+    expect(config.tasks.contextPlan.mode).toBe("audit");
+    expect(() => store.apply({ tasks: { context_pack: { shard_max_bytes: 4 } } })).toThrow("shard_max_bytes");
+    store.apply({ tasks: { context_pack: { mode: "off" }, context_plan: { mode: "off" } } });
+    expect(config.tasks.contextPack.mode).toBe("off");
+    store.reset();
+    expect(config.tasks.contextPack).toEqual({ mode: "off", shardMaxBytes: 8192 });
+  });
+  test("exposes only the approved pack override keys", () => {
+    expect(() => parseRuntimeOverridePatch({ tasks: { context_pack: { mode: "apply", shard_max_bytes: 8192 } } })).not.toThrow();
+    expect(() => parseRuntimeOverridePatch({ tasks: { context_pack: { max_initial_bytes: 1 } } })).toThrow("unsupported key");
+  });
+});
+
+describe("M49 checkpoint hot overrides", () => {
+  test("validates, persists, replays and resets collection settings", () => {
+    const store = newStore();
+    expect(store.view().editable.tasks.checkpoint).toEqual({ enabled: false, interval_seconds: 5 });
+    store.apply({ tasks: { checkpoint: { enabled: true, interval_seconds: 2 } } });
+    expect(config.tasks.checkpoint).toEqual({ enabled: true, intervalSeconds: 2 });
+    const fresh = parseDispatchConfig(source()); newStore({ config: fresh });
+    expect(fresh.tasks.checkpoint).toEqual(config.tasks.checkpoint);
+    expect(() => store.apply({ tasks: { checkpoint: { interval_seconds: 61 } } })).toThrow();
+    expect(config.tasks.checkpoint.enabled).toBe(true);
+    expect(() => parseRuntimeOverridePatch({ tasks: { checkpoint: { automatic_execution: true } } })).toThrow("unsupported key");
+    expect(store.reset().editable.tasks.checkpoint).toEqual({ enabled: false, interval_seconds: 5 });
   });
 });

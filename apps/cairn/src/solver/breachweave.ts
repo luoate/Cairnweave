@@ -1,3 +1,4 @@
+import { markWorkerCheckpoint } from "../checkpoint/worker";
 import type { WorkerTask } from "@cairn/contracts";
 import type { AgentSession, SolverObserverHandle } from "@cairn/agent";
 import { chmodSync, cpSync, mkdirSync, rmSync } from "node:fs";
@@ -83,6 +84,10 @@ export class BreachWeaveSolver implements Solver {
         "worker-extension.ts",
       );
 
+      if (process.env["CAIRN_TASK_CHECKPOINT"] === "1") {
+        process.env["CAIRN_CHECKPOINT_MODULE"] = join(import.meta.dir, "..", "checkpoint", "worker.ts");
+      }
+
       // A conclude task appends one wrap-up turn to the failed task's session instead of
       // starting cold. The session file lives in the previous task's directory, which the
       // scheduler keeps alive until this task finishes.
@@ -111,6 +116,7 @@ export class BreachWeaveSolver implements Solver {
       let steerTimer: ReturnType<typeof setTimeout> | undefined;
       if (task.softDeadlineSeconds !== undefined) {
         steerTimer = setTimeout(() => {
+          markWorkerCheckpoint("soft_deadline");
           session.steer(STEER_MESSAGE).catch(() => {
             // The session may already be finished; the hard deadline still applies.
           });

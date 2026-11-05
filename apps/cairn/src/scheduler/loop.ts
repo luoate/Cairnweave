@@ -1,3 +1,5 @@
+import { registerCheckpointRun, finalizeCheckpointRun, type CheckpointTermination } from "@cairn/graph";
+import { ingestCheckpoint, checkpointEvidenceStatus } from "./checkpoint";
 /**
  * In-process scheduler.
  *
@@ -23,6 +25,7 @@ import {
   BOOTSTRAP_INTENT_DESCRIPTION,
   CLAIM_RELEASE_SHUTDOWN,
   HttpError,
+  buildTaskContextSnapshot,
   claimReason,
   claimTask,
   completeProject,
@@ -90,6 +93,8 @@ import {
   startRun,
   stopSchedulerInstance,
   utcnow,
+  type AgentContextAudit,
+  type GraphExportAudit,
   type CairnDatabase,
   type Intent,
   type IntentMeta,
@@ -118,6 +123,8 @@ import {
 import { createRuntime, type RuntimeBackend, type WorkerProcess } from "../runtime";
 import { environmentSnapshot } from "../runtime/types";
 import { latestSolverSessionFile } from "../solver/session-file";
+import { contextPlanLog } from "./context-plan";
+import { contextPackLog } from "./context-pack";
 import { collectEvidence, type EvidenceCollection } from "./evidence";
 import { ingestAuditStreamLoss, ingestTaskAudit } from "./audit";
 import { ingestTaskProposals, reviewPendingProposals } from "./proposals";
@@ -275,6 +282,8 @@ interface RunningTask {
   /** Host-side result path. */
   resultPath: string;
   hostWorkspace: string;
+  checkpointEnabled: boolean;
+  terminationReason: CheckpointTermination;
   leaseLost: boolean;
   cancelled: boolean;
   startedAtMs: number;
@@ -597,6 +606,13 @@ export class Scheduler {
     }
     if (closed.length === 0) return;
     for (const orphan of closed) {
+      if (this.config.tasks.checkpoint.enabled && /^(bootstrap|reason|explore|conclude)-[a-f0-9]{12}$/.test(orphan.task_id)) {
+        try {
+          ingestCheckpoint(this.db, { runId: orphan.id, projectId: orphan.project_id, taskId: orphan.task_id,
+            sessionDir: join(projectWorkspace(this.workspaceRoot, orphan.project_id), ".cairn", "sessions", orphan.task_id) });
+          this.db.withConn((conn) => finalizeCheckpointRun(conn, orphan.id, "control_plane_restart"));
+        } catch { this.log("checkpoint restart recovery unavailable"); }
+      }
       this.log(
         `orphan run closed run=${orphan.id} project=${orphan.project_id} ` +
           `task=${orphan.task_id} kind=${orphan.kind} reason=${ORPHAN_RUN_DETAIL}`,
@@ -1169,13 +1185,18 @@ export class Scheduler {
           (kind === "explore" || (kind === "conclude" && pending?.of === "explore"))
             ? intent
             : undefined;
+        let graphAudit: GraphExportAudit | undefined;
+        const captureGraphAudit = this.config.tasks.contextPlan.mode === "audit"
+          ? (audit: GraphExportAudit) => { graphAudit = audit; }
+          : undefined;
         const exportYaml =
           sliceFocus === undefined
-            ? exportProjectYaml(conn, projectId)
+            ? exportProjectYaml(conn, projectId, captureGraphAudit)
             : exportProjectSliceYaml(conn, projectId, {
                 focusIntentId: sliceFocus.id,
                 maxFacts: slice.maxFacts,
                 maxIntents: slice.maxIntents,
+                ...(captureGraphAudit === undefined ? {} : { onAudit: captureGraphAudit }),
               });
         // Intent-level budgets are sidecar data; read them in the same transaction that
         // claims the lease so the deadline and tool ceiling belong to this attempt.
@@ -1209,6 +1230,10 @@ export class Scheduler {
         const attachments = listProjectAttachments(conn, projectId);
         // M36: project sidecar truth into the task's session directory. Reason and explore
         // read it next to graph.yaml; a bootstrap conclude has no graph to project.
+        let agentContextAudit: AgentContextAudit | undefined;
+        const captureAgentAudit = this.config.tasks.contextPlan.mode === "audit"
+          ? (audit: AgentContextAudit) => { agentContextAudit = audit; }
+          : undefined;
         const agentContextYaml =
           this.config.runtime.strategyContext === "on" &&
           kind !== "bootstrap" &&
@@ -1218,16 +1243,39 @@ export class Scheduler {
                   kind,
                   ...(intent === undefined ? {} : { focusIntentId: intent.id }),
                   verificationFallback: this.verification.defaultKind,
+                  ...(captureAgentAudit === undefined ? {} : { onAudit: captureAgentAudit }),
                   ...(projectBudget === undefined ? {} : { budget: projectBudget }),
                 }),
               )
             : undefined;
+        // M48: capture before count caps, in the lease/graph/sidecar transaction.
+        // A projection failure falls back to legacy preparation, never relaxes dispatch gates.
+        let contextSnapshot: ReturnType<typeof buildTaskContextSnapshot> | undefined;
+        if (this.config.tasks.contextPack.mode !== "off" &&
+            this.config.runtime.promptGroup === "default" && (kind === "reason" || kind === "explore")) {
+          try {
+            const usage = projectBudget === undefined ? getProjectUsage(conn, projectId) : undefined;
+            contextSnapshot = buildTaskContextSnapshot(conn, projectId, {
+              verificationFallback: this.verification.defaultKind,
+              ...(this.config.tasks.checkpoint.enabled ? { checkpoint: {
+                scopeTargets: scope.targets,
+                evidenceStatus: (ref: string) => checkpointEvidenceStatus(hostWorkspace, ref),
+              } } : {}),
+              budget: projectBudget ?? {
+                usedTokens: usage!.tokens, usedCostUsd: usage!.cost_usd,
+                maxTokens: this.config.budget.maxProjectTokens, maxCostUsd: this.config.budget.maxProjectCostUsd,
+              },
+            });
+          } catch { /* Fixed fallback code is emitted by prepareTask, not raw exception text. */ }
+        }
         const prepared = prepareTask({
           config: { ...this.config, runtime: { ...this.config.runtime, execution: runtime.execution } },
           project,
           exportYaml,
           kind,
-          ...(intent === undefined ? {} : { intent }),          ...(profile === null ? {} : { workerProfile: profile }),
+          ...(contextSnapshot === undefined ? {} : { contextSnapshot }),
+          ...(intent === undefined ? {} : { intent }),
+          ...(profile === null ? {} : { workerProfile: profile }),
           ...(pending === undefined
             ? {}
             : {
@@ -1239,6 +1287,8 @@ export class Scheduler {
           ...(projectBudget === undefined ? {} : { projectBudget }),
           ...(attachments.length === 0 ? {} : { attachments }),
           ...(agentContextYaml === undefined ? {} : { agentContextYaml }),
+          ...(graphAudit === undefined ? {} : { graphAudit }),
+          ...(agentContextAudit === undefined ? {} : { agentContextAudit }),
           scope,
           workspaceRoot: this.workspaceRoot,
           pathMapper: (hostPath) => runtime.mapPath(hostPath),
@@ -1277,6 +1327,10 @@ export class Scheduler {
           startedAt: utcnow(),
           session: workspaceReference(prepared.hostWorkspace, prepared.hostSessionDir),
         });
+        if (this.config.tasks.checkpoint.enabled) {
+          try { registerCheckpointRun(conn, runId, scope.targets); }
+          catch { this.log("checkpoint registration unavailable; dispatch continues"); }
+        }
         return { prepared, runId };
       });
     } catch (error) {
@@ -1294,6 +1348,12 @@ export class Scheduler {
       return false;
     }
 
+    const packLog = contextPackLog(started.prepared.contextPack);
+    if (packLog !== null) this.log(`${packLog} task=${started.prepared.task.taskId} project=${projectId}`);
+    const contextAuditLog = contextPlanLog(started.prepared.contextPlan);
+    if (contextAuditLog !== null) {
+      this.log(`${contextAuditLog} task=${started.prepared.task.taskId} project=${projectId}`);
+    }
     if (
       !this.startProcess(
         started.prepared,
@@ -1335,6 +1395,8 @@ export class Scheduler {
     const startedAtMs = Date.now();
 
     const extraEnv = observerEnvironment(prepared.observer);
+    extraEnv["CAIRN_TASK_CHECKPOINT"] = this.config.tasks.checkpoint.enabled ? "1" : "0";
+    extraEnv["CAIRN_CHECKPOINT_INTERVAL_SECONDS"] = String(this.config.tasks.checkpoint.intervalSeconds);
     Object.assign(extraEnv, toolSpillEnvironment(this.config.tasks.toolResultSpill));
     if (task.maxToolCalls !== undefined) {
       extraEnv["CAIRN_TASK_MAX_TOOL_CALLS"] = String(task.maxToolCalls);
@@ -1370,6 +1432,10 @@ export class Scheduler {
     } catch (error) {
       this.auditStream?.tokens.revoke(task.projectId, task.taskId);
       this.log(`worker spawn failed task=${task.taskId}: ${describe(error)}`);
+      if (this.config.tasks.checkpoint.enabled) {
+        try { this.db.withConn((conn) => finalizeCheckpointRun(conn, runId, "spawn_failed")); }
+        catch { this.log("checkpoint spawn finalization unavailable"); }
+      }
       // Nothing is running, so nothing may keep the slot or the intent claimed: the claim goes
       // here and the caller's `releaseBestEffort` returns the graph lease.
       this.releaseClaim(task.taskId, "spawn_failed");
@@ -1401,6 +1467,8 @@ export class Scheduler {
       sessionDir: prepared.hostSessionDir,
       resultPath: prepared.hostResultPath,
       hostWorkspace: prepared.hostWorkspace,
+      checkpointEnabled: this.config.tasks.checkpoint.enabled,
+      terminationReason: "worker_exit",
       leaseLost: false,
       cancelled: false,
       startedAtMs,
@@ -1425,6 +1493,8 @@ export class Scheduler {
     const task = prepared.task;
     const hardSeconds = task.hardDeadlineSeconds;
     const hardTimer = setTimeout(() => {
+      running.terminationReason = "hard_deadline";
+      this.recordCheckpoint(running);
       this.log(`hard deadline reached task=${task.taskId}; terminating worker`);
       this.terminate(processHandle);
     }, hardSeconds * 1000);
@@ -1444,11 +1514,15 @@ export class Scheduler {
       const ok = this.renewLease(running);
       if (!ok) {
         running.leaseLost = true;
+        running.terminationReason = "lease_lost";
+        this.recordCheckpoint(running);
         this.log(`lease lost task=${task.taskId}; terminating worker`);
         this.terminate(processHandle);
       }
     }, this.leaseIntervalMs);
 
+    const checkpointTimer = running.checkpointEnabled ? setInterval(() => this.recordCheckpoint(running),
+      this.config.tasks.checkpoint.intervalSeconds * 1000) : null;
     const stdoutPromise = new Response(processHandle.stdout as ReadableStream).text();
     const stderrPromise = new Response(processHandle.stderr as ReadableStream).text();
 
@@ -1459,6 +1533,8 @@ export class Scheduler {
       clearTimeout(hardTimer);
       if (softTimer !== null) clearTimeout(softTimer);
       clearInterval(leaseTimer);
+      if (checkpointTimer !== null) clearInterval(checkpointTimer);
+      this.recordCheckpoint(running);
     }
     running.exitCode = exitCode;
 
@@ -1494,6 +1570,7 @@ export class Scheduler {
       const raw = await this.readResult(running);
       if (raw === null) {
         this.log(`result missing task=${task.taskId}`);
+        if (running.terminationReason === "worker_exit") running.terminationReason = "result_missing";
         this.failRunning(running, "result missing");
         this.finish(running, "failed", "result missing");
         return;
@@ -1501,14 +1578,17 @@ export class Scheduler {
       const result = parseTaskResultJson(raw);
       if (result === null) {
         this.log(`result invalid task=${task.taskId} preview=${preview(raw)}`);
+        if (running.terminationReason === "worker_exit") running.terminationReason = "result_invalid";
         this.failRunning(running, "result invalid");
         this.finish(running, "failed", "result invalid");
         return;
       }
 
       const outcome = await this.applyResult(running, result);
+      if (running.terminationReason === "worker_exit") running.terminationReason = "finished";
       this.finish(running, outcome, running.detail);
     } catch (error) {
+      running.terminationReason = "supervision_failed";
       this.log(`task supervision crashed task=${task.taskId}: ${describe(error)}`);
       this.releaseOwnedLease(running);
       this.finish(running, "failed", `supervision crashed: ${describe(error)}`);
@@ -2105,6 +2185,12 @@ export class Scheduler {
       readTaskUsage(running.sessionDir),
     );
 
+    if (running.checkpointEnabled) {
+      this.recordCheckpoint(running);
+      try { this.db.withConn((conn) => finalizeCheckpointRun(conn, running.runId, running.terminationReason)); }
+      catch { this.log("checkpoint finalization unavailable"); }
+    }
+
     // Cairn always releases the reason lease in `finally`: success already created the
     // intents/completion, but the claim itself must not outlive the task.
     if (running.kind === "reason") {
@@ -2362,9 +2448,19 @@ export class Scheduler {
     }
   }
 
+  private recordCheckpoint(task: RunningTask): void {
+    if (!task.checkpointEnabled) return;
+    const status = ingestCheckpoint(this.db, task);
+    if (status === "accepted" || status === "invalid" || status === "conflict" || status === "identity_mismatch") {
+      this.log(`checkpoint ${status} task=${task.taskId} project=${task.projectId}`);
+    }
+  }
+
   private cancel(task: RunningTask, reason: string): void {
     if (task.cancelled) return;
     task.cancelled = true;
+    task.terminationReason = "cancelled";
+    this.recordCheckpoint(task);
     this.log(`cancelling task=${task.taskId} reason=${reason}`);
     const processHandle = this.processes.get(task.taskId);
     if (processHandle !== undefined) this.terminate(processHandle);
