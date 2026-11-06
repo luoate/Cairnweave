@@ -15,6 +15,7 @@ import {
 import { selectOperatorGuidance, buildExperimentReviewBasis, type ExperimentReviewBasis } from "@cairn/graph";
 import { withOperatorGuidance } from "../prompts/operator-guidance";
 import { EXPERIMENT_PLAN_INSTRUCTIONS, EXPERIMENT_REVIEW_INSTRUCTIONS, withExperimentContract } from "../prompts/experiment";
+import { EXPLORATION_MONITOR_INSTRUCTIONS } from "../prompts/exploration";
 import type {
   AgentContextAudit,
   ContextSelection,
@@ -328,8 +329,9 @@ export function prepareTask(input: PrepareTaskInput): PreparedTask {
       const compactBase = loadPrompt("default", name).replace(
         /\{(context_pack_path|intent_id|max_intents)\}/g, (_token, key: string) => replacements[key]!,
       );
-      return decorate(kind === "reason" ? withReasonOutputPolicy(compactBase, undefined,
-        config.tasks.reason.maxIntents, config.strategist.reasonAbandon === "on") : compactBase);
+      return decorate((kind === "reason" ? withReasonOutputPolicy(compactBase, undefined,
+        config.tasks.reason.maxIntents, config.strategist.reasonAbandon === "on") : compactBase) +
+        (input.contextSnapshot?.intents.some(item => item.exploration !== undefined) ? EXPLORATION_MONITOR_INSTRUCTIONS : ""));
     },
   });
   if (pack.applied !== undefined) {

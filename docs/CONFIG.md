@@ -324,6 +324,22 @@ M51d 在意图详情只读显示契约、观察与解释、运行异常、后续
 `bun run eval:experiments --out runs/experiment-eval.json` 运行确定性来源/安全评估，0 模型调用；
 不测真实探索成功率、推理质量或费用收益。没有自动反证/退役、新 UI 编辑器或 M52 重复抑制。
 
+### 重复探索与进展记录（M52a/b，只读）
+
+不新增配置项、阈值或数据库计数器，也不改变 checkpoint 默认关闭与 ContextPack 默认 off。
+显式 checkpoint-enriched snapshot 中，有合法 experiment 的意图附带可选 `exploration`：精确计划/
+提案指纹、已有同计划记录的有限 ID 列表、观察报告分类和连续未新增观察报告次数。结束 run 可带
+对应 `attempts[].exploration`。历史由现有 runs 与最后有效检查点重建，重启不丢计数。
+
+自动交付仅沿用成功 apply 的 M48 输入，完整字段纳入原字节预算及授权恢复分片；只有存在该投影时
+才为 compact prompt 追加解释。off/shadow/fallback 不新增必读历史；预算装不下整条必保留记录时回退，
+不截断计划或计数。已有只读 experiment GET 也返回可选投影，无工作区或证据不可用时不猜测有效观察。
+
+`new_observation` 仅指可比较历史中的新报告，不表示新 Fact、证据内容改变或真实信息增益；只有换描述、
+解释、文件名、attempt ID 或 sequence 不产生新观察。环境/执行/工具故障不增加计数，未知记录中断连续性。
+合理复验仍可继续；不调整优先级、派发、冷却、重试、预算或生命周期，不自动反证或完成项目。
+具体指纹与状态边界见 DESIGN §20 / CONTRACT §9.2。M52c 的软抑制与 M52d 的专门 UI 尚未实施。
+
 ### Worker `worker` / `worker_selection`
 
 | 键 | 默认 | 说明 |

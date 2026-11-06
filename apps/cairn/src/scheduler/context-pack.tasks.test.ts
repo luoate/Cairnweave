@@ -7,7 +7,7 @@ import { basename, join } from "node:path";
 import {
   buildAgentContext, buildTaskContextSnapshot, configureDatabase, concludeIntent, createHint, createIntent,
   createProject, exportProjectSliceYaml, exportProjectYaml, getProjectDetail, markOperatorHint, recordFactMeta,
-  renderAgentContextYaml, recordIntentMeta, listProjectIntentMeta, startRun, finishRun, registerCheckpointRun, acceptTaskCheckpoint, type AgentContextAudit, type CairnDatabase, type GraphExportAudit,
+  renderAgentContextYaml, recordIntentMeta, listProjectIntentMeta, startRun, finishRun, registerCheckpointRun, acceptTaskCheckpoint, finalizeCheckpointRun, type AgentContextAudit, type CairnDatabase, type GraphExportAudit,
 } from "@cairn/graph";
 import { parseDispatchConfig } from "../config";
 import { prepareTask, type PrepareTaskInput } from "./tasks";
@@ -236,6 +236,57 @@ describe("M51a experiment delivery", () => {
     expect(prepared.contextPack.status).toBe("fallback");
     expect(prepared.task.prompt).toContain(JSON.stringify(experiment()));
     expect(canonical(prepared)).toBe(canonical(prepare("off", { kind: "explore", intentMeta })));
+  });
+});
+
+describe("M52a/b observe-only delivery", () => {
+  function monitored() {
+    return db.withConn(conn => {
+      focus = createIntent(conn, projectId, { from: ["f100"], description: "可合理复验的方向", creator: "test", worker: null }).id;
+      recordIntentMeta(conn, { projectId, intentId: focus, experiment: experiment(), priority: 7 });
+      for (let index = 0; index < 2; index++) {
+        const runId = `m52-${index}`, taskId = `m52-task-${index}`;
+        startRun(conn, { id: runId, projectId, intentId: focus, taskId, kind: "explore", worker: "test", startedAt: `2026-11-05T00:0${index}:00Z` });
+        registerCheckpointRun(conn, runId, ["127.0.0.1:8080"], experiment());
+        const value = checkpoint({ project_id: projectId, task_id: taskId, intent_id: focus });
+        value.attempts[0] = { ...value.attempts[0]!, result: "observed", observation: "相同观察报告", fact_refs: ["f100"], evidence_refs: ["evidence/proof.txt"] };
+        expect(acceptTaskCheckpoint(conn, { runId, projectId, taskId, bytes: Buffer.from(JSON.stringify(value)) })).toBe("accepted");
+        finishRun(conn, runId, { outcome: "success", durationMs: 1, finishedAt: `2026-11-05T00:1${index}:00Z` });
+        finalizeCheckpointRun(conn, runId, "finished");
+      }
+      return { intentMeta: listProjectIntentMeta(conn, projectId), contextSnapshot: buildTaskContextSnapshot(conn, projectId, {
+        checkpoint: { scopeTargets: ["127.0.0.1:8080"], evidenceStatus: () => "available" },
+      }) };
+    });
+  }
+  test("applied pack and authorized recovery preserve complete monitors with honest byte accounting", () => {
+    const input = monitored();
+    for (const kind of ["reason", "explore"] as const) {
+      const off = prepare("off", { ...input, kind }), applied = prepare("apply", { ...input, kind });
+      expect(applied.contextPack.status).toBe("applied");
+      expect(applied.task.prompt).toContain("M52a/b，只读提示");
+      const pack = Bun.YAML.parse(readFileSync(join(applied.hostSessionDir, "context-pack.yaml"), "utf8")) as any;
+      expect(pack.intents.find((item: any) => item.id === focus).exploration).toMatchObject({ mode: "observe_only", consecutive_without_new_observation: 1 });
+      const store = join(applied.hostSessionDir, "context-store"), id = applied.contextPack.snapshot_id!;
+      expect(recoverContextRecord(store, projectId, id, "intents", focus)).toEqual(input.contextSnapshot.intents.find(item => item.id === focus)!);
+      expect(recoverContextRecord(store, projectId, id, "attempts", "m52-1")).toEqual(input.contextSnapshot.attempts.find(item => item.run_id === "m52-1")!);
+      expect(applied.contextPack.actual_initial_bytes).toBe(Buffer.byteLength(applied.task.prompt) + readFileSync(join(applied.hostSessionDir, "context-pack.yaml")).length);
+      expect(applied.task.scope).toEqual(off.task.scope);
+      expect(applied.task.hardDeadlineSeconds).toBe(off.task.hardDeadlineSeconds);
+      expect(applied.task.intentId).toBe(off.task.intentId);
+      expect(db.withConn(conn => getProjectDetail(conn, projectId)).intents.find(item => item.id === focus)!.to).toBeNull();
+    }
+  });
+  test("off, shadow and budget fallback never introduce a new mandatory historical prompt", () => {
+    const input = monitored();
+    const off = prepare("off", input), shadow = prepare("shadow", input);
+    expect(canonical(shadow)).toBe(canonical(off));
+    expect(off.task.prompt).not.toContain("M52a/b，只读提示");
+    const config = parseDispatchConfig({ ...BASE, tasks: { ...BASE.tasks, context_pack: { mode: "apply" }, context_plan: { max_initial_bytes: 1 } } });
+    const fallback = prepare("apply", { ...input, config });
+    expect(fallback.contextPack.status).toBe("fallback");
+    expect(canonical(fallback)).toBe(canonical(off));
+    expect(fallback.task.prompt).not.toContain("M52a/b，只读提示");
   });
 });
 

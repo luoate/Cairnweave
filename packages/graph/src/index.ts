@@ -448,9 +448,11 @@ export {
 
 export { emitScalar, map, renderYaml, type YamlMap, type YamlValue } from "./yaml";
 
-export { buildTaskContextSnapshot, type TaskContextSnapshot, type SnapshotFact, type SnapshotIntent } from "./context-snapshot";
+export { buildTaskContextSnapshot, type TaskContextSnapshot, type SnapshotFact, type SnapshotIntent, type SnapshotAttempt } from "./context-snapshot";
 
 export { projectIntentExperiment } from "./experiment-view";
+export { explorationPlanFingerprint, projectExploration, type ExplorationStatus,
+  type ExplorationSummary, type ExplorationProgress } from "./exploration";
 export { buildExperimentReviewBasis, experimentReviewError, type ExperimentReviewBasis } from "./experiment-reviews";
 export { projectExperimentResult, type ExperimentResultProjection } from "./experiments";
 export { registerCheckpointRun, acceptTaskCheckpoint, finalizeCheckpointRun, attachAttemptMemories,

@@ -7,8 +7,8 @@ fact-only + `off` 人工确认），H2 已实现（M41：`goal_conditions` + `fl
 H3 已实现（M42：超时、创建页策略预览、校验徽标、评估集），见 §15**。本文只讨论
 结构与语义，不代表后续阶段已经排期。实现记录见
 `docs/MILESTONES.md`。
-后续已实现的输入/记忆机制另见 §16–18（M47–M49）与 §19（M51a–d）；
-M50 可靠运行与用户引导见 CONFIG / MILESTONES。M52 仍未实施。
+后续已实现的输入/记忆机制另见 §16–18（M47–M49）、§19（M51a–d）与 §20（M52a/b，只读记录）；
+M50 可靠运行与用户引导见 CONFIG / MILESTONES。M52c/d 仍未实施。
 兼容性约束：不改变 Cairn 图的形状、YAML 导出、对外 HTTP golden 与 worker 契约中的既有字段。
 
 ## 1. 摘要
@@ -1341,7 +1341,56 @@ review、reason provenance、原检查点正文及后续方向；最多返回 10
 明确缺观察可通过；解释、工具/环境/执行故障、陈旧版本、计划变化、Scope 变化、缺证据、跨项目、
 虚构引用及非法契约不得成为结果驱动决策。另有 scheduler 文件协议集成、事务回滚、派发后变化、
 默认开关兼容、去重不覆盖、API 隔离与前端异步回归。评估 0 模型调用，不测真实探索成功率或费用收益；
-真实模型效果、浏览器视觉及 Docker 跨 UID 验收未运行。最终离线结果见 MILESTONES。M52 未实施。
+真实模型效果、浏览器视觉及 Docker 跨 UID 验收未运行。最终离线结果见 MILESTONES。该阶段未包含 M52。
+
+## 20. M52a/b：确定性重复识别与观察进展记录（只读）
+
+版本 `0.76.0-m52ab`。目标是让已有探索记录可精确比较，不把“没有新报告”误判为环境错误或假设为假。
+不实施 M52c 的调度软抑制或 M52d 的专门 UI；不新增模型判断调用、存储表、配置开关或计数器。
+
+### 20.1 计划、提案与报告三层指纹
+
+计划指纹在 m52-plan-v1 版本域下散列项目、Scope targets、from 事实集合、契约版本及五字段。
+只规范文本两端空白和 CRLF/CR 行尾，保留大小写和内部空格；集合精确排序去重。Scope 未知/空时指纹
+为 null，不把未知记录混组。描述、priority、dedupe_key 变化不是实验输入变化。提案指纹另以
+m52-proposal-v1 比较来源意图和排序后的精确 run/sequence/attempt 引用；choice/rationale 不参与。
+同计划/同提案只读列出其它已有意图 count、前 8 个 ID 和 omitted，不删除、合并或拒绝任何方向。
+
+观察报告指纹使用 m52-observation-v1，比较规范后的 action/observation、自报 result 和事实引用集合。
+排除 interpretation、证据文件名、run/attempt ID 与 checkpoint sequence；同一 run 内相同报告去重。
+这不是语义相似度、证据内容散列或科学信息增益衡量；改文件名不会新增报告，也不证明文件内容没变。
+
+### 20.2 从持久化历史重建，不维护第二套尝试正文
+
+仅在显式 checkpoint-enriched snapshot 中，为合法契约意图附 `exploration`，为其结束 run 附逐次记录。
+普通 AgentContext 与 graph YAML 不变；旧意图无契约不补造字段。历史只取现有 runs 和每 run 最后有效
+checkpoint，重复保存/无效新版本不多计轮次。以控制面 finished_at 排序，并用 started_at/run_id 稳定
+打破并发同时间平局；不可排序历史保守置后。跨项目隔离，当前同计划的方向共享已见报告集合。
+
+可比较观察必须正常 success/finished，无权威故障，检查点身份/sequence 匹配，控制面派发计划与当前
+契约一致，Scope 未变，输入及引用事实仍 current，自报 observed/negative_observation 且证据引用当前
+全部 available。可用性不是验证。缺记录/绑定/终止或结束信息、计划/Scope/事实变化、观察 inconclusive、
+证据未供/丢失/不可用均为 unknown；不把当前计划补给历史检查点。
+
+状态区分 new_observation、repeated_observation、interpretation_only、no_observation、
+operationally_incomplete、unknown。权威执行/环境故障、非正常结束和检查点自报工具/环境等错误优先记
+operationally_incomplete，不变成负面路线结果。每个 run 一次：新报告将连续计数归零；重复/仅解释/
+空观察加一；unknown 置 null；故障保留此前值但不增加。摘要 counts/latest/streak/advisory 只供阅读。
+
+### 20.3 交付与运行边界
+
+沿用 M48 整条选择、字节预算和完整授权恢复分片，必保留记录放不下则回退，不裁掉计划或摘要。
+只有确有该投影的 compact prompt 才追加解释政策；成功 apply 才自动交付。off/shadow/fallback 不增加
+必读历史；无实验项目不多付该说明字节。已有只读 experiment GET 返回可选摘要与逐 run 记录；响应仍
+最多 10 条 attempts，但 counts 来自完整项目历史。内部仍完整读取，不声称分页或固定内存开销。
+
+所有记录 mode 固定 observe_only，hypothesis_verdict 固定 unknown。计数只涉及观察报告，不表示没有
+新 Fact、整体路线停滞或无复验价值；需结合当前目标与事实。没有派发/优先级/冷却/重试/预算/生命周期
+调整，没有自动判假/退役/重开/完成，也不改变用户引导、Host Bridge Scope 或完成 oracle。
+
+离线回归覆盖规范化精确性、来源引用、peer 上限、并发结束顺序、未知间隔、故障排除、最后有效版本、
+单 run 报告去重、当前事实复核、数据库重开/只读与跨项目隔离、GET 上限、授权恢复和实际字节核算。
+具体全量结果见 MILESTONES；不以固定夹具推断真实模型解题成功率、停滞减少或费用收益。
 
 ## 附录 A：当前提示词输入
 

@@ -1,11 +1,11 @@
 # 里程碑与验证记录
 
-本文件保留至 M51a–d 的实现记录、测试与浏览器验证清单、与 Python Cairn 的已知差异、
+本文件保留至 M52a/b 的实现记录、测试与浏览器验证清单、与 Python Cairn 的已知差异、
 里程碑表以及与 Phase 0 的关系。产品概览、快速开始与 API 概览见 [README](../README.md)。
 
 ## 实现记录
 
-最新代码：**M50 已收束；M51a–d 已实现（0.75.0-m51），不含 M52**。
+最新代码：**M50 已收束；M51a–d 与 M52a/b 已实现（0.76.0-m52ab），不含 M52c/d**。
 最终验收见文末对应记录；以下段落保留各历史阶段当时的状态，不代表当前版本止于 M40。
 
 状态：**M40（完成契约安全门：bootstrap 支持 fact-only；`verification: off` 的完成声明默认进入 `completion_reviews` 人工确认，不再自动关项目；执行模式按题选择记为 M39b）**；M0–M4、M5a–M5c、
@@ -1631,6 +1631,20 @@ M47 八场景 audit/off 兼容性均为 true；M48 八场景中 6 applied、**13
 兼容性复验：M47 八场景 audit/off 均兼容；M48 六场景 applied、**1370/1370** 授权记录恢复，图切片 no_benefit 回退、conclude not_applicable；M42 hardened 错误完成 **0/5**（legacy **2/5**）。所有评估均离线，0 真实模型调用。最终 `bun run check`（TypeScript + 全量测试）：**1393 pass / 0 fail / 134 files / 6847 expects**，249.65s。CSS 产物一致性、CLI `0.75.0-m51` 与包版本、`git diff --check` 通过。新增旧库两列迁移/历史检查点保留及后续方向去重回归已包含在最终全量中。
 
 未重启实际服务、未恢复项目、未运行真实模型/Docker gate 或浏览器视觉验收。部署与真实效果仍需另行授权；默认 checkpoint/pack 开关不变，M52 重复/停滞抑制未实施。边界见 DESIGN §19.4–19.5、CONTRACT §3.2、OPERATIONS。
+
+### M52a / M52b：确定性重复识别与观察进展记录（observe-only）
+
+版本 `0.76.0-m52ab`，2026-11-06；仅实现 a/b，不提前实施 c 的调度抑制或 d 的专门 UI。
+
+- **M52a**：计划指纹精确比较项目、Scope、来源事实与五字段契约，提案指纹再比较来源方向及精确观察引用；只规范行尾/两端空白及集合顺序。换描述、priority、dedupe_key 或 rationale 不代表输入变化；不使用模糊语义匹配，不合并/拒绝方向。同指纹 peer 的计数完整、ID 最多 8 个并带 omitted。
+- **M52b**：从现有 runs 与最后有效 checkpoint 重建新观察报告、重复报告、仅解释、空观察、执行不完整与未知六类记录及连续未新增观察报告次数。同 run 重复报告/累计保存不多计轮次，以结束时间排序并稳定处理并发平局；不可排序历史保守中断连续性。
+- 新报告重置为 0；重复/解释/空观察加一；unknown 置 null；权威环境/执行故障及自报工具等错误不增加计数。缺派发绑定、身份不匹配、计划/Scope/输入或引用事实变化、观察 inconclusive、证据不可用等都不猜测可比较。解释/文件名/attempt ID/sequence 变化不算新观察；不比较证据正文，不把计数等同于没有新 Fact、整体停滞或没有复验价值。
+- 显式 checkpoint-enriched snapshot 附可选只读 exploration，普通 AgentContext/graph 不变，无契约旧意图不补造。自动交付仅沿用 M48 成功 apply，字段/说明都计入实际字节预算、完整记录可授权恢复；off/shadow/fallback 不新增必读历史，无实验项目不附加说明。既有 experiment GET 返回可选摘要，响应仍限 10 条尝试但 counts 来自完整历史。
+- 不新增数据库迁移/计数器、模型调用、配置项、写路由或默认开关变化；mode 固定 observe_only、hypothesis_verdict 固定 unknown。优先级、派发、重试、冷却、预算、用户引导、Scope、生命周期和完成门禁均不调整，合理复验仍允许。
+
+新增 **15 项测试**，覆盖规范化/来源指纹、peer 上限、观察与解释分类、故障排除、未知间隔、当前事实复核、结束顺序及平局、最后有效版本/单 run 去重、数据库重开与只读/项目隔离；已有 API 与 M48 交付/恢复/预算回退测试同时扩充。最终 `bun run check`（TypeScript + 全量测试）：**1408 pass / 0 fail / 135 files / 6996 expects**，246.97s。CSS 产物一致性、CLI/根包/应用/lock 版本 `0.76.0-m52ab` 与 `git diff --check` 通过。
+
+离线复验：M51 来源评估 **19/19**，unsafe_acceptances **0**、verdict_changes **0**；M47 八场景兼容；M48 六场景 applied、**1370/1370** 授权记录完整恢复，图切片 no_benefit 回退、conclude not_applicable；M42 hardened 错误完成 **0/5**（legacy **2/5**）。评估均为确定性夹具、0 真实模型调用，不证明实际停滞减少、探索成功率或费用收益。报告保存在 ignored runs/m52ab-*，未重启实际服务、未恢复项目、未运行真实模型/Docker gate 或浏览器视觉验收。边界见 DESIGN §20、CONTRACT §9.2、CONFIG 与 OPERATIONS。
 
 ## 与 Phase 0 的关系
 

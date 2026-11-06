@@ -27,6 +27,8 @@ test("read-only view separates plan, observation, interpretation and strategy pr
   expect(data.attempts[0].memory.checkpoint.attempts[0]).toMatchObject({ observation: "条件 A 返回 403，条件 B 返回 200", interpretation: "可能存在条件差异，需下一次验证" });
   expect(data.attempts[0].memory.experiment_result.observations[0].evidence).toBe("refs_available_not_verified");
   expect(data.attempts[0].memory.experiment_plan).toEqual(experiment());
+  expect(data.exploration).toMatchObject({ version: 1, mode: "observe_only", counts: { new_observation: 1 }, consecutive_without_new_observation: 0 });
+  expect(data.attempts[0].exploration).toMatchObject({ status: "new_observation", hypothesis_verdict: "unknown" });
   await get();
   expect(db.withConn(conn => exportProjectYaml(conn, scene.projectId))).toBe(before);
   expect((await api.handle(new Request(url(), { method: "POST", body: "{}" }))).status).toBeGreaterThanOrEqual(400);
@@ -59,12 +61,16 @@ test("bounds histories to ten entries and does not expose unrelated project reco
   const data = await get();
   expect(data.attempts).toHaveLength(10); expect(data.followups).toHaveLength(10);
   expect(data.omitted).toEqual({ attempts: 3, followups: 2 });
+  expect(data.exploration.counts).toMatchObject({ new_observation: 1, unknown: 12 });
+  expect(data.exploration.same_plan.count).toBe(12);
+  expect(data.exploration.same_plan.intent_ids).toHaveLength(8);
   expect(JSON.stringify(data)).not.toContain("proj_002");
   expect(data.followups.every((item: any) => item.review.source_intent_id === scene.intentId)).toBe(true);
 });
 test("legacy intents omit invented plans and review data", async () => {
   db.withConn(conn => conn.query("DELETE FROM intent_meta WHERE project_id = ?").run(scene.projectId));
   expect(await get()).toMatchObject({ experiment: null, experiment_review: null, hypothesis_verdict: "unknown" });
+  expect(await get()).not.toHaveProperty("exploration");
 });
 function app() {
   const html = readFileSync(join(import.meta.dir, "static", "index.html"), "utf8");

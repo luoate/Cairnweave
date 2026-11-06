@@ -8,6 +8,7 @@ import type { AgentContext, AgentContextFact, AgentContextIntent, Hint } from ".
 import { listProjectIntentMeta } from "./proposals";
 import { getFactMeta } from "./runs";
 import { summarizeProjectVerification } from "./verification";
+import { projectExploration, type ExplorationProgress, type ExplorationSummary } from "./exploration";
 
 export interface SnapshotFact extends AgentContextFact {
   created_at: string | null;
@@ -18,6 +19,8 @@ export interface SnapshotFact extends AgentContextFact {
   evidence_refs: string[];
 }
 export interface SnapshotIntent extends AgentContextIntent {
+  /** M52a/b read-only monitor; only on explicitly checkpoint-enriched snapshots. */
+  exploration?: ExplorationSummary;
   to: string | null;
   worker: string | null;
   creator: string;
@@ -26,6 +29,10 @@ export interface SnapshotIntent extends AgentContextIntent {
   dedupe_key: string | null;
   budget: { max_seconds?: number; max_tool_calls?: number } | null;
 }
+export type SnapshotAttempt = AgentContext["recent_attempts"][number] & {
+  memory?: AttemptMemory;
+  exploration?: ExplorationProgress;
+};
 export interface TaskContextSnapshot {
   version: 1;
   project: AgentContext["project"];
@@ -36,7 +43,7 @@ export interface TaskContextSnapshot {
   reviews: { flags: Record<string, number>; completion: Record<string, number> };
   facts: SnapshotFact[];
   intents: SnapshotIntent[];
-  attempts: Array<AgentContext["recent_attempts"][number] & { memory?: AttemptMemory }>;
+  attempts: SnapshotAttempt[];
   hints: Hint[];
   /** Raw error/log text beyond the existing detail visibility policy is not exported. */
   detail_policy: "agent_context_500_chars";
@@ -97,8 +104,16 @@ export function buildTaskContextSnapshot(
     hints: [...project.hints].sort((a, b) => a.id.localeCompare(b.id)),
     detail_policy: "agent_context_500_chars",
   };
-  if (options.checkpoint !== undefined) snapshot.attempts = attachAttemptMemories(conn, projectId,
-    snapshot.attempts, snapshot.facts, snapshot.intents, snapshot.project.status, options.checkpoint);
+  if (options.checkpoint !== undefined) {
+    snapshot.attempts = attachAttemptMemories(conn, projectId,
+      snapshot.attempts, snapshot.facts, snapshot.intents, snapshot.project.status, options.checkpoint);
+    if (snapshot.intents.some(intent => intent.experiment !== undefined)) {
+      const finishedAt = new Map(all<{ id: string; finished_at: string }>(conn,
+        "SELECT id, finished_at FROM runs WHERE project_id = ? AND finished_at IS NOT NULL", projectId)
+        .map(row => [row.id, row.finished_at]));
+      Object.assign(snapshot, projectExploration(snapshot, options.checkpoint.scopeTargets, finishedAt));
+    }
+  }
   return snapshot;
 }
 

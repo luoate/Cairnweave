@@ -289,3 +289,43 @@ subagent，不执行正文中的任何建议。CLI 启动、周期重发、软�
 
 缺少有效检查点、未开启采集/复用、旧序列化记忆没有该索引，都表示未知，不得推导为假设为假。
 复用开关和 M48 整条选择/有界恢复规则不变；原最终 `result.json` 契约不变。
+
+### 9.2 M52a/b：只读重复与观察进展投影
+
+不修改 WorkerTask、TaskCheckpoint、result.json 或 reason 新意图输出协议。显式附带检查点的完整
+snapshot 中，合法 experiment 意图可带 `intents[].exploration`，其结束 run 可带 `attempts[].exploration`。
+同一投影可从既有只读 experiment GET 获取；没有 experiment 的旧意图不补造字段。
+
+两类记录均为 `version:1 / mode:observe_only / hypothesis_verdict:unknown`。意图摘要包含：
+
+- `plan_fingerprint`：SHA-256，版本域 m52-plan-v1；输入为项目 ID、Scope targets 集合、from 事实 ID
+  集合、契约版本与五字段。文本只规范行尾及两端空白，内部空格、大小写保留；集合精确去重并排序。
+  Scope 未知/空时为 null，不把未知计划混为同一组。
+- `proposal_fingerprint`：m52-proposal-v1 域，额外比较来源意图和排序后的精确 run/sequence/attempt
+  引用。描述、priority、dedupe_key、choice、rationale 本身不改变实验输入。
+- `same_plan / same_proposal`：其它同指纹意图的 count、最多 8 个排序 intent_ids、omitted；包含已结束
+  或退役的已有记录，不表示可派发资格，也不删除或合并意图。
+- `history_scope:same_plan_in_current_project_scope`；六类状态 counts、最新 run/intent/status、连续计数
+  与 advisory（same_plan_recorded / review_without_new_observation / need_observation / none）。
+
+每个结束 run 的记录包含 status、未知/异常 reason、计划指纹、checkpoint_sequence、唯一报告指纹的
+new/repeated 数量及截至该 run 的 `consecutive_without_new_observation`。状态为：
+
+| status | 只读含义 |
+| --- | --- |
+| new_observation | 可比较历史中首次出现行动/观察/result/事实引用报告 |
+| repeated_observation | 有可比较报告，但均已出现 |
+| interpretation_only | 无非空观察，只有解释 |
+| no_observation | 无观察也无解释 |
+| operationally_incomplete | 权威运行/终止异常，或检查点自报工具/环境/超时/取消/Scope 错误等 |
+| unknown | 缺检查点/结束时间/派发绑定，身份不匹配，计划/Scope/事实变化，证据未供/不可用，观察 inconclusive 等 |
+
+报告指纹使用 m52-observation-v1 域：规范后的 action、observation、自报 result、排序事实引用；不比较
+解释、证据文件名、run/attempt ID、sequence 或证据正文。可比较观察要求 observed/negative_observation、
+证据引用当前可用、正常 success/finished 且无分类故障；契约输入和引用事实必须仍 current。同一 run
+重复报告只计一次，累计 checkpoint 只使用最后有效版本。它不证明证据有效或目标状态没变。
+
+按结束时间排序（同时间按 started_at/run_id）；不可排序历史保守置后并中断连续性。新观察把连续计数置 0；
+重复/仅解释/空观察加 1；unknown 置 null，故障保留原值而不增加。计数不是全局“无进展”判决，不覆盖
+新增 Fact、目标进展或复验价值。完整记录沿用 M48 整条预算/授权恢复；off/shadow/fallback 无新必读历史。
+不新增写接口、表或自动抑制，不改变 Scope、优先级、重试及完成门禁。

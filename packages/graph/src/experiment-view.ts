@@ -2,6 +2,7 @@
 import type { TaskContextSnapshot } from "./context-snapshot";
 import type { IntentMeta } from "./models";
 export function projectIntentExperiment(snapshot: TaskContextSnapshot, intentId: string, metadata: readonly IntentMeta[]) {
+  const intent = snapshot.intents.find(item => item.id === intentId);
   const meta = metadata.find(item => item.intent_id === intentId);
   const attempts = snapshot.attempts.filter(item => item.intent_id === intentId)
     .sort((a, b) => b.started_at.localeCompare(a.started_at) || b.run_id.localeCompare(a.run_id));
@@ -12,8 +13,10 @@ export function projectIntentExperiment(snapshot: TaskContextSnapshot, intentId:
     trust: "worker_claim_not_verified" as const, hypothesis_verdict: "unknown" as const,
     experiment: meta?.experiment ?? null, experiment_review: meta?.experiment_review ?? null,
     reason_run_id: meta?.origin_run_id ?? null,
+    ...(intent?.exploration === undefined ? {} : { exploration: intent.exploration }),
     attempts: attempts.slice(0, 10).map(item => ({ run_id: item.run_id, outcome: item.outcome,
-      ...(item.failure === undefined ? {} : { failure: item.failure }), memory: item.memory ?? null })),
+      ...(item.failure === undefined ? {} : { failure: item.failure }), memory: item.memory ?? null,
+      ...(item.exploration === undefined ? {} : { exploration: item.exploration }) })),
     followups: followups.slice(0, 10).map(item => ({ intent_id: item.intent_id, reason_run_id: item.origin_run_id,
       review: item.experiment_review! })),
     omitted: { attempts: Math.max(0, attempts.length - 10), followups: Math.max(0, followups.length - 10) },
