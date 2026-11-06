@@ -6,6 +6,7 @@
 
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { experiment } from "../../../../../packages/contracts/src/testdata/experiment";
 
 interface TaskShape {
   kind: string;
@@ -33,12 +34,14 @@ if (task.kind === "reason") {
             priority: 90,
             budget: { max_seconds: 20, max_tool_calls: 5 },
             dedupe_key: "high-priority-direction",
+            experiment: experiment(),
           },
           {
             from: ["origin"],
             description: "low priority direction",
             priority: 10,
             dedupe_key: "low-priority-direction",
+            ...(process.argv[3] === "invalid-experiment" ? { experiment: { ...experiment(), version: 99 } } : {}),
           },
         ],
         hints: [{ content: "inspect the login flow" }],

@@ -1,3 +1,4 @@
+import { experiment } from "../../../../packages/contracts/src/testdata/experiment";
 import { checkpoint } from "../../../../packages/contracts/src/testdata/checkpoint";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -5,8 +6,8 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import {
   buildAgentContext, buildTaskContextSnapshot, configureDatabase, concludeIntent, createHint, createIntent,
-  createProject, exportProjectSliceYaml, exportProjectYaml, getProjectDetail, recordFactMeta,
-  renderAgentContextYaml, startRun, finishRun, registerCheckpointRun, acceptTaskCheckpoint, type AgentContextAudit, type CairnDatabase, type GraphExportAudit,
+  createProject, exportProjectSliceYaml, exportProjectYaml, getProjectDetail, markOperatorHint, recordFactMeta,
+  renderAgentContextYaml, recordIntentMeta, listProjectIntentMeta, startRun, finishRun, registerCheckpointRun, acceptTaskCheckpoint, type AgentContextAudit, type CairnDatabase, type GraphExportAudit,
 } from "@cairn/graph";
 import { parseDispatchConfig } from "../config";
 import { prepareTask, type PrepareTaskInput } from "./tasks";
@@ -51,6 +52,26 @@ function prepare(mode: "off" | "shadow" | "apply", extra: Partial<PrepareTaskInp
 const canonical = (prepared: ReturnType<typeof prepare>) => JSON.stringify(prepared.task).replaceAll(prepared.task.taskId, "TASK");
 
 describe("M48 task rollout and actual delivery", () => {
+  test("operator guidance stays pinned in apply/shadow/fallback prompts and is counted in initial bytes", () => {
+    const id = db.withConn(conn => {
+      const hint = createHint(conn, projectId, { content: "优先检查用户指定入口 /login", creator: "custom operator" });
+      markOperatorHint(conn, projectId, hint.id); return hint.id;
+    });
+    for (const mode of ["off", "shadow", "apply"] as const) {
+      const prepared = prepare(mode);
+      expect(prepared.task.prompt).toStartWith("# 用户引导（优先处理）");
+      expect(prepared.task.prompt).toContain("用户指定入口 /login");
+      expect(prepared.operatorHintIds).toEqual([id]);
+      if (mode === "apply") {
+        expect(prepared.contextPack.status).toBe("applied");
+        expect(prepared.contextPack.actual_initial_bytes).toBe(Buffer.byteLength(prepared.task.prompt) + readFileSync(join(prepared.hostSessionDir, "context-pack.yaml")).length);
+      }
+    }
+    const fallback = prepare("apply", { config: parseDispatchConfig({ ...BASE, tasks: { ...BASE.tasks,
+      context_pack: { mode: "apply" }, context_plan: { max_initial_bytes: 1 } } }) });
+    expect(fallback.contextPack.status).toBe("fallback");
+    expect(fallback.task.prompt).toContain("用户指定入口 /login");
+  });
   test("literal placeholder-shaped directory names survive compact prompt rendering", () => {
     const applied = prepare("apply", { workspaceRoot: join(dir, "{intent_id}-{max_intents}") });
     expect(applied.contextPack.status).toBe("applied");
@@ -174,6 +195,50 @@ describe("M48 task rollout and actual delivery", () => {
 });
 
 
+describe("M51a experiment delivery", () => {
+  function storePlan() {
+    return db.withConn(conn => {
+      recordIntentMeta(conn, { projectId, intentId: focus, source: "strategist", experiment: experiment() });
+      return listProjectIntentMeta(conn, projectId);
+    });
+  }
+  test("keeps literal plan data in off/shadow/apply and mandatory focus records, including exact byte accounting", () => {
+    const intentMeta = storePlan();
+    for (const mode of ["off", "shadow", "apply"] as const) {
+      const prepared = prepare(mode, { kind: "explore", intentMeta });
+      expect(prepared.task.prompt).toContain(JSON.stringify(experiment()));
+      expect(prepared.task.prompt).toContain("{intent_id}");
+      expect(prepared.task.prompt).toContain("未验证计划数据");
+      expect(prepared.task.scope.targets).toEqual(["127.0.0.1:8080"]);
+      expect(prepared.task.hardDeadlineSeconds).toBe(30);
+      expect(prepared.task).not.toHaveProperty("experiment");
+      if (mode === "apply") {
+        expect(prepared.contextPack.status).toBe("applied");
+        const pack = Bun.YAML.parse(readFileSync(join(prepared.hostSessionDir, "context-pack.yaml"), "utf8")) as any;
+        expect(pack.intents.find((i: any) => i.id === focus)?.experiment).toEqual(experiment());
+        expect(recoverContextRecord(join(prepared.hostSessionDir, "context-store"), projectId, prepared.contextPack.snapshot_id!, "intents", focus))
+          .toMatchObject({ experiment: experiment() });
+        expect(prepared.contextPack.actual_initial_bytes).toBe(Buffer.byteLength(prepared.task.prompt) + readFileSync(join(prepared.hostSessionDir, "context-pack.yaml")).length);
+      }
+    }
+  });
+  test("includes the plan in explore conclude, not bootstrap conclude, and leaves legacy intents unchanged", () => {
+    const intentMeta = storePlan();
+    expect(prepare("off", { kind: "conclude", intentMeta }).task.prompt).toContain(JSON.stringify(experiment()));
+    expect(prepare("off", { kind: "conclude", concludeOf: "bootstrap", intentMeta }).task.prompt).not.toContain("# 当前探索契约");
+    expect(prepare("off", { kind: "explore" }).task.prompt).not.toContain("# 当前探索契约");
+    expect(prepare("off", { kind: "reason", intentMeta }).task.prompt).toContain("新建 intent 时可附加 experiment");
+  });
+  test("over-budget fallback retains the entire experiment plan instead of silently trimming it", () => {
+    const intentMeta = storePlan();
+    const config = parseDispatchConfig({ ...BASE, tasks: { ...BASE.tasks, context_pack: { mode: "apply" }, context_plan: { max_initial_bytes: 1 } } });
+    const prepared = prepare("apply", { config, kind: "explore", intentMeta });
+    expect(prepared.contextPack.status).toBe("fallback");
+    expect(prepared.task.prompt).toContain(JSON.stringify(experiment()));
+    expect(canonical(prepared)).toBe(canonical(prepare("off", { kind: "explore", intentMeta })));
+  });
+});
+
 describe("M49 prepared task byte accounting", () => {
   test("checkpoint guidance and complete attempt memory enter the actual M48 byte budget, not an unbounded mandatory file", () => {
     const snapshot = db.withConn((conn) => {
@@ -189,6 +254,9 @@ describe("M49 prepared task byte accounting", () => {
     expect(prepared.task.prompt).toContain("save_task_checkpoint");
     const pack = Bun.YAML.parse(readFileSync(join(prepared.hostSessionDir, "context-pack.yaml"), "utf8")) as any;
     expect(pack.attempts[0].memory.trust).toBe("worker_claim_not_verified");
+    expect(pack.attempts[0].memory.experiment_result).toEqual(snapshot.attempts[0]?.memory?.experiment_result);
+    expect(pack.attempts[0].memory.experiment_result).toMatchObject({ status: "operationally_incomplete", hypothesis_verdict: "unknown",
+      observations: [{ attempt_id: "a1", reported_result: "tool_failure", evidence: "unavailable" }] });
     expect(prepared.contextPlan.status).toBe("written");
     if (prepared.contextPlan.status !== "written") throw new Error("no plan");
     const plan = prepared.contextPlan.plan;

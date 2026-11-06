@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { setUtcNowSource } from "@cairn/graph";
 import { CONTEXT_SCENARIOS, runContextEvaluation } from "./context";
+import { runContextPackEvaluation } from "./context-pack";
 
 describe("M47 deterministic context evaluation", () => {
   test("covers eight real preparation scenarios without worker/model calls or input changes", () => {
@@ -33,6 +35,24 @@ describe("M47 deterministic context evaluation", () => {
     expect(byId.get("conclude_resume")!.totals.solver.unknown_sources).toContain("resumed_history");
     expect(JSON.stringify(report)).not.toContain("长描述长描述");
   }, 30000);
+
+  test("shared M47/M48 fixtures stay deterministic across a clock boundary during seeding", () => {
+    try {
+      for (const evaluate of [runContextEvaluation, runContextPackEvaluation]) {
+        setUtcNowSource(() => "2026-11-04T00:00:00Z");
+        const baseline = evaluate();
+        let calls = 0;
+        // A boundary partway through many_facts used to change concluded-intent
+        // selection and its measured YAML by 8 bytes, despite identical graph content.
+        setUtcNowSource(() => ++calls > 140 ? "2026-11-04T00:00:01Z" : "2026-11-04T00:00:00Z");
+        const crossing = evaluate();
+        expect(calls).toBeGreaterThan(140);
+        expect(crossing).toEqual(baseline);
+      }
+    } finally {
+      setUtcNowSource(null);
+    }
+  }, 60000);
 
   test("metrics are stable for repeated runs in the same environment", () => {
     expect(runContextEvaluation()).toEqual(runContextEvaluation());

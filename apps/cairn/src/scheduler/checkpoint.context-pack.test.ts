@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AttemptMemory } from "@cairn/graph";
+import { projectExperimentResult, type AttemptMemory } from "@cairn/graph";
 import { checkpoint } from "../../../../packages/contracts/src/testdata/checkpoint";
 import { contextSnapshot } from "./testdata/context-pack-fixture";
 import { buildContextPack, type BuildPackInput } from "./context-pack";
@@ -15,6 +15,8 @@ function fixture() {
     reuse: { intent_status: "open", scope_status: "unchanged_requires_authorization", project_status: "active",
       budget: "recheck_current_pack_core", automatic_execution: false,
       facts: [{ id: "f1", status: "missing", superseded_by: null }], evidence: [{ ref: "artifacts/test.log", status: "missing" }] } };
+  memory.experiment_result = projectExperimentResult({ checkpoint: memory.checkpoint, outcome: memory.control.outcome,
+    terminationReason: memory.control.termination_reason, evidence: memory.reuse.evidence });
   snapshot.attempts[0]!.memory = memory;
   return snapshot;
 }

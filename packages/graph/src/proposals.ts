@@ -8,6 +8,8 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { isExperimentContract, parseExperimentContract, type ExperimentContract,
+  isExperimentReview, parseExperimentReview, type ExperimentReview } from "@cairn/contracts";
 
 import { all, get, run } from "./db";
 import { HttpError } from "./errors";
@@ -162,24 +164,30 @@ export interface RecordIntentMetaInput {
   originRunId?: string | null;
   priority?: number | null;
   budget?: string | null;
+  experiment?: ExperimentContract;
+  experimentReview?: ExperimentReview;
   createdAt?: string;
 }
 
 export function recordIntentMeta(conn: Database, input: RecordIntentMetaInput): void {
+  if (input.experiment !== undefined && !isExperimentContract(input.experiment)) throw new Error("Invalid experiment contract");
+  if (input.experimentReview !== undefined && !isExperimentReview(input.experimentReview)) throw new Error("Invalid experiment review");
   run(
     conn,
     `
     INSERT INTO intent_meta
         (project_id, intent_id, dedupe_key, source, proposal_id, origin_run_id,
-         priority, budget, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         priority, budget, experiment, experiment_review, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(project_id, intent_id) DO UPDATE SET
         dedupe_key = excluded.dedupe_key,
         source = excluded.source,
         proposal_id = excluded.proposal_id,
         origin_run_id = excluded.origin_run_id,
         priority = excluded.priority,
-        budget = excluded.budget
+        budget = excluded.budget,
+        experiment = COALESCE(excluded.experiment, intent_meta.experiment),
+        experiment_review = COALESCE(excluded.experiment_review, intent_meta.experiment_review)
     `,
     input.projectId,
     input.intentId,
@@ -189,6 +197,8 @@ export function recordIntentMeta(conn: Database, input: RecordIntentMetaInput): 
     input.originRunId ?? null,
     input.priority ?? null,
     input.budget ?? null,
+    input.experiment === undefined ? null : JSON.stringify(input.experiment),
+    input.experimentReview === undefined ? null : JSON.stringify(input.experimentReview),
     input.createdAt ?? utcnow(),
   );
 }
@@ -283,6 +293,8 @@ interface IntentMetaRow {
   origin_run_id: string | null;
   priority: number | null;
   budget: string | null;
+  experiment: string | null;
+  experiment_review: string | null;
   status: string | null;
   status_reason: string | null;
   status_at: string | null;
@@ -291,6 +303,8 @@ interface IntentMetaRow {
 }
 
 function intentMetaFromRow(row: IntentMetaRow): IntentMeta {
+  const experiment = parseExperimentContract(row.experiment);
+  const review = parseExperimentReview(row.experiment_review);
   return {
     project_id: row.project_id,
     intent_id: row.intent_id,
@@ -306,6 +320,8 @@ function intentMetaFromRow(row: IntentMetaRow): IntentMeta {
         ? row.priority
         : null,
     budget: parseIntentBudget(row.budget),
+    ...(experiment === null ? {} : { experiment }),
+    ...(experiment === null || review === null ? {} : { experiment_review: review }),
     status: row.status === "abandoned" ? "abandoned" : "open",
     status_reason: row.status === "abandoned" ? row.status_reason : null,
     status_at: row.status === "abandoned" ? row.status_at : null,

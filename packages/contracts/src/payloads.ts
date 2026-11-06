@@ -6,6 +6,9 @@
  * validators only validate; applying the result is the control plane's job.
  */
 
+import { isExperimentContract } from "./experiment";
+import { isExperimentReview } from "./experiment-review";
+
 type JsonObject = Record<string, unknown>;
 
 /** Priority assigned to a reason intent that does not specify one. */
@@ -117,6 +120,13 @@ export function validateReasonPayload(
       validateIntentPriority(intent["priority"], index);
       validateIntentBudget(intent["budget"], index);
       validateDedupeKey(intent["dedupe_key"], index);
+      if (intent["experiment"] !== undefined && !isExperimentContract(intent["experiment"])) {
+        throw new Error(`invalid intent experiment at index ${index}`);
+      }
+      if (intent["experiment_review"] !== undefined &&
+          (!isExperimentReview(intent["experiment_review"]) || !isExperimentContract(intent["experiment"]))) {
+        throw new Error(`invalid intent experiment_review at index ${index}`);
+      }
     });
     if (intents.length === 0 && openIntentsEmpty) {
       throw new Error("intents must not be empty when open_intents is empty");

@@ -12,6 +12,9 @@ import {
   type TaskKind,
   type WorkerTask,
 } from "@cairn/contracts";
+import { selectOperatorGuidance, buildExperimentReviewBasis, type ExperimentReviewBasis } from "@cairn/graph";
+import { withOperatorGuidance } from "../prompts/operator-guidance";
+import { EXPERIMENT_PLAN_INSTRUCTIONS, EXPERIMENT_REVIEW_INSTRUCTIONS, withExperimentContract } from "../prompts/experiment";
 import type {
   AgentContextAudit,
   ContextSelection,
@@ -98,6 +101,10 @@ export interface PreparedTask {
   /** M47: control-plane diagnostics, never serialized into WorkerTask. */
   contextPlan: ContextPlanOutcome;
   contextPack: ContextPackReport;
+  /** Pending operator hints actually included in this task prompt, for exact acknowledgement. */
+  operatorHintIds: string[];
+  /** Only an applied pack authorizes checkpoint-based strategy references. */
+  experimentReviewBasis?: ExperimentReviewBasis;
 }
 
 export interface PrepareTaskInput {
@@ -113,7 +120,7 @@ export interface PrepareTaskInput {
   resumeFromHostSessionDir?: string;
   /** Optional intent-level limits stored in `intent_meta` (reason output only). */
   budget?: IntentBudget | null;
-  /** Reason only: sidecar metadata for open intents, used for dedupe visibility. */
+  /** Sidecar lifecycle, reason dedupe hints and focused explore experiment plans. */
   intentMeta?: readonly IntentMeta[];
   /** Reason only: finished-run usage and the configured per-project limits. */
   projectBudget?: ProjectBudgetSnapshot;
@@ -244,8 +251,12 @@ export function prepareTask(input: PrepareTaskInput): PreparedTask {
       ? basePrompt
       : withAgentContextPolicy(basePrompt, workerAgentContextPath);
   const decorate = (context: string): string => {
+    const experiment = input.intent === undefined || (kind !== "explore" && !(kind === "conclude" && concludeOf === "explore"))
+      ? undefined : intentMeta.get(input.intent.id)?.experiment;
+    const review = experiment === undefined || input.intent === undefined ? undefined : intentMeta.get(input.intent.id)?.experiment_review;
+    const guided = withOperatorGuidance(withExperimentContract(context, experiment, review), project.hints);
     const attachmentPrompt = input.attachments === undefined || input.attachments.length === 0
-      ? context : withAttachmentPolicy(context, input.attachments);
+      ? guided : withAttachmentPolicy(guided, input.attachments);
     const completed = withCompletionPolicy(artifactDir === undefined
       ? attachmentPrompt : withArtifactPolicy(attachmentPrompt, artifactDir));
     return config.tasks.checkpoint.enabled ? completed + CHECKPOINT_INSTRUCTIONS : completed;
@@ -374,6 +385,11 @@ export function prepareTask(input: PrepareTaskInput): PreparedTask {
     observer,
     contextPlan,
     contextPack: pack.report,
+    ...(kind !== "reason" || pack.applied === undefined || input.contextSnapshot === undefined ? {} : {
+      experimentReviewBasis: buildExperimentReviewBasis(input.contextSnapshot),
+    }),
+    operatorHintIds: selectOperatorGuidance(project.hints)
+      .filter((hint) => hint.operator_guidance === "pending").map((hint) => hint.id),
   };
 }
 
@@ -395,7 +411,7 @@ interface ObserverContext {
   scope: { targets: string[]; notes?: string };
   open_intents: { id: string; description: string; from: string[] }[];
   facts: { id: string; description: string }[];
-  hints: { content: string; creator: string; created_at: string }[];
+  hints: { content: string; creator: string; created_at: string; operator_guidance?: "pending" | "planned" }[];
 }
 
 const OBSERVER_FACT_LIMIT = 30;
@@ -476,6 +492,11 @@ function prepareObserver(
     description: intent.description,
     from: [...intent.from],
   }));
+  const guidance = selectOperatorGuidance(project.hints);
+  const ordinaryHints = project.hints.filter((hint) => hint.operator_guidance === undefined);
+  const ordinaryLimit = Math.max(0, OBSERVER_HINT_LIMIT - guidance.length);
+  const observerHints = [...guidance.slice(0, OBSERVER_HINT_LIMIT),
+    ...(ordinaryLimit === 0 ? [] : ordinaryHints.slice(-ordinaryLimit))];
   const context: ObserverContext = {
     version: 1,
     project: { id: project.project.id, title: project.project.title },
@@ -495,12 +516,11 @@ function prepareObserver(
       id: fact.id,
       description: fact.description,
     })),
-    hints: project.hints
-      .slice(-OBSERVER_HINT_LIMIT)
-      .map((hint) => ({
+    hints: observerHints.map((hint) => ({
         content: hint.content,
         creator: hint.creator,
         created_at: hint.created_at,
+        ...(hint.operator_guidance === undefined ? {} : { operator_guidance: hint.operator_guidance }),
       })),
   };
   audit.push(
@@ -512,7 +532,7 @@ function prepareObserver(
       policy: "focus_first_then_open_intents" },
     { section: "hints", scope: "project", candidates: project.hints.length,
       selected: context.hints.length, limits: { maxHints: OBSERVER_HINT_LIMIT },
-      policy: "recent_hints" },
+      policy: guidance.length === 0 ? "recent_hints" : "operator_guidance_first_then_recent_hints" },
   );
   writeFileSync(hostContextPath, `${JSON.stringify(context, null, 2)}\n`, "utf8");
   return observer;
@@ -689,6 +709,7 @@ function withReasonOutputPolicy(
 - 绝不把凭据、token 或其他机密写进 intent、hint 或描述里。已捕获的 flag 在这里不按机密处理：知道 flag 时，请逐字写出 flag 原文。
 - \`complete\` 不能与 intents 或 hints 同时出现。`,
   ];
+  sections.push(EXPERIMENT_PLAN_INSTRUCTIONS, EXPERIMENT_REVIEW_INSTRUCTIONS);
   if (reasonAbandon) {
     sections.push(`# 退役某个方向（可选）
 调查状态里会列出开放 intent 及其尝试次数与最近一次失败。你最多可以退役一条已经失败过至少一次、且从未成功过的开放 intent：

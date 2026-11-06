@@ -30,6 +30,8 @@ export interface Hint {
   content: string;
   creator: string;
   created_at: string;
+  /** Control-plane provenance. Planned means included in a successful reason turn, not obeyed/verified. */
+  operator_guidance?: "pending" | "planned";
 }
 
 /**
@@ -55,6 +57,10 @@ export interface IntentMeta {
   origin_run_id: string | null;
   priority: number | null;
   budget: IntentBudget | null;
+  /** M51a: optional worker-authored plan; never a fact or a scope grant. */
+  experiment?: import("@cairn/contracts").ExperimentContract;
+  /** M51c: strategy provenance, not a hypothesis verdict. */
+  experiment_review?: import("@cairn/contracts").ExperimentReview;
   /** M37: open until an operator or reason retires the direction. */
   status: IntentLifecycleStatus;
   status_reason: string | null;
@@ -148,6 +154,8 @@ export interface Run {
   model: string | null;
   trigger: string | null;
   outcome: RunOutcome | null;
+  /** Operational failure, not proof that a solution direction is wrong. Absent on legacy runs. */
+  failure?: import("./failures").RunFailure;
   exit_code: number | null;
   started_at: string;
   finished_at: string | null;
@@ -494,10 +502,16 @@ export interface AgentContextIntent {
   last_error: string | null;
   /** Null means the configured default priority. */
   priority: number | null;
+  /** Optional plan, not an observation or completion criterion. */
+  experiment?: import("@cairn/contracts").ExperimentContract;
+  /** M51c: strategy provenance, not a hypothesis verdict. */
+  experiment_review?: import("@cairn/contracts").ExperimentReview;
 }
 
 /** One finished run, with a bounded detail summary. */
 export interface AgentContextAttempt {
+  /** Control-plane classification: an operational failure is not a refuted hypothesis. */
+  failure?: import("./failures").RunFailure;
   run_id: string;
   kind: string;
   intent_id: string | null;

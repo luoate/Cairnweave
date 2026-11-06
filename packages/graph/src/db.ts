@@ -71,6 +71,15 @@ CREATE TABLE IF NOT EXISTS hints (
     PRIMARY KEY (id, project_id)
 );
 
+-- Operator provenance is control-plane sidecar data, never inferred from creator text.
+CREATE TABLE IF NOT EXISTS operator_hint_meta (
+    project_id TEXT NOT NULL,
+    hint_id TEXT NOT NULL,
+    planned_run_id TEXT,
+    PRIMARY KEY (project_id, hint_id),
+    FOREIGN KEY (hint_id, project_id) REFERENCES hints(id, project_id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS project_scopes (
     project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
     targets TEXT NOT NULL,
@@ -230,6 +239,25 @@ CREATE TABLE IF NOT EXISTS runs (
 
 CREATE INDEX IF NOT EXISTS runs_project_started ON runs(project_id, started_at);
 
+-- Operational failures are not negative evidence about a target or hypothesis.
+CREATE TABLE IF NOT EXISTS run_failures (
+    run_id TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
+    domain TEXT NOT NULL CHECK(domain IN ('infrastructure', 'execution')),
+    code TEXT NOT NULL
+);
+
+-- Project-scoped, durable dispatch circuit. No credentials or provider bodies.
+CREATE TABLE IF NOT EXISTS infrastructure_faults (
+    project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+    id TEXT NOT NULL,
+    code TEXT NOT NULL,
+    last_run_id TEXT,
+    consecutive_failures INTEGER NOT NULL,
+    state TEXT NOT NULL CHECK(state IN ('backoff', 'blocked')),
+    retry_after TEXT,
+    updated_at TEXT NOT NULL
+);
+
 -- M49: one latest accepted checkpoint per run, independent of session retention.
 CREATE TABLE IF NOT EXISTS task_checkpoints (
     run_id TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
@@ -238,7 +266,8 @@ CREATE TABLE IF NOT EXISTS task_checkpoints (
     sha256 TEXT,
     accepted_at TEXT,
     termination_reason TEXT,
-    scope_targets TEXT
+    scope_targets TEXT,
+    experiment_plan TEXT
 );
 
 -- One row per scheduler boot. A runs row is opened at dispatch time and only closed by the
@@ -350,6 +379,8 @@ CREATE TABLE IF NOT EXISTS intent_meta (
     origin_run_id TEXT,
     priority INTEGER,
     budget TEXT,
+    experiment TEXT,
+    experiment_review TEXT,
     status TEXT NOT NULL DEFAULT 'open',
     status_reason TEXT,
     status_at TEXT,
@@ -466,6 +497,9 @@ export function configureDatabase(path: string): CairnDatabase {
     ensureIntentMetaColumns(conn);
     ensureStrategistColumns(conn);
     ensureVerificationCheckColumns(conn);
+    if (!all<{ name: string }>(conn, "PRAGMA table_info(task_checkpoints)").some(column => column.name === "experiment_plan")) {
+      conn.exec("ALTER TABLE task_checkpoints ADD COLUMN experiment_plan TEXT");
+    }
   });
   return database;
 }
@@ -559,8 +593,10 @@ function ensureIntentMetaColumns(conn: Database): void {
   if (!columns.has("origin_run_id")) {
     conn.exec("ALTER TABLE intent_meta ADD COLUMN origin_run_id TEXT");
   }
-  // M37: intent lifecycle. Existing rows stay open; abandonment is opt-in.
+  // M37 lifecycle + M51 optional experiment plan; no inference for legacy rows.
   const additions = [
+    ["experiment", "TEXT"],
+    ["experiment_review", "TEXT"],
     ["status", "TEXT NOT NULL DEFAULT 'open'"],
     ["status_reason", "TEXT"],
     ["status_at", "TEXT"],

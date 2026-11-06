@@ -40,6 +40,7 @@ function runtime(
   runner: CommandRunner,
   overrides: {
     completedAction?: "remove" | "stop";
+    env?: Record<string, string>;
     spawn?: (argv: readonly string[]) => {
       exited: Promise<number>;
       stdout: ReadableStream<Uint8Array>;
@@ -60,6 +61,7 @@ function runtime(
   const logs: string[] = [];
   const instance = new DockerRuntime({
     container: {
+      env: overrides.env,
       image: "cairn-worker:test",
       networkMode: "bridge",
       completedAction: overrides.completedAction ?? "remove",
@@ -212,6 +214,37 @@ describe("docker worker execution", () => {
       "--task",
       taskPath,
     ]);
+  });
+
+  test("container.env overrides common values but cannot override scheduler or mount guards", () => {
+    const { runner } = fakeRunner((argv) =>
+      argv.includes("inspect") ? { code: 0, stdout: "true", stderr: "" } : undefined,
+    );
+    const { runtime: docker, spawned } = runtime(runner, { env: {
+      HTTPS_PROXY: "http://host.docker.internal:18899",
+      CAIRN_OBSERVER_ENABLED: "0",
+      CAIRN_AGENT_CONFIG_DIR: "/host/config",
+      CAIRN_AGENT_CONFIG_READONLY: "0",
+    } });
+    docker.ensureProject("proj-1", HOST_WORKSPACE);
+    docker.spawnWorker({
+      taskId: "task-1", projectId: "proj-1",
+      workerTaskPath: "/cairn/workspace/task.json",
+      workerWorkspace: "/cairn/workspace", hostWorkspace: HOST_WORKSPACE,
+      baseEnv: { HTTPS_PROXY: "http://127.0.0.1:18899", COMMON_VALUE: "shared" },
+      controllerEnv: { SECRET_TOKEN: "do-not-leak", HTTP_PROXY: "http://host-only:1" },
+      extraEnv: { CAIRN_OBSERVER_ENABLED: "1" }, hardDeadlineSeconds: 30,
+    });
+    const argv = spawned[0]!;
+    expect(argv).toContain("HTTPS_PROXY=http://host.docker.internal:18899");
+    expect(argv).not.toContain("HTTPS_PROXY=http://127.0.0.1:18899");
+    expect(argv).toContain("COMMON_VALUE=shared");
+    expect(argv).toContain("CAIRN_OBSERVER_ENABLED=1");
+    expect(argv).not.toContain("CAIRN_OBSERVER_ENABLED=0");
+    expect(argv).toContain("CAIRN_AGENT_CONFIG_DIR=/cairn/agent-config");
+    expect(argv).toContain("CAIRN_AGENT_CONFIG_READONLY=1");
+    expect(argv.join(" ")).not.toContain("SECRET_TOKEN");
+    expect(argv.join(" ")).not.toContain("host-only");
   });
 
   test("passes the audit token through the docker client environment, not argv", () => {

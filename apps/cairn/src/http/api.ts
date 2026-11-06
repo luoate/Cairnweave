@@ -1,4 +1,7 @@
 import { DEFAULT_INTENT_PRIORITY } from "@cairn/contracts";
+import { getInfrastructureFault, resetInfrastructureFault, buildTaskContextSnapshot, projectIntentExperiment } from "@cairn/graph";
+import { checkpointEvidenceStatus } from "../scheduler/checkpoint";
+import { attachRunDiagnostics, latestRunDiagnostic } from "./run-diagnostics";
 import {
   HttpError,
   RequestValidationError,
@@ -54,6 +57,7 @@ import {
   listProjects,
   listRejectedFlags,
   listVerifiedFlags,
+  markOperatorHint,
   nextFactId,
   nextHintId,
   nextIntentId,
@@ -665,8 +669,13 @@ function buildRoutes(
   route("GET", "/projects/{project_id}", ({ params }) =>
     db.withConn((conn) => {
       const projectId = params["project_id"]!;
+      const detail = getProjectDetail(conn, projectId);
+      const diagnostic = latestRunDiagnostic(attachRunDiagnostics(listProjectRuns(conn, projectId), workspaceRoot(), projectId));
+      const infrastructureFault = getInfrastructureFault(conn, projectId);
       return json({
-        ...getProjectDetail(conn, projectId),
+        ...detail,
+        ...(infrastructureFault === null ? {} : { infrastructure_fault: infrastructureFault }),
+        ...(diagnostic === null ? {} : { task_diagnostic: diagnostic }),
         flag_reviews: summarizeFlagReviews(conn, projectId),
         completion_review: summarizeCompletionReviews(conn, projectId),
         goal_conditions: resolveProjectGoalConditions(
@@ -876,7 +885,9 @@ function buildRoutes(
   );
 
   route("GET", "/projects/{project_id}/runs", ({ params }) =>
-    db.withConn((conn) => json(listProjectRuns(conn, params["project_id"]!))),
+    db.withConn((conn) => json(attachRunDiagnostics(
+      listProjectRuns(conn, params["project_id"]!), workspaceRoot(), params["project_id"]!,
+    ))),
   );
 
   // Read-only per-worker/model outcome and usage statistics (M14d).
@@ -1168,6 +1179,9 @@ function buildRoutes(
       }
 
       conn.query("UPDATE projects SET status = ? WHERE id = ?").run(body.status, projectId);
+      // Only an actual operator resume acknowledges the repaired environment.
+      // Repeated active PUTs, hints, replans and control-plane restarts do not reset it.
+      if (row.status === "stopped" && body.status === "active") resetInfrastructureFault(conn, projectId);
       if (body.status === "stopped") {
         conn
           .query(
@@ -1366,6 +1380,21 @@ function buildRoutes(
     },
   );
 
+  // M51d: read-only experiment detail; no proposal/edit/execution endpoint.
+  route("GET", "/projects/{project_id}/intents/{intent_id}/experiment", ({ params }) => db.withConn(conn => {
+    const projectId = params["project_id"]!, intentId = params["intent_id"]!;
+    getProjectOr404(conn, projectId);
+    getIntentOr404(conn, projectId, intentId);
+    const root = workspaceRoot();
+    const workspace = root === undefined ? undefined : projectWorkspace(root, projectId);
+    const scope = getProjectScope(conn, projectId);
+    const snapshot = buildTaskContextSnapshot(conn, projectId, { checkpoint: {
+      ...(scope === null ? {} : { scopeTargets: scope.targets }),
+      ...(workspace === undefined ? {} : { evidenceStatus: (ref: string) => checkpointEvidenceStatus(workspace, ref) }),
+    } });
+    return json(projectIntentExperiment(snapshot, intentId, listProjectIntentMeta(conn, projectId)));
+  }));
+
   // Read-only sidecar view for the UI; the graph intent list stays unchanged.
   route("GET", "/projects/{project_id}/intents/lifecycle", ({ params }) =>
     db.withConn((conn) => {
@@ -1448,6 +1477,9 @@ function buildRoutes(
           "INSERT INTO hints (id, project_id, content, creator, created_at) VALUES (?, ?, ?, ?, ?)",
         )
         .run(hintId, projectId, body.content, body.creator, now);
+      // The operator entry point, not the user-editable creator label, establishes priority.
+      // Do not resume stopped/completed projects or interrupt a running reason turn.
+      markOperatorHint(conn, projectId, hintId);
       return json(
         { id: hintId, content: body.content, creator: body.creator, created_at: now },
         201,

@@ -118,6 +118,11 @@ export function evaluateStrategistTrigger(
   const manualTrigger = replanRequested
     ? evaluation("manual_replan", true)
     : null;
+  // Unprocessed operator guidance outranks autonomous work, bypassing ordinary cooldown
+  // and hourly caps, but never failure backoff or running productive tasks.
+  const operatorTrigger = project.hints.some((hint) => hint.operator_guidance === "pending")
+    ? evaluation("operator_guidance", true)
+    : null;
 
   // The first reason turn seeds directions. If an unclaimed direction is already
   // waiting, let the fast layer explore it first; reason runs once the graph settles.
@@ -132,7 +137,7 @@ export function evaluateStrategistTrigger(
         intent.creator === "dispatcher.bootstrap"
       ),
   );
-  if (manualTrigger === null && unseenInitial && fastWorkPending) {
+  if (manualTrigger === null && operatorTrigger === null && unseenInitial && fastWorkPending) {
     return evaluation(null, false);
   }
   const initial = unseenInitial;
@@ -154,7 +159,7 @@ export function evaluateStrategistTrigger(
       )
     : null;
 
-  let candidate = manualTrigger ?? initialTrigger ?? openEmptyTrigger;
+  let candidate = manualTrigger ?? operatorTrigger ?? initialTrigger ?? openEmptyTrigger;
   if (candidate === null) {
     if (
       policy.zeroOutputThreshold > 0 &&

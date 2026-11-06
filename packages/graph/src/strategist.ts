@@ -224,6 +224,7 @@ export function listRecentStrategistRuns(
     WHERE r.project_id = ?
       AND r.kind IN ('bootstrap', 'explore', 'conclude')
       AND r.finished_at IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM run_failures f WHERE f.run_id = r.id)
     ORDER BY r.finished_at DESC, r.id DESC
     LIMIT ?
     `,

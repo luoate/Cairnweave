@@ -72,6 +72,28 @@ describe("M49 durable checkpoint sidecar", () => {
     expect(current[0]?.memory?.reuse.scope_status).toBe("unchanged_requires_authorization");
     expect(current[0]?.memory?.checkpoint.attempts[0]?.result).toBe("tool_failure");
   });
+  test("M51b result projection keeps authoritative failure and survives reopening without session files", () => {
+    const value = payload(); value.attempts[0]!.result = "observed";
+    expect(accept(value)).toBe("accepted");
+    const failure = { domain: "infrastructure", code: "model_connection_error" } as const;
+    db.withConn(conn => {
+      finishRun(conn, "r1", { outcome: "failed", finishedAt: "2026-11-05T00:01:00Z", durationMs: 60000, failure });
+      finalizeCheckpointRun(conn, "r1", "worker_exit");
+    });
+    db = configureDatabase(db.path);
+    const snapshot = db.withConn(conn => buildTaskContextSnapshot(conn, projectId, { checkpoint: {} }));
+    const memory = snapshot.attempts[0]?.memory;
+    expect(memory?.control.failure).toEqual(failure);
+    expect(memory?.experiment_result).toMatchObject({ status: "operationally_incomplete", hypothesis_verdict: "unknown",
+      observations: [{ attempt_id: "a1", reported_result: "observed", evidence: "unavailable" }] });
+    expect(memory?.checkpoint).toEqual(value);
+    expect(db.withConn(conn => conn.query("SELECT COUNT(*) AS n FROM task_checkpoints").get())).toEqual({ n: 1 });
+    expect(db.withConn(conn => buildTaskContextSnapshot(conn, projectId)).attempts[0]).not.toHaveProperty("memory");
+  });
+  test("M51b no checkpoint payload means no invented memory or result", () => {
+    finish();
+    expect(db.withConn(conn => buildTaskContextSnapshot(conn, projectId, { checkpoint: {} })).attempts[0]).not.toHaveProperty("memory");
+  });
   test("project query cannot mix another project's memories even with same local fact ids", () => {
     accept(); finish();
     const other = db.withConn((conn) => createProject(conn, { title: "other", origin: "other", goal: "other", hints: null, bootstrap_enabled: false, scope: { targets: ["127.0.0.1"] } }).project.id);

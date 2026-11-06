@@ -1,9 +1,12 @@
 # 里程碑与验证记录
 
-本文件保留 M1–M40 的实现记录、测试与浏览器验证清单、与 Python Cairn 的已知差异、
+本文件保留至 M51a–d 的实现记录、测试与浏览器验证清单、与 Python Cairn 的已知差异、
 里程碑表以及与 Phase 0 的关系。产品概览、快速开始与 API 概览见 [README](../README.md)。
 
 ## 实现记录
+
+最新代码：**M50 已收束；M51a–d 已实现（0.75.0-m51），不含 M52**。
+最终验收见文末对应记录；以下段落保留各历史阶段当时的状态，不代表当前版本止于 M40。
 
 状态：**M40（完成契约安全门：bootstrap 支持 fact-only；`verification: off` 的完成声明默认进入 `completion_reviews` 人工确认，不再自动关项目；执行模式按题选择记为 M39b）**；M0–M4、M5a–M5c、
 M6–M11、M12a、M12b、M12c、M13a、M13b、M14a、M14b、M14c、M14d、M15a、M15b、M15c、M15d、M15e、M15f、M16a、M16b、M17a、M17b、M17c、M17d、M18a、M18b、M18c、M18d、M18e、M18f、M18g、M19a、M19b、M20a、M20b、M21、M22、M23、M24、M24b、M25、M26、M26b、M27、M28、M29、M30、M31、M32、M32b、M32c、M32f、M33a、M33b、M33c、M33d、M34、M35、M35f、M36、M37、M38、M39、M39b、M40 的计划项全部完成。Phase 1 的
@@ -1585,6 +1588,49 @@ golden 由 `tools/golden/generate.py` 在 Python Cairn 检出上生成（固定�
 | M47 ✅ | ContextPlan v1（任务上下文预算与清单）：新增 `tasks.context_plan {mode: off\|audit, max_initial_bytes}`（默认 audit / 131072），`prepareTask` 在正常输入写完后从最终 prompt 与文件 UTF-8 字节生成 `context-plan.json`；图导出与 AgentContext 在原选择器内发出候选/选入/限制/策略统计，Observer 统计来自实际快照，不额外查库、不重算选择。分别计量 solver / observer、必读 / 可选；附件按账本声明大小，恢复历史与看板未知不记作 0；默认 token 为 null，纯构建器允许显式匹配 task.model 的本地估算适配器。清单仅含计量、SHA-256、固定任务相对路径与截断/恢复说明，不复制正文、凭据或宿主路径；完整图只能恢复 description/边，不能冒充 sidecar/run 历史的恢复入口。超限只告警、审计 I/O 失败只记 unavailable 并继续；off 不做诊断 I/O，不重开 strategy_context；无新 DB/路由/WorkerTask/环境变量/提示词或完成语义变更。新增 `bun run eval:context` 八类真实准备场景及 audit/off 输入对照；没有实施压缩或调用模型 | `bun run check` 通过：1201 passed / 103 files / 5255 expects（2026-11-04）；新增计量、任务准备、真实 scheduler + 确定性 worker、图/AgentContext 选择审计、离线评估共 5 个测试文件，配置与热覆盖回归覆盖枚举/阈值/持久化/重放/重置；离线 CLI 八场景兼容性均 true，超长描述/大量 hints/AgentContext 截断仅产生 over_budget，conclude 历史仍 unknown；版本 `0.70.0-m47` |
 | M48 ✅ | ContextPack v1（预算驱动选择与按需恢复）：新增 `tasks.context_pack {mode: off\|shadow\|apply, shard_max_bytes}`，默认 off；新 default reason/explore 从同次事务的未受记录条数 caps 限制的授权投影建立有界 catalog/index/JSON 分片恢复目录，再 pin 目标/完整条件/校验审核状态/Scope/资源预算与 explore 焦点/直接依赖/替代链，按最终 UTF-8 字节选择近期事实、失败/退役历史、相关方向与 hints。apply 去掉重复必读图/AgentContext 和全量内联列表，实际清单升级 ContextPlan v2；shadow 保持原 WorkerTask 与 v1 实际账单，候选另记。核心超预算、无净收益或快照失败均回退 legacy，普通任务准备失败与审计非阻断语义不变；既有 detail 500 字符可见性、bootstrap/conclude/已有会话、Observer、Scope/完成门禁、worker/环境/HTTP/DB 契约不变；支持既有配置热覆盖，不新增设置控件。恢复按项目/快照/真实路径校验，UTF-8/转义索引有界、临时发布不覆盖既有目录；不导出原始日志/凭据/附件或证据正文，不新增实时 DB 接口 | `bun run check`：1243 passed / 109 files / 5771 expects（2026-11-05）；新增 42 项测试/6 个测试文件，实际 LocalRuntime worker 读取 pack 并恢复省略事实、explore 预算/依赖与 seed-only 完成拒绝均验证；`bun run eval:context-pack` 同 M47 八场景，6 applied 共 1370/1370 条授权记录恢复，facts/intents/hints 初始必读字节分别减少 67.76%/79.37%/85.77%，图切片 no_benefit 回退，恢复 conclude 仍 unknown；shadow/兼容快照/Observer 不变，M42/M47 回归与 CSS check 通过，0 模型调用（不代表真实费用/完成率收益）；版本 `0.71.0-m48` |
 | M49 ✅ | TaskCheckpoint v1 与结构化尝试记忆：新增默认关闭 `tasks.checkpoint {enabled, interval_seconds}`，主 solver 固定本地保存工具 + 原子/周期文件发布，控制面定时/终止前后/重启 orphan 补接；SQLite 每 run 最后有效版本，严格身份/结构/65536 UTF-8 字节与引用校验，单调 sequence、去重/冲突/陈旧分开，坏文件不覆盖、结束后冻结。动作/观察/解释/失败类别与真实 outcome/终止原因分开；已结束记忆在复用时标注意图/项目状态、Scope、替代事实、证据存在性，经 M48 attempts 字节预算完整选择/省略与分片恢复，不自动执行 next_steps、不提升 Fact/完成。session 删除不丢 SQLite 记忆；不开启新路由、不改 WorkerTask/SDK compaction/resume/Observer flush。版本 **0.72.0-m49**。新增 **36 测试 / 6 新测试文件**；最终 **1279 pass / 115 files / 6143 expects**。真实 worker CLI 使用 fake solver，M47/M48/M42 离线评估通过，0 真实模型调用。检查点保持 0600，未运行真实 Docker 跨 UID gate，部署需确保控制面可读。详见 DESIGN §18、CONTRACT §9。 |
+
+### M50：可靠运行与用户引导闭环（代码与离线验收完成）
+
+版本 `0.73.0-m50`，2026-11-05。收束 M49 之后的运行可靠性改造：
+
+- local/container 环境及代理隔离：local 可继承控制面环境，container 仅使用显式配置，不整体传入宿主环境；配置目录仍只读挂载。
+- 有界、脱敏模型诊断及项目/运行卡片可见性；不公开提供商原始错误或凭据。
+- 用户引导由控制面 provenance 标记，优先进入任务与 reason，按派发快照精确确认；等待已有任务自然结束，不抢占、不补派旧 explore 饿死引导。
+- operational failure 与解题结果分流：项目级持久化退避/blocked、到期单探测、认证立即 blocked；保留有进展/不完整会话及基础设施失败的 pending conclude。
+- operational failure 不计路线 attempts、failed delta、zero-output 或自动放弃资格；profile 选择排除环境失败，真实成本仍完整计入。
+- 恢复复用既有 stopped→active 转换，不新增未认证写路由；Scope、claims、预算、完成校验边界保持不变。
+
+验收：`bun run check` **1348 pass / 126 files / 6500 expects**；最终 UI 文案后单独复验 **122 pass**；CSS 一致性和 `git diff --check` 通过。全部为离线/确定性 worker 测试，0 真实模型调用，未重启实际 8001 服务、未恢复项目、未运行真实 Docker gate。部署验收待单独授权，不将离线通过表述为线上生效。升级与恢复见 [CONFIG](CONFIG.md#环境故障与解题结果分流)、[OPERATIONS](OPERATIONS.md#m50-升级与恢复)。
+
+### M51a / M51b：可选探索契约与观察／解释结果索引
+
+版本 `0.74.0-m51ab`，2026-11-06；只标记 M51 已实现的 a/b 子阶段，不标记整个 M51 完成。
+
+- **M51a**：reason 新 intent 可带严格、有界、可省略的 experiment v1（假设、行动、预期信号、证据需求、停止条件）；同事务存 `intent_meta` 增量列。旧行不回填，损坏整体省略，无契约的旧任务照常运行；元数据更新不意外清空契约。
+- AgentContext / M48 完整快照带未验证计划；focused explore / explore conclude 在模板展开后收到 JSON 数据。计划不授予 Scope、不自动执行、不覆盖预算/完成门禁；M48 必保留焦点契约完整计入字节。
+- **M51b**：只复用 M49 最后有效 checkpoint，生成 observations / interpretations 的 attempt_id 只读索引，不复制正文、不造第二套尝试存储；证据可用性不等于有效，hypothesis_verdict 始终 unknown。
+- M50 控制面 failure、outcome 与终止原因优先标记 operationally_incomplete，不用环境故障/解释/空观察反证假设；缺少有效检查点或旧记录没有索引即未知。
+- checkpoint 和 pack 默认值不变；复用仍需 checkpoint + M48 成功 apply，无新 worker 文件/结果信封/HTTP 路由/模型调用。此处记录 a/b 当时的边界，后续 c/d 的策略决策/UI/评估见下一节；M52 重复抑制未实施。
+
+离线定向回归：**90 pass / 0 fail / 8 files / 715 expects**。最终 `bun run check`（TypeScript + 全量测试）：**1369 pass / 0 fail / 129 files / 6685 expects**，耗时 137.23s；CSS 产物一致性、`git diff --check` 通过，CLI / 根包 / 应用包版本一致为 `0.74.0-m51ab`。
+复验另修复 M47/M48 共用夹具的跨秒不确定性：真实时间戳分组曾改变历史意图的截断选择，导致相同场景相差 8 字节；仅规范化评估夹具所属记录的时间戳，不改生产排序、不覆盖调用方全局时钟。新增受控跨秒回归，保留原严格相等断言，两组评估测试 **5 pass / 0 fail / 222 expects**。
+M47 八场景 audit/off 兼容性均为 true；M48 八场景中 6 applied、**1370/1370** 条授权记录完整恢复，图切片 no_benefit 回退，conclude 保持 not_applicable。M42 五场景 hardened 错误完成 **0/5**（legacy 为 2/5）。这些是既有确定性夹具的回归，不表示 M51 的真实探索效果或真实费用收益。
+未重启实际服务、未恢复项目、未调用真实模型或运行真实 Docker。设计与字段边界见 [DESIGN §19](DESIGN.md#19-m51ad可验证探索的计划结果与后续方向已实现)、[CONTRACT §3.1 / §9.1](CONTRACT.md#31-reason-意图的可选探索契约m51a)。
+
+### M51c / M51d：带来源的后续方向与只读探索追溯
+
+版本 `0.75.0-m51`，2026-11-06；在已完成的 a/b 基础上实现 c/d，累计包含 M50 收束，不含 M52。
+
+- **M51c**：reason 新 intent 可带新实验契约与严格有界 experiment_review，选择继续验证、调整方向或需要新观察；引用精确 run / checkpoint sequence / observation attempt ID，来源 reason run 可追溯。
+- 只有成功 apply 的 M48 授权恢复库产生派发 basis；应用时重新核对当前 Scope、事实、证据文件、来源意图与计划。结果驱动决策要求正常成功结束且无权威故障、可用观察与同一派发计划绑定。只有解释、工具错误、环境/执行故障、缺证据、旧版本、跨项目或虚构引用均不能成为反证或换方向依据。
+- `task_checkpoints.experiment_plan` 为控制面派发绑定，worker 检查点不能改写；与 intent_meta.experiment_review 一起增量迁移，历史 NULL 不回填。need_observation 可明确缺结果，但仍须授权来源与当前计划。无效 review 整批拒绝，不留前置意图/Hint；去重不覆盖原契约、review 或 reason provenance。
+- 后续方向复用原 createIntent / 去重 / 优先级 / 预算 / Host Bridge Scope / 完成门禁，不自动反证、退役或重开来源方向；普通无 review 规划仍兼容。来源可验证不等于推理正确，hypothesis_verdict 始终 unknown。
+- **M51d**：仅新增 GET 意图 experiment 详情；前端只读展示计划、当时派发假设/预期信号、原检查点行动/观察/模型解释、权威运行异常、证据状态、后续方向与 reason run。每类最多返回最近 10 条并显示 omitted，选择时加载/手动刷新、过期响应保护、不可信正文 x-text。没有新写路由或自动执行控件。
+- `eval:experiments` 的 **19/19** 固定场景符合预期，4 个合法提案通过、15 个不安全/非法提案拒绝，unsafe_acceptances **0**、verdict_changes **0**；重复评估严格相等。只验证来源/安全/可追溯性，不测真实模型推理质量、探索成功率或费用收益。
+
+兼容性复验：M47 八场景 audit/off 均兼容；M48 六场景 applied、**1370/1370** 授权记录恢复，图切片 no_benefit 回退、conclude not_applicable；M42 hardened 错误完成 **0/5**（legacy **2/5**）。所有评估均离线，0 真实模型调用。最终 `bun run check`（TypeScript + 全量测试）：**1393 pass / 0 fail / 134 files / 6847 expects**，249.65s。CSS 产物一致性、CLI `0.75.0-m51` 与包版本、`git diff --check` 通过。新增旧库两列迁移/历史检查点保留及后续方向去重回归已包含在最终全量中。
+
+未重启实际服务、未恢复项目、未运行真实模型/Docker gate 或浏览器视觉验收。部署与真实效果仍需另行授权；默认 checkpoint/pack 开关不变，M52 重复/停滞抑制未实施。边界见 DESIGN §19.4–19.5、CONTRACT §3.2、OPERATIONS。
 
 ## 与 Phase 0 的关系
 

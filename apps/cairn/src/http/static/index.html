@@ -574,6 +574,30 @@
     </div>
   </header>
 
+  <template x-if="!replay.active && project && project.infrastructure_fault">
+    <div role="status" class="shrink-0 border-b border-amber-300 bg-amber-50 px-4 py-2 text-xs text-amber-900" data-infrastructure-fault>
+      <p class="font-semibold" x-text="project.infrastructure_fault.state === 'blocked' ? '环境故障 · 新任务派发已暂停' : '环境故障 · 等待退避重试'"></p>
+      <p class="mt-1 break-words" x-text="infrastructureFaultLabel(project.infrastructure_fault.code) + ' · 连续 ' + project.infrastructure_fault.consecutive_failures + ' 次'"></p>
+      <p class="mt-1 text-2xs">这不是解题路线失败，不会据此否定目标假设；有进展或无法确认完整性的探索会话保留待恢复后收尾。正在运行的任务不会被此状态强制中断。</p>
+      <p class="mt-1 text-2xs break-words" x-text="project.infrastructure_fault.state === 'blocked' ? '请先停止项目，修复模型/代理/运行时配置，再恢复运行以允许重试。部署配置变更仍需重启服务。' : '最早重试时间：' + formatDate(project.infrastructure_fault.retry_after) + '；到时仅允许一个恢复探测任务，不代表服务已经恢复。'"></p>
+      <button type="button" @click="selectSideTab('runs')" class="mt-1 text-2xs font-medium">查看任务运行 →</button>
+    </div>
+  </template>
+
+  <template x-if="!replay.active && project && project.task_diagnostic && !project.infrastructure_fault">
+    <div role="status" class="shrink-0 border-b border-amber-300 bg-amber-50 px-4 py-2 text-xs text-amber-900" data-task-diagnostic>
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <div class="min-w-0">
+          <span class="font-semibold" x-text="project.task_diagnostic.title"></span>
+          <span class="ml-1 break-words" x-text="project.task_diagnostic.message"></span>
+          <p class="mt-1 text-2xs break-words" x-text="project.task_diagnostic.outcome === null ? '运行尚未结束，模型请求可能正在重试；这不是解题进展。' : '最近一次模型异常；对应运行已结束，详见任务运行。'"></p>
+          <p class="mt-1 text-2xs break-words" x-text="project.task_diagnostic.task_id + (project.task_diagnostic.observed_at ? ' · ' + formatDate(project.task_diagnostic.observed_at) : '')"></p>
+        </div>
+        <button type="button" @click="selectSideTab('runs')" class="shrink-0 rounded-lg border border-amber-300 bg-white px-2 py-1 text-xs font-medium">查看任务运行 →</button>
+      </div>
+    </div>
+  </template>
+
   <template x-if="pendingFlagReviews().length > 0">
     <div class="shrink-0 border-b border-amber-300 bg-amber-50/95 px-4 py-2 text-xs text-amber-900">
       <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -985,6 +1009,75 @@
             </div>
             <div class="p-4 space-y-4">
               <p class="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap break-words" x-text="selectedIntentRecord().description"></p>
+              <section data-experiment-detail class="rounded-xl border border-slate-200 p-3 space-y-3 text-xs">
+                <div class="flex items-center justify-between gap-2">
+                  <h4 class="font-semibold text-slate-700">可验证探索 · 只读</h4>
+                  <button @click="loadIntentExperiment()" :disabled="experimentPanel.loading" class="text-violet-600 disabled:opacity-40">刷新</button>
+                </div>
+                <p class="text-slate-500">计划、观察报告和策略解释不是已验证事实；假设判定始终未知。</p>
+                <p x-show="experimentPanel.loading" class="text-slate-400">正在读取探索记录…</p>
+                <p x-show="experimentPanel.error" class="text-rose-600 break-words" x-text="experimentPanel.error"></p>
+                <template x-if="experimentDetail()">
+                  <div class="space-y-3">
+                    <template x-if="experimentDetail().experiment">
+                      <dl class="space-y-2">
+                        <template x-for="field in experimentFields()" :key="field.key">
+                          <div><dt class="font-medium text-slate-500" x-text="field.label"></dt><dd class="whitespace-pre-wrap break-words text-slate-700" x-text="experimentDetail().experiment[field.key]"></dd></div>
+                        </template>
+                      </dl>
+                    </template>
+                    <p x-show="!experimentDetail().experiment" class="text-slate-400">没有探索契约；不补造历史计划。</p>
+                    <template x-if="experimentDetail().experiment_review">
+                      <div class="rounded-lg bg-violet-50 p-2 space-y-1">
+                        <p class="font-medium text-violet-700" x-text="experimentChoiceLabel(experimentDetail().experiment_review.choice)"></p>
+                        <p class="text-slate-500 break-all" x-text="'来源意图：' + experimentDetail().experiment_review.source_intent_id + ' · reason：' + (experimentDetail().reason_run_id || '未知')"></p>
+                        <p class="whitespace-pre-wrap break-words" x-text="experimentDetail().experiment_review.rationale"></p>
+                        <template x-for="ref in experimentDetail().experiment_review.observations" :key="ref.run_id + ':' + ref.attempt_id">
+                          <p class="font-mono text-slate-500 break-all" x-text="ref.run_id + ' / v' + ref.checkpoint_sequence + ' / ' + ref.attempt_id"></p>
+                        </template>
+                        <p class="text-slate-500">引用通过不代表推理正确，也不会自动否定或退役来源方向。</p>
+                      </div>
+                    </template>
+                    <h5 class="font-semibold text-slate-600">观察与解释</h5>
+                    <p x-show="experimentDetail().attempts.length === 0" class="text-slate-400">没有已结束的尝试；缺少记录不是负结果。</p>
+                    <template x-for="run in experimentDetail().attempts" :key="run.run_id">
+                      <details class="rounded-lg border border-slate-200 p-2 space-y-2">
+                        <summary class="cursor-pointer break-all text-slate-600" x-text="run.run_id + ' · ' + experimentRunLabel(run)"></summary>
+                        <p x-show="!run.memory" class="text-slate-400">没有有效检查点，结果未知。</p>
+                        <template x-if="run.memory">
+                          <div class="space-y-2">
+                            <p class="text-slate-500 break-all" x-text="'检查点 v' + run.memory.sequence + ' · ' + (run.memory.control.termination_reason || '终止原因未知')"></p>
+                            <p class="text-slate-500" x-text="'当时的假设：' + (run.memory.experiment_plan?.hypothesis || '历史计划未关联，不能据此作结果决策')"></p>
+                            <p class="text-slate-500" x-text="'当时的预期信号：' + (run.memory.experiment_plan?.expected_signal || '未知')"></p>
+                            <template x-for="attempt in run.memory.checkpoint.attempts" :key="attempt.id">
+                              <dl class="border-t border-slate-100 pt-2 space-y-1">
+                                <dt class="font-mono text-slate-500" x-text="attempt.id + ' · ' + attempt.result"></dt>
+                                <dt class="font-medium text-slate-500">行动报告</dt><dd class="whitespace-pre-wrap break-words" x-text="attempt.action"></dd>
+                                <dt class="font-medium text-slate-500">观察报告（未验证）</dt><dd class="whitespace-pre-wrap break-words" x-text="attempt.observation.trim() || '没有观察，不是负结果'"></dd>
+                                <dt class="font-medium text-slate-500">解释（模型推断）</dt><dd class="whitespace-pre-wrap break-words" x-text="attempt.interpretation.trim() || '没有解释'"></dd>
+                                <dt class="font-medium text-slate-500">证据引用（可用不等于有效）</dt><dd class="font-mono break-all" x-text="attempt.evidence_refs.join(', ') || '未提供'"></dd>
+                                <dd class="text-slate-500" x-text="experimentEvidenceLabel(run.memory, attempt.id)"></dd>
+                              </dl>
+                            </template>
+                            <p class="whitespace-pre-wrap break-words text-slate-500" x-text="'未解决：' + (run.memory.checkpoint.unresolved.join('；') || '未报告，不等于全部解决')"></p>
+                            <p class="text-slate-500" x-text="'Scope：' + run.memory.reuse.scope_status"></p>
+                          </div>
+                        </template>
+                      </details>
+                    </template>
+                    <h5 class="font-semibold text-slate-600">后续方向（策略判断）</h5>
+                    <p x-show="experimentDetail().followups.length === 0" class="text-slate-400">没有已记录的后续决策。</p>
+                    <template x-for="followup in experimentDetail().followups" :key="followup.intent_id">
+                      <div class="border-t border-slate-100 pt-2 space-y-1">
+                        <p class="text-violet-700 break-all" x-text="followup.intent_id + ' · ' + experimentChoiceLabel(followup.review.choice)"></p>
+                        <p class="whitespace-pre-wrap break-words" x-text="followup.review.rationale"></p>
+                        <p class="font-mono text-slate-400 break-all" x-text="'reason：' + (followup.reason_run_id || '未知')"></p>
+                      </div>
+                    </template>
+                    <p x-show="experimentDetail().omitted.attempts || experimentDetail().omitted.followups" class="text-slate-400" x-text="'仅显示最近 10 条；省略尝试 ' + experimentDetail().omitted.attempts + '、后续方向 ' + experimentDetail().omitted.followups"></p>
+                  </div>
+                </template>
+              </section>
               <div class="pt-4 border-t border-slate-100 space-y-3 text-xs">
                 <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">来源</span><span class="font-mono text-slate-600 text-right break-all" x-text="selectedIntentRecord().from.join(', ')"></span></div>
                 <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">目标</span><span class="font-mono text-slate-600 text-right break-all" x-text="selectedIntentRecord().to || '—'"></span></div>
@@ -1006,6 +1099,7 @@
 
       <!-- Hints -->
       <div x-show="sideTab === 'hints'" class="flex-1 overflow-y-auto p-4 space-y-3 bg-amber-50/25">
+        <p class="text-xs text-amber-800 leading-relaxed">新提交的用户提示优先于自主策略。运行中的任务不会被打断；当前工作结束后优先重新规划。停止或已完成的项目仅保存提示，不自动启动。“已纳入规划”不代表已执行或已验证。</p>
         <template x-if="project.hints.length === 0">
           <div class="rounded-2xl border border-dashed border-amber-200 bg-white/80 px-5 py-10 text-center shadow-sm">
             <p class="text-sm text-slate-300">暂无提示</p>
@@ -1019,6 +1113,8 @@
                 <div class="flex items-center gap-2 min-w-0">
                   <span class="w-2 h-2 rounded-full bg-amber-400 shrink-0"></span>
                   <span class="font-medium text-amber-800 truncate" x-text="h.creator"></span>
+                  <span x-show="h.operator_guidance" class="shrink-0 text-amber-700" data-operator-guidance
+                    x-text="h.operator_guidance === 'pending' ? '用户引导 · 待规划' : '用户引导 · 已纳入规划'"></span>
                 </div>
                 <span class="text-amber-600/80 shrink-0 tabular-nums" x-text="formatTime(h.created_at)"></span>
               </div>
@@ -1160,6 +1256,21 @@
                   审计 →
                 </button>
               </div>
+              <template x-if="run.failure">
+                <div class="rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-2 text-2xs text-amber-900" data-run-failure>
+                  <p class="font-semibold" x-text="run.failure.domain === 'infrastructure' ? '环境故障（非解题失败）' : '任务执行异常（非假设反证）'"></p>
+                  <p class="mt-1 break-words" x-text="run.failure.domain === 'infrastructure' ? infrastructureFaultLabel(run.failure.code) : run.failure.code"></p>
+                  <p class="mt-1">运行失败本身不能证明目标不可达、漏洞不存在或当前方向错误。</p>
+                </div>
+              </template>
+              <template x-if="run.diagnostic">
+                <div class="rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-2 text-2xs text-amber-900" data-run-diagnostic>
+                  <p class="font-semibold" x-text="run.diagnostic.title"></p>
+                  <p class="mt-1 break-words" x-text="run.diagnostic.message"></p>
+                  <p class="mt-1" x-text="run.diagnostic.recent_error_count > 0 ? '近期日志片段记录 ' + run.diagnostic.recent_error_count + ' 次模型错误' : '来自已持久化的运行诊断'"></p>
+                  <p class="mt-1" x-text="run.outcome === null ? '任务尚未结束；本条为 worker 会话诊断，不代表目标网站不可达。' : 'worker 会话诊断；任务结果以运行状态为准。'"></p>
+                </div>
+              </template>
               <template x-if="run.detail">
                 <p class="rounded-lg bg-slate-50 px-2.5 py-2 text-2xs text-slate-500 whitespace-pre-wrap break-words" x-text="run.detail"></p>
               </template>
@@ -2768,7 +2879,8 @@
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 border border-slate-200/60" @click.stop>
     <h3 class="text-base font-semibold text-slate-700 mb-4">添加提示</h3>
     <div class="space-y-3">
-      <textarea x-model="hintForm.content" data-autofocus aria-label="提示内容" placeholder="策略建议或备注…" rows="3" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
+      <textarea x-model="hintForm.content" data-autofocus aria-label="提示内容" placeholder="例如：优先检查登录流程；先暂停当前思路，改查附件中的配置…" rows="3" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
+      <p class="text-xs text-amber-800 leading-relaxed">作为高优先级用户引导提交，优先进入后续任务。运行中项目将在当前工作结束后优先重新规划，仍受失败退避与资源限制；不会中断当前任务或自动恢复已停止的项目。</p>
       <div class="px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-500">
         操作者： <span class="font-medium text-slate-700" x-text="actorName()"></span>
       </div>
@@ -3528,6 +3640,8 @@ function cairnApp() {
     project: null,
     /** M37: intent_id -> {status, status_reason, status_at, status_by}. */
     intentLifecycle: {},
+    experimentPanel: { data: null, projectId: '', intentId: '', loading: false, error: '' },
+    _experimentRequest: 0,
     selectedProjectId: '',
     polling: true,
     pollTimer: null,
@@ -3771,6 +3885,7 @@ function cairnApp() {
     },
 
     async init() {
+      this.$watch('selectedNode', () => this.loadIntentExperiment());
       this._panelResizeMove = (e) => this.onPanelResize(e);
       this._panelResizeStop = () => this.stopPanelResize();
       this._visibilityRefresh = async () => {
@@ -3980,7 +4095,7 @@ function cairnApp() {
 
     reasonTriggerLabel(trigger) {
       if (!trigger) return '';
-      const labels = { initial: '初始', bootstrap: '初始探索', new_facts: '新事实' };
+      const labels = { initial: '初始', bootstrap: '初始探索', new_facts: '新事实', operator_guidance: '用户引导（优先）' };
       if (labels[trigger]) return labels[trigger];
       return trigger
         .split(',')
@@ -4563,6 +4678,8 @@ function cairnApp() {
     },
 
     resetOpsPanels() {
+      this._experimentRequest += 1;
+      this.experimentPanel = { data: null, projectId: '', intentId: '', loading: false, error: '' };
       this.runsPanel = { items: [], loading: false, error: '', loadedFor: '' };
       this.factTrace = { factId: '', loading: false, error: '', meta: null, run: null };
       this.strategistPanel = {
@@ -5390,7 +5507,17 @@ function cairnApp() {
       return error && error.message ? error.message : String(error);
     },
 
+    infrastructureFaultLabel(code) {
+      const labels = { model_connection_error: '模型连接失败，请检查网关、代理和网络',
+        model_auth_error: '模型认证失败，请检查密钥与权限', model_rate_limit: '模型限流或配额不足',
+        model_timeout: '模型请求超时', model_error: '模型服务异常',
+        worker_spawn_failed: 'worker 启动失败', runtime_unavailable: '执行环境不可用' };
+      return labels[code] || '环境故障';
+    },
+
     runOutcomeLabel(run) {
+      if (run?.outcome === 'failed' && run?.failure?.domain === 'infrastructure') return '环境故障';
+      if (run?.outcome === 'failed' && run?.failure?.domain === 'execution') return '执行异常';
       const labels = {
         success: '成功',
         failed: '失败',
@@ -6456,6 +6583,7 @@ function cairnApp() {
     async refreshCurrentView({ quiet = true } = {}) {
       if (this.view === 'graph' && this.selectedProjectId) {
         await this.loadProject(this.selectedProjectId, { quiet });
+        if (this.sideTab === 'runs' && !this.runsPanel.loading) await this.loadRuns();
         if (!this.projectFlag.loading &&
             (!this.projectFlag.found ||
              this.projectFlag.projectId !== this.selectedProjectId ||
@@ -7234,6 +7362,50 @@ function cairnApp() {
       const intentId = this.selectedIntentId();
       if (!this.project || !intentId) return null;
       return this.project.intents.find(i => i.id === intentId) || null;
+    },
+
+    async loadIntentExperiment() {
+      const projectId = this.selectedProjectId, intentId = this.selectedIntentId();
+      const request = ++this._experimentRequest;
+      this.experimentPanel = { data: null, projectId, intentId, loading: !!(projectId && intentId), error: '' };
+      if (!projectId || !intentId) return;
+      try {
+        const data = await this.api('GET', `/projects/${encodeURIComponent(projectId)}/intents/${encodeURIComponent(intentId)}/experiment`);
+        if (request !== this._experimentRequest || projectId !== this.selectedProjectId || intentId !== this.selectedIntentId()) return;
+        this.experimentPanel = { data, projectId, intentId, loading: false, error: '' };
+      } catch (error) {
+        if (request !== this._experimentRequest || projectId !== this.selectedProjectId || intentId !== this.selectedIntentId()) return;
+        this.experimentPanel = { data: null, projectId, intentId, loading: false, error: this.errorText(error) };
+      }
+    },
+
+    experimentDetail() {
+      const panel = this.experimentPanel;
+      return panel.projectId === this.selectedProjectId && panel.intentId === this.selectedIntentId() ? panel.data : null;
+    },
+
+    experimentFields() {
+      return [{ key: 'hypothesis', label: '局部假设（计划）' }, { key: 'action', label: '计划行动' },
+        { key: 'expected_signal', label: '预期信号' }, { key: 'evidence_required', label: '证据需求' },
+        { key: 'stop_condition', label: '本次实验停止条件' }];
+    },
+
+    experimentChoiceLabel(choice) {
+      return ({ continue: '继续验证', change_direction: '调整方向', need_observation: '需要新观察' })[choice] || '未知决策';
+    },
+
+    experimentRunLabel(run) {
+      const failure = run.failure || run.memory?.control.failure;
+      if (failure) return `运行异常：${failure.domain} / ${failure.code}（不是路线反证）`;
+      const status = run.memory?.experiment_result?.status;
+      return status === 'observations_reported' ? '有观察报告，尚未验证'
+        : status === 'operationally_incomplete' ? '运行不完整，不是路线反证' : '结果未知';
+    },
+
+    experimentEvidenceLabel(memory, attemptId) {
+      const evidence = memory.experiment_result?.observations.find(item => item.attempt_id === attemptId)?.evidence;
+      return ({ refs_available_not_verified: '引用文件可用，内容未验证', missing: '引用文件缺失',
+        unavailable: '引用文件不可用', not_supplied: '未提供证据引用' })[evidence] || '没有可索引的观察';
     },
 
     selectedOpenIntentRecord() {
@@ -8415,7 +8587,9 @@ function cairnApp() {
         await this.loadProjects();
         await this.loadProject(this.selectedProjectId);
         this.sideTab = 'hints';
-        this.showToast('提示已添加');
+        this.showToast(this.project.project.status === 'active'
+          ? '用户引导已保存，将在当前工作结束后优先规划'
+          : '用户引导已保存；项目未启动，恢复运行后处理');
       } catch(e) { this.showToast(e.message, 'error'); }
       finally { this.isAddingHint = false; }
     },

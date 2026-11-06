@@ -433,6 +433,8 @@ describe("cross-process task claims", () => {
     expect(runs(containerProject.project.id)).toEqual([]);
     expect(runs(localProject.project.id)[0]?.execution).toBe("local");
     ready = true;
+    expect(loop.tick()).toBe(false); // Readiness does not bypass the durable runtime backoff.
+    clockMs += 31_000;
     expect(loop.tick()).toBe(true);
     expect(runs(containerProject.project.id)[0]?.execution).toBe("container");
     local.releaseAll();

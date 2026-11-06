@@ -321,6 +321,23 @@ describe("project run statistics", () => {
     expect(rows[1]).toMatchObject({ finished: 1, succeeded: 1, success_rate: 1 });
   });
 
+  test("selection excludes infrastructure failures without hiding their actual usage", () => {
+    for (const [id, outcome] of [["good", "success"], ["infra", "failed"], ["execution", "failed"]] as const) {
+      record({ id, worker: "worker", workerProfile: "alpha", model: null,
+        startedAt: "2026-11-05T07:00:00Z", outcome, tokens: 10, costUsd: 0.1 });
+    }
+    db.withConn(conn => {
+      finishRun(conn, "infra", { outcome: "failed", finishedAt: "2026-11-05T07:00:00Z", durationMs: 1,
+        usage: { totalTokens: 10, costUsd: 0.1 }, failure: { domain: "infrastructure", code: "model_connection_error" } });
+      finishRun(conn, "execution", { outcome: "failed", finishedAt: "2026-11-05T07:00:00Z", durationMs: 1,
+        usage: { totalTokens: 10, costUsd: 0.1 }, failure: { domain: "execution", code: "result_invalid" } });
+      expect(buildProfileRunStats(conn, { excludeInfrastructureFailures: true })[0])
+        .toMatchObject({ runs: 2, finished: 2, failed: 1, success_rate: 0.5, tokens: 20 });
+      expect(buildProfileRunStats(conn)[0]).toMatchObject({ runs: 3, finished: 3, failed: 2, tokens: 30, cost_usd: 0.3 });
+      expect(buildProjectRunStats(conn, projectId).totals).toMatchObject({ runs: 3, tokens: 30, cost_usd: 0.3 });
+    });
+  });
+
   test("404s for an unknown project", () => {
     expect(() =>
       db.withConn((conn) => buildProjectRunStats(conn, "proj_999")),

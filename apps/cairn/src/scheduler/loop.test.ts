@@ -39,6 +39,7 @@ import {
   type ProjectDetail,
 } from "@cairn/graph";
 
+import { experiment } from "../../../../packages/contracts/src/testdata/experiment";
 import { AuditTokenRegistry } from "../audit-stream/tokens";
 import { parseDispatchConfig, type DispatchConfig } from "../config";
 import { createApi } from "../http/api";
@@ -251,7 +252,7 @@ function abandonReasonScheduler(
   });
 }
 
-function metaReasonScheduler(): Scheduler {
+function metaReasonScheduler(invalidExperiment = false): Scheduler {
   const fixture = join(import.meta.dir, "testdata", "meta-reason-worker.ts");
   return new Scheduler({
     db,
@@ -259,7 +260,7 @@ function metaReasonScheduler(): Scheduler {
     workspaceRoot: join(directory, "workspace"),
     log: (message) => logs.push(message),
     leaseIntervalMs: 500,
-    workerArgv: (taskPath) => [process.execPath, fixture, taskPath],
+    workerArgv: (taskPath) => [process.execPath, fixture, taskPath, ...(invalidExperiment ? ["invalid-experiment"] : [])],
   });
 }
 
@@ -1181,6 +1182,30 @@ describe("Strategist trigger persistence", () => {
     30_000,
   );
 
+  for (const failure of [{ domain: "infrastructure", code: "model_connection_error" },
+    { domain: "execution", code: "hard_deadline" }] as const) test(
+    `reason cannot abandon a direction based only on ${failure.domain} failure`,
+    async () => {
+      const project = createProjectRow(false);
+      const intent = db.withConn(conn => {
+        const intent = createIntent(conn, project.project.id, { from: ["origin"], description: "not disproven",
+          creator: "tester", worker: null });
+        startRun(conn, { id: "run_seed", projectId: project.project.id, taskId: "task_seed", kind: "explore",
+          intentId: intent.id, worker: "cairn-worker", startedAt: "2026-10-31T09:00:00Z" });
+        finishRun(conn, "run_seed", { outcome: "failed", finishedAt: "2026-10-31T09:01:00Z",
+          durationMs: 1, failure });
+        recordStrategistSuccess(conn, { projectId: project.project.id, runId: "run_reason_0", trigger: "initial",
+          factCount: project.facts.length, hintCount: 0, openIntentCount: 1, at: "2026-10-31T08:00:00Z" });
+        createHint(conn, project.project.id, { content: "new lead", creator: "operator" });
+        return intent;
+      });
+      const loop = abandonReasonScheduler(intent.id, "on");
+      await loop.runUntilIdle();
+      expect(db.withConn(conn => getIntentMeta(conn, project.project.id, intent.id))?.status ?? "open").toBe("open");
+      expect(logs.some(line => line.includes("no failed attempt") && line.includes(intent.id))).toBe(true);
+    }, 30_000,
+  );
+
   test(
     "keeps the intent open when strategist.reason_abandon is off",
     async () => {
@@ -1286,6 +1311,13 @@ describe("Strategist trigger persistence", () => {
 });
 
 describe("Strategist priority and project budgets", () => {
+  test("rejects invalid experiment plans without creating any partial intents or metadata", async () => {
+    const project = createProjectRow(false); const before = load(project.project.id).intents;
+    const loop = metaReasonScheduler(true); loop.tick(); await loop.waitForIdle();
+    expect(load(project.project.id).intents).toEqual(before);
+    expect(db.withConn(conn => listProjectIntentMeta(conn, project.project.id))).toEqual([]);
+    expect(db.withConn(conn => listProjectRuns(conn, project.project.id)).find(r => r.kind === "reason")?.outcome).toBe("failed");
+  }, 30_000);
   test(
     "persists reason priority and budget hints in intent_meta",
     async () => {
@@ -1322,6 +1354,7 @@ describe("Strategist priority and project budgets", () => {
       expect(meta.find((entry) => entry.intent_id === high!.id)).toMatchObject({
         priority: 90,
         budget: { max_seconds: 20, max_tool_calls: 5 },
+        experiment: experiment(),
       });
       expect(meta.find((entry) => entry.intent_id === low!.id)).toMatchObject({
         priority: 10,
@@ -1330,6 +1363,13 @@ describe("Strategist priority and project budgets", () => {
       expect(detail.hints.map((hint) => hint.content)).toEqual([
         "inspect the login flow",
       ]);
+      expect(meta.find(entry => entry.intent_id === low!.id)).not.toHaveProperty("experiment");
+      loop.tick(); await loop.waitForIdle();
+      const explore = db.withConn(conn => listProjectRuns(conn, project.project.id)).find(r => r.kind === "explore");
+      expect(explore?.intent_id).toBe(high!.id);
+      const task = JSON.parse(readFileSync(join(directory, "workspace", project.project.id, ".cairn", "sessions", explore!.task_id, "task.json"), "utf8"));
+      expect(task.prompt).toContain(JSON.stringify(experiment()));
+      expect(task.prompt).toContain("{intent_id}");
     },
     30_000,
   );
@@ -1342,14 +1382,19 @@ describe("Strategist priority and project budgets", () => {
       loop.tick();
       await loop.waitForIdle();
 
-      db.withConn((conn) =>
+      const original = db.withConn(conn => listProjectIntentMeta(conn, project.project.id)).find(m => m.experiment !== undefined)!;
+      const preservedPlan = experiment({ hypothesis: "已由操作员更新的局部假设" });
+      db.withConn(conn => {
+        conn.query("UPDATE intent_meta SET experiment = ? WHERE project_id = ? AND intent_id = ?")
+          .run(JSON.stringify(preservedPlan), project.project.id, original.intent_id);
         requestStrategistReplan(conn, project.project.id, {
           reason: "operator pivot",
           requestedBy: "tester",
-        }),
-      );
+        });
+      });
       loop.tick();
       await loop.waitForIdle();
+      expect(db.withConn(conn => getIntentMeta(conn, project.project.id, original.intent_id))?.experiment).toEqual(preservedPlan);
 
       const runs = db.withConn((conn) =>
         listProjectRuns(conn, project.project.id),

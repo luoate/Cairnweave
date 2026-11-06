@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { latestSolverSessionFile } from "./session-file";
+import { readModelDiagnostic, modelFailureDetail, persistModelDiagnostic } from "./diagnostics";
 import type { Solver, SolverUsage } from "./types";
 
 /** Prompt file released from `packages/agent/src/config/prompts/builtin/cairn-worker.md`. */
@@ -128,6 +129,12 @@ export class BreachWeaveSolver implements Solver {
           expandPromptTemplates: true,
           source: "cairn",
         });
+        const diagnostic = readModelDiagnostic(task.sessionDir) ?? (task.kind === "conclude" && task.resumeSessionDir !== undefined
+          ? readModelDiagnostic(task.resumeSessionDir) : null);
+        if (diagnostic !== null) {
+          persistModelDiagnostic(task.sessionDir, diagnostic);
+          throw new Error(modelFailureDetail(diagnostic));
+        }
         const answer = session.getLastAssistantText();
         if (typeof answer !== "string" || answer.trim() === "") {
           throw new Error("solver finished without an assistant message");

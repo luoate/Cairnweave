@@ -51,11 +51,12 @@ export function createRuntime(options: CreateRuntimeOptions): RuntimeBackend {
 }
 
 /**
- * The host config directory mounted read-only into worker containers. `common_env` wins
- * so a deployment can point at a service account directory.
+ * The host config directory mounted read-only into worker containers. The container
+ * override wins over common_env, matching worker environment precedence.
  */
 export function resolveAgentConfigDir(config: DispatchConfig): string {
-  const fromConfig = config.commonEnv["CAIRN_AGENT_CONFIG_DIR"];
+  const fromConfig = config.container?.env?.["CAIRN_AGENT_CONFIG_DIR"] ??
+    config.commonEnv["CAIRN_AGENT_CONFIG_DIR"];
   if (fromConfig !== undefined && fromConfig.trim() !== "") return fromConfig;
   const fromEnv = process.env["CAIRN_AGENT_CONFIG_DIR"];
   if (fromEnv !== undefined && fromEnv.trim() !== "") return fromEnv;

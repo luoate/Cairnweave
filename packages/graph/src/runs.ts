@@ -5,6 +5,7 @@
 
 import type { Database } from "bun:sqlite";
 
+import type { RunFailure } from "./failures";
 import { all, get, run as runSql } from "./db";
 import type { EvidenceStatus, FactMeta, Run, RunExecution, RunOutcome } from "./models";
 import { getProjectOr404, utcnow } from "./services";
@@ -62,6 +63,7 @@ export interface RunUsage {
 
 export interface FinishRunInput {
   outcome: RunOutcome;
+  failure?: RunFailure;
   finishedAt: string;
   durationMs: number;
   exitCode?: number | null;
@@ -98,6 +100,10 @@ export function finishRun(conn: Database, runId: string, input: FinishRunInput):
     input.model ?? null,
     runId,
   );
+  if (input.failure !== undefined) runSql(conn,
+    `INSERT INTO run_failures (run_id, domain, code) VALUES (?, ?, ?)
+     ON CONFLICT(run_id) DO UPDATE SET domain=excluded.domain, code=excluded.code`,
+    runId, input.failure.domain, input.failure.code);
 }
 
 /** Written into `detail` for every run closed by startup reconciliation (M38). */
@@ -168,7 +174,9 @@ export function listProjectRuns(conn: Database, projectId: string): Run[] {
   getProjectOr404(conn, projectId);
   const rows = all<RunRow>(
     conn,
-    "SELECT * FROM runs WHERE project_id = ? ORDER BY started_at, id",
+    `SELECT r.*, f.domain AS failure_domain, f.code AS failure_code
+     FROM runs r LEFT JOIN run_failures f ON f.run_id = r.id
+     WHERE r.project_id = ? ORDER BY r.started_at, r.id`,
     projectId,
   );
   return rows.map(runFromRow);
@@ -176,7 +184,9 @@ export function listProjectRuns(conn: Database, projectId: string): Run[] {
 
 /** Cross-project history used by stats-driven worker selection. */
 export function listAllRuns(conn: Database): Run[] {
-  return all<RunRow>(conn, "SELECT * FROM runs ORDER BY started_at, id").map(runFromRow);
+  return all<RunRow>(conn, `SELECT r.*, f.domain AS failure_domain, f.code AS failure_code
+    FROM runs r LEFT JOIN run_failures f ON f.run_id = r.id
+    ORDER BY r.started_at, r.id`).map(runFromRow);
 }
 
 export interface RecordFactMetaInput {
@@ -246,6 +256,8 @@ export function getFactMeta(
 }
 
 interface RunRow {
+  failure_domain: RunFailure["domain"] | null;
+  failure_code: RunFailure["code"] | null;
   id: string;
   project_id: string;
   task_id: string;
@@ -295,6 +307,9 @@ function runFromRow(row: RunRow): Run {
     model: row.model,
     trigger: row.trigger,
     outcome: row.outcome === null ? null : (row.outcome as RunOutcome),
+    ...(row.failure_domain == null || row.failure_code == null ? {} : {
+      failure: { domain: row.failure_domain, code: row.failure_code } as RunFailure,
+    }),
     exit_code: row.exit_code,
     started_at: row.started_at,
     finished_at: row.finished_at,

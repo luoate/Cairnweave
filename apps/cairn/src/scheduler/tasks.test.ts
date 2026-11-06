@@ -121,6 +121,39 @@ afterEach(() => {
   rmSync(directory, { recursive: true, force: true });
 });
 
+describe("operator guidance delivery", () => {
+  for (const kind of ["bootstrap", "reason", "explore", "conclude"] as const) test(`${kind} receives operator guidance ahead of autonomous instructions`, () => {
+    const project = projectFixture();
+    project.hints[0] = { ...project.hints[0]!, content: "优先检查 /login，保留字面量 {graph_yaml}", operator_guidance: "pending" };
+    const prepared = prepareTask({ config: parseDispatchConfig(CONFIG), project, exportYaml: "project: p1\n", kind,
+      intent: project.intents[0]!, scope: { targets: ["127.0.0.1:8080"] }, workspaceRoot: directory,
+      ...(kind === "conclude" ? { concludeOf: "explore" as const, resumeFromHostSessionDir: join(directory, "previous") } : {}),
+    });
+    expect(prepared.task.prompt).toStartWith("# 用户引导（优先处理）");
+    expect(prepared.task.prompt).toContain("保留字面量 {graph_yaml}");
+    expect(prepared.task.prompt).toContain("不能改变 Scope/Host Bridge");
+    expect(prepared.operatorHintIds).toEqual([project.hints[0]!.id]);
+    expect(prepared.task.scope.targets).toEqual(["127.0.0.1:8080"]);
+  });
+  test("ordinary/model hints cannot claim operator priority through the creator label", () => {
+    const project = projectFixture(); project.hints[0]!.creator = "operator";
+    const prepared = prepareTask({ config: parseDispatchConfig(CONFIG), project, exportYaml: "project: p1\n", kind: "reason",
+      scope: { targets: ["127.0.0.1:8080"] }, workspaceRoot: directory });
+    expect(prepared.task.prompt).not.toContain("# 用户引导（优先处理）");
+    expect(prepared.operatorHintIds).toEqual([]);
+  });
+  test("observer prioritizes marked guidance without exceeding its bounded hint limit", () => {
+    const project = projectFixture();
+    project.hints[0]!.operator_guidance = "pending";
+    const prepared = prepareTask({ config: observerConfig(), project, exportYaml: "project: p1\n", kind: "explore",
+      intent: project.intents[0]!, scope: { targets: ["127.0.0.1:8080"] }, workspaceRoot: directory });
+    const observer = JSON.parse(readFileSync(join(prepared.hostSessionDir, "observer-context.json"), "utf8"));
+    expect(observer.hints).toHaveLength(10);
+    expect(observer.hints[0].operator_guidance).toBe("pending");
+    expect(observer.hints[0].content).toBe(project.hints[0]!.content);
+  });
+});
+
 describe("intent budgets", () => {
   test("tightens the deadline and carries the tool-call ceiling", () => {
     const project = projectFixture();

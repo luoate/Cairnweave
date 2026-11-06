@@ -7,6 +7,54 @@ dispatch.yaml 仍是配置的事实来源；M22 增加一层**运行期覆盖**�
 M22 改为默认开启（`observer.enabled` 默认 `true`），提案自 M23 起默认 `enabled: true` +
 `mode: dry_run`（完整校验并记录，不写图）。
 
+## 用户提示：高优先级引导
+
+项目页「添加提示」（现有 `POST /projects/{id}/hints`）新提交的内容作为用户引导，而非普通模型备注：
+
+- **上下文优先**：所有 `pending` 用户引导，加上最近四条 `planned` 引导，以单独的「用户引导（优先处理）」段进入后续 bootstrap/reason/explore/conclude 的提示词前部。用户内容在模板渲染完成后按 JSON 插入，字面量占位符不会被二次替换。
+- **调度优先**：待规划引导触发紧急 `operator_guidance` reason 回合，不受普通 hint 增量阈值、冷却期与每小时策略回合上限限制。已有任务自然结束后优先规划；等待期间不继续填充新的 explore，避免旧路线把引导饿死。既有失败收尾 conclude 仍优先。
+- **边界不变**：仍受失败退避、Scope、项目状态、预算、工作槽位与完成验证限制；不抢占当前任务、不绕过其他控制面的 task claims、不自动恢复 stopped/completed 项目。初始 bootstrap 仍保持原有优先级，并同样接收用户引导。
+- **可见状态**：`GET /projects/{id}` 的相关 hint 增加可选 `operator_guidance: "pending" | "planned"`。`planned` 仅表示内容被包含在成功结束的 reason 任务输入中，不证明模型遵从、动作已执行或目标已验证。失败、拒绝、取消及派发失败均不确认提示。reason 运行期间到达的新提示保留 pending，在后续回合处理，即使两条提示时间相同也不会被误吞。
+- **可追溯来源**：来源由控制面在创建 hint 的同一事务中写入 `operator_hint_meta` sidecar，不能靠填写 `creator: "operator"` 获得优先级；显示姓名不变。历史提示、初始化/导入的普通 hints 和模型自产备注不按 creator 猜测回填。该标记表示入口来源，不是身份认证；既有无认证 API 仍须依赖部署层访问控制。
+- **压缩不丢引导**：引导段同时用于 legacy/shadow/apply 的实际提示词，计入 ContextPlan/ContextPack 首次输入字节。待规划引导不会因普通 hints 数量上限被截掉；若必选内容超预算，按既有规则回退并报告超限，而非悄悄删提示。Observer 在原有十条 hint 上限内优先选择用户引导。
+
+新提示是策略引导，不是事实或完成证据，也不能修改任务协议、凭据规则或授权范围。相同事项优先参考较新提示；不同且兼容的要求仍保留。实际执行仍由模型产生计划并由控制面校验，不能把「已纳入规划」当成必然服从的承诺。
+
+## 环境故障与解题结果分流
+
+运行记录仍保留兼容的 `outcome`，另通过可选 `failure: {domain, code}` 标明控制面分类：
+
+- `infrastructure`：模型连接、认证、限流、模型超时/服务异常，以及 worker 启动失败、执行环境不可用。
+- `execution`：任务硬截止、租约丢失、结果缺失/格式错误、证据或应用阶段异常等。它说明任务没有正常完成，并不证明某个目标假设错误。
+- 不受影响及历史 run 不增加 `failure` 字段；不会根据历史自由文本猜测回填。实验的有效负面观察仍须走正常结果与证据校验，不能由进程失败代替。
+
+分类写入 operational sidecar，不写成目标 Fact。typed operational failure 不计入路线尝试次数、失败 delta、零产出连续计数，也不能单独授权 reason 自动放弃方向。worker profile 的自动选择样本排除 infrastructure failure，但只读运行统计、预算与成本仍保留全部实际消耗。
+
+### 项目级退避与暂停派发
+
+环境故障持久化在 `infrastructure_faults`，仅影响该项目的**新派发**，覆盖 bootstrap/reason/explore/conclude、用户引导和人工 replan；不会强制中断已运行任务，也不更改项目的 active/stopped 状态。
+
+| 连续环境失败 | 普通连接/模型/运行时故障 | 限流 |
+| --- | --- | --- |
+| 第一次 | 退避 30 秒 | 退避 60 秒 |
+| 第二次 | 退避 60 秒 | 退避 120 秒 |
+| 第三次 | 暂停新任务派发（blocked） | 暂停新任务派发（blocked） |
+
+认证错误第一次即 blocked。计数跨环境故障类型累积。退避到期后只放行该项目内一个恢复探测任务（仍受预算、Scope、claims 等约束），并非宣告服务恢复。只有观察到当前这次 backoff 的任务成功，才能清除此故障；较早并行任务的晚到成功不能清除新故障，成功也不能自动解除 blocked。
+
+退避/blocked 跨控制面重启保留。添加提示、人工 replan 或重复 PUT active 均不能绕过。若环境故障状态落库失败，本控制面另行暂停该项目派发直至控制面重启，日志会明确报告；这不是普通退避的恢复路径。
+
+### 收尾与恢复
+
+- 仅在 worker 非正常退出且最新受限会话事件明确报告模型故障时按模型环境错误分流；不把任意工具输出中的“401 / Connection error”当模型故障。控制面取消、租约丢失和硬截止判定优先。
+- 完整有界会话确认只有模型错误、没有可保留工作时，释放任务租约，不额外调用 conclude。存在工具结果/实质输出，或历史不完整而无法确认时，保守保留待收尾会话；这只是成果抢救线索，不是验证过的事实。
+- conclude 自身遇到环境故障时，保留原 pending conclude 和探索会话，恢复后再收尾，不把此次环境错误当“收尾已完成”。
+- reason 环境失败不写普通策略失败退避、不吞人工重规划请求，也不确认待规划用户引导。
+
+前端项目页显示「环境故障 · 等待退避重试」或「环境故障 · 新任务派发已暂停」，运行卡片区分「环境故障（非解题失败）」与「任务执行异常（非假设反证）」。只读 `GET /projects/{id}` 在有状态时附加 `infrastructure_fault`；`GET /projects/{id}/runs` 附加相应 run 分类。诊断只包含固定安全消息，不回传提供商原始错误或凭据。
+
+blocked 后的恢复流程：**停止项目 → 修复模型/代理/运行时配置 → 必要时重启服务 → 恢复运行**。复用既有 `PUT /projects/{id}/status`，仅真正的 `stopped → active` 转换重置故障；停止动作本身不重置，completed 项目仍不能从此接口恢复。没有新增未认证写路由，既有部署层访问控制要求不变。恢复只允许重试，不代表连通性已验证；部署配置变更仍需重启服务，不会因恢复项目而热加载。
+
 ## 1. 生效链路
 
 ```
@@ -107,6 +155,42 @@ Docker 模式需要本机 Docker 和镜像；创建时不启动容器，派发�
 不会自动改用本地进程。若 dispatch.yaml 未配置 `container`，使用 `cairn-worker:latest`、
 `bridge` 和 `remove` 的默认值；本地模式不提供容器隔离。无调度器时可以保存选择，但不会派发。
 容器的实时审计流必须明确配置容器可访问的 `audit_stream.url`；否则仍在任务结束时导入审计文件。
+
+### 本地与容器的 worker 环境变量
+
+`common_env` 只放两种模式共用的值；`local.env` 和 `container.env` 是可选的字符串映射，
+分别只传给对应模式的 worker。三者都是部署配置，修改 YAML 后需要重启服务，不能通过运行期
+覆盖接口写入；环境值不写入 `task.json`，不要在 YAML 中放密钥。
+
+```yaml
+common_env:
+  CAIRN_SOLVER: "breachweave"
+local:
+  completed_action: keep
+  env:
+    HTTPS_PROXY: "http://127.0.0.1:18899"
+container:
+  image: "cairn-worker:latest"
+  network_mode: bridge
+  completed_action: remove
+  env:
+    HTTPS_PROXY: "http://host.docker.internal:18899"
+```
+
+地址仅为已有代理的示例，不会自动启动代理或重写地址。`host.docker.internal` 面向容器访问
+宿主机，不能假定本地 worker 使用它也可达；容器内的 `127.0.0.1` 则指向容器自身。
+不需要代理时可不配置；若要清除已继承的代理，用空字符串显式覆盖相应变量，注意大小写变体。
+
+合并优先级（从低到高）：
+
+- 本地：控制面环境 → `common_env` → `local.env` → 调度器计算的任务变量。
+- 容器：`common_env` → `container.env` → 调度器计算的任务变量；不整体继承控制面环境，
+  原有 `CAIRN_SOLVER` 单键回退仍保留。配置目录最终固定为只读挂载点 `/cairn/agent-config`。
+- 容器宿主配置目录从 `container.env.CAIRN_AGENT_CONFIG_DIR`、`common_env`、控制面环境、
+  默认目录依次选择；`local.env` 不影响容器挂载。
+
+项目显式选择的执行模式决定使用哪一组 env，不受全局默认模式影响。未配置新字段时保持原行为。
+此设置不改变 Host Bridge Scope、Docker 网络隔离、审计 token 传递或完成校验规则。
 
 ### 执行模式切换
 
@@ -217,6 +301,28 @@ runtime:
 检查点文件权限为 `0600`；Linux 容器/宿主 UID 不同的环境需在部署层保证控制面可读，不可读时记忆接收
 不可用但原任务照常结束。本次未放宽文件权限、未运行真实 Docker 跨 UID gate。
 没有新增 UI 控件、HTTP 写入接口、WorkerTask 字段或 SDK 恢复策略。完整边界见 DESIGN §18 与 CONTRACT §9。
+
+### 可验证探索（M51a–d）
+
+不新增配置项，也不默认开启 checkpoint 或 ContextPack。reason 新 intent 的可选 `experiment`
+按 [CONTRACT §3.1](CONTRACT.md#31-reason-意图的可选探索契约m51a) 校验，存入元数据；
+旧意图不要求补造。focused explore / explore conclude 的提示词直接带上该计划数据，即便 checkpoint
+关闭也不影响原解题流程；reason 通过启用的 AgentContext / M48 输入读取已有计划。契约不扩展 Scope、调用预算或完成 oracle 权限。
+
+开启上面的 checkpoint + 成功 apply 后，`attempts.memory.experiment_result` 是原检查点的只读索引，
+观察与解释分开引用、运行故障独立标注；文件可用不等于证据有效，假设判决始终 unknown。
+只有错误/解释、缺少检查点或执行不完整都不会变成路线反证。该索引与完整原记忆一起纳入 M48
+预算与恢复分片，不增加第二套存储、模型判断调用或新的必读历史文件。
+M51c 的 reason 新方向可附 `experiment_review`（继续验证／调整方向／需要新观察），必须同时带新契约。
+只有成功 apply 的 reason 上下文恢复库提供来源授权；应用结果时重新核对当前计划、Scope、事实、
+检查点版本和证据可用性。结果驱动选择还要求正常成功结束、无权威运行故障、控制面派发计划绑定一致。
+旧无绑定检查点不回填；可用 `need_observation` 明确报告缺观察，但仍须当前授权来源。普通旧式无 review
+规划不受这个新增来源协议限制；不把来源检查描述成对所有自然语言策略的验证。
+
+M51d 在意图详情只读显示契约、观察与解释、运行异常、后续方向及精确引用；选择意图时加载，可手动刷新。
+只读接口 `GET /projects/{project_id}/intents/{intent_id}/experiment` 每类最多返回 10 条记录并提示省略数量。
+`bun run eval:experiments --out runs/experiment-eval.json` 运行确定性来源/安全评估，0 模型调用；
+不测真实探索成功率、推理质量或费用收益。没有自动反证/退役、新 UI 编辑器或 M52 重复抑制。
 
 ### Worker `worker` / `worker_selection`
 
@@ -381,3 +487,22 @@ dispatch.yaml，不在运行期可编辑视图里。
   新旧两代、迁移只在目标为空时复制、跳过软链接、超过 64 MiB 上限、旧目录保持不变；M44 起
   另加两例，用 `git check-ignore` 与 `git ls-files` 钉住仓库 `agent-config/` 的姿态——凭据与
   provider 接线文件被忽略，`prompts/`、`skills/`、`settings.json` 作为项目内容入库。
+
+## 模型连接错误的页面诊断
+
+项目详情页顶端与「任务运行」卡片会显示模型连接、认证、限流、请求超时或通用服务异常。
+诊断随现有项目轮询刷新，运行尚未结束时也能显示已写入会话日志的错误；不是每个请求的
+即时网络追踪，首次日志写出之前仍可能只有运行状态。错误消失、模型恢复正常返回后不再
+将该次临时错误作为当前告警；后续成功运行也会清除项目顶端的旧告警。
+
+这是 worker 会话的诊断，不是目标网站的可达性结论，也不替代 scheduler 的失败、取消、
+硬截止等权威状态。硬截止记录明确显示任务被终止，不误标为模型连接失败。
+
+服务端只从固定任务目录读取有界日志尾部：每次最多检查 20 个失败/运行中的记录，每个任务
+最多枚举 64 个目录项、读取两个 128 KiB 日志尾部，拒绝软链接/目录重定向。只将错误分类、
+固定中文说明、格式化时间和近期片段的错误次数传给前端；不返回原始响应、提示词、请求头、
+凭据或宿主路径。没有工作区、日志已删、文件不可读或不完整时不阻断 API/任务。
+
+新失败运行将固定错误码与说明写入原有 `runs.detail`，所以 session 清理后仍可看到原因；
+历史的通用退出码记录只在日志仍存在时做只读补充展示，不重写历史、不修改图或完成状态。
+运行期配置页面中的执行环境探测仍只验证运行时/工作区/容器可用性，不验证模型凭据。

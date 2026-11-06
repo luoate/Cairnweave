@@ -352,6 +352,18 @@ export function renderAgentContextYaml(context: AgentContext): string {
           ["last_outcome", intent.last_outcome],
           ["last_error", intent.last_error],
           ["priority", intent.priority],
+          ...(intent.experiment === undefined ? [] : [["experiment_plan_not_evidence", map([
+            ["version", intent.experiment.version], ["hypothesis", intent.experiment.hypothesis],
+            ["action", intent.experiment.action], ["expected_signal", intent.experiment.expected_signal],
+            ["evidence_required", intent.experiment.evidence_required], ["stop_condition", intent.experiment.stop_condition],
+          ])]] as Array<[string, YamlValue]>),
+          ...(intent.experiment_review === undefined ? [] : [["experiment_review_not_evidence", map([
+            ["source_intent_id", intent.experiment_review.source_intent_id],
+            ["choice", intent.experiment_review.choice], ["rationale", intent.experiment_review.rationale],
+            ["observations", intent.experiment_review.observations.map(ref => map([
+              ["run_id", ref.run_id], ["checkpoint_sequence", ref.checkpoint_sequence], ["attempt_id", ref.attempt_id],
+            ]))],
+          ])]] as Array<[string, YamlValue]>),
         ]),
       ),
     ],
@@ -363,6 +375,9 @@ export function renderAgentContextYaml(context: AgentContext): string {
           ["kind", attempt.kind],
           ["intent_id", attempt.intent_id],
           ["outcome", attempt.outcome],
+          ...(attempt.failure === undefined ? [] : [["operational_failure_not_hypothesis_refutation", map([
+            ["domain", attempt.failure.domain], ["code", attempt.failure.code],
+          ])]] as Array<[string, YamlValue]>),
           ["started_at", attempt.started_at],
           ["duration_ms", attempt.duration_ms],
           ["tokens", attempt.tokens],
@@ -560,7 +575,7 @@ function intentView(
   limits: AgentContextLimits,
   audit: AgentContextAudit,
 ): AgentContextIntent {
-  const attempts = runs.filter((run) => run.intent_id === intent.id);
+  const attempts = runs.filter((run) => run.intent_id === intent.id && run.failure === undefined);
   const last = finishedRuns(attempts)[0] ?? null;
   const meta = intentMeta.get(intent.id);
   const abandoned = meta?.status === "abandoned";
@@ -579,6 +594,8 @@ function intentView(
         ? truncate(last.detail, limits.maxDetailChars, audit)
         : null,
     priority: meta?.priority ?? null,
+    ...(meta?.experiment === undefined ? {} : { experiment: meta.experiment }),
+    ...(meta?.experiment_review === undefined ? {} : { experiment_review: meta.experiment_review }),
   };
 }
 
@@ -609,6 +626,7 @@ function selectAttempts(input: {
     kind: run.kind,
     intent_id: run.intent_id,
     outcome: run.outcome,
+    ...(run.failure === undefined ? {} : { failure: run.failure }),
     started_at: run.started_at,
     duration_ms: run.duration_ms,
     tokens: run.total_tokens,
@@ -744,6 +762,7 @@ function buildDelta(input: {
     (run) =>
       run.outcome !== null &&
       run.outcome !== "success" &&
+      run.failure === undefined &&
       (run.finished_at ?? run.started_at) > since,
   ).length;
 

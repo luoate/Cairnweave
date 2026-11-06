@@ -1,5 +1,9 @@
-import { registerCheckpointRun, finalizeCheckpointRun, type CheckpointTermination } from "@cairn/graph";
+import { registerCheckpointRun, finalizeCheckpointRun, buildExperimentReviewBasis, experimentReviewError,
+  type ExperimentReviewBasis, type CheckpointTermination } from "@cairn/graph";
 import { ingestCheckpoint, checkpointEvidenceStatus } from "./checkpoint";
+import { getInfrastructureFault, infrastructureDispatchBlocked, recordInfrastructureFailure,
+  clearInfrastructureFaultAfterSuccess, type InfrastructureFailureCode, type RunFailure } from "@cairn/graph";
+import { readModelSessionState, modelFailureDetail } from "../solver/diagnostics";
 /**
  * In-process scheduler.
  *
@@ -11,6 +15,8 @@ import { ingestCheckpoint, checkpointEvidenceStatus } from "./checkpoint";
 
 import {
   DEFAULT_INTENT_PRIORITY,
+  isExperimentContract,
+  isExperimentReview,
   parseTaskResultJson,
   validateBootstrapConcludePayload,
   validateBootstrapExecutePayload,
@@ -25,6 +31,7 @@ import {
   BOOTSTRAP_INTENT_DESCRIPTION,
   CLAIM_RELEASE_SHUTDOWN,
   HttpError,
+  acknowledgeOperatorGuidance,
   buildTaskContextSnapshot,
   claimReason,
   claimTask,
@@ -275,6 +282,10 @@ interface RunningTask {
   /** Dispatch profile selected for this attempt; absent in prompt mode. */
   workerProfile?: string;
   openIntentsEmpty: boolean;
+  operatorHintIds: string[];
+  experimentReviewBasis?: ExperimentReviewBasis;
+  infrastructureFaultId: string | null;
+  failure?: RunFailure;
   /** Reason only: the trigger that produced this task, persisted on success/failure. */
   trigger?: string;
   /** Host-side session directory. */
@@ -297,6 +308,7 @@ interface RunningTask {
 export class Scheduler {
   private readonly db: CairnDatabase;
   private readonly config: DispatchConfig;
+  private readonly infrastructurePersistenceBlocked = new Set<string>();
   /** Explicit workspace root from options; re-applied when the execution mode changes. */
   private readonly workspaceRootOverride: string | undefined;
   private workspaceRoot: string;
@@ -968,6 +980,7 @@ export class Scheduler {
   }
 
   private tryDispatch(summary: ProjectSummary, claims: ClaimView): boolean {
+    if (this.infrastructurePersistenceBlocked.has(summary.id)) return false;
     if (this.projectTaskCount(summary.id, claims) >= this.projectTaskLimit()) {
       return false;
     }
@@ -997,6 +1010,16 @@ export class Scheduler {
       return false;
     }
     if (project.project.status !== "active") return false;
+    // Environment failures gate every new model call, including salvage/replan. A
+    // retained conclude is still available after recovery; never spend it on a dead backend.
+    try {
+      const fault = this.db.withConn(conn => getInfrastructureFault(conn, summary.id));
+      if (infrastructureDispatchBlocked(fault, this.now()) ||
+          (fault !== null && this.projectTaskCount(summary.id, claims) > 0)) return false;
+    } catch {
+      this.logOnce(`infrastructure:${summary.id}`, `skip project=${summary.id}: infrastructure state unavailable`);
+      return false; // Fail closed rather than bypass a durable circuit.
+    }
 
     // A queued conclude has priority over new work: it holds the failed task's lease and
     // must either write the salvaged fact or release the intent before explore retries.
@@ -1051,6 +1074,10 @@ export class Scheduler {
         return this.dispatchReason(project, scope, trigger, claims);
       }
     }
+
+    // Drain existing productive work before applying operator guidance. Do not refill
+    // explore slots and starve the urgent reason turn while it waits for a settled graph.
+    if (project.hints.some((hint) => hint.operator_guidance === "pending")) return false;
 
     const intentMeta = this.intentMetaFor(summary.id);
     const unclaimed = project.intents.filter(
@@ -1148,6 +1175,7 @@ export class Scheduler {
       runtime = selectedMode === null ? this.runtime : this.runtimeFor(selectedMode);
       if (runtime.execution === "container" && !this.containerReady()) {
         this.logOnce(`container-ready:${projectId}`, `skip project=${projectId}: container agent configuration is not ready`);
+        this.recordRuntimeFault(projectId, "runtime_unavailable");
         return false;
       }
       this.loggedSkips.delete(`container-ready:${projectId}`);
@@ -1156,17 +1184,24 @@ export class Scheduler {
           `sandbox:${projectId}`,
           `skip project=${projectId} because its sandbox is not available`,
         );
+        this.recordRuntimeFault(projectId, "runtime_unavailable");
         return false;
       }
       this.loggedSkips.delete(`sandbox:${projectId}`);
     } catch (error) {
       this.log(`sandbox prepare failed project=${projectId}: ${describe(error)}`);
+      this.recordRuntimeFault(projectId, "runtime_unavailable");
       return false;
     }
 
-    let started: { prepared: PreparedTask; runId: string };
+    let started: { prepared: PreparedTask; runId: string; infrastructureFaultId: string | null };
     try {
       started = this.db.withConn((conn) => {
+        const fault = getInfrastructureFault(conn, projectId);
+        if (infrastructureDispatchBlocked(fault, this.now()) || (fault !== null &&
+            listActiveTaskClaims(conn, { now: this.instanceTimestamp() }).some(claim => claim.project_id === projectId))) {
+          throw new HttpError(409, "Infrastructure recovery already waiting or probing");
+        }
         if (kind === "reason") {
           claimReason(conn, projectId, WORKER_NAME, trigger ?? "initial");
         } else {
@@ -1222,7 +1257,7 @@ export class Scheduler {
         const profile = selectWorkerProfile(
           this.config.workerProfiles,
           this.config.workerSelection,
-          buildProfileRunStats(conn),
+          buildProfileRunStats(conn, { excludeInfrastructureFailures: true }),
           pending?.workerProfile,
         );
         // Challenge files the operator uploaded; the prompt lists them so the worker knows
@@ -1328,10 +1363,11 @@ export class Scheduler {
           session: workspaceReference(prepared.hostWorkspace, prepared.hostSessionDir),
         });
         if (this.config.tasks.checkpoint.enabled) {
-          try { registerCheckpointRun(conn, runId, scope.targets); }
+          try { registerCheckpointRun(conn, runId, scope.targets,
+            intent === undefined ? undefined : intentMeta.find(meta => meta.intent_id === intent.id)?.experiment); }
           catch { this.log("checkpoint registration unavailable; dispatch continues"); }
         }
-        return { prepared, runId };
+        return { prepared, runId, infrastructureFaultId: fault?.id ?? null };
       });
     } catch (error) {
       if (error instanceof HttpError && (error.status === 403 || error.status === 409)) {
@@ -1362,6 +1398,7 @@ export class Scheduler {
         kind,
         intent?.id,
         trigger,
+        started.infrastructureFaultId,
         pending?.of,
         pending?.hostSessionDir,
       )
@@ -1388,6 +1425,7 @@ export class Scheduler {
     kind: RunnableTaskKind,
     intentId: string | undefined,
     trigger: string | undefined,
+    infrastructureFaultId: string | null,
     concludeOf?: ConcludeOf,
     resumeSessionDir?: string,
   ): boolean {
@@ -1440,13 +1478,15 @@ export class Scheduler {
       // here and the caller's `releaseBestEffort` returns the graph lease.
       this.releaseClaim(task.taskId, "spawn_failed");
       this.recordRunFinish(
+        task.projectId,
         runId,
         "failed",
-        `worker spawn failed: ${describe(error)}`,
+        "worker 启动失败，请检查执行环境与运行时配置。",
         null,
         0,
         startedAtMs,
         null,
+        { domain: "infrastructure", code: "worker_spawn_failed" },
       );
       return false;
     }
@@ -1463,6 +1503,9 @@ export class Scheduler {
         ? {}
         : { workerProfile: task.workerProfile }),
       openIntentsEmpty: prepared.openIntentsEmpty,
+      operatorHintIds: prepared.operatorHintIds,
+      ...(prepared.experimentReviewBasis === undefined ? {} : { experimentReviewBasis: prepared.experimentReviewBasis }),
+      infrastructureFaultId,
       ...(trigger === undefined ? {} : { trigger }),
       sessionDir: prepared.hostSessionDir,
       resultPath: prepared.hostResultPath,
@@ -1558,12 +1601,21 @@ export class Scheduler {
         this.finish(running, "failed", "lease lost");
         return;
       }
-      if (exitCode !== 0) {
-        this.log(
-          `worker exited task=${task.taskId} code=${exitCode} stderr=${preview(stderr)}`,
-        );
-        this.failRunning(running, "worker exited");
-        this.finish(running, "failed", `worker exited with code ${exitCode}`);
+      if (exitCode !== 0 || running.terminationReason === "hard_deadline") {
+        this.log(`worker exited task=${task.taskId} code=${exitCode}`);
+        const state = readModelSessionState(running.sessionDir);
+        // Deadlines/cancellation/ownership are control-plane facts. A worker session
+        // can suggest a model fault, but can never override those authoritative outcomes.
+        const diagnostic = running.terminationReason === "hard_deadline" ? null : state.diagnostic;
+        running.failure = diagnostic === null
+          ? { domain: "execution", code: running.terminationReason === "hard_deadline" ? "hard_deadline" : "worker_failed" }
+          : { domain: "infrastructure", code: diagnostic.code };
+        if (diagnostic !== null && state.hasUsefulWork === false) this.releaseOwnedLease(running);
+        else this.failRunning(running, "worker exited");
+        const detail = running.terminationReason === "hard_deadline"
+          ? "任务达到硬截止时间，worker 已被终止"
+          : diagnostic === null ? `worker exited with code ${exitCode}` : `${modelFailureDetail(diagnostic)} (exit ${exitCode})`;
+        this.finish(running, "failed", detail);
         return;
       }
 
@@ -1818,6 +1870,20 @@ export class Scheduler {
         return "success";
       }
       case "intents": {
+        // Validate every retained follow-up before any hint/intent is written. The
+        // transaction also rolls back on later application failures.
+        const reviews = validated.data.intents.flatMap(entry => isExperimentReview(entry["experiment_review"])
+          ? [entry["experiment_review"]] : []);
+        if (reviews.length > 0) {
+          const current = buildExperimentReviewBasis(buildTaskContextSnapshot(conn, running.projectId, { checkpoint: {
+            scopeTargets: getProjectScope(conn, running.projectId)?.targets ?? [],
+            evidenceStatus: ref => checkpointEvidenceStatus(running.hostWorkspace, ref),
+          } }));
+          for (const review of reviews) {
+            const error = experimentReviewError(review, running.experimentReviewBasis, current);
+            if (error !== null) throw new Error(error);
+          }
+        }
         const hintsCreated = this.applyReasonHints(
           conn,
           running.projectId,
@@ -1853,6 +1919,8 @@ export class Scheduler {
               dedupeKey,
               priority: intentPriorityOf(entry["priority"]),
               budget: budget === null ? null : JSON.stringify(budget),
+              ...(isExperimentContract(entry["experiment"]) ? { experiment: entry["experiment"] } : {}),
+              ...(isExperimentReview(entry["experiment_review"]) ? { experimentReview: entry["experiment_review"] } : {}),
             });
             created += 1;
           } catch (error) {
@@ -1951,7 +2019,7 @@ export class Scheduler {
       const meta = getIntentMeta(conn, running.projectId, intentId);
       if (meta?.status === "abandoned") continue;
       const attempts = listProjectRuns(conn, running.projectId).filter(
-        (run) => run.intent_id === intentId && run.outcome !== null,
+        (run) => run.intent_id === intentId && run.outcome !== null && run.failure === undefined,
       );
       if (
         attempts.length === 0 ||
@@ -2147,6 +2215,9 @@ export class Scheduler {
   }
 
   private finish(running: RunningTask, outcome: TaskOutcome, detail?: string | null): void {
+    if (outcome === "failed") running.failure ??= { domain: "execution",
+      code: running.terminationReason === "lease_lost" ? "lease_lost"
+        : running.terminationReason === "supervision_failed" ? "supervision_failed" : "worker_failed" };
     this.running.delete(running.taskId);
     this.processes.delete(running.taskId);
     // The claim ends with the task, whatever the outcome: a failed explore keeps its *intent*
@@ -2155,9 +2226,9 @@ export class Scheduler {
     // The worker flushed before exiting; no process may append to this chain any more.
     this.auditStream?.tokens.revoke(running.projectId, running.taskId);
 
-    // A conclude task is one salvage attempt. Whether it succeeded or failed, the queued
-    // entry is done; a failure releases the intent for the normal explore path.
-    if (running.kind === "conclude" && running.intentId !== undefined) {
+    // A conclude that could not reach the model did not consume a salvage attempt.
+    // Keep its original session and queue row across backoff/restart.
+    if (running.kind === "conclude" && running.intentId !== undefined && running.failure?.domain !== "infrastructure") {
       try {
         this.db.withConn((conn) =>
           deletePendingConclude(conn, running.projectId, running.intentId!),
@@ -2176,6 +2247,7 @@ export class Scheduler {
     this.recordProposals(running);
     // Read before the retention cleanup below removes the task directory.
     this.recordRunFinish(
+      running.projectId,
       running.runId,
       outcome,
       detail ?? running.detail ?? null,
@@ -2183,6 +2255,8 @@ export class Scheduler {
       running.evidenceCount,
       running.startedAtMs,
       readTaskUsage(running.sessionDir),
+      running.failure,
+      running.infrastructureFaultId,
     );
 
     if (running.checkpointEnabled) {
@@ -2412,6 +2486,7 @@ export class Scheduler {
 
   /** Sidecar run bookkeeping must never change the task outcome. */
   private recordRunFinish(
+    projectId: string,
     runId: string,
     outcome: RunOutcome,
     detail: string | null,
@@ -2419,11 +2494,14 @@ export class Scheduler {
     evidenceCount: number,
     startedAtMs: number,
     usage: TaskUsage | null,
+    failure?: RunFailure,
+    observedFaultId: string | null = null,
   ): void {
     try {
-      this.db.withConn((conn) =>
+      this.db.withConn((conn) => {
         finishRun(conn, runId, {
           outcome,
+          ...(failure === undefined ? {} : { failure }),
           finishedAt: utcnow(),
           durationMs: Math.max(0, Date.now() - startedAtMs),
           exitCode,
@@ -2441,9 +2519,15 @@ export class Scheduler {
                   totalTokens: usage.total_tokens,
                   costUsd: usage.cost_usd,
                 },
-        }),
-      );
+        });
+        if (failure?.domain === "infrastructure") {
+          recordInfrastructureFailure(conn, { projectId, runId, code: failure.code, at: this.now().toISOString() });
+        } else if (outcome === "success") {
+          clearInfrastructureFaultAfterSuccess(conn, projectId, observedFaultId);
+        }
+      });
     } catch (error) {
+      if (failure?.domain === "infrastructure") this.infrastructurePersistenceBlocked.add(projectId);
       this.log(`run record failed run=${runId} outcome=${outcome}: ${describe(error)}`);
     }
   }
@@ -2490,11 +2574,20 @@ export class Scheduler {
     });
   }
 
-  /**
-   * On a failed execute task, keep the lease if the solver left a session on disk and
-   * queue a conclude turn; otherwise release so the intent can be explored again.
-   */
+  private recordRuntimeFault(projectId: string, code: InfrastructureFailureCode): void {
+    try {
+      this.db.withConn(conn => recordInfrastructureFailure(conn, { projectId, code, at: this.now().toISOString() }));
+    } catch {
+      this.infrastructurePersistenceBlocked.add(projectId);
+      this.log(`infrastructure state persistence failed project=${projectId}; dispatch paused until controller restart`);
+    }
+  }
+
+  /** Retain useful/uncertain execute sessions; pure model failures bypass this method. */
   private failRunning(running: RunningTask, why: string): void {
+    const codes = { "result missing": "result_missing", "result invalid": "result_invalid",
+      "evidence invalid": "evidence_invalid", "verification error": "verification_error", "apply failed": "apply_failed" } as const;
+    running.failure ??= { domain: "execution", code: codes[why as keyof typeof codes] ?? "worker_failed" };
     if (this.queueConclude(running, why)) return;
     this.releaseOwnedLease(running);
   }
@@ -2720,7 +2813,8 @@ export class Scheduler {
         });
         const detail = snapshot.detail;
         const openIntentCount = snapshot.openIntentCount;
-        this.db.withConn((conn) =>
+        this.db.withConn((conn) => {
+          acknowledgeOperatorGuidance(conn, running.projectId, running.operatorHintIds, running.runId);
           recordStrategistSuccess(conn, {
             projectId: running.projectId,
             runId: running.runId,
@@ -2728,13 +2822,13 @@ export class Scheduler {
             factCount: detail.facts.length,
             hintCount: detail.hints.length,
             openIntentCount,
-          }),
-        );
-      } else if (
+          });
+        });
+      } else if (running.failure?.domain !== "infrastructure" && (
         outcome === "failed" ||
         outcome === "rejected" ||
         outcome === "unhealthy"
-      ) {
+      )) {
         this.db.withConn((conn) =>
           recordStrategistFailure(conn, {
             projectId: running.projectId,

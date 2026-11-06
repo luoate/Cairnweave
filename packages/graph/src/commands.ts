@@ -12,6 +12,7 @@ import type { Database } from "bun:sqlite";
 
 import { all, get, run } from "./db";
 import { HttpError } from "./errors";
+import { attachOperatorGuidance } from "./operator-guidance";
 import { closePendingCompletionReviews } from "./completion-reviews";
 import { recordFactEvidence, type FactEvidenceFileInput } from "./fact-evidence";
 import { recordFactMeta } from "./runs";
@@ -237,7 +238,7 @@ export function getProjectDetail(conn: Database, projectId: string): ProjectDeta
     project: projectMetaFromRow(row),
     facts,
     intents: buildIntents(conn, projectId),
-    hints,
+    hints: attachOperatorGuidance(conn, projectId, hints),
   };
 }
 

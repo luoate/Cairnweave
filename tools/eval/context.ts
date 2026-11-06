@@ -54,6 +54,18 @@ export function seedContextScenario(conn: Database, scenario: ContextScenario): 
     finishRun(conn, runId, { outcome: "failed", detail: "超时并不证明假设错误 ".repeat(100),
       finishedAt: "2026-11-04T00:01:00Z", durationMs: 1 });
   }
+  // Commands use the real graph clock. Normalize fixture-owned rows only, rather
+  // than overriding a process-global clock (which could affect the caller).
+  // Crossing a second during seeding must not change time-based context selection.
+  const timestamp = "2026-11-04T00:00:00Z";
+  conn.query("UPDATE projects SET created_at = ? WHERE id = ?").run(timestamp, projectId);
+  conn.query(`UPDATE intents SET created_at = ?,
+    concluded_at = CASE WHEN concluded_at IS NULL THEN NULL ELSE ? END,
+    last_heartbeat_at = CASE WHEN last_heartbeat_at IS NULL THEN NULL ELSE ? END
+    WHERE project_id = ?`).run(timestamp, timestamp, timestamp, projectId);
+  for (const table of ["hints", "fact_meta", "project_verification", "project_goal_conditions"]) {
+    conn.query(`UPDATE ${table} SET created_at = ? WHERE project_id = ?`).run(timestamp, projectId);
+  }
   return { projectId, focus };
 }
 

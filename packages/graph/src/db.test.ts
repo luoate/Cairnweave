@@ -191,12 +191,39 @@ describe("legacy migrations", () => {
 
     const database = configureDatabase(path);
     const row = database.withConn((conn) =>
-      get<{ origin_run_id: string | null }>(
+      get<{ origin_run_id: string | null; experiment: string | null; experiment_review: string | null }>(
         conn,
-        "SELECT origin_run_id FROM intent_meta WHERE project_id = 'proj_001' AND intent_id = 'i001'",
+        "SELECT origin_run_id, experiment, experiment_review FROM intent_meta WHERE project_id = 'proj_001' AND intent_id = 'i001'",
       ),
     );
-    expect(row).toEqual({ origin_run_id: null });
+    expect(row).toEqual({ origin_run_id: null, experiment: null, experiment_review: null });
+  });
+
+  test("adds a nullable dispatch plan without rewriting legacy checkpoints", () => {
+    const directory = mkdtempSync(join(tmpdir(), "cairn-legacy-checkpoint-"));
+    directories.push(directory);
+    const path = join(directory, "legacy.db");
+    const legacy = new Database(path, { create: true });
+    legacy.exec(`CREATE TABLE task_checkpoints (
+      run_id TEXT PRIMARY KEY, sequence INTEGER NOT NULL DEFAULT 0,
+      payload TEXT, sha256 TEXT, accepted_at TEXT, termination_reason TEXT,
+      scope_targets TEXT
+    )`);
+    const payload = '{"version":1,"sequence":3,"legacy":"kept verbatim"}';
+    legacy.query(`INSERT INTO task_checkpoints
+      (run_id, sequence, payload, sha256, termination_reason, scope_targets)
+      VALUES (?, 3, ?, 'kept-hash', 'finished', '["127.0.0.1:8080"]')`)
+      .run("legacy-run", payload);
+    legacy.close();
+    for (let reopen = 0; reopen < 2; reopen++) {
+      const database = configureDatabase(path);
+      expect(database.withConn(conn => conn.query(
+        "SELECT sequence, payload, sha256, termination_reason, scope_targets, experiment_plan FROM task_checkpoints WHERE run_id = ?",
+      ).get("legacy-run"))).toEqual({
+        sequence: 3, payload, sha256: "kept-hash", termination_reason: "finished",
+        scope_targets: '["127.0.0.1:8080"]', experiment_plan: null,
+      });
+    }
   });
 
   test("adds replan columns to a legacy strategist_state table", () => {

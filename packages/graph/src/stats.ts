@@ -71,12 +71,16 @@ export function buildProjectRunStats(conn: Database, projectId: string): Project
 
 /**
  * Cross-project profile history. Selection uses it as the sample set; untagged prompt-mode
- * runs are excluded because they cannot inform a profile choice.
+ * runs are excluded because they cannot inform a profile choice. Selection excludes
+ * infrastructure failures; default reporting still retains every run and its cost.
  */
-export function buildProfileRunStats(conn: Database): ProfileRunStats[] {
+export function buildProfileRunStats(
+  conn: Database, options: { excludeInfrastructureFailures?: boolean } = {},
+): ProfileRunStats[] {
   const profiles = new Map<string, MutableGroup>();
   for (const run of listAllRuns(conn)) {
-    if (run.worker_profile === null) continue;
+    if (run.worker_profile === null ||
+        (options.excludeInfrastructureFailures && run.failure?.domain === "infrastructure")) continue;
     addRun(groupFor(profiles, run.worker_profile), run);
   }
   return finishProfiles(profiles);

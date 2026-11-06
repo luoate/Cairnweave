@@ -81,6 +81,11 @@ describe("runtime override patches", () => {
     expect(() => parseRuntimeOverridePatch({ tasks: { review: {} } })).toThrow(
       "overrides.tasks has unsupported key: review",
     );
+    // Worker environment overrides are deployment-only, never an HTTP write surface.
+    for (const section of ["common_env", "local", "container"]) {
+      expect(() => parseRuntimeOverridePatch({ [section]: { env: { HTTPS_PROXY: "http://proxy:1" } } }))
+        .toThrow(`overrides has unsupported section: ${section}`);
+    }
     // The off-completion safety gate is deployment policy, not a runtime dial.
     expect(() =>
       parseRuntimeOverridePatch({ verification: { off_completion: "auto" } }),
@@ -144,6 +149,27 @@ describe("RuntimeConfigStore", () => {
     expect(view.read_only.runtime.strategy_context).toBe("on");
     expect(view.read_only.verification.off_completion).toBe("manual");
     expect(view.read_only.observer.enabled).toBe(true);
+  });
+
+  test("runtime patches and restart replay preserve file-only per-mode environments without exposing values", () => {
+    const document = source();
+    document["local"] = { env: { HTTPS_PROXY: "http://local-proxy:18899" } };
+    document["container"] = {
+      image: "worker:test", network_mode: "bridge", completed_action: "remove",
+      env: { HTTPS_PROXY: "http://container-proxy:18899" },
+    };
+    const current = parseDispatchConfig(document);
+    const store = new RuntimeConfigStore({ db, config: current, source: document });
+    const view = store.apply({ runtime: { interval: 5 } });
+    expect(current.local?.env?.["HTTPS_PROXY"]).toBe("http://local-proxy:18899");
+    expect(current.container?.env?.["HTTPS_PROXY"]).toBe("http://container-proxy:18899");
+    expect(JSON.stringify(view)).not.toContain("local-proxy");
+    expect(JSON.stringify(view)).not.toContain("container-proxy");
+    const restarted = parseDispatchConfig(document);
+    new RuntimeConfigStore({ db, config: restarted, source: document });
+    expect(restarted.runtime.interval).toBe(5);
+    expect(restarted.local?.env).toEqual(current.local?.env);
+    expect(restarted.container?.env).toEqual(current.container?.env);
   });
 
   test("applies a patch to the live config in place and persists it", () => {

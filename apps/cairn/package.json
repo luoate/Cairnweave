@@ -1,6 +1,6 @@
 {
   "name": "@cairn/app",
-  "version": "0.72.0-m49",
+  "version": "0.75.0-m51",
   "private": true,
   "type": "module",
   "bin": {

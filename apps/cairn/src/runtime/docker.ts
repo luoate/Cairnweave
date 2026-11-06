@@ -229,9 +229,10 @@ export class DockerRuntime implements RuntimeBackend {
 
     const workerEnv: Record<string, string> = {
       ...options.baseEnv,
+      ...this.container.env,
       ...options.extraEnv,
     };
-    // Honor a control-plane-level solver selection unless common_env overrides it.
+    // Honor a control-plane-level solver selection unless worker configuration overrides it.
     const solver = options.controllerEnv["CAIRN_SOLVER"];
     if (solver !== undefined && workerEnv["CAIRN_SOLVER"] === undefined) {
       workerEnv["CAIRN_SOLVER"] = solver;

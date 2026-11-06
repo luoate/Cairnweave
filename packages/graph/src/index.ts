@@ -18,6 +18,12 @@ export {
 
 export type { AgentContextAudit, ContextSelection, GraphExportAudit } from "./context-audit";
 
+export { getInfrastructureFault, infrastructureDispatchBlocked, recordInfrastructureFailure,
+  clearInfrastructureFaultAfterSuccess, resetInfrastructureFault,
+  type RunFailure, type InfrastructureFailureCode, type ExecutionFailureCode, type InfrastructureFault } from "./failures";
+
+export { markOperatorHint, attachOperatorGuidance, selectOperatorGuidance, acknowledgeOperatorGuidance } from "./operator-guidance";
+
 export { HttpError, RequestValidationError } from "./errors";
 export type { ValidationIssue, ValidationLocation } from "./errors";
 
@@ -444,5 +450,8 @@ export { emitScalar, map, renderYaml, type YamlMap, type YamlValue } from "./yam
 
 export { buildTaskContextSnapshot, type TaskContextSnapshot, type SnapshotFact, type SnapshotIntent } from "./context-snapshot";
 
+export { projectIntentExperiment } from "./experiment-view";
+export { buildExperimentReviewBasis, experimentReviewError, type ExperimentReviewBasis } from "./experiment-reviews";
+export { projectExperimentResult, type ExperimentResultProjection } from "./experiments";
 export { registerCheckpointRun, acceptTaskCheckpoint, finalizeCheckpointRun, attachAttemptMemories,
   type CheckpointTermination, type CheckpointIngestStatus, type AttemptMemory, type AttemptMemoryOptions } from "./checkpoints";

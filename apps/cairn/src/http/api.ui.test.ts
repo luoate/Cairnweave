@@ -47,6 +47,16 @@ describe("static operations UI", () => {
     expect(favicon.status).toBe(200);
   });
 
+  test("explains operator guidance priority and shows truthful planning status", () => {
+    const html = readFileSync(INDEX_PATH, "utf8");
+    expect(html).toContain("data-operator-guidance");
+    expect(html).toContain("用户引导 · 待规划");
+    expect(html).toContain("用户引导 · 已纳入规划");
+    expect(html).toContain("不会中断当前任务或自动恢复已停止的项目");
+    expect(html).toContain("不代表已执行或已验证");
+    expect(html).not.toMatch(/x-html="[^"]*(?:h\.content|operator_guidance)/);
+  });
+
   test("keeps the inline app script syntactically valid", () => {
     const html = readFileSync(INDEX_PATH, "utf8");
     const match = html.match(/<script>\s*(function cairnApp\(\)[\s\S]*?)<\/script>/);
@@ -3404,4 +3414,29 @@ describe("workspace layout and navigation", () => {
     expect(css).toContain("forced-colors:active");
     expect(css).toContain(".workspace-topbar{position:relative;z-index:30");
   });
+});
+
+test("model failures remain visible outside the runs tab and update during polling", () => {
+  const html = readFileSync(INDEX_PATH, "utf8");
+  expect(html).toContain("data-task-diagnostic");
+  expect(html).toContain("data-run-diagnostic");
+  expect(html).toContain('x-text="project.task_diagnostic.message"');
+  expect(html).toContain('x-text="run.diagnostic.message"');
+  expect(html).toContain("if (this.sideTab === 'runs' && !this.runsPanel.loading) await this.loadRuns();");
+  expect(html).not.toContain('x-html="run.diagnostic');
+});
+
+test("environment circuit and operational errors are visible without implying a refuted hypothesis", async () => {
+  const response = await api.handle(new Request("http://cairn.test/"));
+  const html = await response.text();
+  expect(html).toContain("data-infrastructure-fault");
+  expect(html).toContain("data-run-failure");
+  expect(html).toContain("环境故障 · 新任务派发已暂停");
+  expect(html).toContain("最早重试时间：");
+  expect(html).toContain("仅允许一个恢复探测任务");
+  expect(html).toContain("这不是解题路线失败");
+  expect(html).toContain("任务执行异常（非假设反证）");
+  expect(html).toContain("再恢复运行以允许重试");
+  expect(html).not.toContain('x-html="run.failure');
+  expect(html).not.toContain('x-html="project.infrastructure_fault');
 });

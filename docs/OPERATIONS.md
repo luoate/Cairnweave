@@ -7,6 +7,25 @@
 快速开始、架构图与 HTTP API 概览见 [README](../README.md)；配置字段与生效时机见
 [CONFIG.md](CONFIG.md)；worker 契约见 [CONTRACT.md](CONTRACT.md)。
 
+## M50 升级与恢复
+
+M50 的代码/离线验收与实际部署分开。升级前先停止需要暂停的项目并等待任务退出，按部署策略备份 SQLite 数据库（运行中的 WAL 数据库应使用 SQLite 备份接口，而非只复制主文件）；数据库写入者必须使用同版本代码。新 sidecar 表随 `configureDatabase` 增量创建，不需要改写图或凭据。
+
+取得操作员授权后，使用既有服务管理方式重启控制面以加载代码与部署配置。先只读检查项目、runs 和用户引导状态；不要为验证升级自动恢复停止的项目或触发真实模型请求。真实模型与 Docker 连通性 gate 需要另行授权和预算。
+
+环境退避/blocked 不会因服务重启消失。blocked 恢复顺序：停止项目、修复模型/代理/运行时配置、必要时重启服务、操作员恢复运行。只有真正 stopped→active 才重置故障；恢复后仍需成功探测才说明调用恢复。已有错误 run 不靠自由文本回填权威分类，成本历史不清零。详细退避、收尾保留及落库失败保护见 [CONFIG](CONFIG.md#环境故障与解题结果分流)。
+
+## M51a–d 随代码升级
+
+本轮累计版本为 `0.75.0-m51`。在同一升级流程中，`intent_meta.experiment`、
+`intent_meta.experiment_review` 和 `task_checkpoints.experiment_plan` 自动增量添加，历史行留空。
+最后一列是控制面在任务派发时绑定的计划，worker 不能通过检查点改写。旧检查点仍按原 M49 schema
+读取并派生结果索引，但不以当前计划回填历史派发绑定，因此不具备结果驱动后续决策的资格；
+仍可明确提出 `need_observation`。没有第二套尝试正文迁移。
+不开启 checkpoint / ContextPack 时保持原采集/交付行为；不要为了验收悄悄开启开关或恢复项目。
+CLI `cairn version`、根与应用 package 版本应一致，worker 与控制面仍须同版本部署。
+本轮离线测试不等于现有服务已经重载；实际部署、项目恢复和真实模型验证仍分别需要授权。
+
 ## 容器模式（M3）
 
 ```bash

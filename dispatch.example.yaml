@@ -114,6 +114,10 @@ local:
   # "remove" deletes a project workspace when the project is no longer active;
   # "keep" is the safe default for audit.
   completed_action: keep
+  # Worker-only overrides of common_env; deployment settings require a restart.
+  # Keep host proxy addresses out of the shared environment when using both modes.
+  # env:
+  #   HTTPS_PROXY: "http://127.0.0.1:18899"
 
 # Optional housekeeping (M6). Sweeps run once at startup (before the first dispatch)
 # and then every sweep_interval_seconds. Running tasks and queued concludes are never
@@ -272,7 +276,7 @@ retention:
 #   # project content — .gitignore tracks only prompts/, skills/ and settings.json there,
 #   # so auth.json and the provider wiring files stay out of git.
 #   CAIRN_AGENT_CONFIG_DIR: "C:/Users/me/.cairnweave/config"
-#   https_proxy: "http://127.0.0.1:7897"
+# Put mode-specific proxies in local.env / container.env, not common_env.
 
 # Container mode. One container per project; the project workspace is
 # bind-mounted at /cairn/workspace and the agent config read-only at
@@ -288,6 +292,8 @@ retention:
 #   # "remove" deletes the container when the project is no longer active.
 #   completed_action: "remove"
 #   cap_add: []
+#   env:
+#     HTTPS_PROXY: "http://host.docker.internal:18899"
 #   # Host directory that contains project workspaces. This is a control-plane
 #   # path, not a container path. Defaults to local.workspace_root, then cwd.
 #   workspace_root: "C:/cairn-runs"

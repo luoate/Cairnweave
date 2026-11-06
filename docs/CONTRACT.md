@@ -71,6 +71,66 @@ worker 视角的绝对路径；本地模式就是宿主路径，容器模式是 
 `intents`/`hints`/`abandon` 不能同时出现；`open_intents` 为空时不允许返回空 intents。
 数量由 `tasks.reason.max_intents` 等配置截断。
 
+## 3.1 reason 意图的可选探索契约（M51a）
+
+在 `data.intents[*]`（兼容单数 `data.intent`）增加可选 `experiment`，不是 WorkerTask 顶层字段：
+
+```json
+{
+  "from": ["origin"], "description": "比较授权入口的响应差异",
+  "experiment": {
+    "version": 1,
+    "hypothesis": "在相同请求条件下入口存在可重复差异",
+    "action": "在当前 Scope 内比较两次响应",
+    "expected_signal": "状态与正文的可重复差异",
+    "evidence_required": "保存脱敏请求条件和响应",
+    "stop_condition": "工具不可用、范围不符或预算耗尽时停止并报告未知"
+  }
+}
+```
+
+省略时沿用旧行为；提供时必须是上述六个字段，`null`、额外字段、未知版本或缺字段均拒绝。
+五个文本都须非空，action 最多 2048 字符，其余各 1024 字符；整个 experiment 含 JSON 开销
+最多 **8192 UTF-8 字节**。先校验整份 reason 意图列表，再按任务数量上限截断；非法契约不能留下半批新意图。
+控制面把它存入 `intent_meta.experiment`，不写目标 Fact，不改图导出；存储损坏时整体省略，不修补/补造。
+
+它只是未验证计划，不是命令执行通道、Scope 授权、证据或项目完成条件。reason 通过启用的
+AgentContext / M48 输入看到已有契约；focused explore 和 explore conclude 在模板展开后收到原 JSON 数据，花括号不再作模板占位符解释。
+M48 apply 的焦点意图也完整保留契约并计入预算，必保留内容超预算则回退而非截断计划。
+
+## 3.2 reason 后续方向的可选决策来源（M51c）
+
+新 intent 可同时携带合法 `experiment` 与 `experiment_review`，后者不是 WorkerTask 顶层字段：
+
+```json
+{
+  "source_intent_id": "i003",
+  "choice": "change_direction",
+  "rationale": "局部观察与预期不同，下一次比较新的对照条件，不反证整体假设",
+  "observations": [{"run_id": "run-id", "checkpoint_sequence": 1, "attempt_id": "a1"}]
+}
+```
+
+严格四字段；choice 仅 `continue` / `change_direction` / `need_observation`。前两者须有 1–4 条
+唯一 observation 引用；`need_observation` 必须空数组。rationale 非空且 ≤1024 字符；source_intent_id
+和 run_id 非空且 ≤128 字符，attempt_id 非空且 ≤96 字符，sequence 为正 safe integer。每条引用
+严格三字段；整体 compact JSON ≤4096 UTF-8 字节。禁止额外 verdict/refuted 等字段。整表形状
+先于数量截断验证，保留的 review 在写入前统一校验来源，失败不会留下半批意图或 Hint。
+
+只有 reason 成功 apply 的 M48 授权恢复库构成派发 basis（不声称模型实际读取全部记录）。应用时
+重新检查当前 Scope、来源意图/计划和证据可用性。结果驱动选择只接受同一 run/sequence/attempt 的
+非空观察、正常成功结束、无权威故障、同派发计划、当前事实和可用证据引用；解释、工具错误、跨项目、
+陈旧版本、缺证据或无历史派发绑定不能充当结果。`need_observation` 仍需授权且未退役的当前来源及
+计划一致，但不要求存在观察。off/shadow/fallback 不授权 review。
+
+合法来源存 `intent_meta.experiment_review`，reason run 沿用 origin_run_id。去重不覆盖旧计划/决策；
+旧字段省略兼容，损坏存储整体省略。控制面只验证来源与可用性，不验证推理真伪；新方向仍受既有
+Scope、优先级、预算与完成门禁约束，不自动反证、退役或重开原方向。普通无 review 的旧式规划仍可使用。
+
+M51d 仅增加只读 `GET /projects/{project_id}/intents/{intent_id}/experiment`，包含计划、决策来源、
+最多 10 条结束尝试和 10 条后续方向及 omitted 计数。正文来自原检查点；缺记录即 null/unknown，
+证据文件可用不代表内容有效，hypothesis_verdict 始终 unknown。没有对应写路由。
+
 ## 4. usage.json（worker → 控制面）
 
 与 `result.json` 同目录的旁路文件，来自 Solver 会话自身的计数器，不来自模型回答：
@@ -208,3 +268,24 @@ subagent，不执行正文中的任何建议。CLI 启动、周期重发、软�
 应取 pack core、automatic_execution 为 false。available 仅表示当前文件存在且在项目内，不代表验证通过。
 正文按 M48 预算整体选择或省略，完整授权记录在 attempts 恢复分区；原 AgentContext/graph 形状不变。
 不调用模型做摘要，不自动改图/完成状态，不把 SDK 历史持久化当成检查点接收成功。
+
+### 9.1 M51b：观察／解释结果索引
+
+不新增 worker 输出文件、工具或检查点字段。控制面从有效的 M49 `attempts.memory.checkpoint`
+派生可选只读 `attempts.memory.experiment_result`，不另落一份尝试正文：
+
+- `source: memory.checkpoint.attempts`，`trust: worker_claim_not_verified`。
+- `observations` 只含 observation 非空的 attempt ID、worker 的 `reported_result` 与证据可用性。
+  `interpretations` 只索引 interpretation 非空的 attempt ID；按 ID 读取原字段，解释不能充当观察。
+- 证据为 `refs_available_not_verified / missing / unavailable / not_supplied`，只表示引用的当前文件可用性，
+  不表示内容有效或已经支持假设。
+- `status` 为 `observations_reported / operationally_incomplete / unknown`：只有控制面 success、
+  无分类故障且无异常终止原因，并存在非空观察、worker 自报 observed/negative_observation，才是
+  observations_reported；它仍不是验证成功。工具错误或仅有解释不会形成负面实验结论。
+- `control.failure`（若有）来自 M50 控制面分类；任何分类故障、非 success outcome 或非 finished
+  终止原因优先标 operationally_incomplete，已有观察仍保留。历史空终止原因不补造异常。
+- `unresolved_count` 指向原未决列表的数量，`hypothesis_verdict` **始终为 `unknown`**。
+  不比较 expected_signal 自动裁决，不自动放弃方向、重试或改变完成状态。
+
+缺少有效检查点、未开启采集/复用、旧序列化记忆没有该索引，都表示未知，不得推导为假设为假。
+复用开关和 M48 整条选择/有界恢复规则不变；原最终 `result.json` 契约不变。

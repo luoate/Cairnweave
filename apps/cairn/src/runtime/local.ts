@@ -26,12 +26,14 @@ export class LocalRuntime implements RuntimeBackend {
   private readonly workerArgv: (workerTaskPath: string) => string[];
   private readonly log: (message: string) => void;
   private readonly completedAction: "keep" | "remove";
+  private readonly env: Record<string, string>;
   private readonly workspaces = new Map<string, string>();
 
   constructor(options: LocalRuntimeOptions) {
     this.workerArgv = options.workerArgv;
     this.log = options.log;
     this.completedAction = options.local?.completedAction ?? "keep";
+    this.env = options.local?.env ?? {};
   }
 
   ensureProject(projectId: string, hostWorkspace: string): boolean {
@@ -57,6 +59,7 @@ export class LocalRuntime implements RuntimeBackend {
     const env: Record<string, string> = {
       ...options.controllerEnv,
       ...options.baseEnv,
+      ...this.env,
       ...options.extraEnv,
     };
     const child = Bun.spawn(this.workerArgv(options.workerTaskPath), {

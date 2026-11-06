@@ -703,6 +703,35 @@ worker_selection:
     });
   });
 
+  test("parses isolated runtime environment overrides, including explicit empty values", () => {
+    const config = parse(BASE + `common_env:
+  HTTPS_PROXY: "http://common-proxy:18899"
+local:
+  env:
+    HTTPS_PROXY: "http://127.0.0.1:18899"
+    ALL_PROXY: ""
+container:
+  image: "cairn-worker:test"
+  network_mode: bridge
+  completed_action: remove
+  env:
+    HTTPS_PROXY: "http://host.docker.internal:18899"
+`);
+    expect(config.commonEnv).toEqual({ HTTPS_PROXY: "http://common-proxy:18899" });
+    expect(config.local?.env).toEqual({ HTTPS_PROXY: "http://127.0.0.1:18899", ALL_PROXY: "" });
+    expect(config.container?.env).toEqual({ HTTPS_PROXY: "http://host.docker.internal:18899" });
+  });
+
+  test("rejects invalid runtime environment maps and non-string values", () => {
+    for (const section of ["local", "container"]) {
+      for (const env of [null, [], "proxy", { HTTPS_PROXY: 18899 }, { HTTPS_PROXY: false }]) {
+        const document = Bun.YAML.parse(BASE) as Record<string, unknown>;
+        document[section] = { image: "worker:test", network_mode: "bridge", completed_action: "remove", env };
+        expect(() => parseDispatchConfig(document)).toThrow(`${section}.env`);
+      }
+    }
+  });
+
   test("loads the checked-in example config", () => {
     const path = join(import.meta.dir, "..", "..", "..", "dispatch.example.yaml");
     const config = loadDispatchConfig(path);

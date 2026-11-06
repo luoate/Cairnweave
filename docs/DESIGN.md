@@ -7,6 +7,8 @@ fact-only + `off` 人工确认），H2 已实现（M41：`goal_conditions` + `fl
 H3 已实现（M42：超时、创建页策略预览、校验徽标、评估集），见 §15**。本文只讨论
 结构与语义，不代表后续阶段已经排期。实现记录见
 `docs/MILESTONES.md`。
+后续已实现的输入/记忆机制另见 §16–18（M47–M49）与 §19（M51a–d）；
+M50 可靠运行与用户引导见 CONFIG / MILESTONES。M52 仍未实施。
 兼容性约束：不改变 Cairn 图的形状、YAML 导出、对外 HTTP golden 与 worker 契约中的既有字段。
 
 ## 1. 摘要
@@ -1242,6 +1244,105 @@ flag/completion review、预算耗尽不关项目等既有门禁完全保留。�
 最终 `bun run check`：**1279 pass / 0 fail / 115 files / 6143 expects**；相对 M48 新增 36 个测试、
 6 个新测试文件。M47/M48 的两组八场景离线评估与 M42 完成契约评估均通过，UI CSS 无差异。
 
+## 19. M51a–d：可验证探索的计划、结果与后续方向（已实现）
+
+a/b 首次版本 `0.74.0-m51ab`，c/d 累计版本 `0.75.0-m51`。M50 的可靠运行/用户引导收束记录
+单独保留；本节说明计划、观察/解释和后续策略的来源边界，不宣称探索质量或真实费用已经得到验证。
+
+### 19.1 计划复用 intent_meta，不改变图
+
+reason 可为新 intent 提供 `experiment: {version:1, hypothesis, action, expected_signal,
+evidence_required, stop_condition}`。五个非空文本受字段字符和整体 8192 UTF-8 字节限制，
+严格版本/键集校验；字段可省略但不能提供 null/残缺对象。校验发生于正常 reason apply 之前，
+同事务创建意图和元数据；去重命中已有方向时不借机覆盖它的契约。
+
+`intent_meta.experiment TEXT` 为增量列，旧行保持 NULL，不从描述/日志推断回填。
+读端严格重校验，损坏/过大整体省略；其它元数据 upsert 未提供计划时保留已有值，生命周期更新
+也不擦除。没有新增创建/修改契约的 HTTP 路由。图的 Fact/Intent/YAML 结构不变。
+
+AgentContextIntent 可选 experiment，YAML 明示 `experiment_plan_not_evidence`；完整 snapshot
+保留同一计划。focused explore / explore conclude 在模板展开后追加 JSON，计划中的花括号保持
+字面量。reason 的生成说明独立追加，已有契约通过其 AgentContext / M48 输入可见。
+M48 焦点意图为必保留记录，契约原文完整计量，装不下回退，不剪掉假设/停止条件。
+
+计划不是观察、证据或授权；action 不被控制面执行，stop_condition 不是完成 oracle，也不能覆盖
+Scope、硬截止、预算与人工/客观完成门禁。没有契约的旧方向照常运行。
+
+### 19.2 结果复用 M49，不建立第二套尝试记忆
+
+`projectExperimentResult` 只从有效 TaskCheckpoint 与控制面 outcome/termination/failure 派生
+只读 `attempts.memory.experiment_result`，不写新表、不复制动作/观察/解释正文、不改变 worker
+最终结果/检查点 schema。索引的 attempt_id 在同一 memory.checkpoint.attempts 中解析：
+
+| 字段 | 含义 |
+| --- | --- |
+| source / trust | 固定 memory.checkpoint.attempts / worker_claim_not_verified |
+| observations | 只指向非空 observation，携带 worker 自报 result 与证据可用性 |
+| interpretations | 只指向非空 interpretation；不填补 observation |
+| status | observations_reported / operationally_incomplete / unknown，报告/执行状态而非假设裁决 |
+| unresolved_count | 原 checkpoint.unresolved 的条数，不复制文本 |
+| hypothesis_verdict | 固定 unknown，不以 expected_signal 匹配自动判真/判假 |
+
+control.failure 独立保留 M50 权威分类；有分类故障、outcome 非 success、非 finished 终止原因时，
+状态优先 operationally_incomplete，即使 worker 报 observed。无上述故障且有非空观察、自报
+observed/negative_observation 时为 observations_reported；历史 NULL 终止原因不补造失败。
+只有解释、空观察或纯工具错误仍 unknown。上述各状态都不提升 Fact、自动反证或结束项目。
+
+证据索引仅 refs_available_not_verified / missing / unavailable / not_supplied；复用 M49 的当前
+路径/可用性检查，不读新正文、不表示证据有效。既有观察即使遇故障也保留为未验证报告，避免
+把“运行中断”误当“什么都没有发生”。没有有效检查点/旧序列化 memory 没有索引即未知。
+
+checkpoint 仍默认关闭；只采集但 pack off/shadow/fallback 不新增必读历史。自动交付仍需 M49
+丰富 snapshot + M48 成功 apply。原 memory 与索引整条计入预算/恢复分片，SQLite 只有一份
+最后有效检查点，session 删除后仍可派生索引，证据文件缺失则重新标注。
+
+### 19.3 验收与后续边界
+
+离线覆盖契约边界/UTF-8、旧库迁移/事务/重开、元数据损坏与省略兼容、reason→落库→explore
+真实文件派发、explore conclude/非焦点隔离、模板字面量、观察/解释指针、各类 worker result、
+权威故障优先、证据状态及 M48 整条计量/有界恢复。最终回归数据见 MILESTONES。
+不新增模型调用、依赖或 Scope 例外；没有真实模型/线上服务恢复验收。
+
+### 19.4 M51c：带来源的后续方向，不原地裁决假设
+
+reason 创建新方向时可提供新 experiment + experiment_review，选择 continue / change_direction /
+need_observation。前两者引用 1–4 条唯一 run_id/checkpoint_sequence/attempt_id；后者引用为空，
+明确需要新观察。严格有界协议见 CONTRACT §3.2。source intent 与 reason run 沿用元数据来源链，
+review 存入可空增量列，AgentContext / snapshot 带未验证决策来源，focused 任务在模板展开后接收。
+无字段仍走旧协议；元数据损坏整体省略，去重不覆盖旧计划或决策。
+
+只有成功 apply 的 reason pack 才从本次完整授权恢复库建立控制面 basis；不声称模型一定读取
+每条记录。off/shadow/fallback 不授权引用。应用时在写入任何新意图/Hint 之前，从当前数据库、Scope
+和项目工作区证据可用性重建 basis，检查来源仍存在、未 abandoned、计划与派发时一致。
+need_observation 不要求结果；continue/change_direction 则还需派发前与应用时均有同一精确引用：
+
+- checkpoint project/intent/sequence 匹配，引用为非空 observed/negative_observation，不是解释或工具错误；
+- outcome 为 success，权威 termination 为 finished，attempt/memory 均无运行故障；
+- Scope 未变化，引用事实仍 current，证据为 refs_available_not_verified；
+- 控制面注册任务时存 `task_checkpoints.experiment_plan`，且与当前来源契约相同。
+
+派发绑定不是 worker payload 字段，后续 checkpoint 不可改写；旧库 NULL 不回填，不允许把旧观察
+重新套给新假设。无效 review 整批拒绝，普通旧式无 review 提案不受新增来源协议限制。控制面核对
+的是来源/版本/可用性，不是 rationale 的正确性或证据内容真伪；verdict 仍 unknown，不自动反证、
+退役或重开来源意图。新方向仍走原去重、优先级、预算、Host Bridge Scope 和完成 oracle 门禁。
+
+### 19.5 M51d：只读追溯与确定性安全评估
+
+GET `/projects/{project_id}/intents/{intent_id}/experiment` 从当前 snapshot 和 metadata 投影计划、
+review、reason provenance、原检查点正文及后续方向；最多返回 10 条结束尝试和 10 条后续方向，
+同时报告 omitted 数量。内部仍构建项目完整 snapshot，不声称已实现 SQL 分页。证据可用性复用
+现有项目工作区路径检查，缺 root/记录不猜 available。无写入或执行接口。
+
+意图详情显示五字段计划、当时派发假设、观察与模型解释、权威运行异常、证据状态和精确引用。
+选中时加载并支持手动刷新；请求序号及 project/intent 复核防过期响应覆盖。所有不可信正文用 x-text，
+无记录明确 unknown；运行错误不是路线反证、文件可用不是证据有效。
+
+`eval:experiments` 用 19 个固定提案与检查点场景走真实协议/投影/来源检查器：继续、局部负观察换方向、
+明确缺观察可通过；解释、工具/环境/执行故障、陈旧版本、计划变化、Scope 变化、缺证据、跨项目、
+虚构引用及非法契约不得成为结果驱动决策。另有 scheduler 文件协议集成、事务回滚、派发后变化、
+默认开关兼容、去重不覆盖、API 隔离与前端异步回归。评估 0 模型调用，不测真实探索成功率或费用收益；
+真实模型效果、浏览器视觉及 Docker 跨 UID 验收未运行。最终离线结果见 MILESTONES。M52 未实施。
+
 ## 附录 A：当前提示词输入
 
 | 模板 | 占位符 |
@@ -1261,7 +1362,9 @@ flag/completion review、预算耗尽不关项目等既有门禁完全保留。�
 | `runs` | 每次 worker 任务的 outcome、耗时、模型、用量、detail |
 | `fact_meta` | Fact 的 run、证据状态/引用、取代边 |
 | `fact_evidence` | 证据文件的 size/SHA-256 |
-| `intent_meta` | 意图优先级、预算、来源、去重键、创建 run |
+| `intent_meta` | 意图优先级、预算、来源、去重键、创建 run、M51 探索契约与后续决策来源 |
+| `run_failures` / `infrastructure_faults` | M50 运行故障分类 / 项目级持久化环境退避 |
+| `task_checkpoints` | M49 每 run 最后有效进度；M51b 结果索引由此派生；M51c 控制面派发计划绑定，不另存尝试正文 |
 | `strategist_state` | 慢层水位、失败、重规划标记 |
 | `project_verification` / `verification_checks` | 完成策略与每次 oracle 判定 |
 | `flag_reviews` | flag 候选的人工复核与终态 |

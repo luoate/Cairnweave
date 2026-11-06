@@ -111,6 +111,30 @@ function evaluate(
   });
 }
 
+describe("operator guidance priority", () => {
+  function guidedProject() {
+    const value = project({ hints: 1, intents: [{ id: "i-pending" }] });
+    value.hints[0]!.operator_guidance = "pending";
+    return value;
+  }
+  test("bypasses ordinary cooldown, hourly cap, graph thresholds, and initial fast-work preference", () => {
+    expect(evaluate({ project: guidedProject(), state: state({ last_attempt_at: at(1) }),
+      reasonRunsLastHour: 12, policy: { minNewHints: 100, cooldownSeconds: 30, maxRunsPerHour: 12 },
+    })).toMatchObject({ trigger: "operator_guidance", urgent: true, suppressed: null });
+    expect(evaluate({ project: guidedProject(), state: null })).toMatchObject({ trigger: "operator_guidance", urgent: true });
+  });
+  test("still respects failure backoff and in-flight productive work", () => {
+    expect(evaluate({ project: guidedProject(), state: state({ last_failure_at: at(1) }) }))
+      .toMatchObject({ trigger: null, suppressed: "failure_backoff" });
+    expect(evaluate({ project: guidedProject(), runningProductiveTasks: 1 }))
+      .toMatchObject({ trigger: null, suppressed: "tasks_running" });
+  });
+  test("planned guidance does not become an endless urgent trigger", () => {
+    const value = guidedProject(); value.hints[0]!.operator_guidance = "planned";
+    expect(evaluate({ project: value, state: state({ last_hint_count: 1 }) }).trigger).toBeNull();
+  });
+});
+
 describe("Strategist trigger policy", () => {
   test("runs initially when no watermark exists", () => {
     const result = evaluate({ state: null });

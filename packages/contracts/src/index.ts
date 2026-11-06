@@ -19,6 +19,10 @@ export {
 export { WORKER_EXIT, type WorkerExitCode } from "./exit-codes";
 
 export { extractJsonObject } from "./parse";
+export { isExperimentReview, parseExperimentReview, MAX_EXPERIMENT_REVIEW_BYTES,
+  type ExperimentReview, type ExperimentObservationRef } from "./experiment-review";
+export { isExperimentContract, parseExperimentContract, MAX_EXPERIMENT_BYTES, EXPERIMENT_FIELDS,
+  type ExperimentContract } from "./experiment";
 
 export {
   DEFAULT_INTENT_PRIORITY,

@@ -48,14 +48,15 @@ CREATE TABLE strategist_state (
 
 - `last_success_at`：最近一次 reason **成功**（包括 noop）的时间。fallback 与零产出
   计数以它为基准。
-- `last_attempt_at`：最近一次 reason 结束的时间（成功或失败都写）；非紧急触发的冷却
-  以它为基准。
-- `last_failure_at`：最近一次失败；下一次成功会清空。
+- `last_attempt_at`：最近一次更新策略状态的 reason 结束时间（成功或普通失败写入，
+  infrastructure 环境失败除外）；非紧急触发的冷却以它为基准。
+- `last_failure_at`：最近一次普通策略失败；下一次成功会清空。环境失败走独立的项目级持久化退避，
+  不写此字段，避免两套恢复退避叠加。
 - `last_fact_count` / `last_hint_count` / `last_open_intent_count`：该次成功时图的水位。
   只有成功才推进，失败保留旧值，因此重试仍能看到同一批未处理的 delta。
 - `last_trigger` / `last_run_id`：诊断用，直接对应 `runs.trigger` 与 `runs.id`。
 - `replan_requested_at` / `replan_requested_by` / `replan_reason`（M14b）：待处理的人工
-  重规划请求。由 `POST /replan` 写入，reason 成功或失败后清空；`cancelled` / `inactive`
+  重规划请求。由 `POST /replan` 写入，reason 成功或普通失败后清空；环境失败、`cancelled` / `inactive`
   不清空，请求会保留到下一次真正的 reason 结果。
 
 表不进入 YAML 导出、HTTP 图响应或 worker 契约；唯一的写路由是 `POST /replan`。
@@ -78,6 +79,9 @@ CREATE TABLE strategist_state (
 | 9 | `fallback:Ns` | 距上次成功超过 `fallback_interval_seconds`，且启用了该值 | 否 |
 
 判定后的统一约束：
+
+- **项目环境门控**：调度器在进入该触发判定前检查持久化 infrastructure fault。用户引导和人工
+  replan 也不能绕过 backoff/blocked；退避到期只允许一个恢复探测任务。恢复流程见 [CONFIG.md](CONFIG.md#环境故障与解题结果分流)。
 
 - **任务静止**：任何非 `reason` 任务仍在运行时，一律返回
   `suppressed: "tasks_running"`，包括 `initial` 与 `manual_replan`。慢层不分析移动中的图。
@@ -110,6 +114,9 @@ Fact/Hint 仍会通过普通 delta 触发。
 
 `listRecentStrategistRuns()` 取最新的已结束 bootstrap/explore/conclude run，并用
 `EXISTS(fact_meta.run_id)` 判断是否产出 Fact。reason run 本身不产 Fact，被排除。
+带 `run_failures` 分类的 infrastructure/execution operational failure 同样排除，避免把环境或协议故障
+计成路线零产出。历史未分类记录不靠错误文本猜测，仍沿用原行为。recent attempts 审计上下文保留分类，
+但路线 attempts、failed delta 和 reason 自动放弃资格不使用这些 operational failure。
 计数从最新向前走，遇到产出 Fact 的 run 或早于 `last_success_at` 的 run 就停止。
 `conclude` 成功写 Fact 会重置计数；失败或“只结束 intent 没写 Fact”的任务会累加。
 M38 起控制面启动时把上一进程遗留的 `outcome IS NULL` 行补写成 `inactive` 并填
@@ -126,7 +133,7 @@ intent 正在被本控制面执行时，不触发。该触发用于打破“意�
 
 `POST /projects/{id}/replan` 把 `reason` / `requested_by` 写入 `strategist_state`，下一次
 tick 以 urgent `manual_replan` 派发。它跳过冷却与小时配额，但仍等待生产任务结束，并受
-失败退避约束；reason 成功或失败后清除。请求是单项目级覆盖写，重复提交只保留最新一条。
+失败退避及项目环境门控约束；reason 成功或普通失败后清除，环境失败仍保留请求。请求是单项目级覆盖写，重复提交只保留最新一条。
 路由在 reason 租约已占用时返回 409，非 active 项目返回 403。
 
 ### 资源压力
@@ -144,13 +151,29 @@ tick 以 urgent `manual_replan` 派发。它跳过冷却与小时配额，但仍
 
 - `success`：重新读取当前项目，写成功时间、attempt 时间、trigger、run id，以及当前
   fact/hint/open-intent 数；清除 `last_failure_at` 与 `replan_*`。
-- `failed` / `rejected` / `unhealthy`：写 attempt 时间、failure 时间、trigger、run id，
+- 带 `failure.domain = infrastructure` 的失败：不写普通策略状态、不清除 `replan_*`，也不确认用户引导；
+  由项目级 `infrastructure_faults` 负责持久化退避/暂停派发。
+- 其余 `failed` / `rejected` / `unhealthy`：写 attempt 时间、failure 时间、trigger、run id，
   **保留**上次成功的图水位，同时清除 `replan_*`。
 - `cancelled` / `inactive`：不写状态，也不清除人工重规划请求。取消或项目停用不是策略
   失败，不应触发退避，也不应吞掉操作员的请求。
 - 状态写失败只记日志，绝不改变任务结果或退出码。
 
 成功的 noop 也推进水位：模型已经看过这张图，并在当时判断无需新方向。
+
+## 3.1 基于观察提出后续方向（M51c/d）
+
+reason 可在新 intent 的新 `experiment` 旁提供 `experiment_review`：`continue`、`change_direction`
+引用精确 run/checkpoint_sequence/attempt_id，`need_observation` 以空引用明确未知。该记录是策略来源，
+不是 hypothesis verdict；五字段契约与 rationale 应说明预期信号、局部观察和下一步对照的关系。
+仅成功 apply 的 M48 授权库提供 basis，应用时重新核对当前计划、Scope、证据文件、事实状态及
+权威运行结果。无可用观察、只有解释或工具/环境错误不能支持结果驱动换方向；旧无派发计划绑定
+的检查点不回填“当时计划”。具体形状与限制见 [CONTRACT §3.2](CONTRACT.md#32-reason-后续方向的可选决策来源m51c)。
+
+控制面只核对来源，不证明推理正确，也不要求普通旧式提案必须附 review。后续方向沿用 createIntent、
+去重、优先级/预算及 Scope 门禁；不自动改变来源方向生命周期。原意图、后续意图和 reason run
+可从意图详情只读查看；人工刷新而非声称实时传播。离线 `eval:experiments` 只覆盖固定提案的安全和
+可追溯性，不表示模型已获得更高真实成功率，不实现 M52 重复/停滞抑制。
 
 ## 4. 配置
 

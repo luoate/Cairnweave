@@ -511,6 +511,8 @@ export const OBSERVER_TASK_KINDS: readonly ObserverTaskKind[] = [
 ];
 
 export interface ContainerConfig {
+  /** Worker-only overrides of common_env; never inherit the controller environment. */
+  env?: Record<string, string>;
   image: string;
   networkMode: string;
   completedAction: CompletedAction;
@@ -536,6 +538,8 @@ export const DEFAULT_CONTAINER_WORKER_ARGV = [
 ] as const;
 
 export interface LocalConfig {
+  /** Local worker-only overrides of common_env and the inherited environment. */
+  env?: Record<string, string>;
   workspaceRoot: string | null;
   completedAction: LocalCompletedAction;
 }
@@ -953,6 +957,7 @@ function parseContainer(value: unknown): ContainerConfig {
     throw new ConfigError("container.worker_argv must not be empty");
   }
   return {
+    ...(has(container, "env") ? { env: stringMap(container["env"], "container.env") } : {}),
     image: requiredString(container, "image", "container"),
     networkMode: requiredString(container, "network_mode", "container"),
     completedAction: oneOf(
@@ -969,6 +974,7 @@ function parseContainer(value: unknown): ContainerConfig {
 function parseLocal(value: unknown): LocalConfig {
   const local = recordAt(value, "local");
   return {
+    ...(has(local, "env") ? { env: stringMap(local["env"], "local.env") } : {}),
     workspaceRoot: optionalString(local, "workspace_root", "local"),
     completedAction: has(local, "completed_action")
       ? oneOf(local["completed_action"], "local.completed_action", [
