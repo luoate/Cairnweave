@@ -748,6 +748,8 @@ describe("renderProjectWriteupPrompt", () => {
     expect(prompt).toContain("不得写入任何凭据、token、cookie、API key");
     expect(prompt).toContain("逐字符照抄");
     expect(prompt).toContain("草稿的“载荷（Payload）”章节给出脚本与 payload 原文");
+    expect(prompt).toContain("只能列出草稿里真实出现过的文件路径");
+    expect(prompt).toContain("篇幅控制在 2500 字以内");
     expect(prompt).toContain("# 草稿");
     expect(prompt).toContain(FIXTURE_FLAG);
     expect(prompt).toContain("## 攻击路径");
