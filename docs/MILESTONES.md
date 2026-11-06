@@ -5,7 +5,8 @@
 
 ## 实现记录
 
-最新代码：**M50 已收束；M51a–d 与 M52a–d 已实现（0.77.0-m52），M52c 排序偏好默认关闭**。
+最新代码：**M50 已收束；M51a–d 与 M52a–d 已实现（0.77.0-m52），M52c 排序偏好默认关闭；
+Writeup 利用链增补已实现，见文末记录**。
 最终验收见文末对应记录；以下段落保留各历史阶段当时的状态，不代表当前版本止于 M40。
 
 状态：**M40（完成契约安全门：bootstrap 支持 fact-only；`verification: off` 的完成声明默认进入 `completion_reviews` 人工确认，不再自动关项目；执行模式按题选择记为 M39b）**；M0–M4、M5a–M5c、
@@ -1661,6 +1662,35 @@ M47 八场景 audit/off 兼容性均为 true；M48 八场景中 6 applied、**13
 兼容性离线复验：M51 **19/19**，unsafe_acceptances **0**、verdict_changes **0**；M47 八场景兼容；M48 六场景 applied、**1370/1370** 记录可完整恢复，graph_slice no_benefit 回退、conclude not_applicable；M42 hardened 错误完成 **0/5**（legacy **2/5**）。0 真实模型调用，completion token/cost 为 fixture 数值，不是真实账单。CSS 产物一致性、CLI 版本 `0.77.0-m52` 通过；报告存放 ignored runs/m52-*。
 
 未开启真实部署软抑制开关、未重启现有服务、未恢复真实项目、未运行真实模型/Docker gate 或浏览器视觉验收；本阶段代码尚未提交/推送。边界见 DESIGN §20.4–20.5、CONTRACT §9.3、CONFIG 与 OPERATIONS。
+
+### Writeup 利用链：依赖闭包与可复现步骤（2026-11-06）
+
+M19a/M20a 的「攻击路径」按 `created_at, id` 平铺全部已结束意图，真正通向 Flag 的步骤会
+埋在死胡同里。本次把这一节改成从图边还原的利用链，版本保持 `0.77.0-m52`，不新增路由、
+数据库迁移或模型调用：
+
+- **锚点**：`fact_meta.evidence_refs` 引用 Flag 来源文件的 Fact；Flag 来自
+  `operator review`（无路径）时改用完成意图（`to === "goal"`）`from` 里的事实。
+- **依赖闭包与排序**：从锚点沿 `intent.to → intent.from` 反向收集生产意图，Kahn 拓扑
+  排序（`created_at, id` 打破平局）；同一 Fact 取最早的生产意图。闭包外的已结束意图
+  单列「旁支探索（未进入利用链）」，不再混入时间线。
+- **每步可复现**：新增 `position`、`prerequisites`（前置 Fact id + ≤80 字摘要）、
+  `task_id`、`payload_refs` 与 `terminal`；渲染为前置、产出、worker/model/结果、证据、
+  「复现脚本」路径，终点步标注「本步产出的 `fact` 是 Flag 所在事实」。`goal` 完成意图
+  不作为链上步骤。
+- **无法锚定**：没有 Flag 事实时退回全量依赖顺序，`chain.anchored = false`，正文写明
+  「未定位到 Flag 所在事实」，不伪造终点。
+- **载荷顺序随链**：`selectWriteupPayloadArtifacts` 接收 `flagSource`（HTTP 层传入），
+  终点任务脚本与终点证据优先，其次链上证据/任务文件，最后按引用数与路径；`.log`/
+  `.jsonl` 一律不算载荷（即使文件名含 `sqli`/`bypass`）。
+- **撰写 prompt**：要求沿用草稿的链顺序、旁支不得混入、每步写清前置/操作/结果/证据、
+  复现脚本路径照抄，篇幅由约 1200 字放宽到约 2500 字。
+
+测试：`writeup.test.ts` 新增 5 项利用链回归（闭包与旁支、完成意图锚点、无锚点回退、
+逐步复现脚本、终点载荷排序与日志排除），该文件 **27 pass / 149 expects**；最终
+`bun run check`（TypeScript + 全量测试）**1437 pass / 0 fail / 138 files / 7176 expects**。
+全部离线确定性夹具，0 真实模型调用，未重启服务、未恢复真实项目。边界见
+[WRITEUP §1.4 / §7](WRITEUP.md#14-利用链可复现的攻击路径)。
 
 ## 与 Phase 0 的关系
 

@@ -1273,9 +1273,14 @@ Writeup 是面向人的中文复盘文本，分两层，全部逻辑在 `package
   `getProjectScope`、`listFactSupersessions`、`buildProjectRunStats`、
   `summarizeProjectVerification`、`listProjectArtifacts`、`fact_meta`（证据引用与
   产出 run）与 `runs` 的精简投影。`renderProjectWriteupMarkdown` 渲染结论、题目与
-  目标、攻击路径（按意图 → Fact 排序，附 worker/model/outcome 与证据路径）、尚未完成
+  目标、攻击路径（利用链）、尚未完成
   的探索、当前有效事实清单、被取代的判断、Hint、Flag 与校验、执行统计（worker/model
-  两张表）与证据文件附录（≤200 项，超出标记 `artifacts_truncated`）。除 `generated_at`
+  两张表）与证据文件附录（≤200 项，超出标记 `artifacts_truncated`）。攻击路径不再按
+  `created_at` 平铺：`computeChain` 先找锚点（`evidence_refs` 引用 Flag 来源的 Fact；
+  Flag 来自 `operator review` 时改用完成意图 `from` 里的事实），沿 `intent.to → from`
+  求依赖闭包，再做 Kahn 拓扑排序，逐步给出前置 Fact、产出、证据与复现脚本，终点步标出
+  Flag 事实；闭包外的意图单列「旁支探索」。无法锚定时退回全量依赖顺序并标记
+  `anchored: false`。除 `generated_at`
   外输出确定；不写图、不写旁路、不改调度。
 - **Flag 一致性**：草稿的 Flag 与校验段复用 `/flag` 的 `collectProjectFlag`（artifacts
   优先、solver-session 的工具输出回退，M43 起该回退还包括 `.tool-results` 溢出文件），
@@ -1287,9 +1292,11 @@ Writeup 是面向人的中文复盘文本，分两层，全部逻辑在 `package
 - **载荷（M20a）**：`isWriteupPayloadPath` 用扩展名表（脚本、模板、SQL/HTML、zip/pkl
   等投递容器与图片）与文件名关键字（`payload exploit poc inject sqli xss ssrf ssti xxe
   traver webshell deserial forg bypass` 等）从 `project_artifacts` 里确定性筛出载荷，
-  普通响应转储（`.txt/.out/.resp/.md/.json`）不算，仍留在附录。条目超过 20 条时按“被
-  `fact_meta.evidence_refs` 引用过的优先、再按路径”截断（`selectWriteupPayloadArtifacts`），
-  保证支撑结论的载荷不会被探测脚本挤掉。文件字节由 HTTP 层的
+  普通响应转储（`.txt/.out/.resp/.md/.json`）以及一律视为证据转储的 `.log/.jsonl`
+  不算，仍留在附录。条目超过 20 条时由 `selectWriteupPayloadArtifacts` 分层截断：终点步
+  所属任务与它直接引用的证据文件最先，其次链上证据与链上任务文件（按依赖顺序），最后
+  其余载荷按 `fact_meta.evidence_refs` 引用数、路径排序，保证支撑结论的载荷不会被探测
+  脚本挤掉。文件字节由 HTTP 层的
   `collectWriteupPayloads` 读取——`@cairn/graph` 不碰文件系统，只把 `payloadContents`
   注入快照——读取复用 Flag 扫描的收敛：`<workspace>/artifacts` 真实目录、非符号链接、
   路径不逃逸、单文件 ≤128 KiB、只读选中的 ≤20 条、单项目 ≤24000 字符、含 NUL 判定为二进制。

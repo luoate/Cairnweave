@@ -6,6 +6,7 @@ import { join } from "node:path";
 import {
   buildProjectWriteup,
   clearProjectWriteup,
+  completeProject,
   concludeIntent,
   configureDatabase,
   createHint,
@@ -63,9 +64,18 @@ afterEach(() => {
 
 /** Concludes an intent from origin and returns `{ intentId, factId }`. */
 function step(description: string, supersedes: readonly string[] = []) {
+  return stepFrom(description, ["origin"], supersedes);
+}
+
+/** Concludes an intent from explicit facts and returns `{ intentId, factId }`. */
+function stepFrom(
+  description: string,
+  from: readonly string[],
+  supersedes: readonly string[] = [],
+) {
   return db.withConn((conn) => {
     const intent = createIntent(conn, projectId, {
-      from: ["origin"],
+      from: [...from],
       description,
       creator: "tester",
       worker: null,
@@ -325,6 +335,189 @@ describe("buildProjectWriteup", () => {
     step("第一行\n第二行 说明");
     const markdown = renderProjectWriteupMarkdown(snapshot());
     expect(markdown).toContain("1. **第一行 第二行 说明**");
+  });
+});
+
+describe("exploitation chain", () => {
+  test("keeps only the dependency closure of the flag fact and isolates side steps", () => {
+    const recon = step("信息收集：探测登录接口");
+    const exploit = stepFrom("SQL 注入读取 secret 表", [recon.factId]);
+    const deadEnd = stepFrom("无关的目录扫描", [recon.factId]);
+    const flagStep = stepFrom("包含 error.log 执行命令并读出 flag", [exploit.factId]);
+    db.withConn((conn) => {
+      recordFactMeta(conn, {
+        projectId,
+        factId: flagStep.factId,
+        evidenceRefs: ["artifacts/flag.txt"],
+        evidenceStatus: "provided",
+      });
+    });
+
+    const result = snapshot({ flag: { value: FIXTURE_FLAG, source: "artifacts/flag.txt" } });
+    expect(result.chain.anchored).toBe(true);
+    expect(result.chain.flag_fact).toBe(flagStep.factId);
+    expect(result.chain.flag_source).toBe("artifacts/flag.txt");
+    expect(result.chain.steps.map((entry) => entry.fact_id)).toEqual([
+      recon.factId,
+      exploit.factId,
+      flagStep.factId,
+    ]);
+    expect(result.chain.side_steps.map((entry) => entry.fact_id)).toEqual([deadEnd.factId]);
+    expect(result.chain.steps.map((entry) => entry.position)).toEqual([1, 2, 3]);
+    expect(result.chain.steps[1]?.prerequisites).toEqual([
+      { id: recon.factId, brief: "信息收集：探测登录接口" },
+    ]);
+    expect(result.chain.steps.map((entry) => entry.terminal)).toEqual([false, false, true]);
+
+    const markdown = renderProjectWriteupMarkdown(result);
+    expect(markdown).toContain("## 攻击路径（利用链）");
+    expect(markdown).toContain("利用链由记录中的 Fact 依赖边还原");
+    expect(markdown).toContain("### 旁支探索（未进入利用链）");
+    expect(markdown).toContain("终点：本步产出的 `" + flagStep.factId + "` 是 Flag 所在事实");
+  });
+
+  test("anchors on the facts an operator accepted when the flag came from review", () => {
+    const recon = step("信息收集");
+    const exploit = stepFrom("拿到管理员会话", [recon.factId]);
+    const unrelated = stepFrom("未进入最终链路的尝试", [recon.factId]);
+    db.withConn((conn) =>
+      completeProject(conn, projectId, {
+        from: [exploit.factId],
+        description: "Operator confirmed the flag",
+        worker: "operator",
+      }),
+    );
+
+    const result = snapshot({ flag: { value: FIXTURE_FLAG, source: "operator review" } });
+    expect(result.chain.anchored).toBe(true);
+    expect(result.chain.flag_fact).toBe(exploit.factId);
+    expect(result.chain.steps.map((entry) => entry.fact_id)).toEqual([
+      recon.factId,
+      exploit.factId,
+    ]);
+    expect(result.chain.side_steps.map((entry) => entry.fact_id)).toEqual([unrelated.factId]);
+    // The completion intent produces `goal`, not an exploitation step.
+    expect(result.chain.steps.map((entry) => entry.fact_id)).not.toContain("goal");
+  });
+
+  test("falls back to the whole dependency order when no flag fact can be located", () => {
+    const first = step("信息收集");
+    const second = stepFrom("利用", [first.factId]);
+    const third = stepFrom("无关探测", [first.factId]);
+
+    const result = snapshot();
+    expect(result.chain.anchored).toBe(false);
+    expect(result.chain.flag_fact).toBeNull();
+    expect(result.chain.steps.map((entry) => entry.fact_id)).toEqual([
+      first.factId,
+      second.factId,
+      third.factId,
+    ]);
+    expect(result.chain.side_steps).toEqual([]);
+    expect(renderProjectWriteupMarkdown(result)).toContain("未定位到 Flag 所在事实");
+  });
+
+  test("lists the scripts written by each chain step and marks the terminal one", () => {
+    const recon = step("信息收集");
+    const exploit = stepFrom("最终利用", [recon.factId]);
+    writeArtifact("explore-aaaa11112222/scan.py", "print('scan')\n");
+    writeArtifact("explore-bbbb33334444/run.py", "print('run')\n");
+    db.withConn((conn) => {
+      startRun(conn, {
+        id: "run-recon",
+        projectId,
+        taskId: "explore-aaaa11112222",
+        kind: "solver",
+        intentId: recon.intentId,
+        worker: "cairn-worker",
+        startedAt: "2026-10-28T11:00:00Z",
+      });
+      finishRun(conn, "run-recon", {
+        outcome: "success",
+        finishedAt: "2026-10-28T11:02:00Z",
+        durationMs: 60_000,
+        usage: { totalTokens: 1, costUsd: 0 },
+      });
+      recordFactMeta(conn, {
+        projectId,
+        factId: recon.factId,
+        runId: "run-recon",
+        evidenceRefs: [],
+        evidenceStatus: "provided",
+      });
+      startRun(conn, {
+        id: "run-final",
+        projectId,
+        taskId: "explore-bbbb33334444",
+        kind: "solver",
+        intentId: exploit.intentId,
+        worker: "cairn-worker",
+        startedAt: "2026-10-28T11:01:00Z",
+      });
+      finishRun(conn, "run-final", {
+        outcome: "success",
+        finishedAt: "2026-10-28T11:02:00Z",
+        durationMs: 60_000,
+        usage: { totalTokens: 1, costUsd: 0 },
+      });
+      recordFactMeta(conn, {
+        projectId,
+        factId: exploit.factId,
+        runId: "run-final",
+        evidenceRefs: ["artifacts/flag.txt"],
+        evidenceStatus: "provided",
+      });
+      recordProjectArtifacts(conn, { projectId, taskId: "explore-bbbb33334444", workspace });
+    });
+
+    const result = snapshot({ flag: { value: FIXTURE_FLAG, source: "artifacts/flag.txt" } });
+    expect(result.chain.steps[0]?.payload_refs).toEqual(["explore-aaaa11112222/scan.py"]);
+    expect(result.chain.steps[1]?.payload_refs).toEqual(["explore-bbbb33334444/run.py"]);
+    expect(result.chain.steps[1]?.terminal).toBe(true);
+    const markdown = renderProjectWriteupMarkdown(result);
+    expect(markdown).toContain("复现脚本：`explore-bbbb33334444/run.py`");
+  });
+
+  test("puts the terminal task's payloads first and keeps log dumps out", () => {
+    const recon = step("信息收集");
+    const exploit = stepFrom("最终利用", [recon.factId]);
+    writeArtifact("explore-aaaabbbbcccc/aaa.py", "print('aaa')\n");
+    writeArtifact("explore-ddddeeeeffff/zzz.py", "print('zzz')\n");
+    writeArtifact("explore-ddddeeeeffff/sqli_probe.log", "response\n");
+    db.withConn((conn) => {
+      recordProjectArtifacts(conn, { projectId, taskId: "explore-aaaabbbbcccc", workspace });
+      startRun(conn, {
+        id: "run-final",
+        projectId,
+        taskId: "explore-ddddeeeeffff",
+        kind: "solver",
+        intentId: exploit.intentId,
+        worker: "cairn-worker",
+        startedAt: "2026-10-28T11:01:00Z",
+      });
+      finishRun(conn, "run-final", {
+        outcome: "success",
+        finishedAt: "2026-10-28T11:02:00Z",
+        durationMs: 60_000,
+        usage: { totalTokens: 1, costUsd: 0 },
+      });
+      recordFactMeta(conn, {
+        projectId,
+        factId: exploit.factId,
+        runId: "run-final",
+        evidenceRefs: ["artifacts/flag.txt"],
+        evidenceStatus: "provided",
+      });
+    });
+
+    const selected = db.withConn((conn) =>
+      selectWriteupPayloadArtifacts(conn, projectId, { flagSource: "artifacts/flag.txt" }),
+    );
+    expect(selected.map((artifact) => artifact.path)).toEqual([
+      "explore-ddddeeeeffff/zzz.py",
+      "explore-aaaabbbbcccc/aaa.py",
+    ]);
+    expect(isWriteupPayloadPath("explore-ddddeeeeffff/sqli_probe.log")).toBe(false);
   });
 });
 

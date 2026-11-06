@@ -22,7 +22,7 @@ import type { Database } from "bun:sqlite";
 import { listProjectArtifacts, type ProjectArtifact } from "./artifacts";
 import { getProjectDetail, getProjectScope } from "./commands";
 import { all, get, run } from "./db";
-import type { FactSupersession, Hint, VerificationKind } from "./models";
+import type { FactSupersession, Hint, Intent, VerificationKind } from "./models";
 import { buildProjectRunStats } from "./stats";
 import { listFactSupersessions } from "./supersedes";
 import { utcnow } from "./services";
@@ -100,6 +100,13 @@ const PAYLOAD_EXTENSION_LANGUAGES = new Map<string, string | null>([
 const PAYLOAD_NAME_PATTERN =
   /(payload|exploit|attack|\bpoc\b|inject|sqli|xss|ssrf|ssti|xxe|pickle|pkl|traver|webshell|reverse[-_]?shell|bind[-_]?shell|deserial|forg|bypass)/i;
 
+/**
+ * Logs and session transcripts are evidence dumps even when their name carries an attack
+ * keyword (`login_bypass.log`, `sqli_probe.log`). Treating them as payloads would spend the
+ * inline budget on responses and push the scripts that reproduce the chain out of the cap.
+ */
+const EVIDENCE_DUMP_EXTENSIONS = new Set(["log", "jsonl"]);
+
 export interface WriteupFlag {
   value: string;
   source: string;
@@ -146,6 +153,42 @@ export interface WriteupStep {
   created_at: string;
 }
 
+/**
+ * One intent on the reconstructed exploitation chain. The chain keeps the recorded
+ * `from` edges: a step's `prerequisites` name the observations it consumed, and
+ * `payload_refs` name the scripts the producing run left behind, so a reader can replay
+ * the step with the same input the worker had.
+ */
+export interface WriteupChainStep extends WriteupStep {
+  /** 1-based position in dependency order (not creation order). */
+  position: number;
+  /** Consumed facts with a one-line reminder of what each recorded. */
+  prerequisites: { id: string; brief: string }[];
+  /** Task directory of the run that produced this step's fact; null when no run is recorded. */
+  task_id: string | null;
+  /** Payload/script artifacts written by the run that produced this step's fact. */
+  payload_refs: string[];
+  /** True when this step produced a fact that carries the flag. */
+  terminal: boolean;
+}
+
+/**
+ * The exploitation chain as a deterministic projection of the graph. `steps` is the
+ * dependency closure of the fact that carries the flag (or the operator's completion
+ * sources), ordered so every prerequisite appears before the step that used it;
+ * `side_steps` are concluded intents outside that closure.
+ */
+export interface WriteupChain {
+  /** True when the chain was anchored on recorded flag evidence; false means it lists everything. */
+  anchored: boolean;
+  /** The fact the chain ends at, when one could be located. */
+  flag_fact: string | null;
+  /** Where the flag came from (`operator review`, an artifact path, …). */
+  flag_source: string | null;
+  steps: WriteupChainStep[];
+  side_steps: WriteupStep[];
+}
+
 export interface WriteupFinding {
   id: string;
   description: string;
@@ -189,7 +232,10 @@ export interface ProjectWriteupSnapshot {
   };
   origin: string | null;
   goal: string | null;
+  /** Every concluded intent in creation order; kept for callers that want the raw list. */
   steps: WriteupStep[];
+  /** Dependency-ordered exploitation chain plus the intents outside it. */
+  chain: WriteupChain;
   open_intents: { id: string; description: string }[];
   /** Every current fact except origin/goal and superseded ones. */
   findings: WriteupFinding[];
@@ -240,39 +286,109 @@ interface FactMetaRow {
   evidence_status: string;
 }
 
+export interface SelectWriteupPayloadOptions {
+  /**
+   * Flag source, when the caller already knows it. It lets the selector put the payloads
+   * the exploitation chain actually used ahead of unrelated probe scripts.
+   */
+  flagSource?: string | null;
+}
+
 /**
- * The payload artifacts a writeup should inline, capped to `MAX_WRITEUP_PAYLOADS`. Files
- * cited by a fact's `evidence_refs` come first, then by path, so the cap cannot drop the
- * payloads that carry the conclusion. The HTTP layer reads exactly these paths.
+ * The payload artifacts a writeup should inline, capped to `MAX_WRITEUP_PAYLOADS`.
+ * Artifacts the exploitation chain used come first (in chain order), then files cited by
+ * any fact, then by path, so the cap cannot drop the scripts that reproduce the result.
+ * The HTTP layer reads exactly these paths.
  */
 export function selectWriteupPayloadArtifacts(
   conn: Database,
   projectId: string,
+  options: SelectWriteupPayloadOptions = {},
 ): ProjectArtifact[] {
-  const ordered = orderWriteupPayloadArtifacts(
-    listProjectArtifacts(conn, projectId),
-    factsByEvidencePath(
-      all<Pick<FactMetaRow, "fact_id" | "evidence_refs">>(
-        conn,
-        "SELECT fact_id, evidence_refs FROM fact_meta WHERE project_id = ?",
-        projectId,
-      ),
-    ),
+  const artifacts = listProjectArtifacts(conn, projectId);
+  return orderWriteupPayloadArtifacts(
+    artifacts,
+    factsByEvidencePath(readFactRows(conn, projectId)),
+    readChain(conn, projectId, options.flagSource ?? null, artifacts),
+  ).slice(0, MAX_WRITEUP_PAYLOADS);
+}
+
+function readFactRows(conn: Database, projectId: string): FactMetaRow[] {
+  return all<FactMetaRow>(
+    conn,
+    "SELECT fact_id, run_id, evidence_refs, evidence_status FROM fact_meta WHERE project_id = ?",
+    projectId,
   );
-  return ordered.slice(0, MAX_WRITEUP_PAYLOADS);
+}
+
+function readChain(
+  conn: Database,
+  projectId: string,
+  flagSource: string | null,
+  artifacts: readonly ProjectArtifact[],
+): WriteupChain {
+  const detail = getProjectDetail(conn, projectId);
+  const evidenceByFact = new Map<string, string[]>();
+  const runByFact = new Map<string, string | null>();
+  for (const row of readFactRows(conn, projectId)) {
+    evidenceByFact.set(row.fact_id, parseRefs(row.evidence_refs));
+    runByFact.set(row.fact_id, row.run_id);
+  }
+  const runRows = new Map<string, LiteRunRow>();
+  for (const entry of listRunsLite(conn, projectId)) runRows.set(entry.id, entry);
+  return computeChain({
+    intents: detail.intents,
+    factById: new Map(detail.facts.map((fact) => [fact.id, fact])),
+    evidenceByFact,
+    runByFact,
+    runRows,
+    artifacts,
+    flagSource,
+  });
 }
 
 function orderWriteupPayloadArtifacts(
   artifacts: readonly ProjectArtifact[],
   factsByArtifact: ReadonlyMap<string, string[]>,
+  chain: WriteupChain,
 ): ProjectArtifact[] {
+  // The scripts of the terminal step come first: that is the run that produced the flag,
+  // so its files are what a reader replays to reproduce the result. Everything else on the
+  // chain follows in dependency order, then artifacts outside the chain.
+  const terminalTasks = new Set<string>();
+  const terminalEvidence = new Set<string>();
+  const chainEvidence = new Map<string, number>();
+  const chainTask = new Map<string, number>();
+  chain.steps.forEach((step, index) => {
+    if (step.task_id !== null && !chainTask.has(step.task_id)) chainTask.set(step.task_id, index);
+    for (const ref of step.evidence) {
+      const key = normalizeArtifactPath(ref);
+      if (key === "" || chainEvidence.has(key)) continue;
+      chainEvidence.set(key, index);
+      if (step.terminal) terminalEvidence.add(key);
+    }
+    if (step.terminal && step.task_id !== null) terminalTasks.add(step.task_id);
+  });
+  const sortKey = (artifact: ProjectArtifact): { tier: number; order: number } => {
+    const key = normalizeArtifactPath(artifact.path);
+    const evidenceOrder = chainEvidence.get(key);
+    if (terminalTasks.has(artifact.task_id) || terminalEvidence.has(key)) return { tier: 0, order: 0 };
+    if (evidenceOrder !== undefined) return { tier: 1, order: evidenceOrder };
+    const taskOrder = chainTask.get(artifact.task_id);
+    if (taskOrder !== undefined) return { tier: 2, order: taskOrder };
+    return { tier: 3, order: 0 };
+  };
   return artifacts
     .filter((artifact) => isWriteupPayloadPath(artifact.path))
     .sort((left, right) => {
-      const byEvidence =
+      const leftKey = sortKey(left);
+      const rightKey = sortKey(right);
+      if (leftKey.tier !== rightKey.tier) return leftKey.tier - rightKey.tier;
+      if (leftKey.order !== rightKey.order) return leftKey.order - rightKey.order;
+      const byEvidenceCount =
         (factsByArtifact.get(normalizeArtifactPath(right.path))?.length ?? 0) -
         (factsByArtifact.get(normalizeArtifactPath(left.path))?.length ?? 0);
-      return byEvidence !== 0 ? byEvidence : left.path.localeCompare(right.path);
+      return byEvidenceCount !== 0 ? byEvidenceCount : left.path.localeCompare(right.path);
     });
 }
 
@@ -290,6 +406,249 @@ function factsByEvidencePath(
     }
   }
   return byPath;
+}
+
+interface ChainInput {
+  intents: readonly Intent[];
+  factById: ReadonlyMap<string, { description: string }>;
+  evidenceByFact: ReadonlyMap<string, string[]>;
+  runByFact: ReadonlyMap<string, string | null>;
+  runRows: ReadonlyMap<string, LiteRunRow>;
+  artifacts: readonly ProjectArtifact[];
+  flagSource: string | null;
+}
+
+interface StepContext {
+  factById: ReadonlyMap<string, { description: string }>;
+  evidenceByFact: ReadonlyMap<string, string[]>;
+  runByFact: ReadonlyMap<string, string | null>;
+  runRows: ReadonlyMap<string, LiteRunRow>;
+}
+
+/**
+ * Reconstructs the exploitation chain from the recorded edges only.
+ *
+ * Anchors are the facts that carry the flag: the ones whose `evidence_refs` cite the flag
+ * source, and the facts an operator named when completing the project. Walking `intent.to`
+ * backwards through `intent.from` gives the dependency closure; a topological order then
+ * puts every prerequisite before the step that used it. Intents outside the closure are
+ * reported separately instead of being interleaved by timestamp. When no anchor can be
+ * located (no flag yet), the whole concluded graph is ordered by dependency so the draft
+ * is still readable, and `anchored` says the chain could not be tied to a flag.
+ */
+function computeChain(input: ChainInput): WriteupChain {
+  const concluded = input.intents
+    .filter((intent) => intent.to !== null && intent.to !== "goal")
+    .sort(byCreation);
+  const producers = new Map<string, Intent>();
+  for (const intent of concluded) {
+    if (intent.to === null) continue;
+    const current = producers.get(intent.to);
+    if (current === undefined || byCreation(intent, current) < 0) producers.set(intent.to, intent);
+  }
+
+  const anchors = chainAnchors(input);
+  const chosen = dependencyClosure(producers, anchors);
+  const ctx: StepContext = input;
+  const payloads = payloadsByTask(input.artifacts);
+
+  if (chosen.size === 0) {
+    const everyIntent = new Set(concluded.map((intent) => intent.id));
+    const ordered = topologicalOrder(concluded, producers, everyIntent);
+    return {
+      anchored: false,
+      flag_fact: null,
+      flag_source: input.flagSource,
+      steps: ordered.map((intent, index) =>
+        toChainStep(intent, index + 1, ctx, payloads, new Set<string>()),
+      ),
+      side_steps: [],
+    };
+  }
+
+  const ordered = topologicalOrder(concluded, producers, chosen);
+  const placed = new Set(ordered.map((intent) => intent.id));
+  return {
+    anchored: true,
+    flag_fact: anchors[0] ?? null,
+    flag_source: input.flagSource,
+    steps: ordered.map((intent, index) =>
+      toChainStep(intent, index + 1, ctx, payloads, new Set(anchors)),
+    ),
+    side_steps: concluded
+      .filter((intent) => !placed.has(intent.id))
+      .map((intent) => toWriteupStep(intent, ctx)),
+  };
+}
+
+function chainAnchors(input: ChainInput): string[] {
+  const source = input.flagSource === null ? "" : normalizeArtifactPath(input.flagSource);
+  const fromEvidence: string[] = [];
+  if (source !== "") {
+    for (const [factId, refs] of input.evidenceByFact) {
+      if (refs.some((ref) => normalizeArtifactPath(ref) === source)) fromEvidence.push(factId);
+    }
+    fromEvidence.sort();
+  }
+  // `operator review` and verification-created flags have no artifact path; the operator's
+  // completion intent records exactly which facts they accepted in `from`.
+  const fromGoal: string[] = [];
+  for (const intent of input.intents) {
+    if (intent.to !== "goal") continue;
+    for (const factId of intent.from) {
+      if (factId === "origin" || factId === "goal" || fromEvidence.includes(factId)) continue;
+      if (!fromGoal.includes(factId)) fromGoal.push(factId);
+    }
+  }
+  return [...fromEvidence, ...fromGoal];
+}
+
+function dependencyClosure(
+  producers: ReadonlyMap<string, Intent>,
+  anchors: readonly string[],
+): Set<string> {
+  const chosen = new Set<string>();
+  const queue = [...anchors];
+  while (queue.length > 0) {
+    const factId = queue.pop();
+    if (factId === undefined) break;
+    const producer = producers.get(factId);
+    if (producer === undefined || chosen.has(producer.id)) continue;
+    chosen.add(producer.id);
+    queue.push(...producer.from);
+  }
+  return chosen;
+}
+
+/** Kahn's algorithm; ties and the ready queue are ordered by `created_at, id`. */
+function topologicalOrder(
+  intents: readonly Intent[],
+  producers: ReadonlyMap<string, Intent>,
+  chosen: ReadonlySet<string>,
+): Intent[] {
+  const chain = intents.filter((intent) => chosen.has(intent.id));
+  const byId = new Map(chain.map((intent) => [intent.id, intent]));
+  const indegree = new Map<string, number>(chain.map((intent) => [intent.id, 0]));
+  const dependents = new Map<string, string[]>();
+  for (const intent of chain) {
+    const seen = new Set<string>();
+    for (const source of intent.from) {
+      const producer = producers.get(source);
+      if (
+        producer === undefined ||
+        producer.id === intent.id ||
+        !byId.has(producer.id) ||
+        seen.has(producer.id)
+      ) {
+        continue;
+      }
+      seen.add(producer.id);
+      indegree.set(intent.id, (indegree.get(intent.id) ?? 0) + 1);
+      const list = dependents.get(producer.id);
+      if (list === undefined) dependents.set(producer.id, [intent.id]);
+      else list.push(intent.id);
+    }
+  }
+  const ready = chain.filter((intent) => (indegree.get(intent.id) ?? 0) === 0).sort(byCreation);
+  const ordered: Intent[] = [];
+  while (ready.length > 0) {
+    const next = ready.shift();
+    if (next === undefined) break;
+    ordered.push(next);
+    for (const dependentId of dependents.get(next.id) ?? []) {
+      const remaining = (indegree.get(dependentId) ?? 0) - 1;
+      indegree.set(dependentId, remaining);
+      if (remaining === 0) {
+        const dependent = byId.get(dependentId);
+        if (dependent !== undefined) insertSorted(ready, dependent);
+      }
+    }
+  }
+  if (ordered.length < chain.length) {
+    // A cycle is not expected (intents only cite facts that existed), but never drop steps.
+    const placed = new Set(ordered.map((intent) => intent.id));
+    ordered.push(...chain.filter((intent) => !placed.has(intent.id)).sort(byCreation));
+  }
+  return ordered;
+}
+
+function insertSorted(list: Intent[], value: Intent): void {
+  const index = list.findIndex((entry) => byCreation(value, entry) < 0);
+  if (index < 0) list.push(value);
+  else list.splice(index, 0, value);
+}
+
+function byCreation(left: Intent, right: Intent): number {
+  const byTime = left.created_at.localeCompare(right.created_at);
+  return byTime === 0 ? left.id.localeCompare(right.id) : byTime;
+}
+
+function toWriteupStep(intent: Intent, ctx: StepContext): WriteupStep {
+  const factId = intent.to;
+  const runId = factId === null ? null : ctx.runByFact.get(factId) ?? null;
+  const run = runId === null ? undefined : ctx.runRows.get(runId);
+  return {
+    intent_id: intent.id,
+    description: intent.description,
+    from: intent.from,
+    fact_id: factId,
+    fact_description: factId === null ? null : ctx.factById.get(factId)?.description ?? null,
+    run_id: runId,
+    worker: run?.worker ?? intent.worker,
+    model: run?.model ?? null,
+    outcome: run?.outcome ?? null,
+    evidence: factId === null ? [] : ctx.evidenceByFact.get(factId) ?? [],
+    created_at: intent.created_at,
+  };
+}
+
+function toChainStep(
+  intent: Intent,
+  position: number,
+  ctx: StepContext,
+  payloads: ReadonlyMap<string, string[]>,
+  terminals: ReadonlySet<string>,
+): WriteupChainStep {
+  const base = toWriteupStep(intent, ctx);
+  const taskId = base.run_id === null ? null : ctx.runRows.get(base.run_id)?.task_id ?? null;
+  return {
+    ...base,
+    position,
+    prerequisites: intent.from.map((factId) => ({
+      id: factId,
+      brief: brief(ctx.factById.get(factId)?.description ?? ""),
+    })),
+    task_id: taskId,
+    payload_refs: taskId === null ? [] : [...(payloads.get(taskId) ?? [])],
+    terminal: intent.to !== null && terminals.has(intent.to),
+  };
+}
+
+/** Payload-eligible artifact paths grouped by the task that produced them. */
+function payloadsByTask(
+  artifacts: readonly ProjectArtifact[],
+): Map<string, string[]> {
+  const byTask = new Map<string, string[]>();
+  for (const artifact of artifacts) {
+    if (!isWriteupPayloadPath(artifact.path)) continue;
+    const list = byTask.get(artifact.task_id);
+    if (list === undefined) byTask.set(artifact.task_id, [artifact.path]);
+    else list.push(artifact.path);
+  }
+  for (const list of byTask.values()) list.sort();
+  return byTask;
+}
+
+/** First clause of a fact, short enough to sit inside a prerequisite list. */
+const BRIEF_CHARS = 80;
+
+function brief(value: string): string {
+  const single = inline(value);
+  if (single === "") return "";
+  const stop = single.search(/[。；;]/);
+  const head = stop >= 0 ? single.slice(0, stop) : single;
+  const clipped = head.length <= BRIEF_CHARS ? head : `${head.slice(0, BRIEF_CHARS)}…`;
+  return clipped === "" ? `${single.slice(0, BRIEF_CHARS)}…` : clipped;
 }
 
 export function buildProjectWriteup(
@@ -325,29 +684,9 @@ export function buildProjectWriteup(
 
   const concluded = detail.intents
     .filter((intent) => intent.to !== null)
-    .sort((left, right) => {
-      const byTime = left.created_at.localeCompare(right.created_at);
-      return byTime === 0 ? left.id.localeCompare(right.id) : byTime;
-    });
-
-  const steps: WriteupStep[] = concluded.map((intent) => {
-    const factId = intent.to;
-    const runId = factId === null ? null : runByFact.get(factId) ?? null;
-    const run = runId === null ? undefined : runRows.get(runId);
-    return {
-      intent_id: intent.id,
-      description: intent.description,
-      from: intent.from,
-      fact_id: factId,
-      fact_description: factId === null ? null : factById.get(factId)?.description ?? null,
-      run_id: runId,
-      worker: run?.worker ?? intent.worker,
-      model: run?.model ?? null,
-      outcome: run?.outcome ?? null,
-      evidence: factId === null ? [] : evidenceByFact.get(factId) ?? [],
-      created_at: intent.created_at,
-    };
-  });
+    .sort(byCreation);
+  const stepContext: StepContext = { factById, evidenceByFact, runByFact, runRows };
+  const steps: WriteupStep[] = concluded.map((intent) => toWriteupStep(intent, stepContext));
 
   const findings = detail.facts
     .filter(
@@ -364,12 +703,21 @@ export function buildProjectWriteup(
     }));
 
   const artifacts = listProjectArtifacts(conn, projectId);
+  const chain = computeChain({
+    intents: detail.intents,
+    factById,
+    evidenceByFact,
+    runByFact,
+    runRows,
+    artifacts,
+    flagSource: options.flag?.source ?? null,
+  });
 
   const factsByArtifact = factsByEvidencePath(metaRows);
   const contents = new Map(
     (options.payloadContents ?? []).map((entry) => [normalizeArtifactPath(entry.path), entry]),
   );
-  const orderedPayloads = orderWriteupPayloadArtifacts(artifacts, factsByArtifact);
+  const orderedPayloads = orderWriteupPayloadArtifacts(artifacts, factsByArtifact, chain);
   const payloads: WriteupPayload[] = orderedPayloads.slice(0, MAX_WRITEUP_PAYLOADS).map((row) => {
     const content = contents.get(normalizeArtifactPath(row.path));
     const raw = content?.text ?? null;
@@ -401,6 +749,7 @@ export function buildProjectWriteup(
     origin: factById.get("origin")?.description ?? null,
     goal: factById.get("goal")?.description ?? null,
     steps,
+    chain,
     open_intents: detail.intents
       .filter((intent) => intent.to === null)
       .sort((left, right) => left.id.localeCompare(right.id))
@@ -492,14 +841,18 @@ export function renderProjectWriteupMarkdown(snapshot: ProjectWriteupSnapshot): 
   push(`- 背景：${snapshot.origin === null ? "未记录" : inline(snapshot.origin)}`);
   push(`- 目标：${snapshot.goal === null ? "未记录" : inline(snapshot.goal)}`);
 
-  push("", "## 攻击路径");
-  if (snapshot.steps.length === 0) {
-    push("（没有已完成的探索意图）");
-  }
-  snapshot.steps.forEach((step, index) => {
+  push("", "## 攻击路径（利用链）");
+  push(...chainIntro(snapshot.chain));
+  const showStep = (step: WriteupChainStep, index: number): void => {
     const head = `${index + 1}. **${inline(step.description) || step.intent_id}**`;
     const sources = step.from.length === 0 ? "" : `（基于 ${step.from.join("、")}）`;
     push(`${head}${sources}`);
+    if (step.prerequisites.length > 0) {
+      const items = step.prerequisites.map((entry) =>
+        entry.brief === "" ? `\`${entry.id}\`` : `\`${entry.id}\`（${entry.brief}）`,
+      );
+      push(`   - 前置：${items.join("、")}`);
+    }
     if (step.fact_description !== null) {
       push(`   - 产出 \`${step.fact_id}\`：${inline(step.fact_description)}`);
     } else {
@@ -513,7 +866,37 @@ export function renderProjectWriteupMarkdown(snapshot: ProjectWriteupSnapshot): 
     if (step.evidence.length > 0) {
       push(`   - 证据：${step.evidence.map((ref) => `\`${ref}\``).join("、")}`);
     }
-  });
+    if (step.payload_refs.length > 0) {
+      push(`   - 复现脚本：${payloadRefList(step.payload_refs)}`);
+    }
+    if (step.terminal && step.fact_id !== null) {
+      const source = snapshot.chain.flag_source === null
+        ? "来源未记录"
+        : `来源：\`${inline(snapshot.chain.flag_source)}\``;
+      push(`   - 终点：本步产出的 \`${step.fact_id}\` 是 Flag 所在事实（${source}）。`);
+    }
+  };
+  if (snapshot.chain.steps.length === 0) {
+    push("（没有已完成的探索意图）");
+  }
+  snapshot.chain.steps.forEach((step, index) => showStep(step, index));
+
+  if (snapshot.chain.side_steps.length > 0) {
+    push(
+      "",
+      "### 旁支探索（未进入利用链）",
+      `以下 ${snapshot.chain.side_steps.length} 个已结束意图不在 Flag 所在事实的依赖闭包内，` +
+        "保留作对照；它们不构成利用链的一步。",
+    );
+    for (const step of snapshot.chain.side_steps) {
+      const label = brief(step.description) || step.intent_id;
+      const fact = step.fact_description === null
+        ? "未产出事实"
+        : `\`${step.fact_id}\`：${brief(step.fact_description)}`;
+      const outcome = step.outcome === null ? "" : `（结果：${inline(step.outcome)}）`;
+      push(`- **${label}** → ${fact}${outcome}`);
+    }
+  }
 
   if (snapshot.open_intents.length > 0) {
     push("", "### 尚未完成的探索");
@@ -682,10 +1065,18 @@ export function renderProjectWriteupPrompt(snapshot: ProjectWriteupSnapshot): st
       "不得把占位串当成答案，也不得自己拼出一个看起来完整的 Flag。",
     "- 草稿的“载荷（Payload）”章节给出脚本与 payload 原文：引用时同样逐字符照抄，" +
       "不得改写、补全或自己编造；只登记了路径或标注未内联的载荷，就照实说附件包里有这个文件，不要虚构内容。",
+    "- 草稿的「攻击路径（利用链）」已按 Fact 依赖边排好顺序，每一步写明前置事实、产出的观察、证据与复现脚本。" +
+      "重写时必须沿用这个顺序逐步展开，只写链上的步骤；标在「旁支探索」里的内容不要混进利用链，只放进复盘段。",
+    "- 利用链的每一步至少写清四件事：前置（依赖草稿里的哪条已确认观察）、操作（引用草稿记录的载荷或脚本路径与原文）、" +
+      "结果（事实原文里的判定或输出）、证据文件路径。读者应能按这个顺序重放，而不是只看到抽象概括。",
+    "- 草稿给出「复现脚本」路径时，照抄该路径并说明它能从附件包取得；不得只写“使用脚本”这类抽象描述。",
+    "- 草稿里写成否定结论的观察（未取得、不成立、不可用、失败）不得写成成功，也不要为了连贯而省略" +
+      "“上一步失败后改走哪条路”。",
     "- 不得写入任何凭据、token、cookie、API key 或内网敏感地址（草稿里授权范围内的目标地址除外）。",
-    "- 结构建议：题目概述 → 信息收集 → 利用链（按攻击路径顺序）→ 获取 Flag → 复盘与遗留问题。",
+    "- 结构建议：题目概述 → 信息收集 → 利用链（按草稿依赖顺序，逐步可复现）→ 获取 Flag → " +
+      "复现清单（按顺序列出脚本与关键请求）→ 复盘与遗留问题。",
     "- 允许使用 Markdown 标题、列表和代码块；输出正文，不要包裹在 JSON 或额外说明里。",
-    "- 篇幅控制在 1200 字以内，突出关键判断与转折点。",
+    "- 篇幅控制在 2500 字以内；利用链要写全，信息收集与复盘可以压缩。",
     "",
     "# 草稿",
     renderProjectWriteupMarkdown(snapshot).trimEnd(),
@@ -763,6 +1154,7 @@ interface WriteupRow {
 
 interface LiteRunRow {
   id: string;
+  task_id: string;
   worker: string;
   model: string | null;
   outcome: string | null;
@@ -771,9 +1163,44 @@ interface LiteRunRow {
 function listRunsLite(conn: Database, projectId: string): LiteRunRow[] {
   return all<LiteRunRow>(
     conn,
-    "SELECT id, worker, model, outcome FROM runs WHERE project_id = ?",
+    "SELECT id, task_id, worker, model, outcome FROM runs WHERE project_id = ?",
     projectId,
   );
+}
+
+function chainIntro(chain: WriteupChain): string[] {
+  if (chain.steps.length === 0) return [];
+  if (chain.anchored) {
+    const terminal = chain.flag_fact === null ? "" : `终点为 \`${chain.flag_fact}\`。`;
+    const source = chain.flag_source === null || chain.flag_source === ""
+      ? ""
+      : `Flag 来源：\`${inline(chain.flag_source)}\`。`;
+    const lines = [
+      `利用链由记录中的 Fact 依赖边还原：共 ${chain.steps.length} 个已结束意图构成 Flag 事实的依赖闭包，` +
+        `按依赖顺序排列，每个前置事实都先于使用它的步骤。${terminal}${source}`,
+    ];
+    if (chain.side_steps.length > 0) {
+      lines.push(`另有 ${chain.side_steps.length} 个已结束意图不在此闭包内，列在「旁支探索」。`);
+    }
+    if (chain.steps.some((step) => step.payload_refs.length > 0)) {
+      lines.push(
+        "「复现脚本」是该步运行写下、且被判为载荷/脚本的工件路径；逐字原文见「载荷（Payload）」，" +
+          "未内联或超出上限的文件以附件包为准。",
+      );
+    }
+    return lines;
+  }
+  return [
+    `未定位到 Flag 所在事实；以下按 Fact 依赖顺序列出全部 ${chain.steps.length} 个已结束意图，` +
+      "每个前置事实都先于使用它的步骤。",
+  ];
+}
+
+/** Up to six payload paths per step; the rest are still in the snapshot and the archive. */
+function payloadRefList(refs: readonly string[]): string {
+  const max = 6;
+  const shown = refs.slice(0, max).map((ref) => `\`${ref}\``).join("、");
+  return refs.length <= max ? shown : `${shown} 等 ${refs.length} 个`;
 }
 
 function snapshotVerdict(snapshot: ProjectWriteupSnapshot): string {
@@ -853,8 +1280,10 @@ export function payloadLanguage(path: string): string | null {
 export function isWriteupPayloadPath(path: string): boolean {
   const normalized = normalizeArtifactPath(path);
   if (normalized === "") return false;
+  const extension = extensionOf(normalized);
+  if (EVIDENCE_DUMP_EXTENSIONS.has(extension)) return false;
   if (PAYLOAD_NAME_PATTERN.test(normalized)) return true;
-  return PAYLOAD_EXTENSION_LANGUAGES.has(extensionOf(normalized));
+  return PAYLOAD_EXTENSION_LANGUAGES.has(extension);
 }
 
 /** Cuts long text at a line boundary so a fenced block never ends mid-character. */

@@ -413,9 +413,13 @@ export {
   type BuildProjectWriteupOptions,
   type ProjectWriteupRecord,
   type ProjectWriteupSnapshot,
+  type SelectWriteupPayloadOptions,
+  type WriteupChain,
+  type WriteupChainStep,
   type WriteupFlag,
   type WriteupPayload,
   type WriteupPayloadContent,
+  type WriteupStep,
 } from "./writeup";
 
 export {

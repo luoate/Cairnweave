@@ -374,7 +374,9 @@ export function registerWriteupRoutes(
         ? []
         : collectWriteupPayloads({
             workspace,
-            artifacts: selectWriteupPayloadArtifacts(conn, projectId),
+            artifacts: selectWriteupPayloadArtifacts(conn, projectId, {
+              flagSource: flagView?.source ?? null,
+            }),
           });
     const snapshot = buildProjectWriteup(conn, projectId, {
       verificationFallback,
