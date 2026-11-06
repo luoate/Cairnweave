@@ -115,6 +115,7 @@ export interface TasksConfig {
   contextPlan: ContextPlanConfig;
   contextPack: ContextPackConfig;
   checkpoint: TaskCheckpointConfig;
+  explorationSuppression: { enabled: boolean };
 }
 
 export const DEFAULT_GRAPH_SLICE: GraphSliceConfig = {
@@ -632,7 +633,7 @@ const EDITABLE_OVERRIDE_KEYS: Record<string, readonly string[]> = {
     "max_project_workers",
     "interval",
   ],
-  tasks: ["bootstrap", "reason", "explore", "graph_slice", "evidence", "tool_result_spill", "context_plan", "context_pack", "checkpoint"],
+  tasks: ["bootstrap", "reason", "explore", "graph_slice", "evidence", "tool_result_spill", "context_plan", "context_pack", "checkpoint", "exploration_suppression"],
   worker: [
     "soft_deadline_ratio",
     "retain_task_files",
@@ -682,6 +683,7 @@ const EDITABLE_TASK_KEYS: Record<string, readonly string[]> = {
   context_plan: ["mode", "max_initial_bytes"],
   context_pack: ["mode", "shard_max_bytes"],
   checkpoint: ["enabled", "interval_seconds"],
+  exploration_suppression: ["enabled"],
 };
 
 /** Snake_case patch accepted by `RuntimeConfigStore.apply`; see `EDITABLE_OVERRIDE_KEYS`. */
@@ -863,11 +865,19 @@ function parseTasks(value: unknown): TasksConfig {
     contextPlan: has(tasks, "context_plan")
       ? parseContextPlan(tasks["context_plan"])
       : { ...DEFAULT_CONTEXT_PLAN },
+    explorationSuppression: has(tasks, "exploration_suppression")
+      ? parseExplorationSuppression(tasks["exploration_suppression"]) : { enabled: false },
     checkpoint: has(tasks, "checkpoint") ? parseTaskCheckpointConfig(tasks["checkpoint"]) : { ...DEFAULT_TASK_CHECKPOINT },
     contextPack: has(tasks, "context_pack")
       ? parseContextPack(tasks["context_pack"])
       : { ...DEFAULT_CONTEXT_PACK },
   };
+}
+
+function parseExplorationSuppression(value: unknown): { enabled: boolean } {
+  const policy = recordAt(value, "tasks.exploration_suppression");
+  checkOverrideKeys(policy, ["enabled"], "tasks.exploration_suppression");
+  return { enabled: has(policy, "enabled") ? booleanAt(policy["enabled"], "tasks.exploration_suppression.enabled") : false };
 }
 
 function parseTaskCheckpointConfig(value: unknown): TaskCheckpointConfig {

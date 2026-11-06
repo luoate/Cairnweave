@@ -33,6 +33,7 @@ import {
   HttpError,
   acknowledgeOperatorGuidance,
   buildTaskContextSnapshot,
+  buildExplorationSuppression,
   claimReason,
   claimTask,
   completeProject,
@@ -1089,10 +1090,25 @@ export class Scheduler {
         !isBootstrapIntent(intent),
     );
     if (unclaimed.length > 0) {
+      let effective: Map<string, number> | undefined;
+      if (this.config.tasks.explorationSuppression.enabled) {
+        try {
+          const decisions = this.db.withConn(conn => buildExplorationSuppression(
+            buildTaskContextSnapshot(conn, summary.id, { checkpoint: {
+              scopeTargets: scope.targets,
+              evidenceStatus: ref => checkpointEvidenceStatus(projectWorkspace(this.workspaceRoot, summary.id), ref),
+            } }), listProjectRuns(conn, summary.id), { enabled: true, now: this.now() },
+          ));
+          effective = new Map([...decisions].map(([id, decision]) => [id, decision.effective_priority]));
+        } catch {
+          // Optional preference cannot block authorized work when history is unavailable.
+          this.logOnce(`exploration:${summary.id}`, `exploration preference unavailable project=${summary.id}; using base priority`);
+        }
+      }
       return this.dispatchExplore(
         project,
         scope,
-        pickByPriority(unclaimed, intentMeta),
+        pickByPriority(unclaimed, intentMeta, effective),
         claims,
       );
     }
@@ -3107,10 +3123,11 @@ function isInitialProject(project: ProjectDetail): boolean {
 function pickByPriority(
   intents: readonly Intent[],
   meta: ReadonlyMap<string, IntentMeta>,
+  effective?: ReadonlyMap<string, number>,
 ): Intent {
   let best = intents[0]!;
   for (const intent of intents) {
-    if (compareIntentPriority(intent, best, meta) < 0) best = intent;
+    if (compareIntentPriority(intent, best, meta, effective) < 0) best = intent;
   }
   return best;
 }
@@ -3119,9 +3136,10 @@ function compareIntentPriority(
   left: Intent,
   right: Intent,
   meta: ReadonlyMap<string, IntentMeta>,
+  effective?: ReadonlyMap<string, number>,
 ): number {
-  const leftPriority = meta.get(left.id)?.priority ?? DEFAULT_INTENT_PRIORITY;
-  const rightPriority = meta.get(right.id)?.priority ?? DEFAULT_INTENT_PRIORITY;
+  const leftPriority = effective?.get(left.id) ?? meta.get(left.id)?.priority ?? DEFAULT_INTENT_PRIORITY;
+  const rightPriority = effective?.get(right.id) ?? meta.get(right.id)?.priority ?? DEFAULT_INTENT_PRIORITY;
   if (leftPriority !== rightPriority) return rightPriority - leftPriority;
   if (left.created_at !== right.created_at) {
     return right.created_at.localeCompare(left.created_at);

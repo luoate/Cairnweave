@@ -51,6 +51,7 @@ export interface EditableRuntimeConfig {
     tool_result_spill: { enabled: boolean; max_inline_chars: number };
     context_plan: { mode: "off" | "audit"; max_initial_bytes: number };
     checkpoint: { enabled: boolean; interval_seconds: number };
+    exploration_suppression: { enabled: boolean };
     context_pack: { mode: "off" | "shadow" | "apply"; shard_max_bytes: number };
     evidence: { min_bytes: number };
   };
@@ -365,6 +366,7 @@ function editableView(config: DispatchConfig): EditableRuntimeConfig {
         enabled: config.tasks.toolResultSpill.enabled,
         max_inline_chars: config.tasks.toolResultSpill.maxInlineChars,
       },
+      exploration_suppression: { enabled: config.tasks.explorationSuppression.enabled },
       checkpoint: { enabled: config.tasks.checkpoint.enabled, interval_seconds: config.tasks.checkpoint.intervalSeconds },
       context_pack: { mode: config.tasks.contextPack.mode, shard_max_bytes: config.tasks.contextPack.shardMaxBytes },
       context_plan: {

@@ -326,7 +326,7 @@ M51d 在意图详情只读显示契约、观察与解释、运行异常、后续
 
 ### 重复探索与进展记录（M52a/b，只读）
 
-不新增配置项、阈值或数据库计数器，也不改变 checkpoint 默认关闭与 ContextPack 默认 off。
+a/b 本身不新增配置项、阈值或数据库计数器，也不改变 checkpoint 默认关闭与 ContextPack 默认 off。
 显式 checkpoint-enriched snapshot 中，有合法 experiment 的意图附带可选 `exploration`：精确计划/
 提案指纹、已有同计划记录的有限 ID 列表、观察报告分类和连续未新增观察报告次数。结束 run 可带
 对应 `attempts[].exploration`。历史由现有 runs 与最后有效检查点重建，重启不丢计数。
@@ -337,8 +337,33 @@ M51d 在意图详情只读显示契约、观察与解释、运行异常、后续
 
 `new_observation` 仅指可比较历史中的新报告，不表示新 Fact、证据内容改变或真实信息增益；只有换描述、
 解释、文件名、attempt ID 或 sequence 不产生新观察。环境/执行/工具故障不增加计数，未知记录中断连续性。
-合理复验仍可继续；不调整优先级、派发、冷却、重试、预算或生命周期，不自动反证或完成项目。
-具体指纹与状态边界见 DESIGN §20 / CONTRACT §9.2。M52c 的软抑制与 M52d 的专门 UI 尚未实施。
+合理复验仍可继续；a/b 只读投影本身不调整优先级、派发、冷却、重试、预算或生命周期，不自动反证或完成项目。
+具体指纹与状态边界见 DESIGN §20 / CONTRACT §9.2。可选 c 与只读 d 见下一节。
+
+### 有界排序软偏好与只读进展（M52c/d）
+
+```yaml
+tasks:
+  exploration_suppression:
+    enabled: false  # 默认关闭；仅允许布尔 enabled，不开放阈值/窗口/penalty 调整
+```
+
+显式 true 时，对当前同计划、连续 3 次可比较任务未新增观察报告的方向，最多软降权 20、最低有效优先级 0。
+窗口从首次跨阈值的结束时刻起 300 秒；继续重复/改名不会滚动续期，到期恢复基础优先级。
+仅影响 explore 候选排序，不写回 priority，不排除候选，唯一候选仍可执行；不自动 reason/放弃/退役/完成。
+新报告/unknown 中断并重置资格；故障跳过，最新故障/unknown 时不降权。
+新非 origin/goal Fact 或任何 Hint 的最近创建时间独立重置资格，只有开始时间严格在其后的任务才重新累计。
+当前计划/Scope/事实/证据、run 或输入时间不可比较时不降权；不是全局目标进展或科学信息增益测量。
+
+开关支持既有运行配置热覆盖/验证/持久化重放/reset，下一次调度选择生效；false 立即恢复基础排序，
+不撤销已运行任务。环境门、pending conclude、reason/用户引导、预算、claim 与 Scope 顺序不变。
+可选历史读取异常回基础排序。已有有效检查点可供控制面排序，不要求当前 checkpoint enabled 或 M48 apply；
+无历史则不降权，新采集仍需 checkpoint 开关。模型历史交付仍仅沿用 M48 成功 apply，不能绕过预算/恢复授权。
+
+意图详情新增六类报告计数、连续次数（0 与未知分开）、最新 run、同计划/提案 peer、指纹与原因，以及
+基础→有效优先级、到期和“读取时排序预览（不是派发授权）”。复用既有只读 experiment GET，刷新重新计算，
+不新增未认证写路由或状态控件。`bun run eval:exploration --out runs/exploration-eval.json` 运行 17 个
+确定性场景、0 模型调用，只测安全与排序边界，不证明真实停滞减少或成本收益。
 
 ### Worker `worker` / `worker_selection`
 

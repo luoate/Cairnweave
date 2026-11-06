@@ -2,11 +2,13 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { configureDatabase, createIntent, exportProjectYaml,
-  recordIntentMeta, startRun, finishRun, type CairnDatabase } from "@cairn/graph";
+import { acceptTaskCheckpoint, configureDatabase, createIntent, exportProjectYaml, finalizeCheckpointRun,
+  recordIntentMeta, registerCheckpointRun, startRun, finishRun, type CairnDatabase } from "@cairn/graph";
+import { parseDispatchConfig } from "../config";
+import { RuntimeConfigStore } from "../config-overrides";
 import { experiment } from "../../../../packages/contracts/src/testdata/experiment";
 import { review } from "../../../../packages/contracts/src/testdata/experiment-review";
-import { EXPERIMENT_EVIDENCE, seedExperimentScenario } from "../../../../packages/graph/src/testdata/experiment-scenario";
+import { EXPERIMENT_EVIDENCE, EXPERIMENT_SCOPE, seedExperimentScenario } from "../../../../packages/graph/src/testdata/experiment-scenario";
 import { createApi, type Api } from "./api";
 let dir: string, db: CairnDatabase, api: Api, scene: ReturnType<typeof seedExperimentScenario>;
 beforeEach(() => {
@@ -28,6 +30,8 @@ test("read-only view separates plan, observation, interpretation and strategy pr
   expect(data.attempts[0].memory.experiment_result.observations[0].evidence).toBe("refs_available_not_verified");
   expect(data.attempts[0].memory.experiment_plan).toEqual(experiment());
   expect(data.exploration).toMatchObject({ version: 1, mode: "observe_only", counts: { new_observation: 1 }, consecutive_without_new_observation: 0 });
+  expect(data.exploration_suppression).toMatchObject({ mode: "off", state: "off", penalty: 0,
+    semantics: "priority_preview_not_dispatch_authorization" });
   expect(data.attempts[0].exploration).toMatchObject({ status: "new_observation", hypothesis_verdict: "unknown" });
   await get();
   expect(db.withConn(conn => exportProjectYaml(conn, scene.projectId))).toBe(before);
@@ -72,6 +76,38 @@ test("legacy intents omit invented plans and review data", async () => {
   expect(await get()).toMatchObject({ experiment: null, experiment_review: null, hypothesis_verdict: "unknown" });
   expect(await get()).not.toHaveProperty("exploration");
 });
+test("M52d previews live opt-in preference and immediately reflects disable and expired history", async () => {
+  const now = Date.now(), at = (minute: number) => new Date(now - (5 - minute) * 60_000).toISOString();
+  db.withConn(conn => {
+    conn.query("UPDATE runs SET started_at = ?, finished_at = ? WHERE id = ?").run(at(0), at(1), scene.runId);
+    for (let n = 1; n <= 3; n++) {
+      const id = `repeat-${n}`;
+      startRun(conn, { id, projectId: scene.projectId, intentId: scene.intentId, taskId: id, kind: "explore", worker: "fixture", startedAt: at(n) });
+      registerCheckpointRun(conn, id, EXPERIMENT_SCOPE, experiment());
+      expect(acceptTaskCheckpoint(conn, { runId: id, projectId: scene.projectId, taskId: id,
+        bytes: Buffer.from(JSON.stringify({ ...scene.checkpoint, task_id: id })) })).toBe("accepted");
+      finishRun(conn, id, { outcome: "success", durationMs: 1, finishedAt: at(n + 1) }); finalizeCheckpointRun(conn, id, "finished");
+    }
+  });
+  const source = { server: "http://127.0.0.1:8000", runtime: { execution: "local", interval: 3, max_workers: 4,
+    max_running_projects: 2, max_project_workers: 1, healthcheck_timeout: 15, prompt_group: "default" },
+    tasks: { bootstrap: { timeout: 300, conclude_timeout: 90 }, reason: { timeout: 300, max_intents: 3 },
+      explore: { timeout: 600, conclude_timeout: 120 } } };
+  const config = parseDispatchConfig(source);
+  const runtimeConfig = new RuntimeConfigStore({ db, config, source });
+  api = createApi({ db, workspaceRoot: dir, runtimeConfig });
+  expect((await get()).exploration_suppression.state).toBe("off");
+  runtimeConfig.apply({ tasks: { exploration_suppression: { enabled: true } } });
+  expect((await get()).exploration_suppression).toMatchObject({ mode: "soft", state: "reduced", penalty: 20, effective_priority: 30 });
+  runtimeConfig.apply({ tasks: { exploration_suppression: { enabled: false } } });
+  expect((await get()).exploration_suppression).toMatchObject({ state: "off", penalty: 0, effective_priority: 50 });
+  runtimeConfig.apply({ tasks: { exploration_suppression: { enabled: true } } });
+  db.withConn(conn => {
+    conn.query("UPDATE runs SET started_at = ?, finished_at = ? WHERE id = ?").run(at(-5), at(-4), scene.runId);
+    conn.query("UPDATE runs SET started_at = ?, finished_at = ? WHERE id LIKE 'repeat-%'").run(at(-3), at(-2));
+  });
+  expect((await get()).exploration_suppression).toMatchObject({ state: "inactive", reason: "window_expired", penalty: 0 });
+});
 function app() {
   const html = readFileSync(join(import.meta.dir, "static", "index.html"), "utf8");
   const script = html.match(/<script>\s*(function cairnApp\(\)[\s\S]*?)<\/script>/)![1]!;
@@ -85,6 +121,20 @@ test("UI is text-only for untrusted records and never turns availability into ve
   expect(state.experimentRunLabel({ failure: { domain: "infrastructure", code: "model_timeout" } })).toContain("不是路线反证");
   expect(state.experimentEvidenceLabel({ experiment_result: { observations: [{ attempt_id: "a1", evidence: "refs_available_not_verified" }] } }, "a1")).toContain("未验证");
 });
+test("M52d labels distinguish zero, unknown, faults, bounded peers and optional soft preference", () => {
+  const { html, state } = app();
+  expect(html).toContain("data-exploration-progress");
+  expect(html).toContain("读取时排序预览（不是派发授权）");
+  expect(html).not.toMatch(/x-html="[^"]*(?:exploration|suppression)/);
+  expect(state.explorationStreakLabel(0)).toBe("0");
+  for (const unknown of [null, undefined, -1, "0", Number.NaN]) expect(state.explorationStreakLabel(unknown)).toBe("未知");
+  expect(state.explorationStatusLabel("operationally_incomplete")).toContain("不增计数");
+  expect(state.explorationStatusLabel("unknown")).toContain("中断连续性");
+  expect(state.explorationPeersLabel("同计划", { count: 12, intent_ids: ["i1", "<img src=x>"], omitted: 10 })).toContain("另省略 10");
+  expect(state.explorationSuppressionLabel({ mode: "off", state: "off", reason: "disabled", base_priority: 50, effective_priority: 50 })).toContain("关闭");
+  expect(state.explorationSuppressionLabel({ mode: "soft", state: "inactive", reason: "window_expired", base_priority: 50, effective_priority: 50 })).toContain("不滚动续期");
+});
+
 test("UI suppresses stale responses, clears old data and surfaces read failures", async () => {
   const { state } = app(); state.selectedProjectId = scene.projectId; state.selectedNode = { type: "intent", id: scene.intentId };
   const pending: Array<(value: unknown) => void> = [];

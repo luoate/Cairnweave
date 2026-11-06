@@ -11,201 +11,9 @@
 <style>
   [x-cloak] { display: none !important; }
   #cy { width: 100%; height: 100%; }
-  ::-webkit-scrollbar { width: 5px; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
   ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
-  .overlay { background: rgba(15,23,42,0.25); backdrop-filter: blur(6px); }
-  .timeline-flash { animation: timelineFlash 1s ease-out; }
-  .reason-chip-running { animation: reasonChipGlow 1.8s ease-in-out infinite; }
-  .intent-chip-running { animation: intentChipGlow 1.8s ease-in-out infinite; }
-  .reason-panel-running::before {
-    content: "";
-    position: absolute;
-    inset: -6px;
-    border-radius: 22px;
-    background: radial-gradient(circle, rgba(56, 189, 248, 0.14), rgba(56, 189, 248, 0));
-    animation: reasonPanelPulse 2.1s ease-out infinite;
-    pointer-events: none;
-  }
-  .reason-beacon {
-    position: relative;
-    width: 10px;
-    height: 10px;
-    border-radius: 9999px;
-    background: #0ea5e9;
-    box-shadow: 0 0 0 4px rgba(14, 165, 233, 0.16);
-  }
-  .reason-beacon::after {
-    content: "";
-    position: absolute;
-    inset: -6px;
-    border-radius: 9999px;
-    border: 1.5px solid rgba(14, 165, 233, 0.34);
-    animation: reasonBeaconPulse 1.8s ease-out infinite;
-  }
-  .reason-graph-scan {
-    position: absolute;
-    inset: 8px;
-    overflow: hidden;
-    pointer-events: none;
-    border-radius: 18px;
-  }
-  .reason-graph-scan::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    border-radius: inherit;
-    box-shadow:
-      inset 0 0 0 1px rgba(125, 211, 252, 0.32),
-      inset 0 0 30px rgba(125, 211, 252, 0.06),
-      inset 0 0 64px rgba(56, 189, 248, 0.03);
-    animation: reasonFramePulse 2.8s ease-in-out infinite;
-  }
-  .reason-graph-scan::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    inset: 12px;
-    border-radius: 12px;
-    background:
-      linear-gradient(90deg, rgba(125, 211, 252, 0.85), rgba(125, 211, 252, 0.18)),
-      linear-gradient(180deg, rgba(125, 211, 252, 0.85), rgba(125, 211, 252, 0.18)),
-      linear-gradient(270deg, rgba(125, 211, 252, 0.85), rgba(125, 211, 252, 0.18)),
-      linear-gradient(0deg, rgba(125, 211, 252, 0.85), rgba(125, 211, 252, 0.18));
-    background-size: 18px 2px, 2px 18px, 18px 2px, 2px 18px;
-    background-position: left top, left top, right bottom, right bottom;
-    background-repeat: no-repeat;
-    opacity: 0.6;
-  }
-  .reason-graph-scan > span {
-    position: absolute;
-    inset: 0;
-    display: block;
-  }
-  .reason-graph-grid {
-    inset: 12px;
-    border-radius: 12px;
-    background:
-      repeating-linear-gradient(
-        90deg,
-        rgba(186, 230, 253, 0) 0,
-        rgba(186, 230, 253, 0) 35px,
-        rgba(186, 230, 253, 0.045) 36px,
-        rgba(186, 230, 253, 0.045) 37px
-      ),
-      repeating-linear-gradient(
-        180deg,
-        rgba(186, 230, 253, 0) 0,
-        rgba(186, 230, 253, 0) 35px,
-        rgba(186, 230, 253, 0.04) 36px,
-        rgba(186, 230, 253, 0.04) 37px
-      );
-    opacity: 0.42;
-  }
-  .reason-graph-ambient {
-    inset: 0;
-    background:
-      radial-gradient(circle at 12% 18%, rgba(56, 189, 248, 0.11), rgba(56, 189, 248, 0) 30%),
-      radial-gradient(circle at 84% 16%, rgba(59, 130, 246, 0.08), rgba(59, 130, 246, 0) 24%),
-      linear-gradient(180deg, rgba(186, 230, 253, 0.055), rgba(255, 255, 255, 0) 46%);
-    animation: reasonAmbientPulse 2.4s ease-in-out infinite alternate;
-  }
-  .reason-graph-scanline {
-    inset: 0;
-  }
-  .reason-graph-scanline::before {
-    content: "";
-    position: absolute;
-    left: 10px;
-    right: 10px;
-    height: 2px;
-    top: 12%;
-    background: linear-gradient(90deg, rgba(56, 189, 248, 0), rgba(186, 230, 253, 0.96), rgba(56, 189, 248, 0));
-    box-shadow:
-      0 0 18px rgba(125, 211, 252, 0.42),
-      0 0 34px rgba(186, 230, 253, 0.16);
-    animation: reasonGraphScanline 4.2s linear infinite;
-  }
-  .reason-graph-sweep {
-    inset: -18%;
-    background: linear-gradient(
-      103deg,
-      rgba(14, 165, 233, 0) 40%,
-      rgba(56, 189, 248, 0.04) 47%,
-      rgba(255, 255, 255, 0.22) 50%,
-      rgba(125, 211, 252, 0.1) 53%,
-      rgba(14, 165, 233, 0) 60%
-    );
-    transform: translateX(-86%) skewX(-14deg);
-    animation: reasonGraphSweep 4.6s ease-in-out infinite;
-  }
-  .title-action-trigger {
-    min-width: 0;
-  }
-  .title-action-button {
-    opacity: 1;
-    transform: translateY(0);
-    pointer-events: auto;
-    transition: opacity 180ms ease, transform 180ms ease, background-color 180ms ease, color 180ms ease, border-color 180ms ease;
-  }
-  @media (hover: hover) and (pointer: fine) {
-    .title-action-button {
-      opacity: 0;
-      transform: translateY(2px);
-      pointer-events: none;
-    }
-    .title-action-trigger:hover .title-action-button,
-    .title-action-trigger:focus-within .title-action-button {
-      opacity: 1;
-      transform: translateY(0);
-      pointer-events: auto;
-    }
-  }
-  @keyframes timelineFlash {
-    0% { background: rgba(99, 102, 241, 0.18); box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.2); }
-    35% { background: rgba(99, 102, 241, 0.12); box-shadow: 0 0 0 8px rgba(99, 102, 241, 0.08); }
-    100% { background: rgba(99, 102, 241, 0); box-shadow: 0 0 0 14px rgba(99, 102, 241, 0); }
-  }
-  @keyframes reasonBeaconPulse {
-    0% { transform: scale(0.72); opacity: 0.9; }
-    70% { transform: scale(1.45); opacity: 0; }
-    100% { transform: scale(1.45); opacity: 0; }
-  }
-  @keyframes reasonPanelPulse {
-    0% { transform: scale(0.96); opacity: 0; }
-    18% { opacity: 1; }
-    70% { transform: scale(1.02); opacity: 0.18; }
-    100% { transform: scale(1.03); opacity: 0; }
-  }
-  @keyframes reasonChipGlow {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.18); }
-    50% { box-shadow: 0 0 0 7px rgba(56, 189, 248, 0.08); }
-  }
-  @keyframes intentChipGlow {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(251, 191, 36, 0.18); }
-    50% { box-shadow: 0 0 0 7px rgba(251, 191, 36, 0.08); }
-  }
-  @keyframes reasonGraphSweep {
-    0% { transform: translateX(-86%) skewX(-14deg); opacity: 0; }
-    18% { opacity: 1; }
-    82% { opacity: 1; }
-    100% { transform: translateX(88%) skewX(-14deg); opacity: 0; }
-  }
-  @keyframes reasonAmbientPulse {
-    0% { opacity: 0.75; }
-    100% { opacity: 1; }
-  }
-  @keyframes reasonGraphScanline {
-    0% { top: 11%; opacity: 0.18; }
-    8% { opacity: 0.55; }
-    50% { opacity: 0.42; }
-    92% { opacity: 0.55; }
-    100% { top: 87%; opacity: 0.18; }
-  }
-  @keyframes reasonFramePulse {
-    0%, 100% { opacity: 0.72; }
-    50% { opacity: 1; }
-  }
+  ::-webkit-scrollbar-thumb { background: #c5ced2; border-radius: 4px; }
 </style>
 </head>
 <body class="bg-slate-50 text-slate-800 h-screen flex flex-col overflow-hidden" :class="{ 'select-none cursor-col-resize': isResizingPanel }" x-data="cairnApp()" x-effect="syncDocumentTitle()">
@@ -215,7 +23,7 @@
   <aside id="workspaceNavigation" class="app-sidebar" :class="{ 'is-open': sidebarOpen }" aria-label="工作区导航" @keydown.escape.stop="closeSidebar()" @keydown.tab="if (sidebarOpen && window.innerWidth <= 960) trapModalFocus($el, $event)">
     <a href="#/" @click.prevent="if (view !== 'list') backToList(); sidebarOpen = false" class="sidebar-brand" aria-label="Cairnweave 项目工作台">
       <span class="brand-symbol"><img src="/static/favicon.svg" alt="" width="24" height="24"></span>
-      <span class="brand-wordmark">Cairnweave<span>AGENT WORKSPACE</span></span>
+      <span class="brand-wordmark">Cairnweave<span>探索与证据工作台</span></span>
     </a>
     <div class="sidebar-scroll">
       <div class="nav-section-label">工作区</div>
@@ -232,27 +40,27 @@
       <div x-show="view === 'graph'" x-cloak class="space-y-0">
         <div class="nav-project-label"><span>当前项目</span><code x-text="selectedProjectId"></code></div>
         <div class="nav-section-label">探索与决策</div>
-        <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'detail' }" :aria-pressed="sideTab === 'detail'" @click="selectSideTab('detail')"><span class="nav-glyph">◎</span><span>项目详情</span></button>
-        <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'hints' }" :aria-pressed="sideTab === 'hints'" @click="selectSideTab('hints')"><span class="nav-glyph">◇</span><span>提示</span></button>
-        <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'board' }" :aria-pressed="sideTab === 'board'" @click="selectSideTab('board')"><span class="nav-glyph">▤</span><span>观察看板</span></button>
-        <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'strategist' }" :aria-pressed="sideTab === 'strategist'" @click="selectSideTab('strategist')"><span class="nav-glyph">⌘</span><span>慢层决策</span></button>
+        <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'detail' }" :aria-pressed="sideTab === 'detail'" @click="selectSideTab('detail')"><svg class="nav-glyph" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/></svg><span>项目详情</span></button>
+        <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'hints' }" :aria-pressed="sideTab === 'hints'" @click="selectSideTab('hints')"><svg class="nav-glyph" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 18h6M10 21h4M8 14a6 6 0 1 1 8 0l-1 2H9Z"/></svg><span>提示</span></button>
+        <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'board' }" :aria-pressed="sideTab === 'board'" @click="selectSideTab('board')"><svg class="nav-glyph" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M15 4v16M5.5 8h1M11.5 8h1M17.5 8h1M5.5 12h1M11.5 12h1"/></svg><span>观察看板</span></button>
+        <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'strategist' }" :aria-pressed="sideTab === 'strategist'" @click="selectSideTab('strategist')"><svg class="nav-glyph" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="9" y="3" width="6" height="5" rx="1"/><path d="M12 8v4M5 16v-4h14v4"/><rect x="2" y="16" width="6" height="5" rx="1"/><rect x="16" y="16" width="6" height="5" rx="1"/></svg><span>慢层决策</span></button>
         <div class="nav-section-label">执行与溯源</div>
-        <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'runs' }" :aria-pressed="sideTab === 'runs'" @click="selectSideTab('runs')"><span class="nav-glyph">▷</span><span>任务运行</span></button>
-        <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'log' }" :aria-pressed="sideTab === 'log'" @click="selectSideTab('log')"><span class="nav-glyph">≡</span><span>事件日志</span></button>
-        <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'evidence' }" :aria-pressed="sideTab === 'evidence'" @click="selectSideTab('evidence')"><span class="nav-glyph">▧</span><span>证据文件</span></button>
-        <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'audit' }" :aria-pressed="sideTab === 'audit'" @click="selectSideTab('audit')"><span class="nav-glyph">⊡</span><span>工具审计</span></button>
-        <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'proposals' }" :aria-pressed="sideTab === 'proposals'" @click="selectSideTab('proposals')"><span class="nav-glyph">↗</span><span>图提案</span></button>
-        <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'attachments' }" :aria-pressed="sideTab === 'attachments'" @click="selectSideTab('attachments')"><span class="nav-glyph">⊞</span><span>题目附件</span></button>
+        <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'runs' }" :aria-pressed="sideTab === 'runs'" @click="selectSideTab('runs')"><svg class="nav-glyph" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9"/><path d="m10 8 6 4-6 4Z"/></svg><span>任务运行</span></button>
+        <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'log' }" :aria-pressed="sideTab === 'log'" @click="selectSideTab('log')"><svg class="nav-glyph" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg><span>事件日志</span></button>
+        <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'evidence' }" :aria-pressed="sideTab === 'evidence'" @click="selectSideTab('evidence')"><svg class="nav-glyph" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 3H6v18h12V7ZM14 3v4h4M9 12h6M9 16h6"/></svg><span>证据文件</span></button>
+        <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'audit' }" :aria-pressed="sideTab === 'audit'" @click="selectSideTab('audit')"><svg class="nav-glyph" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m12 3 8 3v6c0 4-4 7-8 9-4-2-8-5-8-9V6ZM8 12l3 3 5-6"/></svg><span>工具审计</span></button>
+        <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'proposals' }" :aria-pressed="sideTab === 'proposals'" @click="selectSideTab('proposals')"><svg class="nav-glyph" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="5" cy="6" r="3"/><circle cx="19" cy="6" r="3"/><circle cx="12" cy="19" r="3"/><path d="M8 6h8M6.5 9l4 7M17.5 9l-4 7"/></svg><span>图提案</span></button>
+        <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'attachments' }" :aria-pressed="sideTab === 'attachments'" @click="selectSideTab('attachments')"><svg class="nav-glyph" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m8 12 7-7a4 4 0 0 1 6 6L11 21a6 6 0 0 1-8-8L13 3M6 15l10-10"/></svg><span>题目附件</span></button>
         <div class="nav-section-label">分析与交付</div>
-        <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'cost' }" :aria-pressed="sideTab === 'cost'" @click="selectSideTab('cost')"><span class="nav-glyph">＄</span><span>成本归因</span></button>
-        <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'stats' }" :aria-pressed="sideTab === 'stats'" @click="selectSideTab('stats')"><span class="nav-glyph">▥</span><span>运行统计</span></button>
-        <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'report' }" :aria-pressed="sideTab === 'report'" @click="selectSideTab('report')"><span class="nav-glyph">▣</span><span>项目报告</span></button>
-        <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'writeup' }" :aria-pressed="sideTab === 'writeup'" @click="selectSideTab('writeup')"><span class="nav-glyph">✎</span><span>Writeup</span></button>
+        <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'cost' }" :aria-pressed="sideTab === 'cost'" @click="selectSideTab('cost')"><svg class="nav-glyph" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9"/><path d="M12 6v12M16 8h-5a3 3 0 0 0 0 6h2a3 3 0 0 1 0 6" transform="translate(0 -2)"/></svg><span>成本归因</span></button>
+        <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'stats' }" :aria-pressed="sideTab === 'stats'" @click="selectSideTab('stats')"><svg class="nav-glyph" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 3v18h18M7 16v-4M12 16V8M17 16V4"/></svg><span>运行统计</span></button>
+        <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'report' }" :aria-pressed="sideTab === 'report'" @click="selectSideTab('report')"><svg class="nav-glyph" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 3H5v18h14V8ZM14 3v5h5M8 12h8M8 16h5"/></svg><span>项目报告</span></button>
+        <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'writeup' }" :aria-pressed="sideTab === 'writeup'" @click="selectSideTab('writeup')"><svg class="nav-glyph" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m15 5 4 4M3 21l5-1L21 7a2.8 2.8 0 0 0-4-4L4 16ZM12 21h9"/></svg><span>Writeup</span></button>
       </div>
     </div>
     <div class="sidebar-footer">
       <button type="button" class="nav-item" @click="openSettings(); sidebarOpen = false" data-settings-button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m9 3-1 3-3 1v4l-2 1 2 2v3l3 1 1 3h6l1-3 3-1v-3l2-2-2-1V7l-3-1-1-3Z"/><circle cx="12" cy="12" r="3"/></svg><span>工作区设置</span></button>
-      <div class="sidebar-footnote"><span class="connection-dot"></span><span>本地控制台</span><span class="key-hint">/ 搜索</span></div>
+      <div class="sidebar-footnote"><span class="connection-dot"></span><span>本地控制台</span><span class="key-hint"><kbd>/</kbd> 搜索</span></div>
     </div>
   </aside>
 <!-- ═══════════ PROJECT LIST VIEW ═══════════ -->
@@ -292,11 +100,11 @@
 
   <main x-ref="projectListScroll" @scroll.passive="rememberProjectListScroll()" class="project-list-content flex-1 overflow-y-auto p-4">
     <section class="workspace-intro" aria-labelledby="workspaceTitle">
-      <div><p class="eyebrow">EXPLORE · VERIFY · DELIVER</p><h1 id="workspaceTitle">项目工作台</h1><p class="intro-description">从探索到验证，让每一步都有迹可循。</p></div>
-      <span class="intro-index" aria-hidden="true">CW / WORKSPACE</span>
+      <div><p class="eyebrow">探索 · 验证 · 留证</p><h1 id="workspaceTitle">项目工作台</h1><p class="intro-description">管理探索方向、核对观察与证据</p></div>
+      <span class="intro-index" aria-hidden="true">CW / projects</span>
     </section>
     <div class="project-summary" aria-label="项目概览">
-      <button type="button" class="summary-tile" :class="{ 'is-selected': listStatusFilter === 'all' }" @click="setListStatusFilter('all')" :aria-pressed="listStatusFilter === 'all'"><span class="summary-label">全部项目 <span aria-hidden="true">↗</span></span><span class="summary-value" x-text="projects.length"></span><span class="summary-caption">工作区内所有探索</span></button>
+      <button type="button" class="summary-tile" :class="{ 'is-selected': listStatusFilter === 'all' }" @click="setListStatusFilter('all')" :aria-pressed="listStatusFilter === 'all'"><span class="summary-label">全部项目</span><span class="summary-value" x-text="projects.length"></span><span class="summary-caption">工作区内所有探索</span></button>
       <button type="button" class="summary-tile" :class="{ 'is-selected': listStatusFilter === 'active' }" @click="setListStatusFilter('active')" :aria-pressed="listStatusFilter === 'active'"><span class="summary-label"><span class="status-dot status-active"></span>进行中</span><span class="summary-value" x-text="countProjectsByStatus('active')"></span><span class="summary-caption">正在探索与等待派发</span></button>
       <button type="button" class="summary-tile" :class="{ 'is-selected': listStatusFilter === 'stopped' }" @click="setListStatusFilter('stopped')" :aria-pressed="listStatusFilter === 'stopped'"><span class="summary-label"><span class="status-dot status-stopped"></span>已停止</span><span class="summary-value" x-text="countProjectsByStatus('stopped')"></span><span class="summary-caption">保留现场，随时恢复</span></button>
       <button type="button" class="summary-tile" :class="{ 'is-selected': listStatusFilter === 'completed' }" @click="setListStatusFilter('completed')" :aria-pressed="listStatusFilter === 'completed'"><span class="summary-label"><span class="status-dot status-completed"></span>已完成</span><span class="summary-value" x-text="countProjectsByStatus('completed')"></span><span class="summary-caption">已结束的项目</span></button>
@@ -306,7 +114,7 @@
         <div class="relative min-w-[12rem] flex-1">
           <svg class="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2"/></svg>
           <input x-ref="listSearch" data-list-search x-model="listQuery" @keydown.escape="listQuery = ''" type="search"
-            placeholder="搜索项目名称、ID 或状态…" aria-label="搜索项目"
+            placeholder="搜索项目名称、ID 或状态" aria-label="搜索项目"
             class="h-8 w-full rounded-lg border border-slate-200 bg-white pl-8 pr-3 text-xs text-slate-600 placeholder:text-slate-300 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100">
         </div>
         <select x-model="listSort" @change="saveListPrefs()"
@@ -356,15 +164,15 @@
           @keydown.enter.self.prevent="openProject(p.id)"
           @keydown.space.self.prevent="openProject(p.id)"
           role="button" tabindex="0"
-          class="project-card group h-full flex flex-col bg-white rounded-2xl border border-slate-200/60 p-5 cursor-pointer transition-all duration-200 hover:shadow-lg hover:shadow-slate-200/50 hover:border-slate-300 hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-300 focus-visible:ring-offset-2">
+          class="project-card group h-full flex flex-col bg-white rounded-2xl border border-slate-200/60 p-5 cursor-pointer transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-300 focus-visible:ring-offset-2">
           <div class="flex items-start justify-between mb-3">
-            <span class="text-2xs font-mono text-slate-400 tracking-wide" x-text="p.id"></span>
+            <span class="text-2xs font-mono text-slate-400" x-text="p.id"></span>
             <div class="flex items-center gap-1.5 shrink-0">
               <template x-if="!p.has_scope">
-                <span class="px-1.5 py-0.5 rounded-full text-2xs font-semibold uppercase tracking-[0.12em] bg-amber-50 text-amber-700 border border-amber-200"
+                <span class="px-1.5 py-0.5 rounded-full text-2xs font-semibold bg-amber-50 text-amber-700 border border-amber-200"
                   title="没有授权范围，调度器不会派发任务">未授权</span>
               </template>
-              <span class="px-1.5 py-0.5 rounded-full text-2xs font-semibold uppercase tracking-[0.12em]"
+              <span class="px-1.5 py-0.5 rounded-full text-2xs font-semibold"
                 :class="projectStatusBadgeClass(p.status)"
                 x-text="projectStatusLabel(p.status)"></span>
             </div>
@@ -487,7 +295,7 @@
         :aria-label="`重命名 ${project.project.title}`">
         <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="m16.862 4.487 1.65-1.65a1.875 1.875 0 1 1 2.652 2.652l-9.193 9.193a4.5 4.5 0 0 1-1.897 1.13L6 17l1.188-4.074a4.5 4.5 0 0 1 1.13-1.897l8.544-8.542Z"/><path d="M19.5 7.125 16.875 4.5"/><path d="M5.25 18.75h13.5"/></svg>
       </button>
-      <span class="px-1.5 py-0.5 rounded-full text-2xs font-semibold uppercase tracking-[0.12em] shrink-0"
+      <span class="px-1.5 py-0.5 rounded-full text-2xs font-semibold shrink-0"
         :class="projectStatusBadgeClass(project.project.status)"
         x-text="projectStatusLabel(project.project.status)"></span>
     </div>
@@ -508,13 +316,13 @@
       <summary>项目操作 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m7 10 5 5 5-5"/></svg></summary>
       <div class="project-action-popover flex items-center gap-1.5">
       <template x-if="!replay.active">
-        <button @click="startProjectReplay()" class="px-2.5 py-1 rounded-lg border border-violet-200 text-xs text-violet-600 hover:bg-violet-50 transition flex items-center gap-1.5">
+        <button @click="startProjectReplay()" class="px-2.5 py-1 rounded-lg border border-slate-200 text-xs text-slate-600 hover:bg-slate-50 transition flex items-center gap-1.5">
           <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7V5Z"/><path d="M4 5v14"/></svg>
           回放
         </button>
       </template>
       <template x-if="replay.active">
-        <div class="flex items-center gap-1.5 rounded-xl border border-violet-200 bg-violet-50/80 px-2 py-1 text-xs text-violet-700">
+        <div class="replay-controls flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-700">
           <span class="font-medium whitespace-nowrap" x-text="replayProgressLabel()"></span>
           <button @click="toggleProjectReplayPlayback()" class="inline-flex h-6 w-6 items-center justify-center rounded-md border border-violet-200 bg-white/80 hover:bg-white transition" :title="replay.playing ? '暂停回放' : '继续回放'">
             <svg x-show="replay.playing" class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 6h3v12H8zM13 6h3v12h-3z"/></svg>
@@ -601,7 +409,7 @@
   <template x-if="pendingFlagReviews().length > 0">
     <div class="shrink-0 border-b border-amber-300 bg-amber-50/95 px-4 py-2 text-xs text-amber-900">
       <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <span class="text-2xs font-semibold uppercase tracking-[0.16em] text-amber-600">Flag 复核</span>
+        <span class="text-2xs font-semibold text-amber-600">Flag 复核</span>
         <span>检测到以下 Flag，项目继续探索，判定前不会结束。请判断：</span>
       </div>
       <div class="mt-1.5 space-y-1.5">
@@ -624,7 +432,7 @@
   <template x-if="pendingCompletionReview() && projectIsActive()">
     <div class="shrink-0 border-b border-sky-300 bg-sky-50 px-4 py-2 text-xs text-sky-700">
       <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <span class="text-2xs font-semibold uppercase tracking-[0.16em] text-sky-600">完成确认</span>
+        <span class="text-2xs font-semibold text-sky-600">完成确认</span>
         <span>完成校验已关闭，模型的完成声明不会自动生效。请确认目标是否已经达成。</span>
       </div>
       <div class="mt-1.5 flex flex-wrap items-start gap-2">
@@ -642,7 +450,7 @@
 
   <template x-if="projectFlag.found && projectFlag.projectId === project.project.id">
     <div class="shrink-0 flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-emerald-200 bg-emerald-50/90 px-4 py-1.5 text-xs text-emerald-800">
-      <span class="text-2xs font-semibold uppercase tracking-[0.16em] text-emerald-600">Flag</span>
+      <span class="text-2xs font-semibold text-emerald-600">Flag</span>
       <code class="max-w-full break-all rounded bg-white/80 px-1.5 py-0.5 font-mono text-xs font-semibold text-emerald-900" x-text="projectFlag.flag"></code>
       <button type="button" @click="copyProjectFlag()"
         class="rounded-md border border-emerald-200 bg-white px-2 py-0.5 text-2xs font-medium text-emerald-700 hover:bg-emerald-50 transition">复制</button>
@@ -654,7 +462,7 @@
 
   <template x-if="projectFlagSuspect()">
     <div class="shrink-0 flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-amber-200 bg-amber-50/90 px-4 py-1.5 text-xs text-amber-800">
-      <span class="text-2xs font-semibold uppercase tracking-[0.16em] text-amber-600">Flag 可疑</span>
+      <span class="text-2xs font-semibold text-amber-600">Flag 可疑</span>
       <span x-text="projectFlagSuspectLabel()"></span>
       <code class="max-w-full break-all rounded bg-white/80 px-1.5 py-0.5 font-mono text-2xs text-amber-900" x-text="projectFlagSuspectValues()"></code>
     </div>
@@ -696,7 +504,7 @@
             <div class="flex items-start gap-3">
               <span class="reason-beacon mt-1 shrink-0"></span>
               <div class="min-w-0">
-                <div class="text-2xs font-semibold uppercase tracking-[0.18em] text-sky-500">推理运行中</div>
+                <div class="text-2xs font-semibold text-sky-500">推理运行中</div>
                 <div class="mt-0.5 text-sm font-semibold text-slate-700 truncate" x-text="project.project.reason.worker"></div>
                 <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-2xs text-slate-500">
                   <span x-show="project.project.reason.trigger" x-text="`触发 ${reasonTriggerLabel(project.project.reason.trigger)}`"></span>
@@ -705,15 +513,6 @@
               </div>
             </div>
           </div>
-        </div>
-      </template>
-
-      <template x-if="project.project.reason">
-        <div class="reason-graph-scan z-[1]">
-          <span class="reason-graph-grid"></span>
-          <span class="reason-graph-ambient"></span>
-          <span class="reason-graph-scanline"></span>
-          <span class="reason-graph-sweep"></span>
         </div>
       </template>
 
@@ -767,7 +566,7 @@
     <!-- Side panel -->
     <section class="inspector-panel border-l border-slate-200/60 bg-white flex flex-col overflow-hidden shrink-0 relative z-20" aria-label="项目详情面板" :style="{ width: sidePanelWidth + 'px', minWidth: sidePanelWidth + 'px', flexBasis: sidePanelWidth + 'px' }">
       <div class="inspector-header">
-        <div><p class="eyebrow">INSPECTOR</p><h2 tabindex="-1" x-text="workspacePanelTitle()"></h2></div>
+        <div><p class="eyebrow">节点与证据</p><h2 tabindex="-1" x-text="workspacePanelTitle()"></h2></div>
         <select class="inspector-select" aria-label="切换详情面板" :value="sideTab" @change="selectSideTab($event.target.value)">
           <optgroup label="探索与决策"><option value="detail">项目详情</option><option value="hints">提示</option><option value="board">观察看板</option><option value="strategist">慢层决策</option></optgroup>
           <optgroup label="执行与溯源"><option value="runs">任务运行</option><option value="log">事件日志</option><option value="evidence">证据文件</option><option value="audit">工具审计</option><option value="proposals">图提案</option><option value="attachments">题目附件</option></optgroup>
@@ -780,7 +579,7 @@
         <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
           <div class="px-4 py-3 border-b border-slate-100 bg-slate-50/80 flex items-center justify-between gap-3">
             <div class="flex items-center gap-2">
-              <span class="text-2xs font-semibold text-slate-400 uppercase tracking-widest">授权范围</span>
+              <span class="text-2xs font-semibold text-slate-400">授权范围</span>
               <span x-show="scopePanel.loading" class="text-2xs text-slate-400">加载中…</span>
             </div>
             <button type="button" @click="openScopeEditor(selectedProjectId, project && project.project ? project.project.title : '')"
@@ -817,7 +616,7 @@
         <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden" data-project-execution-panel>
           <div class="px-4 py-3 border-b border-slate-100 bg-slate-50/80 flex items-center justify-between gap-3">
             <div class="flex items-center gap-2">
-              <span class="text-2xs font-semibold text-slate-400 uppercase tracking-widest">执行环境</span>
+              <span class="text-2xs font-semibold text-slate-400">执行环境</span>
             </div>
             <button type="button" x-show="!project?.execution?.configured_mode" @click="openSettings('runtime')"
               class="rounded-lg border border-slate-200 px-2 py-0.5 text-2xs font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition">调整默认值</button>
@@ -859,13 +658,13 @@
                 <div class="px-4 py-3 border-b border-slate-100 bg-slate-50/80">
                   <div class="flex items-center justify-between gap-3">
                     <div class="flex items-center gap-2 min-w-0">
-                      <span class="px-2 py-0.5 rounded-md text-2xs font-mono font-bold shrink-0"
+                      <span class="px-2 py-0.5 rounded-md text-2xs font-mono font-medium shrink-0"
                         :class="{
                           'bg-teal-50 text-teal-700': fact.id === 'origin',
                           'bg-rose-50 text-rose-600': fact.id === 'goal',
                           'bg-brand-50 text-brand-700': fact.id !== 'origin' && fact.id !== 'goal'
                         }" x-text="fact.id"></span>
-                      <span class="text-2xs text-slate-400 uppercase tracking-wider">事实</span>
+                      <span class="text-2xs text-slate-400">事实</span>
                     </div>
                     <button type="button" @click="removeFactSelection(fact.id)"
                       class="text-2xs text-slate-400 hover:text-slate-600 transition">移除</button>
@@ -893,13 +692,13 @@
           <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
             <div class="px-4 py-3 border-b border-slate-100 bg-slate-50/80">
               <div class="flex items-center gap-2">
-                <span class="px-2 py-0.5 rounded-md text-2xs font-mono font-bold"
+                <span class="px-2 py-0.5 rounded-md text-2xs font-mono font-medium"
                   :class="{
                     'bg-teal-50 text-teal-700': selectedFactId() === 'origin',
                     'bg-rose-50 text-rose-600': selectedFactId() === 'goal',
                     'bg-brand-50 text-brand-700': selectedFactId() !== 'origin' && selectedFactId() !== 'goal'
                   }" x-text="selectedFactId()"></span>
-                <span class="text-2xs text-slate-400 font-medium uppercase tracking-wider">事实</span>
+                <span class="text-2xs text-slate-400 font-medium">事实</span>
                 <div class="flex-1"></div>
                 <button type="button" @click="openEvidenceForFact(selectedFactId())"
                   class="rounded-lg border border-slate-200 px-2 py-0.5 text-2xs font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition">
@@ -912,13 +711,13 @@
               <div class="space-y-3 text-xs">
                 <template x-if="selectedFactId() === 'origin'">
                   <div class="pt-4 border-t border-slate-100">
-                    <p class="text-2xs font-semibold text-slate-400 uppercase tracking-widest mb-3">起点</p>
+                    <p class="text-2xs font-semibold text-slate-400 mb-3">起点</p>
                     <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">角色</span><span class="text-slate-600 text-right break-words">项目起点</span></div>
                   </div>
                 </template>
                 <template x-if="selectedFactId() === 'goal'">
                   <div class="pt-4 border-t border-slate-100 space-y-3">
-                    <p class="text-2xs font-semibold text-rose-500 uppercase tracking-widest">目标</p>
+                    <p class="text-2xs font-semibold text-rose-500">目标</p>
                     <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">角色</span><span class="text-slate-600 text-right break-words">项目目标事实</span></div>
                     <template x-if="selectedFactProducingIntent()">
                       <div class="pt-1 space-y-3">
@@ -931,7 +730,7 @@
                 </template>
                 <template x-if="selectedFactId() !== 'origin' && selectedFactId() !== 'goal' && selectedFactProducingIntent()">
                   <div class="pt-4 border-t border-slate-100 space-y-3">
-                    <p class="text-2xs font-semibold text-brand-500 uppercase tracking-widest">产出者</p>
+                    <p class="text-2xs font-semibold text-brand-500">产出者</p>
                     <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">意图</span><span class="font-mono text-slate-600 text-right break-all" x-text="selectedFactProducingIntent().id"></span></div>
                     <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">来源</span><span class="font-mono text-slate-600 text-right break-all" x-text="selectedFactProducingIntent().from.join(', ')"></span></div>
                     <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">创建者</span><span class="text-slate-600 text-right break-all" x-text="selectedFactProducingIntent().creator"></span></div>
@@ -942,7 +741,7 @@
                 <template x-if="selectedFactId() !== 'origin' && selectedFactId() !== 'goal'">
                   <div class="pt-4 border-t border-slate-100 space-y-2">
                     <div class="flex items-center justify-between gap-2">
-                      <p class="text-2xs font-semibold text-slate-400 uppercase tracking-widest">溯源</p>
+                      <p class="text-2xs font-semibold text-slate-400">溯源</p>
                       <span class="rounded-full border border-slate-200 px-1.5 py-0.5 text-2xs text-slate-400">只读</span>
                     </div>
                     <template x-if="factTrace.factId === selectedFactId() && factTrace.loading">
@@ -976,7 +775,7 @@
                 </template>
                 <template x-if="selectedFactId() !== 'origin' && selectedFactId() !== 'goal' && factTrace.factId === selectedFactId() && !factTrace.loading && !factTrace.error && ((factTrace.meta && factTrace.meta.superseded_by) || (factTrace.meta && factTrace.meta.supersedes && factTrace.meta.supersedes.length))">
                   <div class="pt-4 border-t border-slate-100 space-y-2">
-                    <p class="text-2xs font-semibold text-amber-500 uppercase tracking-widest">取代关系</p>
+                    <p class="text-2xs font-semibold text-amber-500">取代关系</p>
                     <template x-if="factTrace.meta && factTrace.meta.superseded_by">
                       <div class="flex items-start justify-between gap-3">
                         <span class="text-slate-400 shrink-0">已被取代</span>
@@ -1003,7 +802,7 @@
           <section class="rounded-2xl border border-violet-200/80 bg-white shadow-sm overflow-hidden">
             <div class="px-4 py-3 border-b border-violet-100 bg-violet-50/70">
               <div class="flex items-center gap-2">
-                <span class="px-2 py-0.5 rounded-md bg-violet-100 text-violet-700 text-2xs font-mono font-bold" x-text="selectedIntentId()"></span>
+                <span class="px-2 py-0.5 rounded-md bg-violet-100 text-violet-700 text-2xs font-mono font-medium" x-text="selectedIntentId()"></span>
                 <span class="text-2xs font-medium" :class="intentStatusClass(selectedIntentRecord())" x-text="intentStatusLabel(selectedIntentRecord())"></span>
               </div>
             </div>
@@ -1038,11 +837,44 @@
                         <p class="text-slate-500">引用通过不代表推理正确，也不会自动否定或退役来源方向。</p>
                       </div>
                     </template>
+                    <section data-exploration-progress class="border-t border-slate-100 pt-3 space-y-2">
+                      <h5 class="font-semibold text-slate-600">重复与观察进展 · 只读</h5>
+                      <p class="text-slate-500">只比较观察报告，不比较证据正文；无新增报告不等于无新 Fact、路线错误或没有复验价值。</p>
+                      <template x-if="experimentDetail().exploration">
+                        <div class="space-y-2">
+                          <p x-text="'连续未新增观察报告：' + explorationStreakLabel(experimentDetail().exploration.consecutive_without_new_observation)"></p>
+                          <p class="break-all" x-text="experimentDetail().exploration.latest ? '同计划最新任务：' + experimentDetail().exploration.latest.run_id + ' · ' + explorationStatusLabel(experimentDetail().exploration.latest.status) : '没有可归属的结束任务记录'"></p>
+                          <dl class="space-y-1">
+                            <template x-for="status in explorationStatuses()" :key="status.key">
+                              <div class="flex justify-between gap-2"><dt x-text="status.label"></dt><dd x-text="experimentDetail().exploration.counts[status.key] ?? '未知'"></dd></div>
+                            </template>
+                          </dl>
+                          <p class="text-slate-500">统计包含当前项目同计划的其它方向，不只当前意图；故障不增加计数，未知中断连续性。</p>
+                          <p class="break-all" x-text="explorationPeersLabel('同计划其它记录', experimentDetail().exploration.same_plan)"></p>
+                          <p class="break-all" x-text="explorationPeersLabel('同提案其它记录', experimentDetail().exploration.same_proposal)"></p>
+                          <details class="text-slate-500 space-y-1">
+                            <summary class="cursor-pointer">精确匹配指纹（非语义等价证明）</summary>
+                            <p class="font-mono break-all" x-text="'计划：' + (experimentDetail().exploration.plan_fingerprint || '未知：缺授权 Scope')"></p>
+                            <p class="font-mono break-all" x-text="'提案：' + (experimentDetail().exploration.proposal_fingerprint || '未知')"></p>
+                          </details>
+                        </div>
+                      </template>
+                      <p x-show="!experimentDetail().exploration" class="text-slate-400">没有可比较的探索投影；不补造历史。</p>
+                      <template x-if="experimentDetail().exploration_suppression">
+                        <div class="rounded-lg bg-slate-50 p-2 space-y-1">
+                          <p class="font-medium">读取时排序预览（不是派发授权）</p>
+                          <p class="break-words" x-text="explorationSuppressionLabel(experimentDetail().exploration_suppression)"></p>
+                          <p x-show="experimentDetail().exploration_suppression.until" x-text="'窗口到期：' + formatDate(experimentDetail().exploration_suppression.until)"></p>
+                          <p class="text-slate-500">最多软降权 20，窗口 5 分钟、不滚动续期；唯一可派发方向仍可运行。实际选择仍受用户引导、环境、预算、认领与 Scope 门禁约束；刷新后重新计算。</p>
+                        </div>
+                      </template>
+                    </section>
                     <h5 class="font-semibold text-slate-600">观察与解释</h5>
                     <p x-show="experimentDetail().attempts.length === 0" class="text-slate-400">没有已结束的尝试；缺少记录不是负结果。</p>
                     <template x-for="run in experimentDetail().attempts" :key="run.run_id">
                       <details class="rounded-lg border border-slate-200 p-2 space-y-2">
                         <summary class="cursor-pointer break-all text-slate-600" x-text="run.run_id + ' · ' + experimentRunLabel(run)"></summary>
+                        <p x-show="run.exploration" class="text-slate-500" x-text="run.exploration ? explorationStatusLabel(run.exploration.status) + ' · 截至本任务连续计数：' + explorationStreakLabel(run.exploration.consecutive_without_new_observation) + (run.exploration.reason ? ' · ' + explorationReasonLabel(run.exploration.reason) : '') : ''"></p>
                         <p x-show="!run.memory" class="text-slate-400">没有有效检查点，结果未知。</p>
                         <template x-if="run.memory">
                           <div class="space-y-2">
@@ -1166,7 +998,7 @@
               :class="timelineEntryButtonClass(entry)">
               <div class="flex flex-wrap items-center gap-2">
                 <span class="text-2xs font-medium text-slate-400 tabular-nums" x-text="formatTime(entry.timestamp)"></span>
-                <span class="px-2 py-0.5 rounded-md text-2xs font-semibold uppercase tracking-wide"
+                <span class="px-2 py-0.5 rounded-md text-2xs font-semibold"
                   :class="timelineEventBadgeClass(entry)" x-text="timelineEventBadge(entry)"></span>
                 <span class="text-2xs text-slate-300" x-text="formatTimelineDate(entry.timestamp)"></span>
               </div>
@@ -1186,8 +1018,8 @@
         <div class="flex items-start justify-between gap-3">
           <div class="min-w-0">
             <div class="flex items-center gap-1.5">
-              <span class="text-2xs font-semibold uppercase tracking-[0.16em] text-slate-400">运行</span>
-              <span class="px-1.5 py-0.5 rounded-full border border-slate-200 bg-white text-2xs font-medium uppercase tracking-wide text-slate-400">只读</span>
+              <span class="text-2xs font-semibold text-slate-400">运行</span>
+              <span class="px-1.5 py-0.5 rounded-full border border-slate-200 bg-white text-2xs font-medium text-slate-400">只读</span>
             </div>
             <p class="mt-1 text-xs text-slate-500" x-text="runsPanel.loadedFor ? `${runsPanel.items.length} 次任务尝试` : '执行器任务尝试'"></p>
           </div>
@@ -1224,7 +1056,7 @@
               <div class="min-w-0">
                 <div class="font-mono text-2xs text-slate-600 truncate" :title="run.id" x-text="run.id"></div>
                 <div class="mt-0.5 flex items-center gap-1.5 text-2xs text-slate-400 min-w-0">
-                  <span class="uppercase tracking-wide shrink-0" x-text="runKindLabel(run.kind)"></span>
+                  <span class="uppercase shrink-0" x-text="runKindLabel(run.kind)"></span>
                   <span class="shrink-0">·</span>
                   <span class="truncate" x-text="run.worker"></span>
                   <template x-if="run.worker_profile">
@@ -1233,7 +1065,7 @@
                   <span x-show="run.worker_profile" class="truncate text-brand-600" x-text="run.worker_profile"></span>
                 </div>
               </div>
-              <span class="shrink-0 rounded-full border px-2 py-0.5 text-2xs font-semibold uppercase tracking-wide"
+              <span class="shrink-0 rounded-full border px-2 py-0.5 text-2xs font-semibold"
                 :class="runOutcomeClass(run)" x-text="runOutcomeLabel(run)"></span>
             </div>
             <div class="p-3 space-y-2.5">
@@ -1284,8 +1116,8 @@
         <div class="flex items-start justify-between gap-3">
           <div class="min-w-0">
             <div class="flex items-center gap-1.5">
-              <span class="text-2xs font-semibold uppercase tracking-[0.16em] text-slate-400">慢层</span>
-              <span class="px-1.5 py-0.5 rounded-full border border-slate-200 bg-white text-2xs font-medium uppercase tracking-wide text-slate-400">只读</span>
+              <span class="text-2xs font-semibold text-slate-400">慢层</span>
+              <span class="px-1.5 py-0.5 rounded-full border border-slate-200 bg-white text-2xs font-medium text-slate-400">只读</span>
             </div>
             <p class="mt-1 text-xs text-slate-500" x-text="strategistPanel.data ? `${strategistPanel.data.intents.length} 个未结束意图 · ${strategistPanel.data.reason_runs.length} 次推理` : '触发水位、预算与推理历史'"></p>
           </div>
@@ -1322,7 +1154,7 @@
             <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
               <div class="px-3 py-2.5 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between gap-2">
                 <span class="text-2xs font-semibold text-slate-600">单项目预算</span>
-                <span class="rounded-full border px-2 py-0.5 text-2xs font-semibold uppercase tracking-wide"
+                <span class="rounded-full border px-2 py-0.5 text-2xs font-semibold"
                   :class="strategistExhaustedClass(strategistPanel.data.budget)"
                   x-text="strategistExhaustedLabel(strategistPanel.data.budget)"></span>
               </div>
@@ -1463,7 +1295,7 @@
                           <span class="shrink-0" x-text="formatDate(run.started_at)"></span>
                         </div>
                       </div>
-                      <span class="shrink-0 rounded-full border px-2 py-0.5 text-2xs font-semibold uppercase tracking-wide"
+                      <span class="shrink-0 rounded-full border px-2 py-0.5 text-2xs font-semibold"
                         :class="runOutcomeClass(run)" x-text="runOutcomeLabel(run)"></span>
                     </div>
                     <div class="grid grid-cols-3 gap-x-2 text-2xs">
@@ -1487,8 +1319,8 @@
         <div class="flex items-start justify-between gap-3">
           <div class="min-w-0">
             <div class="flex items-center gap-1.5">
-              <span class="text-2xs font-semibold uppercase tracking-[0.16em] text-slate-400">审计</span>
-              <span class="px-1.5 py-0.5 rounded-full border border-slate-200 bg-white text-2xs font-medium uppercase tracking-wide text-slate-400">只读</span>
+              <span class="text-2xs font-semibold text-slate-400">审计</span>
+              <span class="px-1.5 py-0.5 rounded-full border border-slate-200 bg-white text-2xs font-medium text-slate-400">只读</span>
             </div>
             <p class="mt-1 text-xs text-slate-500" x-text="auditPanel.loadedFor ? `${auditPanel.summaries.length} 个有账本事件的任务` : '任务账本与流式审计状态'"></p>
           </div>
@@ -1532,13 +1364,13 @@
           <div class="rounded-xl border px-3 py-2.5 text-2xs"
             :class="auditPanel.loss ? 'border-rose-200 bg-rose-50/70' : auditPanel.lossError ? 'border-amber-200 bg-amber-50/60' : 'border-teal-200 bg-teal-50/60'">
             <div class="flex items-center justify-between gap-2">
-              <span class="font-semibold uppercase tracking-wide" :class="auditPanel.loss ? 'text-rose-600' : auditPanel.lossError ? 'text-amber-600' : 'text-teal-600'">
+              <span class="font-semibold" :class="auditPanel.loss ? 'text-rose-600' : auditPanel.lossError ? 'text-amber-600' : 'text-teal-600'">
                 <span x-show="auditPanel.lossLoading">正在检查实时流</span>
                 <span x-show="!auditPanel.lossLoading && auditPanel.loss">已记录流丢失</span>
                 <span x-show="!auditPanel.lossLoading && !auditPanel.loss && auditPanel.lossLoaded">未记录流丢失</span>
                 <span x-show="auditPanel.lossError">流丢失状态不可用</span>
               </span>
-              <span x-show="auditPanel.loss" class="shrink-0 rounded-full bg-rose-100 px-1.5 py-0.5 text-2xs font-semibold uppercase text-rose-600">缺口</span>
+              <span x-show="auditPanel.loss" class="shrink-0 rounded-full bg-rose-100 px-1.5 py-0.5 text-2xs font-semibold text-rose-600">缺口</span>
             </div>
             <template x-if="auditPanel.lossError">
               <p class="mt-1.5 text-amber-700 break-words" x-text="auditPanel.lossError"></p>
@@ -1575,8 +1407,8 @@
           <div class="space-y-2">
             <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
               <div class="px-3 py-2.5 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between gap-2">
-                <span class="text-2xs font-semibold uppercase tracking-[0.16em] text-slate-400">哈希链</span>
-                <span class="shrink-0 rounded-full border px-2 py-0.5 text-2xs font-semibold uppercase tracking-wide"
+                <span class="text-2xs font-semibold text-slate-400">哈希链</span>
+                <span class="shrink-0 rounded-full border px-2 py-0.5 text-2xs font-semibold"
                   :class="auditPanel.detail.chain_ok ? 'border-teal-200 bg-teal-50 text-teal-600' : 'border-rose-200 bg-rose-50 text-rose-600'"
                   x-text="auditPanel.detail.chain_ok ? '完整' : `断点 @ ${auditPanel.detail.broken_at}`"></span>
               </div>
@@ -1586,7 +1418,7 @@
                   <div><span class="text-slate-400">任务</span><div class="font-mono text-slate-600 break-all" x-text="auditPanel.detail.task_id"></div></div>
                 </div>
                 <div>
-                  <span class="text-2xs uppercase tracking-wide text-slate-400">根哈希</span>
+                  <span class="text-2xs text-slate-400">根哈希</span>
                   <div class="mt-0.5 font-mono text-2xs text-slate-500 break-all" :title="auditPanel.detail.root_hash"
                     x-text="auditPanel.detail.root_hash ? shortHash(auditPanel.detail.root_hash, 16) : '—'"></div>
                 </div>
@@ -1606,10 +1438,10 @@
                     <span class="font-mono text-2xs text-slate-400 shrink-0" x-text="`#${row.seq}`"></span>
                     <span class="font-mono text-2xs text-slate-600 truncate" x-text="auditEventTool(row.event)"></span>
                     <span class="text-2xs text-slate-400 truncate" x-text="auditEventAction(row.event)"></span>
-                    <span x-show="auditEventKindLabel(row.event)" class="shrink-0 rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-2xs font-semibold uppercase text-amber-700"
+                    <span x-show="auditEventKindLabel(row.event)" class="shrink-0 rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-2xs font-semibold text-amber-700"
                       x-text="auditEventKindLabel(row.event)"></span>
                   </div>
-                  <span class="shrink-0 rounded-full border px-1.5 py-0.5 text-2xs font-semibold uppercase"
+                  <span class="shrink-0 rounded-full border px-1.5 py-0.5 text-2xs font-semibold"
                     :class="auditDecisionClass(row.event)" x-text="auditDecisionLabel(row.event)"></span>
                 </div>
                 <div class="px-2.5 py-2 space-y-1.5 text-2xs">
@@ -1643,8 +1475,8 @@
         <div class="flex items-start justify-between gap-3">
           <div class="min-w-0">
             <div class="flex items-center gap-1.5">
-              <span class="text-2xs font-semibold uppercase tracking-[0.16em] text-slate-400">证据</span>
-              <span class="px-1.5 py-0.5 rounded-full border border-slate-200 bg-white text-2xs font-medium uppercase tracking-wide text-slate-400">只读</span>
+              <span class="text-2xs font-semibold text-slate-400">证据</span>
+              <span class="px-1.5 py-0.5 rounded-full border border-slate-200 bg-white text-2xs font-medium text-slate-400">只读</span>
             </div>
             <p class="mt-1 text-xs text-slate-500">已记录摘要与当前工作区的对比</p>
           </div>
@@ -1679,8 +1511,8 @@
           <div class="space-y-2">
             <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
               <div class="px-3 py-2.5 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between gap-2">
-                <span class="font-mono text-2xs font-bold text-brand-700 break-all" x-text="evidencePanel.meta.fact_id"></span>
-                <span class="shrink-0 rounded-full border px-2 py-0.5 text-2xs font-semibold uppercase tracking-wide"
+                <span class="font-mono text-2xs font-medium text-brand-700 break-all" x-text="evidencePanel.meta.fact_id"></span>
+                <span class="shrink-0 rounded-full border px-2 py-0.5 text-2xs font-semibold"
                   :class="factEvidenceStatusClass(evidencePanel.meta.evidence_status)"
                   x-text="factEvidenceStatusLabel(evidencePanel.meta.evidence_status)"></span>
               </div>
@@ -1708,7 +1540,7 @@
             </section>
 
             <div class="flex items-center justify-between px-0.5">
-              <span class="text-2xs font-semibold uppercase tracking-[0.16em] text-slate-400">已验证文件</span>
+              <span class="text-2xs font-semibold text-slate-400">已验证文件</span>
               <span class="text-2xs text-slate-400 tabular-nums" x-text="evidencePanel.files.length"></span>
             </div>
 
@@ -1722,7 +1554,7 @@
               <article class="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
                 <div class="px-2.5 py-2 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between gap-2">
                   <span class="font-mono text-2xs text-slate-600 break-all" x-text="file.path"></span>
-                  <span class="shrink-0 rounded-full border px-1.5 py-0.5 text-2xs font-semibold uppercase"
+                  <span class="shrink-0 rounded-full border px-1.5 py-0.5 text-2xs font-semibold"
                     :class="evidenceFileStatusClass(file.status)" x-text="evidenceFileStatusLabel(file.status)"></span>
                 </div>
                 <div class="px-2.5 py-2 space-y-1.5 text-2xs">
@@ -1731,7 +1563,7 @@
                     <div><span class="text-slate-400">当前大小</span><div class="text-slate-600" x-text="file.current_size === null ? '—' : formatBytes(file.current_size)"></div></div>
                   </div>
                   <div>
-                    <span class="text-2xs uppercase tracking-wide text-slate-400">SHA-256</span>
+                    <span class="text-2xs text-slate-400">SHA-256</span>
                     <div class="font-mono text-2xs text-slate-500 break-all" :title="file.sha256" x-text="shortHash(file.sha256, 16)"></div>
                     <template x-if="file.current_sha256 && file.current_sha256 !== file.sha256">
                       <div class="mt-1 font-mono text-2xs text-rose-500 break-all" :title="file.current_sha256" x-text="`当前 ${shortHash(file.current_sha256, 16)}`"></div>
@@ -1750,8 +1582,8 @@
         <div class="flex items-start justify-between gap-3">
           <div class="min-w-0">
             <div class="flex items-center gap-1.5">
-              <span class="text-2xs font-semibold uppercase tracking-[0.16em] text-slate-400">提案</span>
-              <span class="px-1.5 py-0.5 rounded-full border border-slate-200 bg-white text-2xs font-medium uppercase tracking-wide text-slate-400">只读</span>
+              <span class="text-2xs font-semibold text-slate-400">提案</span>
+              <span class="px-1.5 py-0.5 rounded-full border border-slate-200 bg-white text-2xs font-medium text-slate-400">只读</span>
             </div>
             <p class="mt-1 text-xs text-slate-500" x-text="proposalsPanel.loadedFor ? `${proposalsPanel.items.length} 条候选变更` : 'Observer 候选与审核结果'"></p>
           </div>
@@ -1787,13 +1619,13 @@
             <div class="px-3 py-2.5 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between gap-2">
               <div class="min-w-0">
                 <div class="flex items-center gap-1.5">
-                  <span class="shrink-0 rounded-md px-1.5 py-0.5 text-2xs font-semibold uppercase tracking-wide"
+                  <span class="shrink-0 rounded-md px-1.5 py-0.5 text-2xs font-semibold"
                     :class="proposalKindClass(proposal.kind)" x-text="proposalKindLabel(proposal.kind)"></span>
                   <span class="font-mono text-2xs text-slate-400 truncate" :title="proposal.id" x-text="proposal.id"></span>
                 </div>
                 <p class="mt-1 text-2xs text-slate-600 leading-relaxed break-words" x-text="proposalSummary(proposal)"></p>
               </div>
-              <span class="shrink-0 rounded-full border px-2 py-0.5 text-2xs font-semibold uppercase tracking-wide"
+              <span class="shrink-0 rounded-full border px-2 py-0.5 text-2xs font-semibold"
                 :class="proposalStatusClass(proposal.status)" x-text="proposalStatusLabel(proposal.status)"></span>
             </div>
             <div class="p-3 space-y-2 text-2xs">
@@ -1856,8 +1688,8 @@
         <div class="flex items-start justify-between gap-3">
           <div class="min-w-0">
             <div class="flex items-center gap-1.5">
-              <span class="text-2xs font-semibold uppercase tracking-[0.16em] text-slate-400">看板</span>
-              <span class="px-1.5 py-0.5 rounded-full border border-slate-200 bg-white text-2xs font-medium uppercase tracking-wide text-slate-400">只读</span>
+              <span class="text-2xs font-semibold text-slate-400">看板</span>
+              <span class="px-1.5 py-0.5 rounded-full border border-slate-200 bg-white text-2xs font-medium text-slate-400">只读</span>
             </div>
             <p class="mt-1 text-xs text-slate-500" x-text="boardSummaryText()"></p>
           </div>
@@ -1892,7 +1724,7 @@
           <div class="space-y-3">
             <section class="space-y-2">
               <div class="flex items-center justify-between px-0.5">
-                <span class="text-2xs font-semibold uppercase tracking-[0.16em] text-slate-400">想法</span>
+                <span class="text-2xs font-semibold text-slate-400">想法</span>
                 <span class="text-2xs text-slate-400 tabular-nums" x-text="boardCountText(boardPanel.data.ideas.length, boardPanel.data.ideas_total)"></span>
               </div>
               <template x-if="boardPanel.data.ideas.length === 0">
@@ -1920,7 +1752,7 @@
 
             <section class="space-y-2">
               <div class="flex items-center justify-between px-0.5">
-                <span class="text-2xs font-semibold uppercase tracking-[0.16em] text-slate-400">记忆</span>
+                <span class="text-2xs font-semibold text-slate-400">记忆</span>
                 <span class="text-2xs text-slate-400 tabular-nums" x-text="boardCountText(boardPanel.data.memory.length, boardPanel.data.memory_total)"></span>
               </div>
               <template x-if="boardPanel.data.memory.length === 0">
@@ -1961,8 +1793,8 @@
         <div class="flex items-start justify-between gap-3">
           <div class="min-w-0">
             <div class="flex items-center gap-1.5">
-              <span class="text-2xs font-semibold uppercase tracking-[0.16em] text-slate-400">成本</span>
-              <span class="px-1.5 py-0.5 rounded-full border border-slate-200 bg-white text-2xs font-medium uppercase tracking-wide text-slate-400">只读</span>
+              <span class="text-2xs font-semibold text-slate-400">成本</span>
+              <span class="px-1.5 py-0.5 rounded-full border border-slate-200 bg-white text-2xs font-medium text-slate-400">只读</span>
             </div>
             <p class="mt-1 text-xs text-slate-500"
               x-text="costPanel.data ? `${formatNumber(costPanel.data.totals.tokens)} Token · ${strategistCostText(costPanel.data.totals.cost_usd)} · ${costPanel.data.totals.runs} 次运行` : '用量归因与因果链'"></p>
@@ -1999,7 +1831,7 @@
             <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
               <div class="px-3 py-2.5 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between gap-2">
                 <span class="text-2xs font-semibold text-slate-600">项目总用量</span>
-                <span class="rounded-full border px-2 py-0.5 text-2xs font-semibold uppercase tracking-wide"
+                <span class="rounded-full border px-2 py-0.5 text-2xs font-semibold"
                   :class="costPanel.data.attribution.complete ? 'border-teal-200 bg-teal-50 text-teal-700' : 'border-amber-200 bg-amber-50 text-amber-600'"
                   x-text="costPanel.data.attribution.complete ? '全部归因' : '存在未归因'"></span>
               </div>
@@ -2171,8 +2003,8 @@
         <div class="flex items-start justify-between gap-3">
           <div class="min-w-0">
             <div class="flex items-center gap-1.5">
-              <span class="text-2xs font-semibold uppercase tracking-[0.16em] text-slate-400">统计</span>
-              <span class="px-1.5 py-0.5 rounded-full border border-slate-200 bg-white text-2xs font-medium uppercase tracking-wide text-slate-400">只读</span>
+              <span class="text-2xs font-semibold text-slate-400">统计</span>
+              <span class="px-1.5 py-0.5 rounded-full border border-slate-200 bg-white text-2xs font-medium text-slate-400">只读</span>
             </div>
             <p class="mt-1 text-xs text-slate-500"
               x-text="statsPanel.data ? `${statsPanel.data.totals.runs} 次运行 · 成功 ${statsPanel.data.totals.succeeded} / 结束 ${statsPanel.data.totals.finished}` : 'Worker、模型与 Profile 表现'"></p>
@@ -2302,8 +2134,8 @@
         <div class="flex items-start justify-between gap-3">
           <div class="min-w-0">
             <div class="flex items-center gap-1.5">
-              <span class="text-2xs font-semibold uppercase tracking-[0.16em] text-slate-400">报告</span>
-              <span class="px-1.5 py-0.5 rounded-full border border-slate-200 bg-white text-2xs font-medium uppercase tracking-wide text-slate-400">只读</span>
+              <span class="text-2xs font-semibold text-slate-400">报告</span>
+              <span class="px-1.5 py-0.5 rounded-full border border-slate-200 bg-white text-2xs font-medium text-slate-400">只读</span>
             </div>
             <p class="mt-1 text-xs text-slate-500"
               x-text="reportPanel.data ? `生成于 ${formatTime(reportPanel.data.generated_at)} · ${reportPanel.data.project.status}` : '完成度、取代关系与用量快照'"></p>
@@ -2471,7 +2303,7 @@
       <div x-show="sideTab === 'writeup'" class="flex-1 overflow-y-auto p-3 space-y-3 bg-slate-50/30">
         <div class="space-y-2">
           <div class="flex flex-wrap items-center gap-x-1.5 gap-y-1">
-            <span class="text-2xs font-semibold uppercase tracking-[0.16em] text-slate-400">Writeup</span>
+            <span class="text-2xs font-semibold text-slate-400">Writeup</span>
             <span class="px-1.5 py-0.5 rounded-full border text-2xs font-medium"
               :class="writeupPanel.data && writeupPanel.data.source === 'model' ? 'border-brand-200 bg-brand-50 text-brand-600' : 'border-slate-200 bg-white text-slate-400'"
               x-text="writeupPanel.data && writeupPanel.data.source === 'model' ? '模型撰写' : '中文草稿'"></span>
@@ -2542,7 +2374,7 @@
       <div x-show="sideTab === 'attachments'" class="flex-1 overflow-y-auto p-3 space-y-3 bg-slate-50/30">
         <div class="space-y-2">
           <div class="flex flex-wrap items-center gap-x-1.5 gap-y-1">
-            <span class="text-2xs font-semibold uppercase tracking-[0.16em] text-slate-400">Attachments</span>
+            <span class="text-2xs font-semibold text-slate-400">Attachments</span>
             <span class="px-1.5 py-0.5 rounded-full border text-2xs font-medium"
               :class="attachmentsPanel.available ? 'border-slate-200 bg-white text-slate-400' : 'border-amber-200 bg-amber-50 text-amber-600'"
               x-text="attachmentWorkspaceLabel()"></span>
@@ -2662,7 +2494,7 @@
       </div>
       <div class="form-full form-section">
         <div class="flex items-center justify-between mb-1">
-          <label for="newProjectTargets" class="text-2xs text-slate-400 font-medium uppercase tracking-wider">授权范围 <span class="text-rose-500">*</span></label>
+          <label for="newProjectTargets" class="text-2xs text-slate-400 font-medium">授权范围 <span class="text-rose-500">*</span></label>
           <span class="text-2xs text-slate-300">每行一个目标</span>
         </div>
         <textarea id="newProjectTargets" x-ref="newProjectTargets" x-model="newProject.targetsText" rows="3" placeholder="127.0.0.1:8080&#10;https://lab.example" aria-label="授权目标"
@@ -2674,7 +2506,7 @@
       </div>
       <div>
         <div class="flex items-center justify-between mb-1">
-          <label for="new-project-execution" class="text-2xs text-slate-400 font-medium uppercase tracking-wider">执行环境</label>
+          <label for="new-project-execution" class="text-2xs text-slate-400 font-medium">执行环境</label>
           <span class="text-2xs text-slate-300">按题目设置</span>
         </div>
         <select id="new-project-execution" x-model="newProject.execution" aria-label="执行环境"
@@ -2687,7 +2519,7 @@
       </div>
       <div>
         <div class="flex items-center justify-between mb-1">
-          <label for="newProjectVerification" class="text-2xs text-slate-400 font-medium uppercase tracking-wider">完成校验</label>
+          <label for="newProjectVerification" class="text-2xs text-slate-400 font-medium">完成校验</label>
           <span class="text-2xs text-slate-300">创建后固定</span>
         </div>
         <select id="newProjectVerification" x-model="newProject.verificationKind" aria-label="完成校验"
@@ -2721,7 +2553,7 @@
       </div>
       <div>
         <div class="flex items-center justify-between mb-1">
-          <label class="text-2xs text-slate-400 font-medium uppercase tracking-wider">题目附件</label>
+          <label class="text-2xs text-slate-400 font-medium">题目附件</label>
           <span class="text-2xs text-slate-300">可选，创建后上传</span>
         </div>
         <label class="h-8 rounded-lg border border-dashed px-3 text-2xs font-medium inline-flex items-center gap-1.5 transition"
@@ -2747,7 +2579,7 @@
 
       <div class="form-full form-section">
         <div class="flex items-center justify-between mb-2">
-          <span class="text-2xs text-slate-400 font-medium uppercase tracking-wider">提示（可选）</span>
+          <span class="text-2xs text-slate-400 font-medium">提示（可选）</span>
           <button type="button" @click="newProject.hints.push({ content: '' })" class="text-2xs text-brand-500 hover:text-brand-600 font-medium">+ 添加</button>
         </div>
         <template x-for="(hint, idx) in newProject.hints" :key="idx">
@@ -2776,7 +2608,7 @@
     <div class="space-y-3">
       <div>
         <div class="flex items-center justify-between mb-1">
-          <label class="text-2xs text-slate-400 font-medium uppercase tracking-wider">目标 <span class="text-rose-500">*</span></label>
+          <label class="text-2xs text-slate-400 font-medium">目标 <span class="text-rose-500">*</span></label>
           <span class="text-2xs text-slate-300">每行一个目标</span>
         </div>
         <textarea x-model="scopeForm.targetsText" @input="scopeFormError = ''" data-autofocus rows="4" placeholder="127.0.0.1:8080&#10;https://lab.example" aria-label="授权目标"
@@ -3509,7 +3341,7 @@
     </div>
     <div class="flex-1 min-h-0 grid grid-cols-[minmax(170px,230px)_1fr]">
       <div class="border-r border-slate-200/80 bg-slate-50/60 overflow-auto p-3 space-y-0.5">
-        <p class="text-2xs uppercase tracking-wide text-slate-400 px-2 pb-1">文件</p>
+        <p class="text-2xs text-slate-400 px-2 pb-1">文件</p>
         <p x-show="skillDetail.loading" class="px-2 text-2xs text-slate-400">加载中…</p>
         <p x-show="skillDetail.error" class="px-2 text-2xs text-rose-600 break-words" x-text="skillDetail.error"></p>
         <template x-for="row in skillDetailTree()" :key="row.type + ':' + row.path">
@@ -6709,7 +6541,7 @@ function cairnApp() {
     },
 
     graphStyles() {
-      const common = { 'text-valign':'center','text-halign':'center','font-family':'-apple-system,BlinkMacSystemFont,Inter,sans-serif' };
+      const common = { 'text-valign':'center','text-halign':'center','font-family':'Segoe UI,Microsoft YaHei UI,Microsoft YaHei,PingFang SC,sans-serif' };
       return [
         { selector: 'node[nodeType="origin"]', style: { ...common, shape:'round-rectangle','background-color':'#14b8a6',label:'data(label)',color:'#fff','font-size':'11px','font-weight':'bold','text-wrap':'wrap','text-max-width':'92px','text-overflow-wrap':'anywhere',width:'data(width)',height:'data(height)','border-width':0 }},
         { selector: 'node[nodeType="goal"]', style: { ...common, shape:'round-rectangle','background-color':'#f43f5e',label:'data(label)',color:'#fff','font-size':'11px','font-weight':'bold','text-wrap':'wrap','text-max-width':'92px','text-overflow-wrap':'anywhere',width:'data(width)',height:'data(height)','border-width':0 }},
@@ -7392,6 +7224,44 @@ function cairnApp() {
 
     experimentChoiceLabel(choice) {
       return ({ continue: '继续验证', change_direction: '调整方向', need_observation: '需要新观察' })[choice] || '未知决策';
+    },
+
+    explorationStatuses() {
+      return [{ key: 'new_observation', label: '新增观察报告' }, { key: 'repeated_observation', label: '重复观察报告' },
+        { key: 'interpretation_only', label: '仅有解释' }, { key: 'no_observation', label: '无观察报告' },
+        { key: 'operationally_incomplete', label: '运行不完整（不增计数）' }, { key: 'unknown', label: '未知（中断连续性）' }];
+    },
+
+    explorationStatusLabel(status) {
+      return this.explorationStatuses().find(item => item.key === status)?.label || '未知状态';
+    },
+
+    explorationStreakLabel(value) {
+      return Number.isSafeInteger(value) && value >= 0 ? String(value) : '未知';
+    },
+
+    explorationPeersLabel(label, peers) {
+      if (!peers) return label + '：未知';
+      return label + '：' + peers.count + '；' + (peers.intent_ids.length ? peers.intent_ids.join('、') : '无已列出 ID') +
+        (peers.omitted ? '；另省略 ' + peers.omitted : '');
+    },
+
+    explorationReasonLabel(reason) {
+      return ({ run_not_normally_successful: '任务未正常成功结束', completion_time_unknown: '结束时间未知',
+        checkpoint_missing: '缺少检查点', termination_unknown: '终止原因未知', checkpoint_identity_mismatch: '检查点身份或版本不匹配',
+        checkpoint_reports_operational_error: '检查点报告工具或环境错误', dispatch_plan_missing: '缺少派发时计划绑定',
+        dispatch_plan_changed: '计划已变化', scope_changed_or_unknown: 'Scope 已变化或未知', fact_changed_or_missing: '事实已变化或缺失',
+        observation_inconclusive: '观察报告不确定', observation_evidence_unavailable: '证据引用未提供或不可用',
+        disabled: '未启用软抑制', progress_time_unknown: '进展时间未知', project_or_operator_gate: '项目状态或用户引导优先',
+        not_unclaimed_open: '不是未认领的开放方向', plan_unknown: '计划不可比较', history_time_unknown: '历史时间不可比较',
+        latest_not_comparable: '最新任务为故障或未知', below_threshold_or_new_input: '未达阈值或已有新输入', history_missing: '缺少可比较历史',
+        repeated_reports_window: '连续未新增报告的有界窗口', window_expired: '窗口已到期，不滚动续期' })[reason] || '未知原因';
+    },
+
+    explorationSuppressionLabel(decision) {
+      const priority = '基础优先级 ' + decision.base_priority + ' → 排序优先级 ' + decision.effective_priority;
+      return (decision.state === 'reduced' ? '软降权 ' + decision.penalty : decision.mode === 'off' ? '软抑制关闭' : '本次不降权') +
+        '；' + priority + '；' + this.explorationReasonLabel(decision.reason);
     },
 
     experimentRunLabel(run) {

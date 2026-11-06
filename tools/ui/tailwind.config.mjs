@@ -9,7 +9,7 @@ export default {
   content: [`${staticDir}index.html`],
   theme: {
     fontFamily: {
-      sans: ["-apple-system", "BlinkMacSystemFont", "Inter", "Segoe UI", "sans-serif"],
+      sans: ["Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "-apple-system", "BlinkMacSystemFont", "sans-serif"],
       mono: ["ui-monospace", "SFMono-Regular", "Menlo", "Monaco", "Consolas", "Liberation Mono", "monospace"],
     },
     extend: {

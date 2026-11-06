@@ -451,6 +451,7 @@ export { emitScalar, map, renderYaml, type YamlMap, type YamlValue } from "./yam
 export { buildTaskContextSnapshot, type TaskContextSnapshot, type SnapshotFact, type SnapshotIntent, type SnapshotAttempt } from "./context-snapshot";
 
 export { projectIntentExperiment } from "./experiment-view";
+export { buildExplorationSuppression, EXPLORATION_SOFT_LIMITS, type ExplorationSuppression, type ExplorationRunTime } from "./exploration-suppression";
 export { explorationPlanFingerprint, projectExploration, type ExplorationStatus,
   type ExplorationSummary, type ExplorationProgress } from "./exploration";
 export { buildExperimentReviewBasis, experimentReviewError, type ExperimentReviewBasis } from "./experiment-reviews";

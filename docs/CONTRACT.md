@@ -328,4 +328,23 @@ new/repeated 数量及截至该 run 的 `consecutive_without_new_observation`。
 按结束时间排序（同时间按 started_at/run_id）；不可排序历史保守置后并中断连续性。新观察把连续计数置 0；
 重复/仅解释/空观察加 1；unknown 置 null，故障保留原值而不增加。计数不是全局“无进展”判决，不覆盖
 新增 Fact、目标进展或复验价值。完整记录沿用 M48 整条预算/授权恢复；off/shadow/fallback 无新必读历史。
-不新增写接口、表或自动抑制，不改变 Scope、优先级、重试及完成门禁。
+a/b 本身不新增写接口、表或自动抑制，不改变 Scope、优先级、重试及完成门禁。
+
+### 9.3 M52c/d：独立可选排序偏好与只读预览
+
+worker 及 reason 输出协议不变。`tasks.exploration_suppression.enabled` 是控制面运行配置，默认 false，
+不是 worker 可提交的指令。a/b 投影仍为 observe_only/unknown；即使启用 c，也不允许写入 refuted verdict。
+
+既有 `GET /projects/{project_id}/intents/{intent_id}/experiment` 顶层增加 `exploration_suppression`：
+
+- `version:1`、`mode:off|soft`、`state:off|inactive|reduced`、机器可读 `reason`。
+- `base_priority`、`effective_priority`、`penalty`：本次排序预览，不修改意图元数据。
+- `window_started_at`、`until`（未建立窗口为 null）、`evaluated_at`（无合法时钟为 null），ISO 时间。
+- `limits:{threshold:3,max_penalty:20,window_seconds:300}`：固定上限，不可由 worker 或配置放大。
+- `semantics:priority_preview_not_dispatch_authorization`：非 claim、执行授权或派发承诺。读取后配置、输入、
+  候选或时间变化会使实际选择不同；环境、用户引导、预算、claim、Scope 与完成门禁仍独立生效。
+
+新观察/unknown、新 Fact/Hint 重置资格；故障不推进，最新故障/unknown 免责。窗口从首个阈值完成时刻
+开始、同一连续段不滚动续期，唯一候选仍可执行；完整保守复核边界见 DESIGN §20.4。
+API 与 scheduler 共用派生纯函数，无写操作、新端点、持久化窗口或额外模型判断调用。
+UI 使用 x-text，明确区分 null 与 0，显示原因、peer 省略数、到期与刷新语义，不提供状态写入控件。

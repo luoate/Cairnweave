@@ -1,11 +1,11 @@
 # 里程碑与验证记录
 
-本文件保留至 M52a/b 的实现记录、测试与浏览器验证清单、与 Python Cairn 的已知差异、
+本文件保留至 M52a–d 的实现记录、测试与浏览器验证清单、与 Python Cairn 的已知差异、
 里程碑表以及与 Phase 0 的关系。产品概览、快速开始与 API 概览见 [README](../README.md)。
 
 ## 实现记录
 
-最新代码：**M50 已收束；M51a–d 与 M52a/b 已实现（0.76.0-m52ab），不含 M52c/d**。
+最新代码：**M50 已收束；M51a–d 与 M52a–d 已实现（0.77.0-m52），M52c 排序偏好默认关闭**。
 最终验收见文末对应记录；以下段落保留各历史阶段当时的状态，不代表当前版本止于 M40。
 
 状态：**M40（完成契约安全门：bootstrap 支持 fact-only；`verification: off` 的完成声明默认进入 `completion_reviews` 人工确认，不再自动关项目；执行模式按题选择记为 M39b）**；M0–M4、M5a–M5c、
@@ -1645,6 +1645,22 @@ M47 八场景 audit/off 兼容性均为 true；M48 八场景中 6 applied、**13
 新增 **15 项测试**，覆盖规范化/来源指纹、peer 上限、观察与解释分类、故障排除、未知间隔、当前事实复核、结束顺序及平局、最后有效版本/单 run 去重、数据库重开与只读/项目隔离；已有 API 与 M48 交付/恢复/预算回退测试同时扩充。最终 `bun run check`（TypeScript + 全量测试）：**1408 pass / 0 fail / 135 files / 6996 expects**，246.97s。CSS 产物一致性、CLI/根包/应用/lock 版本 `0.76.0-m52ab` 与 `git diff --check` 通过。
 
 离线复验：M51 来源评估 **19/19**，unsafe_acceptances **0**、verdict_changes **0**；M47 八场景兼容；M48 六场景 applied、**1370/1370** 授权记录完整恢复，图切片 no_benefit 回退、conclude not_applicable；M42 hardened 错误完成 **0/5**（legacy **2/5**）。评估均为确定性夹具、0 真实模型调用，不证明实际停滞减少、探索成功率或费用收益。报告保存在 ignored runs/m52ab-*，未重启实际服务、未恢复项目、未运行真实模型/Docker gate 或浏览器视觉验收。边界见 DESIGN §20、CONTRACT §9.2、CONFIG 与 OPERATIONS。
+
+### M52c / M52d：有界软偏好与只读进展展示/评估
+
+版本 `0.77.0-m52`，2026-11-06；在已完成 a/b 上实现 c/d。
+
+- **M52c**：`tasks.exploration_suppression.enabled` 默认 false，严格只接受 enabled 布尔键；支持运行配置热覆盖、持久化重放和 reset。连续 3 次可比较任务未新增观察报告后，首次跨阈值起 300 秒内最多软降权 20（不低于 0）。同计划方向共享历史，更多重复/改名不滚动续期，到期恢复基础排序。只改变本次 explore 候选 effective priority，不写回 priority、不排除候选，唯一方向仍派发。
+- 新报告/unknown 重置资格；故障不推进，最新故障/unknown 免责。新非 origin/goal Fact 或任意 Hint 独立重置资格，只累计其创建时间之后开始的可比较任务；不改写 a/b 报告计数。未知/非法/未来运行时间及当前计划/Scope/事实/证据不可比较时保守不降权；不是全局目标停滞判决。
+- 既有环境门、pending conclude、reason/用户引导、预算及 claim/Scope 复查保持不变，历史读取异常回基础优先级。不新增自动 reason、重试、放弃/退役/重开/完成或持久化计数器，不把观察计数升级为反证。控制面读取已有有效历史不强制当前采集或 M48；模型交付仍受 M48 apply/字节预算/授权恢复约束。
+- **M52d**：既有只读 experiment GET 增加共享纯函数计算的 exploration_suppression，明确 priority_preview_not_dispatch_authorization。意图详情显示六类计数、连续次数（0/未知分开）、同计划最新 run、peer 与省略数、指纹、逐 run 未知/异常原因和软偏好原因/到期。文本只用 x-text，沿用过期请求保护与手动刷新；无新写路由、worker 协议或模型调用。
+- 新增 `bun run eval:exploration --out runs/exploration-eval.json`：**17/17** 场景匹配，unsafe_reductions **0**、mutations **0**、verdict_changes **0**，独立数据库重复评估字节一致。固定夹具只测边界，不证明真实停滞减少、成功率、科学信息增益或费用收益。
+
+验收覆盖真实 Scheduler + 离线 worker 的默认排序/显式偏好/唯一候选/到期恢复/证据缺失/环境门/用户引导，API 热启停与过期预览、新输入后重新累计、故障/unknown、只读和数据库重开。新增 **21 项测试**；最终 `bun run check`（TypeScript + 全量测试）：**1429 pass / 0 fail / 138 files / 7111 expects**，258.52s。`git diff --check` 通过。
+
+兼容性离线复验：M51 **19/19**，unsafe_acceptances **0**、verdict_changes **0**；M47 八场景兼容；M48 六场景 applied、**1370/1370** 记录可完整恢复，graph_slice no_benefit 回退、conclude not_applicable；M42 hardened 错误完成 **0/5**（legacy **2/5**）。0 真实模型调用，completion token/cost 为 fixture 数值，不是真实账单。CSS 产物一致性、CLI 版本 `0.77.0-m52` 通过；报告存放 ignored runs/m52-*。
+
+未开启真实部署软抑制开关、未重启现有服务、未恢复真实项目、未运行真实模型/Docker gate 或浏览器视觉验收；本阶段代码尚未提交/推送。边界见 DESIGN §20.4–20.5、CONTRACT §9.3、CONFIG 与 OPERATIONS。
 
 ## 与 Phase 0 的关系
 

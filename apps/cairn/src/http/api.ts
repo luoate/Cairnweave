@@ -1,5 +1,5 @@
 import { DEFAULT_INTENT_PRIORITY } from "@cairn/contracts";
-import { getInfrastructureFault, resetInfrastructureFault, buildTaskContextSnapshot, projectIntentExperiment } from "@cairn/graph";
+import { getInfrastructureFault, resetInfrastructureFault, buildTaskContextSnapshot, projectIntentExperiment, buildExplorationSuppression } from "@cairn/graph";
 import { checkpointEvidenceStatus } from "../scheduler/checkpoint";
 import { attachRunDiagnostics, latestRunDiagnostic } from "./run-diagnostics";
 import {
@@ -1392,7 +1392,11 @@ function buildRoutes(
       ...(scope === null ? {} : { scopeTargets: scope.targets }),
       ...(workspace === undefined ? {} : { evidenceStatus: (ref: string) => checkpointEvidenceStatus(workspace, ref) }),
     } });
-    return json(projectIntentExperiment(snapshot, intentId, listProjectIntentMeta(conn, projectId)));
+    const suppression = buildExplorationSuppression(snapshot, listProjectRuns(conn, projectId), {
+      enabled: runtimeConfig?.config.tasks.explorationSuppression.enabled ?? false, now: new Date(),
+    }).get(intentId);
+    return json({ ...projectIntentExperiment(snapshot, intentId, listProjectIntentMeta(conn, projectId)),
+      exploration_suppression: suppression });
   }));
 
   // Read-only sidecar view for the UI; the graph intent list stays unchanged.

@@ -445,6 +445,22 @@ describe("M48 ContextPack hot overrides", () => {
   });
 });
 
+describe("M52c soft preference overrides", () => {
+  test("is default-off, validates a strict enable flag, and persists/replays/resets", () => {
+    const store = newStore();
+    expect(config.tasks.explorationSuppression).toEqual({ enabled: false });
+    expect(store.view().editable.tasks.exploration_suppression).toEqual({ enabled: false });
+    store.apply({ tasks: { exploration_suppression: { enabled: true } } });
+    expect(config.tasks.explorationSuppression.enabled).toBe(true);
+    const fresh = parseDispatchConfig(source()); newStore({ config: fresh });
+    expect(fresh.tasks.explorationSuppression.enabled).toBe(true);
+    expect(() => store.apply({ tasks: { exploration_suppression: { enabled: "yes" } } })).toThrow();
+    expect(() => store.apply({ tasks: { exploration_suppression: { max_penalty: 1000 } } })).toThrow("unsupported key");
+    expect(config.tasks.explorationSuppression.enabled).toBe(true);
+    expect(store.reset().editable.tasks.exploration_suppression.enabled).toBe(false);
+  });
+});
+
 describe("M49 checkpoint hot overrides", () => {
   test("validates, persists, replays and resets collection settings", () => {
     const store = newStore();

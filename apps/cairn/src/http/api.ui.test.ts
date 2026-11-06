@@ -47,6 +47,47 @@ describe("static operations UI", () => {
     expect(favicon.status).toBe(200);
   });
 
+  test("serves the light workspace with explicit Chinese sans fallbacks and readable metadata", async () => {
+    const response = await api.handle(new Request("http://cairn.test/static/app.css"));
+    expect(response.status).toBe(200);
+    const css = await response.text();
+    expect(css).toContain("Microsoft YaHei UI");
+    expect(css).toContain("PingFang SC");
+    expect(css).toContain("font-variant-numeric:tabular-nums");
+    expect(css).toContain(".workspace-view .text-2xs");
+    expect(css).toContain("prefers-reduced-motion");
+    expect(css).toContain("forced-colors");
+  });
+
+  test("keeps exploration chrome quiet without removing running status or loading feedback", () => {
+    const html = readFileSync(INDEX_PATH, "utf8");
+    const css = readFileSync(join(STATIC_DIR, "app.css"), "utf8");
+    expect(html).not.toMatch(/reason(?:ChipGlow|GraphSweep|GraphScanline|FramePulse|AmbientPulse)/);
+    expect(html).not.toContain("reason-graph-scan");
+    expect(html).not.toContain("hover:-translate-y");
+    expect(html).toContain("推理运行中");
+    expect(html).toContain("reasonBadgeText(p.reason, true)");
+    expect(html).toContain("workingIntentBadgeText(p.working_intent_count)");
+    expect(html).toContain("'animate-spin': isLoadingProjects");
+    expect(css).toContain(".title-action-trigger:focus-within .title-action-button");
+    expect(css).toContain(":focus-visible");
+  });
+
+  test("uses consistent hidden-from-AT navigation icons while retaining every panel and keyboard shortcut", () => {
+    const html = readFileSync(INDEX_PATH, "utf8");
+    expect(html).not.toMatch(/<span class="nav-glyph">/);
+    const icons = html.match(/<svg class="nav-glyph" aria-hidden="true"/g) ?? [];
+    expect(icons).toHaveLength(14);
+    for (const tab of ["detail", "hints", "board", "strategist", "runs", "log", "evidence", "audit", "proposals", "attachments", "cost", "stats", "report", "writeup"]) {
+      expect(html).toContain(`selectSideTab('${tab}')`);
+    }
+    expect(html).toContain("<kbd>/</kbd> 搜索");
+    expect(html).toContain("aria-label=\"切换工作区导航\"");
+    expect(html).toContain("aria-label=\"切换详情面板\"");
+    expect(html).toContain("setWorkspacePane('graph')");
+    expect(html).toContain("setWorkspacePane('panel')");
+  });
+
   test("explains operator guidance priority and shows truthful planning status", () => {
     const html = readFileSync(INDEX_PATH, "utf8");
     expect(html).toContain("data-operator-guidance");
