@@ -14,6 +14,7 @@ import type { CairnObserverHandle } from "./extension/cairn-observer/types"
 import { pentestCompactionExtension } from "./extension/pentest-compaction"
 import { scopeGuardExtension } from "./extension/scope-guard"
 import { largeToolResultExtension } from "./extension/large-tool-result"
+import { modelTraceExtension } from "./extension/model-trace"
 import { rtkRewriteExtension } from "./extension/rtk-rewrite"
 
 export interface SolverSession {
@@ -55,6 +56,10 @@ export interface SubagentStartupSnapshot {
  * A per-task decision therefore edits the resolved model: `off` aliases every level to the
  * provider's "none", `on` drops those aliases so the pref's own level reaches the provider.
  * Token-budget providers (Anthropic-style) express "off" by not sending a level at all.
+ *
+ * A pref that explicitly marks `supportsReasoningEffort: false` means the endpoint rejects the
+ * parameter; forcing it on would fail every task on such a gateway, so that opt-out wins and
+ * the switch simply cannot silence reasoning there.
  */
 const REASONING_OFF_EFFORT: Record<string, string> = {
     minimal: "none",
@@ -77,7 +82,13 @@ export function applyReasoningMode(
         return rest
     }
     const compat = { ...((model.compat ?? {}) as Record<string, unknown>) }
-    compat.supportsReasoningEffort = true
+    if (compat.supportsReasoningEffort !== false) compat.supportsReasoningEffort = true
+    // pi-ai sends the system message as OpenAI's `developer` role whenever the model reasons
+    // and compat allows it. Its URL heuristic treats almost every custom gateway as a
+    // first-party OpenAI endpoint, and gateways that only know `system` answer 422
+    // ("unknown variant `developer`"). Reasoning must not change the message roles, so the
+    // role is opt-in per model pref rather than inherited from detection.
+    if (compat.supportsDeveloperRole !== true) compat.supportsDeveloperRole = false
     const map = { ...((compat.reasoningEffortMap ?? {}) as Record<string, string>) }
     if (mode === "on") {
         // A pref configured to silence the provider must not drag a reasoning task with it.
@@ -120,6 +131,39 @@ function toolSpillExtensions(workspaceDir: string): ExtensionFactory[] {
     const spill = readToolSpillFromEnv()
     if (!spill.enabled) return []
     return [largeToolResultExtension({ workspaceRoot: workspaceDir, maxInlineChars: spill.maxInlineChars })]
+}
+
+/** Mirrors `DEFAULT_MODEL_TRACE` in the Cairn config layer. */
+const DEFAULT_MODEL_TRACE_PREVIEW_CHARS = 2000
+const DEFAULT_MODEL_TRACE_MAX_BYTES = 8 * 1024 * 1024
+
+/**
+ * Reads the model-trace contract (`tasks.model_trace`) that the scheduler exports as
+ * CAIRN_MODEL_TRACE_*. A worker started by hand falls back to the defaults, so the trace is
+ * available even when nobody wired the scheduler.
+ */
+export function readModelTraceFromEnv(): { enabled: boolean; previewChars: number; maxBytes: number } {
+    const enabled = process.env["CAIRN_MODEL_TRACE_ENABLED"]?.trim() !== "0"
+    const preview = Number(process.env["CAIRN_MODEL_TRACE_PREVIEW_CHARS"]?.trim() ?? "")
+    const previewChars = Number.isInteger(preview) && preview >= 200 && preview <= 20000
+        ? preview
+        : DEFAULT_MODEL_TRACE_PREVIEW_CHARS
+    const bytes = Number(process.env["CAIRN_MODEL_TRACE_MAX_BYTES"]?.trim() ?? "")
+    const maxBytes = Number.isInteger(bytes) && bytes >= 262_144 && bytes <= 64 * 1024 * 1024
+        ? bytes
+        : DEFAULT_MODEL_TRACE_MAX_BYTES
+    return { enabled, previewChars, maxBytes }
+}
+
+/**
+ * Only the main solver gets a trace: subagents write their own session under the workspace
+ * and would double-count the same turn budget. `<sessionDir>/model-trace.jsonl` sits in the
+ * project workspace, which the control plane can read in both local and container mode.
+ */
+function modelTraceExtensions(sessionDir: string): ExtensionFactory[] {
+    const trace = readModelTraceFromEnv()
+    if (!trace.enabled) return []
+    return [modelTraceExtension({ traceDir: sessionDir, ...trace })]
 }
 
 /**
@@ -273,6 +317,8 @@ export async function createSolverSession(init: SolverInitPayload): Promise<Solv
         // Registered after the gate so scope auditing still sees the full result, and before the
         // observers so the context carries a pointer instead of a dump.
         ...toolSpillExtensions(workspaceDir),
+        // Pure observation: it appends to the session directory and never alters a message.
+        ...modelTraceExtensions(sessionDir),
         cairnObserver ? cairnObserver.extension : challengeObserverExtension({ observerEnabled, observerModel }),
         // rtkRewriteExtension(),
     ]
@@ -281,9 +327,12 @@ export async function createSolverSession(init: SolverInitPayload): Promise<Solv
     if (!resolvedSessionOpts) {
         throw new Error(`prompt not found: ${init.promptName}`)
     }
+    // M57c: a task-level allowlist narrows the prompt's own tool list. It is applied
+    // before the reasoning edit so the two changes compose without renaming tools.
+    const narrowedSessionOpts = narrowSessionTools(resolvedSessionOpts, init.tools)
     const sessionOpts = init.reasoning === undefined
-        ? resolvedSessionOpts
-        : applyReasoningMode(resolvedSessionOpts, init.reasoning)
+        ? narrowedSessionOpts
+        : applyReasoningMode(narrowedSessionOpts, init.reasoning)
     const startupSnapshot = buildSolverStartupSnapshot(init, prompt, sessionOpts, {
         solverDir: baseDir,
         sessionDir,
@@ -307,6 +356,28 @@ export async function createSolverSession(init: SolverInitPayload): Promise<Solv
         sessionDir,
         workspaceDir,
         ...(cairnObserver ? { observer: cairnObserver.handle } : {}),
+    }
+}
+
+/**
+ * Keeps only the named tools, never adding one the prompt did not offer. Built-in tools
+ * are filtered by `name`; custom tools and MCP-provided tools have no per-task filter, so
+ * any allowlist that omits all custom tools also drops them.
+ */
+export function narrowSessionTools(
+    options: CreateAgentSessionOptions,
+    allowed: readonly string[] | undefined,
+): CreateAgentSessionOptions {
+    if (allowed === undefined) return options
+    const keep = new Set(allowed)
+    const tools = (options.tools ?? []).filter((tool) => keep.has((tool as { name?: unknown }).name as string))
+    const customTools = (options.customTools ?? []).filter(
+        (tool) => keep.has((tool as { name?: unknown }).name as string),
+    )
+    return {
+        ...options,
+        tools,
+        ...(customTools.length === 0 ? { customTools: undefined } : { customTools }),
     }
 }
 

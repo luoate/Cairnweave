@@ -229,6 +229,15 @@ describe("M51a experiment delivery", () => {
     expect(prepare("off", { kind: "explore" }).task.prompt).not.toContain("# 当前探索契约");
     expect(prepare("off", { kind: "reason", intentMeta }).task.prompt).toContain("新建 intent 时可附加 experiment");
   });
+  test("tells the model that experiment is exactly six keys and version is required", () => {
+    // proj_047 lost three reason turns because `experiment` came back with the five text
+    // fields and no `version`, while the contract requires exactly six keys. The
+    // instruction has to say so outright instead of only showing it in the example.
+    const prompt = prepare("off", { kind: "reason" }).task.prompt;
+    expect(prompt).toContain("version 必须是数字 1");
+    expect(prompt).toContain("恰好六个键");
+    expect(prompt).toContain("全部作废");
+  });
   test("over-budget fallback retains the entire experiment plan instead of silently trimming it", () => {
     const intentMeta = storePlan();
     const config = parseDispatchConfig({ ...BASE, tasks: { ...BASE.tasks, context_pack: { mode: "apply" }, context_plan: { max_initial_bytes: 1 } } });

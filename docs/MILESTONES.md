@@ -6,8 +6,9 @@
 ## 实现记录
 
 最新代码：**M50 已收束；M51a–d 与 M52a–d 已实现（0.77.0-m52），M52c 排序偏好默认关闭；
-M53 只读调度日志、M54 Writeup 目标凭据、M55 按任务类型推理开关已实现，版本保持 0.77.0-m52；
-Writeup 利用链增补已实现，见文末记录**。
+M53 只读调度日志、M54 Writeup 目标凭据、M55 按任务类型推理开关、M56 模型请求/响应轨迹、
+M57a 证据引用逐条降级、M57b 工具预算末尾保留段、M57c 规划回合收权与确定性失败分类、
+M57d scope 解析精度已实现，版本保持 0.77.0-m52；Writeup 利用链增补已实现，见文末记录**。
 最终验收见文末对应记录；以下段落保留各历史阶段当时的状态，不代表当前版本止于 M40。
 
 状态：**M40（完成契约安全门：bootstrap 支持 fact-only；`verification: off` 的完成声明默认进入 `completion_reviews` 人工确认，不再自动关项目；执行模式按题选择记为 M39b）**；M0–M4、M5a–M5c、
@@ -1781,6 +1782,16 @@ bootstrap 仍需要全图。副作用是 ContextPack 与切片比较的是同一
   `minimal..xhigh` 全部映射到 `reasoning_effort: "none"`（网关实测只有 `none` 真正关闭，
   `minimal`/`low` 仍会思考），`on` 删除这类映射并按 model-prefs 的 `thinkingLevel` 发送；
   Anthropic 风格端点 `off` 直接不发送思考级别。函数不修改传入对象。
+- **developer 角色**：pi-ai 在 `model.reasoning` 且 `compat.supportsDeveloperRole` 时把 system
+  消息改发成 OpenAI 的 `developer` 角色，而它的 URL 启发式把自定义网关判成标准 OpenAI，
+  本网关只认 `system`，实测报 `422 ... unknown variant 'developer'`。`applyReasoningMode()`
+  因此只在 model-prefs 显式写 `supportsDeveloperRole: true` 时才保留该角色；设置弹窗「模型
+  与密钥 → 高级参数」新增「协议兼容」两个三态开关（developer 角色 / `reasoning_effort`），
+  保存时与已有的其它 `compat` 键合并。`cairn-worker` 的本地 pref 补上
+  `supportsDeveloperRole: false`。真实调用 `POST /settings/agent/models/cairn-worker/test`
+  返回 `ok: true` / `OK`，并单独确认网关接受 `reasoning_effort: "none"`（HTTP 200）。
+  同理，显式写 `supportsReasoningEffort: false` 的 pref（如 `zhipu-glm-flash`）不再被
+  `applyReasoningMode()` 强制打开——否则每个任务都会发一个该端点不接受参数。
 - **前端**：设置弹窗「Worker 与选择」新增「推理（思考）」下拉（关闭 / 仅 reason / 全部任务）
   与三条说明，沿用现有 `select` 字段与 `notes` 提示。
 - **本地配置**：`agent-config/model-prefs.json` 去掉把全部档位映射到 `none` 的临时
@@ -1792,12 +1803,228 @@ bootstrap 仍需要全图。副作用是 ContextPack 与切片比较的是同一
 （可编辑、热改与 reset、非法值在合并后拒绝）、`scheduler/tasks.test.ts`
 （`reasoningForKind` 四种类型与 task.json 落盘、缺省不写）、`contracts.test.ts`
 （`on`/`off` 接受、其它值拒绝）与 `packages/agent/src/solver/session.test.ts`
-（关闭映射、开启剥离 `none`、不修改原对象、Anthropic 风格、无模型时原样返回）；
+（关闭映射、开启剥离 `none`、不修改原对象、Anthropic 风格、无模型时原样返回、
+未显式开启时不使用 developer 角色、显式 `supportsReasoningEffort: false` 不被覆盖）；
 `api.ui.test.ts` 的字段清单补上 `worker.reasoning`；`context-pack.scheduler.test.ts`
 新增一项，固定图切片开启后 explore 的 legacy 输入已小于 ContextPack 候选、按 `no_benefit`
 回退的行为（其余 M48 用例显式关闭切片，继续测 pack 本身）。最终 `bun run check`
-（TypeScript + 全量测试）：**1468 pass / 0 fail / 140 files / 7304 expects**。未重启实际服务、
+（TypeScript + 全量测试）：**1470 pass / 0 fail / 140 files / 7313 expects**。未重启实际服务、
 未运行真实模型 gate，也未做浏览器视觉验收。
+
+### M56：模型请求与响应轨迹（2026-11-07）
+
+M53 的调度日志只有运行生命周期（派发、软截止、结束），任务卡住或模型直接报错时看不到
+worker 到底发了什么、模型回了什么。solver 的会话 JSONL 只在消息完成后记录，且完全不记录
+请求体——system 提示词多大、带了哪些工具、`reasoning_effort` 是否真的发出，都无从确认。
+本次加一条**只读诊断旁路**，不改变任务协议、不写图、不参与完成判定：
+
+- **配置**：`tasks.model_trace.enabled / preview_chars / max_bytes`，默认
+  `true / 2000 / 8388608`（8 MiB）。`EDITABLE_OVERRIDE_KEYS.tasks` 与
+  `EDITABLE_TASK_KEYS` 收录，`/settings/runtime` 热覆盖，下一任务生效；
+  范围校验 200–20000 与 262144–67108864。
+- **调度**：`modelTraceEnvironment()` 拼出 `CAIRN_MODEL_TRACE_ENABLED` /
+  `_PREVIEW_CHARS` / `_MAX_BYTES`，由 `loop.ts` 与其它任务环境变量一起注入；worker 侧
+  `readModelTraceFromEnv()` 再夹一次范围。
+- **worker**：新扩展 `packages/agent/src/solver/extension/model-trace.ts`，只在主 solver
+  会话注册（subagent 会重复计同一轮预算）。它在 `before_provider_request` 写 `request`
+  （模型、请求体字节、消息条数与预览、工具名、白名单标量参数），
+  `message_update` 写 400 ms 节流的 `stream` 尾预览，`message_end` 写 `response`
+  （文本、思考、停止原因、token 用量、延迟、错误），`tool_execution_start/end` 写
+  `tool_start` / `tool_end`。NDJSON 每行带自增 `seq` 与 ISO `at`，落在
+  `<session>/solver-session/model-trace.jsonl`（与它描述的 SDK 会话同目录，也就是
+  `TCH_SOLVER_SESSION_DIR`）；续跑时从已有文件大小与最后一个 `seq` 续写（否则控制面
+  的 `cursor` 会把新事件当成旧的），写满上限追加一条 `truncated` 后停止。所有处理函数
+  吞掉自身异常：轨迹坏了只会没有文件，不会让任务失败。
+- **安全**：请求参数按白名单记录，不导出整个请求体（`onPayload` 拿到的是 provider
+  请求体，本就不含 base URL 或请求头，测试用带 `?token=SECRET` 的 `baseUrl` 断言它不会
+  被带进来）；API key 从不序列化；每个文本字段按预览字符数保留开头与结尾。因此凭据
+  边界与 `docs/CONTRACT.md` 第 8 节一致。
+- **控制面**：`apps/cairn/src/http/project-trace.ts` 只读读取器——校验 project/task id
+  字符集，要求会话目录与 `solver-session/` 都不是符号链接且 `realpath` 等于自身，文件用
+  `O_NOFOLLOW` 打开并比对 inode/dev，丢掉尾部未写完的行；单次最多读 4 MiB，默认 200 条、
+  最多 500 条，丢弃更早事件时置 `truncated`。路由
+  `GET /projects/{project_id}/runs/{task_id}/trace?cursor=&limit=`
+  返回 `{task_id, available, truncated, cursor, events}`；未知项目 404，无轨迹返回
+  `available: false` 而不是错误。不新增任何写路由。
+- **前端**：调度页签的实时运行卡和运行记录卡各加「模型请求与响应 / 模型轨迹」按钮，
+  打开只读弹窗；每 1.5 秒带 `cursor` 增量拉取，可暂停/继续跟随，界面最多保留 800 条并
+  提示；按事件类型分卡片展示，`response` 的错误、`truncated` 与工具失败用颜色区分。
+  设置弹窗新增「模型轨迹」分组（开关、预览字符数、单任务上限）与四条说明。
+- **文档**：`docs/CONFIG.md` 增三行；`docs/OPERATIONS.md` 增「模型轨迹（M56）」，含
+  `curl` 与 `tail -f` 排障示例；`docs/CONTRACT.md` 第 7 节把 `model-trace.jsonl` 列为
+  worker 写的只读旁路，协议不加字段。
+- **顺带修掉的调度恢复缺口**：为了验证本功能重启控制面时，新进程在 30 秒的 peer 窗口内
+  启动，`start()` 因此跳过 orphan 对账；启动扫描又把刚死的实例当成还活着（心跳只有
+  9 秒），于是一条租约早已过期（`lease_expires_at` 在 4 分钟前）的 claim 无人回收，
+  项目此后每分钟只能打出 `claim lost ... status=409`，要等默认一小时的 retention sweep。
+  现在 `reconcilePreviousBoot()` 会汇报是否因 peer 跳过，`start()` 据此安排一次
+  `armPeerRecheck()`：先等过 peer 超时，再按最早失效的租约续排，直到没有 waiting 的
+  claim 为止。回收规则本身不变——仍要求 owner 已死**且**任务租约到期，所以比控制面活得
+  更久的 worker 不会被抢。`claims.test.ts` 新增一项覆盖这条路径（跳过对账 → 租约未到期
+  时重新排队 → 到期后释放）。
+- **proj_047 暴露的两类「执行异常」**（排查记录，均已修复）：
+  - `apply_failed` + 日志 `invalid intent experiment at index 0`：reason 结果里的
+    `experiment` 少了 `version`。契约要求恰好六个键，校验器抛普通 `Error`，于是被归进
+    「写图失败」且 `detail` 为空，卡片只能显示 `apply_failed`。提示词原来只写「五个文本
+    字段」，示例里才有 `version`，弱模型 4 次里 3 次漏掉。现在
+    `EXPERIMENT_PLAN_INSTRUCTIONS` 明确「恰好六个键、version 必须是数字 1、缺字段整次
+    结果作废」；控制面把四个 payload 校验器包进 `validatePayload()`，契约错误改记为
+    `result_invalid` 并把校验器原文写进 `run.detail`，日志为 `result rejected task=…`。
+    UI 新增 `executionFailureLabel()`，卡片不再裸露 `result_invalid` 之类的原始码。
+  - `evidence_invalid`：worker 引用了从未写过的路径（`git/.git/config` 实际写成
+    `git/config`；`source_probe.log`、`FINDINGS.md` 只存在于计划里），而探索失败后自动
+    排队的 conclude 会重复同一组引用，一次错误代价是两次运行。完成校验提示词新增一条：
+    引用前 `ls -l` 确认文件存在且非空，一个坏路径就作废整次运行，不要引用「打算写」的
+    文件。
+
+测试：`packages/agent/src/solver/extension/model-trace.test.ts` 9 项（请求摘要不泄漏
+密钥与 base URL、OpenAI 与扁平两种工具形状都能读到名字、响应用量/停止原因/工具调用、
+模型错误、流式节流、一次截断后停止、关闭时不注册处理函数、工具开始/结束、续跑从已有
+`seq` 继续编号）；`project-trace.test.ts` 7 项（缺失即不可用、有序 + cursor、只留最新
+窗口、忽略半写行、拒绝逃逸 id、拒绝符号链接、只认 `solver-session/` 下的文件）；
+`api.trace.test.ts` 4 项（正常返回、cursor 去重、未知项目
+404、无轨迹可用）；`config.test.ts` 2 项与 `config-overrides.test.ts` 1 项（默认值、
+范围校验、热覆盖与 reset）；`scheduler/tasks.test.ts` 1 项（环境变量契约）；
+`scheduler/claims.test.ts` 1 项（重启紧挨上一次异常退出时的 claim 回收）；
+`api.ui.test.ts` 新增 3 项（打开与 cursor 轮询、关闭停止轮询、800 条上限）并更新
+可编辑字段清单、overlay 计数与工作区语义计数；`scheduler/loop.test.ts` 的无效
+experiment 用例断言 `result_invalid` 与 `detail` 原文；`context-pack.tasks.test.ts` 与
+`scheduler/tasks.test.ts` 各新增 1 项固定提示词。最终 `bun test`：
+**1501 pass / 0 fail / 143 files / 7452 expects**。`cairn-worker:latest` 已重新构建并确认
+镜像内含 `model-trace.ts`；已有的 `cairn-dispatch-*` 容器需要 `docker rm -f` 后才会用新
+镜像启动（当前无遗留容器）。控制面已按原命令重启（`--port 8001 --db-path
+runs/demo/cairn.db --config runs/demo/dispatch.yaml`），重启中断了一次
+`explore` 尝试，租约到期后自动重试。
+
+实测（proj_046，本地模式）：
+- `explore-fc084f0bd7e4` 的轨迹在十几秒内记下 5 轮请求/响应，其中 3 轮是
+  `stop_reason: "error"`、`error: "503 Service is too busy..."`——这类「任务看着卡住、
+  实际是网关拒绝服务」的情况以前只能靠 `stderr.log` 猜，现在在调度日志里直接可见。
+- 同一批轨迹确认 `reasoning_effort: "none"` 确实发给了 provider（M55 的开关生效）。
+- 读到的第一个反例是工具名列表为空：pi-ai 的 OpenAI 兼容 provider 把工具序列化成
+  `{type:"function", function:{name}}`，第一版只读顶层 `name`，已改为同时支持两种形状；
+  重启后的 `explore-41c7175aa512` 列出 10 个工具（read/bash/write/edit/grep/find/ls/
+  memory_list …），25 轮响应全部 `stop:toolUse`，bash 调用 22 次。
+- HTTP 面：`GET .../runs/explore-fc084f0bd7e4/trace?limit=3` 返回
+  `available:true, truncated:true, cursor:16`；未知项目 404；无轨迹任务返回
+  `available:false`；`/` 已是带 `data-modal="trace"` 的新界面。
+- 恢复路径：第二次重启（带 claim 重检修复）后日志为
+  `orphan run closed … reason=control plane restarted before finish` →
+  `stale claim released … reason=owner instance expired` → 立刻
+  `dispatched explore project=proj_046 intent=i003`，此后调度恢复正常，不再出现
+  `claim lost … status=409`；`explore-2749675493b0` 的首个请求列出 10 个工具，
+  `/trace` 返回 `available:true, cursor:103`。
+
+### M57a：证据引用逐条降级（2026-11-07）
+
+proj_047 的 17 次运行里有 10 次失败，其中 6 次是 `evidence_invalid`：一个不存在或写错的
+`evidence_refs` 条目就让整轮结论作废。最贵的一次是 explore i006——17:04 已用
+`?><?php echo 4*4;?>` 实测出正确的 eval 逃逸原语，却因为结果里引用了被工具预算挡住、
+从未写出的 `FINDINGS.md` 被整轮丢弃，随后又从零重跑一遍。
+
+- **控制面**：`applyResult()` 先算完成声称，再决定严格度。非完成类结果按
+  `tasks.evidence.invalid_refs`（默认 `drop`）逐条丢弃无效引用，合法子集照常写图，被丢弃
+  的条目与原因写进 `run.detail`（`invalid evidence refs dropped: …`）和调度日志
+  （`evidence refs dropped task=…`）；`fail` 恢复旧的全有或全无。携带 `complete` 的声明
+  在两种模式下都保持严格——完成必须为它引用的每个文件负责。
+- **detail 合并**：新增 `appendDetail()`，证据丢弃、完成未通过、载荷契约错误不再互相覆盖，
+  一张运行卡能同时说明「丢弃了哪些引用」和「完成校验为什么没过」。
+- **提示词**：完成校验那一条改为「无效引用逐条丢弃并记录；完成声明严格」，不再宣称
+  「一个坏路径作废整次运行」。
+- **配置**：`tasks.evidence.invalid_refs`，默认 `drop`，可热覆盖。
+
+测试：`scheduler/evidence-policy.test.ts` 2 项（默认 drop 时 bootstrap 事实照常记录、只留
+合法引用、detail 含丢弃原因，且项目继续跑完；`fail` 时同一夹具以 `evidence_invalid` 失败
+且不写事实），新夹具 `testdata/mixed-evidence-worker.ts`；`config.test.ts` 新增 2 项
+（默认值、显式 `fail`、非法枚举拒绝）；`tasks.test.ts` 的提示词断言同步。`bun test`：
+**1509 pass / 0 fail / 144 files**。
+
+### M57b：工具预算末尾保留段（2026-11-07）
+
+同一批失败的另外三起因工具预算而起：explore 的 60 次调用全部花在探测上，`write
+FINDINGS.md` 在第 61 次被拒绝——而被拒绝的正是结果要引用的文件。预算与证据两条规则叠在一起，
+互相把对方的产出作废。
+
+- **Host Bridge**：新增 `reserveToolCalls`。调用计数进入最后 N 次后，只有写本任务
+  `artifactDir`（未开启工件隔离时为工作区内）的 `write`/`edit` 放行，其余工具以
+  `tool_budget_reserve` 拒绝并说明剩余次数；被拒绝的保留段调用不消耗配额，硬截止仍然兜底。
+  预算耗尽后的行为不变（`tool_budget_exhausted`）。
+- **预警**：达到 80%（但当它晚于保留段起点时提前到保留段前一次）时，桥在允许的决策上挂一次
+  `tool_budget_warning`，`pi-extension` 通过可选的 `pi.sendMessage` 注入一条隐藏消息，让模型
+  在探测被切断前开始落盘。低于 10 次的小预算不发预警，避免噪音。
+- **任务面**：`WorkerTask.reserveToolCalls` 由 `prepareTask` 按 `worker.budget_reserve_calls`
+  （默认 3）写入，且最多保留到「预算 − 1」，不会把 1–2 次的小预算整段吃掉；loop 注入
+  `CAIRN_TASK_RESERVE_TOOL_CALLS`，worker-extension 再夹一次范围。提示词新增「# 工具预算」
+  段，写明上限、保留段与「进入保留段前先写结论」。
+- **配置**：`worker.budget_reserve_calls`，默认 3，可热覆盖；`0` 关闭。
+
+测试：`host-bridge/bridge.test.ts` 新增 3 项（保留段拒绝探测但放行本任务产物、其它任务目录
+仍被拒、拒绝不消耗配额，耗尽后仍全拒；80% 预警只发一次且落在保留段前；环境变量解析与
+越界拒绝），并新增 `pi-extension` 预警注入 1 项；`scheduler/tasks.test.ts` 新增 3 项
+（预算 7 保留 3、预算 2 只保留 1、无预算不保留且不写该段）；`config.test.ts` 补
+`budget_reserve_calls` 的默认值与越界校验。`bun test`：**1511 pass / 0 fail / 144 files /
+7502 expects**（M57a 与 M57b 合计）。
+
+### M57c：规划回合收权与确定性失败分类（2026-11-07）
+
+proj_047 的三次 reason 失败里，每一次都是 42 轮、30 多次 bash 侦察之后，才在最终
+JSON 里漏掉 `experiment.version`；随后还要等默认 120 秒退避才重试，而重试的提示词里
+并没有告诉模型上一次为什么被拒收。规划回合因此既贵又慢，还重复犯错。
+
+- **任务契约**：`WorkerTask.tools`（`packages/contracts`）与 `SolverInitPayload.tools`
+  （`packages/agent`）新增工具白名单。`narrowSessionTools()` 在 `resolvePromptSession`
+  之后按工具名取交集，**只能收窄、不会新增**；customTools 同样过滤，未列名则全部移除。
+  `prepareTask` 对 reason 写入 `tasks.reason.tools`（默认 read/grep/find/ls）。
+- **预算**：`tasks.reason.max_tool_calls`（默认 12，0 不限）作为 reason 的工具上限；
+  reason 是只读回合，因此不参与 M57b 的产物保留段（保留段只会拦住它最后的读取）。
+- **提示词**：reason 新增「# 规划回合的工具边界」，写明可用工具、次数与「产出是方向，
+  不是结果」；compact 与 legacy 两条渲染路径共用同一组选项，避免漂移。
+- **退避分类**：`strategist_state.last_failure_code`（增量迁移）记录失败码。
+  `recordStrategistFailure` 接受 `code`，成功时清空；`evaluateStrategistTrigger` 对
+  `result_invalid` 使用 `strategist.schema_backoff_seconds`（默认 15），其它失败码仍用
+  `failure_backoff_seconds`（默认 120）。`loop.ts` 在记录其结果时带上
+  `running.failure?.code`。
+- **失败回灌**：新增 `getLatestReasonFailure()`——最近一次 reason 失败且之后没有被成功
+  reason 取代时返回其 `code/detail/finished_at`；`loop.ts` 在同一次派发事务里读取并交给
+  `prepareTask`，提示词追加「# 上次规划被拒收」，引用校验器原文（截断 800 字符）。
+- **配置**：`tasks.reason.tools`、`tasks.reason.max_tool_calls` 与
+  `strategist.schema_backoff_seconds` 均可热覆盖。
+
+测试：`packages/agent/src/solver/session.test.ts` 新增 4 项（白名单只保留列名工具、不新增、
+未列名时清空 customTools、无白名单时原对象不变）；`scheduler/strategist.test.ts` 1 项
+（schema 退避短、其它码仍长、0 关闭）；`packages/graph/src/strategist.test.ts` 2 项
+（失败码持久化与成功清空、`getLatestReasonFailure` 的取代语义）；`scheduler/tasks.test.ts`
+3 项（reason 只读工具与上限、无保留段、失败回灌、允许 bash 时不写“没有 bash”）；`config.test.ts`
+新增 reason 工具/上限与 `schema_backoff_seconds` 的解析与非法值；`scheduler/loop.test.ts`
+1 项端到端（`result_invalid` 在 5 秒后重试、120 秒退避内不再等待、第二次提示词引用第一次
+的校验器原文）。
+
+### M57d：scope 解析精度（2026-11-07）
+
+proj_047 的 42 次阻断里至少 9 次是误报：脚本里的裸主机名（无端口）与 scope 的
+`http://host`（端口 80）被判成不同目标；写出的脚本正文被当成命令；`X-Forwarded-For`
+里的 `127.0.0.1` 被当成连接目的；`which curl`、`command -v curl` 被当成网络调用。
+每次误报都多一轮模型往返，还会把模型推向更绕的写法。
+
+- **默认端口**：`portAllowed()` 在端点无端口时，若 scope 目标是 80/443 则视为同一目标。
+  显式端口规则不变（`host:8080` 不会被裸主机名匹配）。
+- **命令位置**：`scanTokens` 保留 `quoted` 标记并输出 `; | && || & 换行` 运算符；
+  `splitSegments` 按未加引号的运算符切分简单命令，`commandIndexOf` 跳过赋值、前导选项与
+  `sudo/doas/env/nohup/time/timeout/nice/ionice/stdbuf/exec/busybox`（含其带值选项与
+  `timeout 60` 的数字）。只有命令词是网络工具的段才产生网络意图与位置参数端点。
+- **heredoc**：`cat > file <<'EOF'` / `tee -a file <<EOF` 的正文不扫描；`python - <<EOF`
+  等继承 stdin 的 heredoc 保持可见，`import socket` 仍 fail closed。终止符按 `<<-` 的
+  制表符规则匹配，正文中的 `<<` 不会再次成段。
+- **请求头**：`-H/--header`、`-b/--cookie`、`-A/--user-agent`、`-e/--referer` 的值与
+  `--data` 一样进入 carried 区域，由 `scope.ssrf_markers` 处置；默认 `observe` 记录
+  `ssrf_candidate`，不阻断。
+
+测试：`host-bridge/command.test.ts` 新增 11 项（命令位置不触发、包装命令仍命名工具、shell
+语法词之后仍找到命令且变量端点仍 fail closed、`xargs` 与 `find -exec` 运行的命令、裸主机名
+只在网络工具下成为主目标、写脚本 heredoc 不扫描、`cd … && cat > … <<EOF` 仍识别为写文件、
+stdin heredoc 仍 fail closed、heredoc 旁的命令行 URL 仍被读取、请求头/cookie 值进入
+carried）；`host-bridge/bridge.test.ts` 新增 2 项（默认端口匹配与显式端口不匹配、header 值
+记录为 SSRF 标记且放行）。`bun test`：**1536 pass / 0 fail / 144 files / 7579 expects**。
 
 ## 与 Phase 0 的关系
 

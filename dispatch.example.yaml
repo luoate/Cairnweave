@@ -53,6 +53,11 @@ tasks:
     timeout: 300
     # Hard cap on new intents created by one reason step.
     max_intents: 2
+    # M57c: a planning turn reads the graph and prior evidence; it does not run a second
+    # exploration. Narrow only — never adds a tool the prompt did not declare.
+    tools: [read, grep, find, ls]
+    # Tool-call ceiling for a reason turn; 0 disables it.
+    max_tool_calls: 12
   explore:
     timeout: 600
     conclude_timeout: 120
@@ -67,6 +72,11 @@ tasks:
   # placeholders, so the default is 1; set 0 to accept empty evidence.
   evidence:
     min_bytes: 1
+    # M57a: drop | fail. `drop` discards only the invalid refs (missing, directory,
+    # too small) and keeps the valid subset, recording the reason in run.detail;
+    # `fail` restores the all-or-nothing rejection. A `complete` claim stays strict
+    # in both modes.
+    invalid_refs: drop
   # M43: tool results longer than max_inline_chars are written to
   # <workspace>/.tool-results/ and replaced in the context by the absolute path plus a
   # short preview, so a single 30k-char curl no longer stays in every later turn. The
@@ -106,6 +116,11 @@ worker:
   # Give each task its own artifacts/<task-id>/ namespace. Defaults to true when
   # runtime.max_project_workers > 1; set false to opt out.
   scoped_artifacts: true
+  # M57b: hold back the last N calls of an intent's tool budget for final
+  # artifacts. In the reserve only writes inside this task's artifacts/<task-id>/
+  # are allowed, so a worker that spent its budget probing can still write the
+  # file it cites. 0 disables; never reserves the whole budget.
+  budget_reserve_calls: 3
 
 local:
   # Project workspaces live under <workspace_root>/<project_id>/. Omit to use the
@@ -200,6 +215,7 @@ retention:
 #   min_new_hints: 1              # 0 disables the hint-delta trigger
 #   cooldown_seconds: 30          # minimum gap for non-urgent triggers; 0 disables
 #   failure_backoff_seconds: 120  # block every trigger after a reason failure
+#   schema_backoff_seconds: 15    # M57c: shorter backoff for a result_invalid payload
 #   max_runs_per_hour: 12         # rolling-hour cap for non-urgent triggers
 #   zero_output_threshold: 3      # consecutive fact-less explore/conclude runs
 #   stale_intent_seconds: 0       # all open intents stale for this long; 0 disables

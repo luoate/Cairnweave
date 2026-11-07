@@ -99,14 +99,20 @@ export function evaluateStrategistTrigger(
   });
 
   // A failed reason turn holds back every trigger, including urgent ones, so a crash
-  // cannot turn into a per-tick retry storm.
+  // cannot turn into a per-tick retry storm. A deterministic payload-contract failure
+  // (`result_invalid`) waits the short schema backoff instead: the next prompt carries
+  // the validator's message, so retrying soon is the point (M57c).
+  const backoffSeconds =
+    state?.last_failure_code === "result_invalid"
+      ? policy.schemaBackoffSeconds
+      : policy.failureBackoffSeconds;
   if (
-    policy.failureBackoffSeconds > 0 &&
+    backoffSeconds > 0 &&
     state?.last_failure_at !== null &&
     state?.last_failure_at !== undefined
   ) {
     const elapsed = elapsedSeconds(now, state.last_failure_at);
-    if (elapsed !== null && elapsed < policy.failureBackoffSeconds) {
+    if (elapsed !== null && elapsed < backoffSeconds) {
       return evaluation(null, false, "failure_backoff");
     }
   }

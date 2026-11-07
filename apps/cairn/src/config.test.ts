@@ -48,7 +48,9 @@ describe("dispatcher config", () => {
       strategyContext: "on",
     });
     expect(config.tasks.reason.maxIntents).toBe(3);
-    expect(config.tasks.evidence).toEqual({ minBytes: 1 });
+    expect(config.tasks.reason.tools).toEqual(["read", "grep", "find", "ls"]);
+    expect(config.tasks.reason.maxToolCalls).toBe(12);
+    expect(config.tasks.evidence).toEqual({ minBytes: 1, invalidRefs: "drop" });
     expect(config.local).toEqual({ workspaceRoot: null, completedAction: "keep" });
     expect(config.container).toBeNull();
     expect(config.commonEnv).toEqual({});
@@ -58,6 +60,7 @@ describe("dispatcher config", () => {
       retainTaskFiles: true,
       resultGraceSeconds: 15,
       scopedArtifacts: false,
+      budgetReserveCalls: 3,
     });
     expect(config.retention).toEqual({
       sessionMaxAgeDays: 0,
@@ -81,6 +84,7 @@ describe("dispatcher config", () => {
       minNewHints: 1,
       cooldownSeconds: 30,
       failureBackoffSeconds: 120,
+      schemaBackoffSeconds: 15,
       maxRunsPerHour: 12,
       zeroOutputThreshold: 3,
       staleIntentSeconds: 0,
@@ -197,6 +201,20 @@ describe("dispatcher config", () => {
     ).toThrow("verification.evidence_enforcement");
   });
 
+  test("parses the invalid evidence ref policy", () => {
+    expect(parse(BASE).tasks.evidence.invalidRefs).toBe("drop");
+    const config = parse(
+      BASE + "  evidence: {min_bytes: 4, invalid_refs: fail}\n",
+    );
+    expect(config.tasks.evidence).toEqual({ minBytes: 4, invalidRefs: "fail" });
+  });
+
+  test("rejects an unknown invalid evidence ref policy", () => {
+    expect(() =>
+      parse(BASE + "  evidence: {invalid_refs: ignore}\n"),
+    ).toThrow("tasks.evidence.invalid_refs");
+  });
+
   test("parses the off completion review switch", () => {
     expect(parse(BASE).verification.offCompletion).toBe("manual");
     const config = parse(
@@ -303,6 +321,7 @@ describe("dispatcher config", () => {
   min_new_hints: 0
   cooldown_seconds: 5
   failure_backoff_seconds: 30
+  schema_backoff_seconds: 3
   max_runs_per_hour: 4
   zero_output_threshold: 2
   stale_intent_seconds: 600
@@ -316,6 +335,7 @@ describe("dispatcher config", () => {
       minNewHints: 0,
       cooldownSeconds: 5,
       failureBackoffSeconds: 30,
+      schemaBackoffSeconds: 3,
       maxRunsPerHour: 4,
       zeroOutputThreshold: 2,
       staleIntentSeconds: 600,
@@ -409,6 +429,26 @@ describe("dispatcher config", () => {
     );
   });
 
+  test("parses the reason planning tool allowlist and ceiling", () => {
+    const config = parse(
+      BASE.replace(
+        "reason: {timeout: 300}",
+        "reason: {timeout: 300, tools: [read, bash, read], max_tool_calls: 20}",
+      ),
+    );
+    expect(config.tasks.reason.tools).toEqual(["read", "bash"]);
+    expect(config.tasks.reason.maxToolCalls).toBe(20);
+    expect(() =>
+      parse(BASE.replace("reason: {timeout: 300}", "reason: {timeout: 300, tools: []}")),
+    ).toThrow("tasks.reason.tools must be a non-empty array");
+    expect(() =>
+      parse(BASE.replace("reason: {timeout: 300}", 'reason: {timeout: 300, tools: ["Read"]}')),
+    ).toThrow("tasks.reason.tools[0] is not a tool name");
+    expect(() =>
+      parse(BASE.replace("reason: {timeout: 300}", "reason: {timeout: 300, max_tool_calls: -1}")),
+    ).toThrow("tasks.reason.max_tool_calls must be a non-negative integer");
+  });
+
   test("defaults graph slicing on and parses overrides", () => {
     expect(parse(BASE).tasks.graphSlice).toEqual({
       enabled: true,
@@ -442,12 +482,39 @@ describe("dispatcher config", () => {
     );
   });
 
+  test("defaults the model trace on and parses bounded overrides", () => {
+    expect(parse(BASE).tasks.modelTrace).toEqual({ enabled: true, previewChars: 2000, maxBytes: 8 * 1024 * 1024 });
+    const config = parse(
+      BASE +
+        `  model_trace:
+    enabled: false
+    preview_chars: 400
+    max_bytes: 1048576
+`,
+    );
+    expect(config.tasks.modelTrace).toEqual({ enabled: false, previewChars: 400, maxBytes: 1048576 });
+  });
+
+  test("validates model trace bounds", () => {
+    expect(() => parse(BASE + "  model_trace: {enabled: 1}\n")).toThrow(
+      "tasks.model_trace.enabled must be a boolean",
+    );
+    expect(() => parse(BASE + "  model_trace: {preview_chars: 199}\n")).toThrow(
+      "tasks.model_trace.preview_chars must be an integer from 200 to 20000",
+    );
+    expect(() => parse(BASE + "  model_trace: {max_bytes: 1024}\n")).toThrow(
+      "tasks.model_trace.max_bytes must be an integer from 262144 to 67108864",
+    );
+  });
+
   test("parses and validates the evidence minimum size", () => {
     expect(parse(BASE + "  evidence: {min_bytes: 0}\n").tasks.evidence).toEqual({
       minBytes: 0,
+      invalidRefs: "drop",
     });
     expect(parse(BASE + "  evidence: {min_bytes: 12}\n").tasks.evidence).toEqual({
       minBytes: 12,
+      invalidRefs: "drop",
     });
     expect(() => parse(BASE + "  evidence: {min_bytes: -1}\n")).toThrow(
       "tasks.evidence.min_bytes must be a non-negative integer",
@@ -589,6 +656,7 @@ common_env:
       retainTaskFiles: false,
       resultGraceSeconds: 0,
       scopedArtifacts: false,
+      budgetReserveCalls: 3,
     });
     expect(config.commonEnv).toEqual({
       HTTPS_PROXY: "http://127.0.0.1:7897",
@@ -809,6 +877,10 @@ describe("config validation", () => {
     );
     expect(() => parse(BASE + "worker: {scoped_artifacts: yes}\n")).toThrow(
       "worker.scoped_artifacts must be a boolean",
+    );
+    expect(parse(BASE + "worker: {budget_reserve_calls: 0}\n").worker.budgetReserveCalls).toBe(0);
+    expect(() => parse(BASE + "worker: {budget_reserve_calls: -1}\n")).toThrow(
+      "worker.budget_reserve_calls must be a non-negative integer",
     );
   });
 

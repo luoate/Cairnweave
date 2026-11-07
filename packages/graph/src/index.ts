@@ -326,6 +326,7 @@ export {
 
 export {
   countReasonRunsSince,
+  getLatestReasonFailure,
   getStrategistState,
   listRecentStrategistRuns,
   recordStrategistFailure,
@@ -333,6 +334,7 @@ export {
   requestStrategistReplan,
   type RecordStrategistFailureInput,
   type RecordStrategistSuccessInput,
+  type ReasonFailureSummary,
   type RequestStrategistReplanInput,
 } from "./strategist";
 

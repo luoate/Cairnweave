@@ -6,7 +6,7 @@ import { join } from "node:path";
 import type { ProjectDetail } from "@cairn/graph";
 
 import { parseDispatchConfig } from "../config";
-import { observerEnvironment, prepareTask, reasoningForKind, toolSpillEnvironment } from "./tasks";
+import { modelTraceEnvironment, observerEnvironment, prepareTask, reasoningForKind, toolSpillEnvironment } from "./tasks";
 
 const CONFIG = {
   server: "http://127.0.0.1:8000",
@@ -171,6 +171,42 @@ describe("intent budgets", () => {
     expect(prepared.task.hardDeadlineSeconds).toBe(5);
     expect(prepared.task.softDeadlineSeconds).toBe(4);
     expect(prepared.task.maxToolCalls).toBe(7);
+    // The default reserve is 3, clamped to leave at least one probing call.
+    expect(prepared.task.reserveToolCalls).toBe(3);
+    expect(prepared.task.prompt).toContain("# 工具预算");
+    expect(prepared.task.prompt).toContain("最多 7 次工具调用");
+    expect(prepared.task.prompt).toContain("最后 3 次调用属于保留段");
+  });
+
+  test("a tiny budget keeps at least one probing call", () => {
+    const project = projectFixture();
+    const prepared = prepareTask({
+      config: parseDispatchConfig(CONFIG),
+      project,
+      exportYaml: "project: p1\n",
+      kind: "explore",
+      intent: project.intents[0]!,
+      budget: { max_tool_calls: 2 },
+      scope: { targets: ["127.0.0.1:8080"] },
+      workspaceRoot: directory,
+    });
+    expect(prepared.task.reserveToolCalls).toBe(1);
+    expect(prepared.task.prompt).toContain("最后 1 次调用属于保留段");
+  });
+
+  test("no budget no reserve", () => {
+    const project = projectFixture();
+    const prepared = prepareTask({
+      config: parseDispatchConfig(CONFIG),
+      project,
+      exportYaml: "project: p1\n",
+      kind: "explore",
+      intent: project.intents[0]!,
+      scope: { targets: ["127.0.0.1:8080"] },
+      workspaceRoot: directory,
+    });
+    expect(prepared.task.reserveToolCalls).toBeUndefined();
+    expect(prepared.task.prompt).not.toContain("# 工具预算");
   });
 
   test("appends the completion verification policy to the prompt", () => {
@@ -192,6 +228,25 @@ describe("intent budgets", () => {
     expect(prepared.task.prompt).toContain("artifacts/<任务>/credentials.txt");
     expect(prepared.task.prompt).toContain("操作员自己的机密");
     expect(prepared.task.prompt).toContain("绝不脱敏、打码或截短");
+  });
+
+  test("tells the worker to verify evidence paths instead of guessing them", () => {
+    // proj_047 cited refs like `artifacts/<task>/git/.git/config` and
+    // `artifacts/<task>/source_probe.log`, which the worker never wrote. M57a drops such
+    // entries one by one, but a completion claim stays strict, so the policy says both.
+    const project = projectFixture();
+    const prepared = prepareTask({
+      config: parseDispatchConfig(CONFIG),
+      project,
+      exportYaml: "project: p1\n",
+      kind: "bootstrap",
+      intent: project.intents[0]!,
+      scope: { targets: ["127.0.0.1:8080"] },
+      workspaceRoot: directory,
+    });
+    expect(prepared.task.prompt).toContain("确认存在且非空");
+    expect(prepared.task.prompt).toContain("逐条丢弃");
+    expect(prepared.task.prompt).toContain("整个完成声称就会被拒收");
   });
 
   test("lists uploaded challenge files for the worker to read", () => {
@@ -470,6 +525,71 @@ describe("reason prompt extensions", () => {
     expect(prompt).toContain("cost_usd: 1.5 / 上限 10（15.0%）");
   });
 
+  test("restricts a reason turn to read-only tools and states the ceiling", () => {
+    const project = projectFixture();
+    const prepared = prepareTask({
+      config: parseDispatchConfig(CONFIG),
+      project,
+      exportYaml: "project: p1\n",
+      kind: "reason",
+      scope: { targets: ["127.0.0.1:8080"] },
+      workspaceRoot: directory,
+    });
+
+    expect(prepared.task.tools).toEqual(["read", "grep", "find", "ls"]);
+    expect(prepared.task.maxToolCalls).toBe(12);
+    // Reason has nothing to write, so an artifact reserve would only block its final reads.
+    expect(prepared.task.reserveToolCalls).toBeUndefined();
+
+    const prompt = prepared.task.prompt;
+    expect(prompt).toContain("# 规划回合的工具边界");
+    expect(prompt).toContain("可用工具只有 read / grep / find / ls");
+    expect(prompt).toContain("没有 bash、write 或 edit");
+    expect(prompt).toContain("最多 12 次工具调用");
+    expect(prompt).not.toContain("# 工具预算");
+  });
+
+  test("quotes the previous rejected reason result back into the prompt", () => {
+    const project = projectFixture();
+    const prepared = prepareTask({
+      config: parseDispatchConfig(CONFIG),
+      project,
+      exportYaml: "project: p1\n",
+      kind: "reason",
+      previousReasonFailure: {
+        code: "result_invalid",
+        detail: "invalid intent experiment at index 1: missing version",
+        finished_at: "2026-01-01T00:05:00Z",
+      },
+      scope: { targets: ["127.0.0.1:8080"] },
+      workspaceRoot: directory,
+    });
+    const prompt = prepared.task.prompt;
+    expect(prompt).toContain("# 上次规划被拒收");
+    expect(prompt).toContain("result_invalid");
+    expect(prompt).toContain("invalid intent experiment at index 1: missing version");
+    expect(prompt).toContain("version");
+  });
+
+  test("a keepless reason prompt drops the bash instruction when bash is allowed", () => {
+    const config = parseDispatchConfig({
+      ...CONFIG,
+      tasks: { ...CONFIG.tasks, reason: { timeout: 300, tools: ["read", "bash"] } },
+    });
+    const project = projectFixture();
+    const prepared = prepareTask({
+      config,
+      project,
+      exportYaml: "project: p1\n",
+      kind: "reason",
+      scope: { targets: ["127.0.0.1:8080"] },
+      workspaceRoot: directory,
+    });
+    expect(prepared.task.tools).toEqual(["read", "bash"]);
+    expect(prepared.task.prompt).toContain("可用工具只有 read / bash");
+    expect(prepared.task.prompt).not.toContain("没有 bash、write 或 edit");
+  });
+
   test("omits the resource section when no budget snapshot is available", () => {
     const prepared = prepareTask({
       config: parseDispatchConfig(CONFIG),
@@ -735,6 +855,21 @@ describe("tool-result spill environment", () => {
     expect(toolSpillEnvironment(parseDispatchConfig(CONFIG).tasks.toolResultSpill)).toEqual({
       CAIRN_TOOL_SPILL_ENABLED: "1",
       CAIRN_TOOL_SPILL_MAX_CHARS: "32000",
+    });
+  });
+});
+
+describe("model trace environment", () => {
+  test("exports the bounded config section to the worker", () => {
+    expect(modelTraceEnvironment({ enabled: true, previewChars: 2000, maxBytes: 8 * 1024 * 1024 })).toEqual({
+      CAIRN_MODEL_TRACE_ENABLED: "1",
+      CAIRN_MODEL_TRACE_PREVIEW_CHARS: "2000",
+      CAIRN_MODEL_TRACE_MAX_BYTES: "8388608",
+    });
+    expect(modelTraceEnvironment({ enabled: false, previewChars: 400, maxBytes: 262_144 })).toEqual({
+      CAIRN_MODEL_TRACE_ENABLED: "0",
+      CAIRN_MODEL_TRACE_PREVIEW_CHARS: "400",
+      CAIRN_MODEL_TRACE_MAX_BYTES: "262144",
     });
   });
 });

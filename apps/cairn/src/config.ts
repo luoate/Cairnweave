@@ -42,6 +42,14 @@ export interface BootstrapTaskConfig {
 export interface ReasonTaskConfig {
   timeout: number;
   maxIntents: number;
+  /**
+   * M57c: tools a reason turn may call. A planning turn needs to read the graph and the
+   * evidence a worker left behind, not to run a second exploration; the default excludes
+   * bash/write/edit. The list only narrows what the prompt already declares.
+   */
+  tools: string[];
+  /** Tool-call ceiling for reason; 0 disables it. Defaults to 12. */
+  maxToolCalls: number;
 }
 
 export interface ExploreTaskConfig {
@@ -61,12 +69,27 @@ export interface GraphSliceConfig {
   maxIntents: number;
 }
 
+export type EvidenceInvalidRefMode = "drop" | "fail";
+
+export const EVIDENCE_INVALID_REF_MODES: readonly EvidenceInvalidRefMode[] = [
+  "drop",
+  "fail",
+];
+
 export interface EvidenceConfig {
   /**
    * Smallest accepted evidence file in bytes; 0 disables the check. Empty and tiny
    * files are usually placeholders, so the default rejects zero-byte evidence.
    */
   minBytes: number;
+  /**
+   * What one bad `evidence_refs` entry does to the run. `drop` (default) discards only
+   * that entry and keeps the valid subset: a single mistyped path no longer destroys a
+   * run's whole conclusion and force a cold restart (proj_047 lost two verified exploit
+   * primitives this way). `fail` restores the strict all-or-nothing behaviour. A
+   * completion claim is strict either way — completion needs every ref it names.
+   */
+  invalidRefs: EvidenceInvalidRefMode;
 }
 
 export interface ToolResultSpillConfig {
@@ -79,6 +102,29 @@ export interface ToolResultSpillConfig {
   /** Serialized tool result at or below this many characters is passed through untouched. */
   maxInlineChars: number;
 }
+
+/**
+ * Per-task model trace: the worker appends what it actually sent to the provider and what
+ * came back to `<sessionDir>/model-trace.jsonl`, and the control plane serves it read-only.
+ *
+ * It is on by default because "what did the model actually see and answer" is the first
+ * question when a solve stalls, and the file lives in the project workspace that the
+ * control plane already owns. Bodies are bounded by `previewChars` per field and
+ * `maxBytes` per task, so a long task cannot fill the disk with conversation text.
+ */
+export interface ModelTraceConfig {
+  enabled: boolean;
+  /** Characters kept per message / response / tool preview. */
+  previewChars: number;
+  /** Append limit per task; the trace stops with one `truncated` marker. */
+  maxBytes: number;
+}
+
+export const DEFAULT_MODEL_TRACE: ModelTraceConfig = {
+  enabled: true,
+  previewChars: 2000,
+  maxBytes: 8 * 1024 * 1024,
+};
 
 export interface ContextPlanConfig {
   /** Audit only: never trims input or blocks dispatch. */
@@ -112,6 +158,7 @@ export interface TasksConfig {
   graphSlice: GraphSliceConfig;
   evidence: EvidenceConfig;
   toolResultSpill: ToolResultSpillConfig;
+  modelTrace: ModelTraceConfig;
   contextPlan: ContextPlanConfig;
   contextPack: ContextPackConfig;
   checkpoint: TaskCheckpointConfig;
@@ -129,7 +176,7 @@ export const DEFAULT_GRAPH_SLICE: GraphSliceConfig = {
   maxIntents: 60,
 };
 
-export const DEFAULT_EVIDENCE: EvidenceConfig = { minBytes: 1 };
+export const DEFAULT_EVIDENCE: EvidenceConfig = { minBytes: 1, invalidRefs: "drop" };
 
 /** `PREVIEW_CHARS` in the worker-side spill extension stays at 600 and is not configurable. */
 export const DEFAULT_TOOL_RESULT_SPILL: ToolResultSpillConfig = {
@@ -408,6 +455,12 @@ export interface StrategistConfig {
   cooldownSeconds: number;
   /** Seconds to wait after a failed/rejected reason turn; 0 disables. */
   failureBackoffSeconds: number;
+  /**
+   * M57c: backoff after a deterministic payload-contract failure (`result_invalid`).
+   * Short, because the next turn gets the validator's message and is expected to fix the
+   * shape; waiting the full execution backoff only burns wall-clock. 0 disables.
+   */
+  schemaBackoffSeconds: number;
   /** Maximum non-urgent reason runs started per rolling hour; 0 disables. */
   maxRunsPerHour: number;
   /** Consecutive finished productive tasks without a fact before a reason turn; 0 disables. */
@@ -430,6 +483,7 @@ export const DEFAULT_STRATEGIST: StrategistConfig = {
   minNewHints: 1,
   cooldownSeconds: 30,
   failureBackoffSeconds: 120,
+  schemaBackoffSeconds: 15,
   maxRunsPerHour: 12,
   zeroOutputThreshold: 3,
   staleIntentSeconds: 0,
@@ -571,6 +625,9 @@ export const REASONING_MODES: readonly ReasoningMode[] = ["off", "reason", "all"
  */
 export const DEFAULT_REASONING_MODE: ReasoningMode = "reason";
 
+/** Calls held back at the end of an intent budget; see `WorkerRunnerConfig`. */
+export const DEFAULT_BUDGET_RESERVE_CALLS = 3;
+
 /** Runner-specific settings for the single merged worker implementation. */
 export interface WorkerRunnerConfig {
   /**
@@ -590,6 +647,14 @@ export interface WorkerRunnerConfig {
   scopedArtifacts: boolean;
   /** Which kinds send a reasoning budget; written into task.json as `reasoning`. */
   reasoning: ReasoningMode;
+  /**
+   * Tool calls held back at the end of an intent budget for final artifacts. Workers
+   * routinely spend every allowed call probing and then cannot write `FINDINGS.md`, so
+   * they cite a file that was never written and the run is rejected (proj_047: three
+   * explores). The last N calls may only write inside this task's artifact directory.
+   * 0 disables the reserve and restores the plain ceiling.
+   */
+  budgetReserveCalls: number;
 }
 
 export interface DispatchConfig {
@@ -661,13 +726,14 @@ const EDITABLE_OVERRIDE_KEYS: Record<string, readonly string[]> = {
     "max_project_workers",
     "interval",
   ],
-  tasks: ["bootstrap", "reason", "explore", "graph_slice", "evidence", "tool_result_spill", "context_plan", "context_pack", "checkpoint", "exploration_suppression"],
+  tasks: ["bootstrap", "reason", "explore", "graph_slice", "evidence", "tool_result_spill", "model_trace", "context_plan", "context_pack", "checkpoint", "exploration_suppression"],
   worker: [
     "soft_deadline_ratio",
     "retain_task_files",
     "result_grace_seconds",
     "scoped_artifacts",
     "reasoning",
+    "budget_reserve_calls",
   ],
   retention: [
     "session_max_age_days",
@@ -692,6 +758,7 @@ const EDITABLE_OVERRIDE_KEYS: Record<string, readonly string[]> = {
     "min_new_hints",
     "cooldown_seconds",
     "failure_backoff_seconds",
+    "schema_backoff_seconds",
     "max_runs_per_hour",
     "zero_output_threshold",
     "stale_intent_seconds",
@@ -704,11 +771,12 @@ const EDITABLE_OVERRIDE_KEYS: Record<string, readonly string[]> = {
 
 const EDITABLE_TASK_KEYS: Record<string, readonly string[]> = {
   bootstrap: ["timeout", "conclude_timeout"],
-  reason: ["timeout", "max_intents"],
+  reason: ["timeout", "max_intents", "tools", "max_tool_calls"],
   explore: ["timeout", "conclude_timeout"],
   graph_slice: ["enabled", "max_facts", "max_intents"],
-  evidence: ["min_bytes"],
+  evidence: ["min_bytes", "invalid_refs"],
   tool_result_spill: ["enabled", "max_inline_chars"],
+  model_trace: ["enabled", "preview_chars", "max_bytes"],
   context_plan: ["mode", "max_initial_bytes"],
   context_pack: ["mode", "shard_max_bytes"],
   checkpoint: ["enabled", "interval_seconds"],
@@ -858,6 +926,27 @@ function parseRuntime(value: unknown): RuntimeConfig {
   };
 }
 
+function reasonTools(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new ConfigError("tasks.reason.tools must be a non-empty array of tool names");
+  }
+  const names: string[] = [];
+  for (const [index, item] of value.entries()) {
+    const name = stringAt(item, `tasks.reason.tools[${index}]`, true);
+    if (!TOOL_NAME_RE.test(name)) {
+      throw new ConfigError(`tasks.reason.tools[${index}] is not a tool name`);
+    }
+    if (!names.includes(name)) names.push(name);
+  }
+  return names;
+}
+
+const TOOL_NAME_RE = /^[a-z][a-z0-9_]{0,63}$/;
+
+/** M57c: a planning turn reads, it does not run a second exploration. */
+export const DEFAULT_REASON_TOOLS: readonly string[] = ["read", "grep", "find", "ls"];
+export const DEFAULT_REASON_MAX_TOOL_CALLS = 12;
+
 function parseTasks(value: unknown): TasksConfig {
   const tasks = recordAt(value, "tasks");
   const bootstrap = requiredObject(tasks, "bootstrap", "tasks");
@@ -877,6 +966,12 @@ function parseTasks(value: unknown): TasksConfig {
       maxIntents: has(reason, "max_intents")
         ? requiredPositiveInt(reason, "max_intents", "tasks.reason")
         : 3,
+      tools: has(reason, "tools")
+        ? reasonTools(reason["tools"])
+        : [...DEFAULT_REASON_TOOLS],
+      maxToolCalls: has(reason, "max_tool_calls")
+        ? nonNegativeInt(reason["max_tool_calls"], "tasks.reason.max_tool_calls")
+        : DEFAULT_REASON_MAX_TOOL_CALLS,
     },
     explore: {
       timeout: requiredPositiveInt(explore, "timeout", "tasks.explore"),
@@ -891,6 +986,9 @@ function parseTasks(value: unknown): TasksConfig {
     toolResultSpill: has(tasks, "tool_result_spill")
       ? parseToolResultSpill(tasks["tool_result_spill"])
       : { ...DEFAULT_TOOL_RESULT_SPILL },
+    modelTrace: has(tasks, "model_trace")
+      ? parseModelTrace(tasks["model_trace"])
+      : { ...DEFAULT_MODEL_TRACE },
     contextPlan: has(tasks, "context_plan")
       ? parseContextPlan(tasks["context_plan"])
       : { ...DEFAULT_CONTEXT_PLAN },
@@ -955,12 +1053,40 @@ function parseToolResultSpill(value: unknown): ToolResultSpillConfig {
   };
 }
 
+function parseModelTrace(value: unknown): ModelTraceConfig {
+  const trace = recordAt(value, "tasks.model_trace");
+  checkOverrideKeys(trace, ["enabled", "preview_chars", "max_bytes"], "tasks.model_trace");
+  const enabled = has(trace, "enabled")
+    ? booleanAt(trace["enabled"], "tasks.model_trace.enabled")
+    : DEFAULT_MODEL_TRACE.enabled;
+  const previewChars = has(trace, "preview_chars")
+    ? requiredPositiveInt(trace, "preview_chars", "tasks.model_trace")
+    : DEFAULT_MODEL_TRACE.previewChars;
+  if (previewChars < 200 || previewChars > 20_000) {
+    throw new ConfigError("tasks.model_trace.preview_chars must be an integer from 200 to 20000");
+  }
+  const maxBytes = has(trace, "max_bytes")
+    ? requiredPositiveInt(trace, "max_bytes", "tasks.model_trace")
+    : DEFAULT_MODEL_TRACE.maxBytes;
+  if (maxBytes < 262_144 || maxBytes > 64 * 1024 * 1024) {
+    throw new ConfigError("tasks.model_trace.max_bytes must be an integer from 262144 to 67108864");
+  }
+  return { enabled, previewChars, maxBytes };
+}
+
 function parseEvidence(value: unknown): EvidenceConfig {
   const evidence = recordAt(value, "tasks.evidence");
   return {
     minBytes: has(evidence, "min_bytes")
       ? nonNegativeInt(evidence["min_bytes"], "tasks.evidence.min_bytes")
       : DEFAULT_EVIDENCE.minBytes,
+    invalidRefs: has(evidence, "invalid_refs")
+      ? oneOf(
+          evidence["invalid_refs"],
+          "tasks.evidence.invalid_refs",
+          EVIDENCE_INVALID_REF_MODES,
+        )
+      : DEFAULT_EVIDENCE.invalidRefs,
   };
 }
 
@@ -1270,6 +1396,7 @@ function parseStrategist(value: unknown): StrategistConfig {
     minNewHints: intAt("minNewHints"),
     cooldownSeconds: intAt("cooldownSeconds"),
     failureBackoffSeconds: intAt("failureBackoffSeconds"),
+    schemaBackoffSeconds: intAt("schemaBackoffSeconds"),
     maxRunsPerHour: intAt("maxRunsPerHour"),
     zeroOutputThreshold: intAt("zeroOutputThreshold"),
     staleIntentSeconds: intAt("staleIntentSeconds"),
@@ -1390,6 +1517,9 @@ function parseWorker(value: unknown, scopedArtifactsDefault: boolean): WorkerRun
     scopedArtifacts: has(worker, "scoped_artifacts")
       ? booleanAt(worker["scoped_artifacts"], "worker.scoped_artifacts")
       : scopedArtifactsDefault,
+    budgetReserveCalls: has(worker, "budget_reserve_calls")
+      ? nonNegativeInt(worker["budget_reserve_calls"], "worker.budget_reserve_calls")
+      : DEFAULT_BUDGET_RESERVE_CALLS,
     reasoning: has(worker, "reasoning")
       ? oneOf(worker["reasoning"], "worker.reasoning", REASONING_MODES)
       : DEFAULT_REASONING_MODE,
@@ -1484,6 +1614,7 @@ export function parseDispatchConfig(value: unknown, options: ConfigOptions = {})
         resultGraceSeconds: 15,
         scopedArtifacts: scopedArtifactsDefault,
         reasoning: DEFAULT_REASONING_MODE,
+        budgetReserveCalls: DEFAULT_BUDGET_RESERVE_CALLS,
       };
 
   const observer = has(root, "observer")

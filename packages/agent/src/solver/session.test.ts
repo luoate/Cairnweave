@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test"
 
-import { buildSolverStartupSnapshot, buildSubagentStartupSnapshot, applyReasoningMode, readToolSpillFromEnv } from "./session"
+import { buildSolverStartupSnapshot, buildSubagentStartupSnapshot, applyReasoningMode, narrowSessionTools, readToolSpillFromEnv } from "./session"
 
 const init = { solverId: "solver-1", promptName: "cairn-worker", task: "task" }
 const prompt = { name: "cairn-worker", meta: {}, content: "prompt" }
@@ -94,6 +94,47 @@ describe("per-task reasoning mode", () => {
         expect(model.compat.reasoningEffortMap).toEqual({ high: "high" })
     })
 
+    test("keeps the system role unless the model pref opts into the developer role", () => {
+        // pi-ai's URL heuristic calls almost every custom gateway "standard OpenAI" and then
+        // swaps the system message for OpenAI's `developer` role as soon as the model reasons.
+        // Gateways that only know `system` answer 422 "unknown variant `developer`", so the
+        // role is opt-in per model pref and reasoning must never turn it on by itself.
+        const off = applyReasoningMode({ model: openaiModel as never, thinkingLevel: "medium" }, "off")
+        expect(
+            (off.model as unknown as { compat: { supportsDeveloperRole: boolean } }).compat
+                .supportsDeveloperRole,
+        ).toBe(false)
+
+        const optedIn = applyReasoningMode(
+            {
+                model: { ...openaiModel, compat: { supportsDeveloperRole: true } } as never,
+                thinkingLevel: "medium",
+            },
+            "on",
+        )
+        expect(
+            (optedIn.model as unknown as { compat: { supportsDeveloperRole: boolean } }).compat
+                .supportsDeveloperRole,
+        ).toBe(true)
+    })
+
+    test("honours a pref that says the endpoint rejects reasoning_effort", () => {
+        // zhipu-glm-flash is configured this way: an explicit false must survive the per-task
+        // switch, otherwise every task would send a parameter the gateway does not accept.
+        const options = applyReasoningMode(
+            {
+                model: {
+                    ...openaiModel,
+                    compat: { supportsReasoningEffort: false },
+                } as never,
+                thinkingLevel: "medium",
+            },
+            "off",
+        )
+        const compat = (options.model as unknown as { compat: Record<string, unknown> }).compat
+        expect(compat.supportsReasoningEffort).toBe(false)
+    })
+
     test("does not mutate the resolved options", () => {
         const original = { model: openaiModel as never, thinkingLevel: "medium" as const }
         applyReasoningMode(original, "off")
@@ -113,6 +154,48 @@ describe("per-task reasoning mode", () => {
         expect(applyReasoningMode({ thinkingLevel: "low" } as never, "off")).toEqual({
             thinkingLevel: "low",
         })
+    })
+})
+
+describe("per-task tool allowlist", () => {
+    const tools = [
+        { name: "read" },
+        { name: "bash" },
+        { name: "write" },
+        { name: "edit" },
+        { name: "grep" },
+    ]
+    const customTools = [{ name: "memory_list" }, { name: "idea_list" }]
+
+    test("keeps only the named built-in and custom tools", () => {
+        const narrowed = narrowSessionTools(
+            { tools, customTools } as never,
+            ["read", "grep", "memory_list"],
+        ) as { tools: Array<{ name: string }>; customTools?: Array<{ name: string }> }
+        expect(narrowed.tools.map((tool) => tool.name)).toEqual(["read", "grep"])
+        expect(narrowed.customTools?.map((tool) => tool.name)).toEqual(["memory_list"])
+    })
+
+    test("never adds a tool the prompt did not offer", () => {
+        const narrowed = narrowSessionTools(
+            { tools: [{ name: "read" }] } as never,
+            ["read", "bash", "fetch"],
+        ) as { tools: Array<{ name: string }> }
+        expect(narrowed.tools.map((tool) => tool.name)).toEqual(["read"])
+    })
+
+    test("drops every custom tool when none is named", () => {
+        const narrowed = narrowSessionTools(
+            { tools, customTools } as never,
+            ["read", "ls"],
+        ) as { tools: Array<{ name: string }>; customTools?: unknown }
+        expect(narrowed.tools.map((tool) => tool.name)).toEqual(["read"])
+        expect(narrowed.customTools).toBeUndefined()
+    })
+
+    test("returns the same options when no allowlist is given", () => {
+        const options = { tools } as never
+        expect(narrowSessionTools(options, undefined)).toBe(options)
     })
 })
 

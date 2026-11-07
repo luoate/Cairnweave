@@ -51,6 +51,7 @@ import {
   getIntentMeta,
   getIntentOr404,
   getIntentTimeout,
+  getLatestReasonFailure,
   getPendingConclude,
   getProjectDetail,
   getProjectExecution,
@@ -113,6 +114,7 @@ import {
   type ProjectSummary,
   type RunOutcome,
   type TaskClaim,
+  type TaskClaimReapResult,
 } from "@cairn/graph";
 import type { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
@@ -142,6 +144,7 @@ import { evaluateStrategistTrigger } from "./strategist";
 import { readTaskUsage } from "./usage";
 import {
   observerEnvironment,
+  modelTraceEnvironment,
   prepareTask,
   projectWorkspace,
   reasoningForKind,
@@ -335,6 +338,8 @@ export class Scheduler {
   private timer: ReturnType<typeof setInterval> | null = null;
   private sweepTimer: ReturnType<typeof setInterval> | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  /** One delayed claim reap after a restart found a peer that was still beating. */
+  private peerRecheckTimer: ReturnType<typeof setTimeout> | null = null;
   /**
    * Boot id of the `scheduler_instances` row this process owns, and the `instance_id` written on
    * every claim and run it dispatches. Generated in the constructor so a dispatch that never went
@@ -414,7 +419,7 @@ export class Scheduler {
     if (this.timer !== null) return;
     // Runs left by the previous process can only be closed here: from the first dispatch on,
     // this scheduler's own task map holds in-flight work that must stay open.
-    this.reconcilePreviousBoot();
+    const peerLookedAlive = this.reconcilePreviousBoot();
     // Reconcile persisted state before the first dispatch: rows left by a previous process
     // may point at concluded intents or deleted sessions.
     try {
@@ -422,6 +427,11 @@ export class Scheduler {
     } catch (error) {
       this.log(`startup sweep failed: ${describe(error)}`);
     }
+    // A restart within one instance timeout of an ungraceful stop sees the old boot's heartbeat
+    // as live, so reconcile and the sweep leave its claims alone — and the next sweep is an
+    // hour away by default. Re-check once the peer timeout has passed, or the project stays
+    // blocked behind a claim nobody owns.
+    if (peerLookedAlive) this.armPeerRecheck();
     this.armTimers();
     this.tick();
   }
@@ -519,6 +529,10 @@ export class Scheduler {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
     }
+    if (this.peerRecheckTimer !== null) {
+      clearTimeout(this.peerRecheckTimer);
+      this.peerRecheckTimer = null;
+    }
   }
 
   async stop(): Promise<void> {
@@ -596,7 +610,7 @@ export class Scheduler {
    * orphans. Intent and reason leases are deliberately left alone: releasing them would
    * crowd out a worker that is still running, and they expire on their own TTL.
    */
-  private reconcilePreviousBoot(): void {
+  private reconcilePreviousBoot(): boolean {
     const instanceId = newBootId();
     this.instanceId = instanceId;
     const at = this.instanceTimestamp();
@@ -612,15 +626,15 @@ export class Scheduler {
       });
     } catch (error) {
       this.log(`startup reconcile failed: ${describe(error)}`);
-      return;
+      return false;
     }
     if (closed === null) {
       this.log(
         `startup reconcile skipped: another scheduler instance heartbeats within ${timeoutSeconds}s`,
       );
-      return;
+      return true;
     }
-    if (closed.length === 0) return;
+    if (closed.length === 0) return false;
     for (const orphan of closed) {
       if (this.config.tasks.checkpoint.enabled && /^(bootstrap|reason|explore|conclude)-[a-f0-9]{12}$/.test(orphan.task_id)) {
         try {
@@ -635,6 +649,30 @@ export class Scheduler {
       );
     }
     this.log(`startup reconcile closed ${closed.length} orphan run(s)`);
+    return false;
+  }
+
+  /**
+   * Re-runs the claim reaper until the previous boot's claims are gone. A claim is only taken
+   * over when its owner is dead *and* the task lease has run out, so a worker that outlived the
+   * control plane is still respected; this only removes the wait for the next retention sweep,
+   * which defaults to an hour. The first pass waits out the peer timeout, later ones wait for
+   * the earliest lease to expire.
+   */
+  private armPeerRecheck(delayMs = (this.instanceTimeoutSeconds() + 5) * 1000): void {
+    if (this.peerRecheckTimer !== null) clearTimeout(this.peerRecheckTimer);
+    this.peerRecheckTimer = setTimeout(() => {
+      this.peerRecheckTimer = null;
+      const result = this.reapTaskClaimLedger();
+      if (result === null || result.waiting.length === 0) return;
+      // Still inside a live lease: come back when the earliest one runs out.
+      const earliest = result.waiting
+        .map((claim) => Date.parse(claim.lease_expires_at))
+        .filter((value) => Number.isFinite(value))
+        .sort((left, right) => left - right)[0];
+      const waitMs = earliest === undefined ? this.instanceTimeoutSeconds() * 1000 : earliest - Date.now() + 5_000;
+      this.armPeerRecheck(Math.max(waitMs, 5_000));
+    }, delayMs);
   }
 
   /** Peer liveness window: two dispatch intervals, never shorter than 30 seconds. */
@@ -706,7 +744,7 @@ export class Scheduler {
    * intent a crashed task held becomes dispatchable again without waiting for the graph lease's
    * own TTL twice over. A live peer's claims are untouched even when past their lease.
    */
-  private reapTaskClaimLedger(): void {
+  private reapTaskClaimLedger(): TaskClaimReapResult | null {
     let result: ReturnType<typeof reapTaskClaims>;
     try {
       result = this.db.withConn((conn) =>
@@ -717,7 +755,7 @@ export class Scheduler {
       );
     } catch (error) {
       this.log(`claim reap failed: ${describe(error)}`);
-      return;
+      return null;
     }
     for (const claim of result.released) {
       this.log(
@@ -734,6 +772,7 @@ export class Scheduler {
     if (result.released.length > 0) {
       this.log(`claim reap released ${result.released.length} stale claim(s)`);
     }
+    return result;
   }
 
   /** `utcnow()`'s shape on the injectable clock, so tests can age a peer heartbeat. */
@@ -1273,6 +1312,9 @@ export class Scheduler {
                 };
               })()
             : undefined;
+        // M57c: quote the rejected shape back into the next planning prompt.
+        const previousReasonFailure =
+          kind === "reason" ? getLatestReasonFailure(conn, projectId) : null;
         const profile = selectWorkerProfile(
           this.config.workerProfiles,
           this.config.workerSelection,
@@ -1340,6 +1382,7 @@ export class Scheduler {
           ...(intentBudget === null ? {} : { budget: intentBudget }),
           intentMeta,
           ...(projectBudget === undefined ? {} : { projectBudget }),
+          ...(previousReasonFailure === null ? {} : { previousReasonFailure }),
           ...(attachments.length === 0 ? {} : { attachments }),
           ...(agentContextYaml === undefined ? {} : { agentContextYaml }),
           ...(graphAudit === undefined ? {} : { graphAudit }),
@@ -1456,8 +1499,12 @@ export class Scheduler {
     extraEnv["CAIRN_TASK_CHECKPOINT"] = this.config.tasks.checkpoint.enabled ? "1" : "0";
     extraEnv["CAIRN_CHECKPOINT_INTERVAL_SECONDS"] = String(this.config.tasks.checkpoint.intervalSeconds);
     Object.assign(extraEnv, toolSpillEnvironment(this.config.tasks.toolResultSpill));
+    Object.assign(extraEnv, modelTraceEnvironment(this.config.tasks.modelTrace));
     if (task.maxToolCalls !== undefined) {
       extraEnv["CAIRN_TASK_MAX_TOOL_CALLS"] = String(task.maxToolCalls);
+    }
+    if (task.reserveToolCalls !== undefined && task.reserveToolCalls > 0) {
+      extraEnv["CAIRN_TASK_RESERVE_TOOL_CALLS"] = String(task.reserveToolCalls);
     }
     extraEnv["CAIRN_SSRF_POLICY"] = this.config.scope.ssrfMarkers;
     const protectedHosts = protectedTargetHosts(this.config);
@@ -1738,35 +1785,42 @@ export class Scheduler {
     }
 
     // Reason turns do not write facts; for every other kind, validate the worker's
-    // evidence claim before touching the graph. Missing evidence is recorded, invalid
-    // evidence fails the task (the filesystem is untrusted input).
+    // evidence claim before touching the graph. Missing evidence is recorded. Invalid
+    // refs are dropped one at a time (`tasks.evidence.invalid_refs: drop`, the default)
+    // so a single mistyped path cannot destroy a whole run's conclusion — proj_047 lost
+    // two verified exploit primitives to exactly that. A completion claim stays strict:
+    // completion has to name every file it relies on.
     const evidence: EvidenceCollection =
       running.kind === "reason"
         ? { status: "missing", refs: [], files: [], invalid: [] }
         : collectEvidence(result.evidence_refs, running.hostWorkspace, {
             minBytes: this.config.tasks.evidence.minBytes,
           });
+    const claim = completionClaim(running, result, evidence);
     if (evidence.invalid.length > 0) {
       const reasons = evidence.invalid
         .map((issue) => `${issue.ref || "<ref>"}: ${issue.reason}`)
         .join("; ");
-      running.detail = `invalid evidence: ${reasons}`;
-      this.log(`evidence rejected task=${running.taskId}: ${reasons}`);
-      this.failRunning(running, "evidence invalid");
-      return "failed";
+      if (claim !== null || this.config.tasks.evidence.invalidRefs === "fail") {
+        running.detail = `invalid evidence: ${reasons}`;
+        this.log(`evidence rejected task=${running.taskId}: ${reasons}`);
+        this.failRunning(running, "evidence invalid");
+        return "failed";
+      }
+      this.appendDetail(running, `invalid evidence refs dropped: ${reasons}`);
+      this.log(`evidence refs dropped task=${running.taskId}: ${reasons}`);
     }
     running.evidenceCount = evidence.refs.length;
 
     // A completion claim is verified before any graph write. The oracle is allowed to
     // call the challenge service, so it runs outside the graph transaction; a failure
     // leaves the project active instead of recording a model-declared completion.
-    const claim = completionClaim(running, result, evidence);
     let verification: VerificationOutcome | null = null;
     if (claim !== null) {
       try {
         verification = await this.verification.verify(running.projectId, claim);
       } catch (error) {
-        running.detail = `completion verification failed: ${describe(error)}`;
+        this.appendDetail(running, `completion verification failed: ${describe(error)}`);
         this.log(`verification error task=${running.taskId}: ${describe(error)}`);
         this.failRunning(running, "verification error");
         return "failed";
@@ -1775,7 +1829,7 @@ export class Scheduler {
         this.log(
           `completion not verified task=${running.taskId} kind=${verification.kind} detail=${verification.detail}`,
         );
-        running.detail = `completion not verified: ${verification.detail}`;
+        this.appendDetail(running, `completion not verified: ${verification.detail}`);
       }
     }
 
@@ -1797,6 +1851,14 @@ export class Scheduler {
         }
       });
     } catch (error) {
+      if (error instanceof PayloadContractError) {
+        // Nothing was applied; the worker's JSON is the failure. Record its reason so the run
+        // card explains itself, and keep the retry path identical to a failed apply.
+        this.appendDetail(running, `invalid result payload: ${error.message}`);
+        this.log(`result rejected task=${running.taskId}: ${error.message}`);
+        this.failRunning(running, "result invalid");
+        return "failed";
+      }
       if (error instanceof HttpError) {
         this.log(
           `apply rejected task=${running.taskId} status=${error.status} detail=${String(error.detail)}`,
@@ -1816,10 +1878,12 @@ export class Scheduler {
     data: Record<string, unknown>,
     verification: VerificationOutcome | null,
   ): TaskOutcome {
-    const validated = validateReasonPayload(
-      { accepted: true, data },
-      running.openIntentsEmpty,
-      this.config.tasks.reason.maxIntents,
+    const validated = validatePayload(() =>
+      validateReasonPayload(
+        { accepted: true, data },
+        running.openIntentsEmpty,
+        this.config.tasks.reason.maxIntents,
+      ),
     );
     switch (validated.kind) {
       case "rejected":
@@ -2072,7 +2136,7 @@ export class Scheduler {
     evidence: EvidenceCollection,
   ): TaskOutcome {
     if (running.intentId === undefined) return "failed";
-    const validated = validateExplorePayload({ accepted: true, data });
+    const validated = validatePayload(() => validateExplorePayload({ accepted: true, data }));
     if (validated.kind === "rejected") {
       releaseIntent(conn, running.projectId, running.intentId, WORKER_NAME);
       return "rejected";
@@ -2108,10 +2172,11 @@ export class Scheduler {
     if (running.intentId === undefined || running.concludeOf === undefined) {
       return "failed";
     }
-    const validated =
+    const validated = validatePayload(() =>
       running.concludeOf === "bootstrap"
         ? validateBootstrapConcludePayload({ accepted: true, data })
-        : validateExplorePayload({ accepted: true, data });
+        : validateExplorePayload({ accepted: true, data }),
+    );
     if (validated.kind === "rejected") {
       releaseIntent(conn, running.projectId, running.intentId, WORKER_NAME);
       return "rejected";
@@ -2141,7 +2206,7 @@ export class Scheduler {
     verification: VerificationOutcome | null,
   ): TaskOutcome {
     if (running.intentId === undefined) return "failed";
-    const validated = validateBootstrapExecutePayload({ accepted: true, data });
+    const validated = validatePayload(() => validateBootstrapExecutePayload({ accepted: true, data }));
     if (validated.kind === "rejected") {
       releaseIntent(conn, running.projectId, running.intentId, WORKER_NAME);
       return "rejected";
@@ -2604,9 +2669,16 @@ export class Scheduler {
     }
   }
 
+  /** Adds a note to the run detail without discarding an earlier one. */
+  private appendDetail(running: RunningTask, note: string): void {
+    running.detail =
+      running.detail === undefined || running.detail === ""
+        ? note
+        : `${running.detail}; ${note}`;
+  }
+
   /** Retain useful/uncertain execute sessions; pure model failures bypass this method. */
-  private failRunning(running: RunningTask, why: string): void {
-    const codes = { "result missing": "result_missing", "result invalid": "result_invalid",
+  private failRunning(running: RunningTask, why: string): void {    const codes = { "result missing": "result_missing", "result invalid": "result_invalid",
       "evidence invalid": "evidence_invalid", "verification error": "verification_error", "apply failed": "apply_failed" } as const;
     running.failure ??= { domain: "execution", code: codes[why as keyof typeof codes] ?? "worker_failed" };
     if (this.queueConclude(running, why)) return;
@@ -2855,6 +2927,7 @@ export class Scheduler {
             projectId: running.projectId,
             runId: running.runId,
             trigger,
+            code: running.failure?.code ?? null,
           }),
         );
       }
@@ -3258,6 +3331,26 @@ function preview(text: string, limit = 1200): string {
 
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * A worker result that arrived intact but does not satisfy the payload contract.
+ *
+ * The validators throw plain `Error`s, which used to fall into the generic `apply failed`
+ * bucket: the operator saw "任务执行异常 / apply_failed" with no reason, and the run looked
+ * like a graph write had broken. Nothing was written; the model simply returned a shape the
+ * contract does not accept (proj_047: `experiment` came back without `version`). Carrying the
+ * validator's message into the run detail is what makes that visible without reading logs.
+ */
+class PayloadContractError extends Error {}
+
+/** Runs a payload validator, turning a contract failure into the model's failure, not ours. */
+function validatePayload<T>(validate: () => T): T {
+  try {
+    return validate();
+  } catch (error) {
+    throw new PayloadContractError(describe(error));
+  }
 }
 
 /** Run detail for a cancelled task, so the UI can show why it stopped without the log. */

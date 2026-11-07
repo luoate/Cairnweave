@@ -840,7 +840,7 @@ describe("modal focus management", () => {
     }
     // An unclosed overlay would nest every later modal inside it, hiding them.
     expect(depth).toBe(0);
-    expect(Object.keys(overlayDepths).length).toBe(13);
+    expect(Object.keys(overlayDepths).length).toBe(14);
     for (const [name, level] of Object.entries(overlayDepths)) {
       expect(level, name).toBe(0);
     }
@@ -1325,11 +1325,42 @@ describe("model and key settings", () => {
     await app.saveAgentModel();
     expect(calls[0]![0]).toBe("PUT");
     expect(calls[0]![1]).toBe("/settings/agent/models/m1");
+    // The form carries no compat switches, so the entry is saved without any compat rather
+    // than silently keeping the previous one.
     expect(calls[0]![2]).toEqual({
       providerId: "p1",
       modelId: "model-b",
       reasoning: false,
       input: ["text"],
+      compat: null,
+    });
+  });
+
+  test("round-trips compat and lets the developer role be turned off", async () => {
+    const app = loadState();
+    const model = {
+      id: "m1", provider: "p1", providerId: "p1", modelId: "deepseek-flash",
+      reasoning: true, compat: { reasoningEffortMap: { minimal: "none" } },
+    };
+    app.agentConfig = { ...app.agentConfig, providers: [{ id: "p1", name: "p1" }] };
+    app.selectAgentModel(model);
+
+    expect(app.agentModelForm.supportsDeveloperRole).toBe("");
+    expect(app.agentModelForm.compatOther).toEqual({ reasoningEffortMap: { minimal: "none" } });
+
+    app.agentModelForm.supportsDeveloperRole = "false";
+    const calls: any[] = [];
+    app.api = async (method: string, path: string, body: unknown) => {
+      calls.push([method, path, body]);
+      return { id: "m1" };
+    };
+    app.loadAgentConfig = async () => {};
+    app.showToast = () => {};
+
+    await app.saveAgentModel();
+    expect(calls[0]![2].compat).toEqual({
+      reasoningEffortMap: { minimal: "none" },
+      supportsDeveloperRole: false,
     });
   });
 
@@ -2223,6 +2254,85 @@ describe("skill detail modal", () => {
   });
 });
 
+describe("model trace modal", () => {
+  function event(seq: number, type: string) {
+    return { seq, at: "2026-01-02T03:00:00Z", type, turn: 1 };
+  }
+
+  test("opens on the selected run and polls with the last cursor", async () => {
+    const app = loadState();
+    app.selectedProjectId = "proj_1";
+    const paths: string[] = [];
+    let page = 0;
+    app.api = async (method: string, path: string) => {
+      expect(method).toBe("GET");
+      paths.push(path);
+      page += 1;
+      if (page === 1) {
+        return { task_id: "task_1", available: true, truncated: false, cursor: 2, events: [event(1, "request"), event(2, "response")] };
+      }
+      return { task_id: "task_1", available: true, truncated: false, cursor: 3, events: [event(3, "stream")] };
+    };
+
+    await app.openTrace("task_1", "explore");
+    try {
+      expect(app.showTrace).toBe(true);
+      expect(app.traceView.kind).toBe("explore");
+      expect(app.traceView.events.map((item: any) => item.seq)).toEqual([1, 2]);
+      expect(paths).toEqual(["/projects/proj_1/runs/task_1/trace"]);
+
+      // The next poll asks only for what the modal has not seen yet.
+      await app.loadTrace({ quiet: true });
+      expect(paths[1]).toBe("/projects/proj_1/runs/task_1/trace?cursor=2");
+      expect(app.traceView.events.map((item: any) => item.seq)).toEqual([1, 2, 3]);
+      expect(app.traceView.cursor).toBe(3);
+
+      expect(app.traceEventLabel(event(1, "request"))).toBe("请求 #1");
+      expect(app.traceEventLabel({ type: "tool_start", tool: "bash" })).toBe("工具开始 · bash");
+      expect(app.traceRoleLabel("system")).toBe("系统");
+      expect(app.traceEventLabel({ type: "truncated" })).toBe("轨迹已截断");
+      expect(app.traceUsageLabel({ input: 10, output: 3, cache_read: 2, total: 13 })).toBe("token 输入 10 · 输出 3 · 缓存读 2 · 总计 13");
+    } finally {
+      app.closeTrace();
+    }
+  });
+
+  test("closing stops the poll and registers a closer", async () => {
+    const app = loadState();
+    app.selectedProjectId = "proj_1";
+    app.api = async () => ({ available: false, truncated: false, cursor: 0, events: [] });
+    await app.openTrace("task_1", "explore");
+    expect(app.traceView.timer).not.toBeNull();
+    expect(Object.keys(app.modalClosers())).toContain("trace");
+
+    app.closeTrace();
+    expect(app.showTrace).toBe(false);
+    expect(app.traceView.timer).toBeNull();
+    // A late poll cannot reopen a closed modal.
+    expect(await app.loadTrace({ quiet: true })).toBeUndefined();
+    expect(app.showTrace).toBe(false);
+  });
+
+  test("keeps growing traces bounded in the modal", async () => {
+    const app = loadState();
+    app.selectedProjectId = "proj_1";
+    app.api = async () => ({
+      available: true,
+      truncated: false,
+      cursor: 900,
+      events: Array.from({ length: 900 }, (_, index) => event(index + 1, "stream")),
+    });
+    await app.openTrace("task_1", "explore");
+    try {
+      expect(app.traceView.events).toHaveLength(800);
+      expect(app.traceView.dropped).toBe(true);
+      expect(app.traceViewStatusLabel()).toContain("最近 800 条");
+    } finally {
+      app.closeTrace();
+    }
+  });
+});
+
 describe("runtime settings modal", () => {
   function editableFixture() {
     return {
@@ -2239,6 +2349,7 @@ describe("runtime settings modal", () => {
         explore: { timeout: 900, conclude_timeout: 120 },
         graph_slice: { enabled: true, max_facts: 80, max_intents: 60 },
         evidence: { min_bytes: 32 },
+        model_trace: { enabled: true, preview_chars: 2000, max_bytes: 8388608 },
       },
       worker: {
         reasoning: "reason",
@@ -3452,7 +3563,7 @@ describe("workspace layout and navigation", () => {
   test("dialogs and live feedback expose semantics while the workspace is inert", () => {
     const html = readFileSync(INDEX_PATH, "utf8");
     const modalRoots = [...html.matchAll(/<div x-show="show[^>]*data-modal="[^>]+>/g)];
-    expect(modalRoots).toHaveLength(13);
+    expect(modalRoots).toHaveLength(14);
     for (const [root] of modalRoots) {
       expect(root).toContain('role="dialog"');
       expect(root).toContain('aria-modal="true"');

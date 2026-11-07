@@ -1311,12 +1311,93 @@ describe("Strategist trigger persistence", () => {
 });
 
 describe("Strategist priority and project budgets", () => {
+  test(
+    "retries a rejected plan after the short schema backoff and quotes the reason",
+    async () => {
+      const project = createProjectRow(false);
+      const fixture = join(import.meta.dir, "testdata", "meta-reason-worker.ts");
+      let nowMs = Date.now();
+      const loop = new Scheduler({
+        db,
+        config: parseDispatchConfig({
+          ...CONFIG,
+          strategist: {
+            ...CONFIG.strategist,
+            failure_backoff_seconds: 120,
+            schema_backoff_seconds: 5,
+          },
+        }),
+        workspaceRoot: join(directory, "workspace"),
+        log: (message) => logs.push(message),
+        leaseIntervalMs: 500,
+        now: () => new Date(nowMs),
+        workerArgv: (taskPath) => [process.execPath, fixture, taskPath, "invalid-experiment"],
+      });
+
+      loop.tick();
+      await loop.waitForIdle();
+
+      const reasonRuns = () =>
+        db.withConn((conn) => listProjectRuns(conn, project.project.id))
+          .filter((run) => run.kind === "reason");
+      expect(reasonRuns()).toHaveLength(1);
+      expect(reasonRuns()[0]!.failure).toEqual({ domain: "execution", code: "result_invalid" });
+      expect(
+        db.withConn((conn) => getStrategistState(conn, project.project.id))!.last_failure_code,
+      ).toBe("result_invalid");
+
+      // Inside the 5 s schema window the turn is still held back, even though the full
+      // execution backoff (120 s) is nowhere near done.
+      nowMs += 2_000;
+      loop.tick();
+      await loop.waitForIdle();
+      expect(reasonRuns()).toHaveLength(1);
+
+      // Past the schema backoff (but still inside the full one) the retry goes out.
+      nowMs += 10_000;
+      loop.tick();
+      await loop.waitForIdle();
+      const runs = reasonRuns();
+      expect(runs).toHaveLength(2);
+      expect(
+        logs.some(
+          (line) =>
+            line.includes(`slow-layer suppressed project=${project.project.id}`) &&
+            line.includes("reason=failure_backoff"),
+        ),
+      ).toBe(true);
+
+      // The retry prompt carries the validator's message from the rejected turn.
+      const retry = runs[1]!;
+      const taskFile = join(
+        directory,
+        "workspace",
+        project.project.id.replaceAll("/", "-"),
+        retry.session!,
+        "task.json",
+      );
+      const task = JSON.parse(readFileSync(taskFile, "utf8")) as { prompt: string };
+      expect(task.prompt).toContain("# 上次规划被拒收");
+      expect(task.prompt).toContain("result_invalid");
+      expect(task.prompt).toContain("invalid intent experiment");
+    },
+    60_000,
+  );
+
   test("rejects invalid experiment plans without creating any partial intents or metadata", async () => {
     const project = createProjectRow(false); const before = load(project.project.id).intents;
     const loop = metaReasonScheduler(true); loop.tick(); await loop.waitForIdle();
     expect(load(project.project.id).intents).toEqual(before);
     expect(db.withConn(conn => listProjectIntentMeta(conn, project.project.id))).toEqual([]);
-    expect(db.withConn(conn => listProjectRuns(conn, project.project.id)).find(r => r.kind === "reason")?.outcome).toBe("failed");
+    const reasonRun = db.withConn(conn => listProjectRuns(conn, project.project.id)).find(r => r.kind === "reason");
+    expect(reasonRun?.outcome).toBe("failed");
+    // The model returned parseable JSON that breaks the payload contract. That is the
+    // worker's failure, not a graph write, and the card has to say which field was wrong:
+    // proj_047 lost three reason turns to an `experiment` without `version` and every one
+    // of them showed up as a bare `apply_failed` with no detail.
+    expect(reasonRun?.failure).toEqual({ domain: "execution", code: "result_invalid" });
+    expect(reasonRun?.detail).toContain("invalid intent experiment at index 1");
+    expect(logs.some((line) => line.includes("result rejected") && line.includes("invalid intent experiment"))).toBe(true);
   }, 30_000);
   test(
     "persists reason priority and budget hints in intent_meta",

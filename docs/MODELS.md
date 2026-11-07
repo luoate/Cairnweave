@@ -31,7 +31,9 @@
 3. **加模型**：`modelId` 是上游真实模型名；可选短 `id` 作为本地引用名。高级字段：
    `thinkingLevel`（minimal/low/medium/high/xhigh）、`reasoning`、`input`（text/image）、
    `cost`（input/output/cacheRead/cacheWrite）、`contextWindow`、`maxTokens`、模型级
-   `headers` 与 `compat`。
+   `headers` 与 `compat`。`compat` 的两个开关在界面上是「协议兼容」：`developer 角色`
+   与 `reasoning_effort`，各可选“不指定 / 支持 / 不支持”，保存时与手写在
+   `model-prefs.json` 里的其它 `compat` 键合并。
 4. **设为默认**：把当前条目复制为 `cairn-worker`，`cairn-worker.md` 的
    `model: "cairn-worker"` 始终指向这份副本。`worker_profiles` 仍可按任务覆盖模型。
 5. **测试**：对目标条目真实调用一次模型。未保存密钥时返回可读提示而不是 SDK 文件路径
@@ -91,6 +93,7 @@ curl -s -X POST "$BASE/settings/agent/providers/<provider-id>/test" -H "$H"
 | 409 删除被拒 | 条目仍被模型/`worker_profiles`/Observer/prompt 默认引用；确认后加 `?force=true` |
 | `model discovery failed: ...` | 上游不可达或返回形状不符；错误已脱敏，检查 Base URL 与协议 |
 | 网关返回 `MODEL_NOT_SUPPORTED` | 模型名不被该网关提供；用发现结果或更换模型 |
+| 422 `unknown variant 'developer'` | 开了推理后 SDK 把 system 消息改成 OpenAI 的 `developer` 角色，而该网关只认 `system`；在模型「高级参数 → 协议兼容」把 `developer 角色` 设为“不支持”（等价于 `compat.supportsDeveloperRole: false`） |
 | 设为默认后任务仍用旧模型 | `worker_profiles` 的任务级覆盖优先于 `cairn-worker` |
 
 ## 6. 临时目录演练

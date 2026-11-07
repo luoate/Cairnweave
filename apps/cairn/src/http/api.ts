@@ -3,6 +3,7 @@ import { getInfrastructureFault, resetInfrastructureFault, buildTaskContextSnaps
 import { checkpointEvidenceStatus } from "../scheduler/checkpoint";
 import { attachRunDiagnostics, latestRunDiagnostic } from "./run-diagnostics";
 import { taskDeadlineReader } from "./project-activity";
+import { readModelTrace } from "./project-trace";
 import {
   HttpError,
   RequestValidationError,
@@ -906,6 +907,23 @@ function buildRoutes(
         now: new Date(),
         deadlineFor: taskDeadlineReader(workspaceRoot(), projectId),
         ...(limit === undefined ? {} : { limit }),
+      }));
+    }),
+  );
+
+  // Read-only model trace for one task: what the worker sent to the provider and what came
+  // back, straight from `<sessionDir>/model-trace.jsonl`. The UI polls it with `cursor`
+  // while the task runs, so the response is bounded per call and never re-sends the head.
+  route("GET", "/projects/{project_id}/runs/{task_id}/trace", ({ params, url }) =>
+    db.withConn((conn) => {
+      const projectId = params["project_id"]!;
+      const taskId = params["task_id"]!;
+      getProjectOr404(conn, projectId);
+      const cursor = Number(url.searchParams.get("cursor") ?? "");
+      const limit = Number(url.searchParams.get("limit") ?? "");
+      return json(readModelTrace(workspaceRoot(), projectId, taskId, {
+        ...(Number.isInteger(cursor) && cursor >= 0 ? { cursor } : {}),
+        ...(Number.isInteger(limit) && limit >= 1 ? { limit } : {}),
       }));
     }),
   );

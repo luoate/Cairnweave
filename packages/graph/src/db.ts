@@ -621,6 +621,9 @@ function ensureStrategistColumns(conn: Database): void {
     ["replan_requested_at", "TEXT"],
     ["replan_requested_by", "TEXT"],
     ["replan_reason", "TEXT"],
+    // M57c: distinguishes a deterministic payload-contract failure (short backoff) from
+    // an execution failure (full backoff) without re-reading the run ledger.
+    ["last_failure_code", "TEXT"],
   ] as const;
   for (const [name, definition] of additions) {
     if (!columns.has(name)) {

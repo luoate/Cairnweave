@@ -51,6 +51,10 @@ function bridgeFromEnv(): HostBridge {
   const policy = parsePolicy(process.env["CAIRN_SCOPE_POLICY"]);
   const stream = parseAuditStream();
   const maxToolCalls = parseMaxToolCalls(process.env["CAIRN_TASK_MAX_TOOL_CALLS"]);
+  const reserveToolCalls = parseReserveToolCalls(
+    process.env["CAIRN_TASK_RESERVE_TOOL_CALLS"],
+    maxToolCalls,
+  );
   const boardDir = process.env["CAIRN_OBSERVER_BOARD_DIR"]?.trim();
   const observerStateDir = process.env["CAIRN_OBSERVER_STATE_DIR"]?.trim();
   const protectedWriteRoots = [boardDir, observerStateDir].filter(
@@ -62,6 +66,7 @@ function bridgeFromEnv(): HostBridge {
     stream?.url ?? "",
     stream?.token ?? "",
     maxToolCalls === undefined ? "" : String(maxToolCalls),
+    reserveToolCalls === undefined ? "" : String(reserveToolCalls),
   ].join("\u0000");
   if (cached !== null && cached.key === key) return cached.bridge;
 
@@ -79,6 +84,7 @@ function bridgeFromEnv(): HostBridge {
     ...(protectedWriteRoots.length === 0 ? {} : { protectedWriteRoots }),
     ...(stream === undefined ? {} : { auditStream: stream }),
     ...(maxToolCalls === undefined ? {} : { maxToolCalls }),
+    ...(reserveToolCalls === undefined ? {} : { reserveToolCalls }),
   });
   cached = { key, bridge };
   return bridge;
@@ -91,6 +97,19 @@ function parseMaxToolCalls(raw: string | undefined): number | undefined {
     throw new Error("CAIRN_TASK_MAX_TOOL_CALLS must be a positive integer up to 1000000");
   }
   return value;
+}
+
+function parseReserveToolCalls(
+  raw: string | undefined,
+  maxToolCalls: number | undefined,
+): number | undefined {
+  if (raw === undefined || raw.trim() === "") return undefined;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 0 || value > 1_000_000) {
+    throw new Error("CAIRN_TASK_RESERVE_TOOL_CALLS must be a non-negative integer up to 1000000");
+  }
+  if (value === 0 || maxToolCalls === undefined) return undefined;
+  return Math.min(value, maxToolCalls - 1);
 }
 
 function parseAuditStream(): AuditStreamEnvelope | undefined {

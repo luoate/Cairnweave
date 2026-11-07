@@ -230,10 +230,13 @@ container:
 | --- | --- | --- |
 | `bootstrap.timeout` / `bootstrap.conclude_timeout` | 600 / 90 | 秒；M42 把示例从 300 提到 600（旧 demo 为 120），软截止按 0.8 为 480 |
 | `reason.timeout` / `reason.max_intents` | 300 / 2 | 秒；单次 reason 新增意图上限 |
+| `reason.tools` | read/grep/find/ls | M57c：规划回合可用的工具白名单，只能收窄 prompt 已声明的工具，不会新增。默认不含 bash/write/edit，避免规划回合变成第二次探索 |
+| `reason.max_tool_calls` | 12 | M57c：reason 的工具调用上限；0 表示不限。只在没有 intent 预算时生效（reason 没有 intent） |
 | `explore.timeout` / `explore.conclude_timeout` | 600 / 120 | 秒 |
 | `graph_slice.enabled` | true | explore 及其 conclude 是否拿切片；`false` 回到全图导出 |
 | `graph_slice.max_facts` / `graph_slice.max_intents` | 80 / 60 | 软上限；`max_facts ≥ 2` |
 | `evidence.min_bytes` | 1 | 0 表示接受空证据 |
+| `evidence.invalid_refs` | drop | M57a：`drop` / `fail`。`drop` 逐条丢弃不存在、为目录或小于最小字节的 `evidence_refs` 并把原因写进 run detail，其余引用照常记录；`fail` 恢复旧的全有或全无（一个坏路径作废整轮）。携带 `complete` 声明的结果在两种模式下都保持严格。运行时热覆盖 |
 | `tool_result_spill.enabled` / `.max_inline_chars` | true / 32000 | M43：工具结果序列化后超过 `max_inline_chars` 字符就落盘 `<workspace>/.tool-results/<毫秒>-<工具>-<调用id>.md`，上下文里换成「绝对路径 + 工作区相对路径 + 600 字符预览 + 先 grep 再分片读」的指针。`max_inline_chars` 必须为正整数（1 也合法，等于全部外置）；`enabled: false` 回到全量内联。solver 与 subagent 共用同一份开关和同一个工作区，指针因此总是绝对路径在前。溢出文件不进 `project_artifacts` 索引，但 `/flag` 的兜底扫描把它算作取证来源 |
 | `context_plan.mode` | audit | M47：`off` / `audit`；生成任务级 `context-plan.json`。审计不改变输入、不阻断派发；没有 `enforce` 模式 |
 | `context_plan.max_initial_bytes` | 131072 | 正整数；Solver 提示词 + 必读文件的 UTF-8 字节审计阈值，严格大于才告警；不是项目 token 配额或模型窗口 |
@@ -241,6 +244,9 @@ container:
 | `checkpoint.enabled` | false | M49：同任务文件检查点与 SQLite 结构化尝试记忆；不新增模型调用；复用需要 M48 成功 apply |
 | `checkpoint.interval_seconds` | 5 | 整数 1–60；worker 重发和控制面接收间隔，不保证最后一个动作已保存 |
 | `context_pack.shard_max_bytes` | 8192 | 整数 1024–65536；恢复记录分片、索引页、目录及描述符的最终字节上限，不是会话总上限 |
+| `model_trace.enabled` | true | M56：worker 把每次模型请求与响应追加到 `<session>/solver-session/model-trace.jsonl`，调度日志的「模型轨迹」只读展示。诊断旁路，写失败不影响任务 |
+| `model_trace.preview_chars` | 2000 | 整数 200–20000；每个文本字段保留的预览字符数（开头约 35% + 结尾） |
+| `model_trace.max_bytes` | 8388608 | 整数 262144–67108864；单任务追加上限，写满后追加一条 `truncated` 并停止 |
 
 `context_plan` 的两个键可经现有 `/settings/runtime` 覆盖与重置，下一次任务准备生效（本阶段
 不加弹窗控件）。文件在 `<workspace>/.cairn/sessions/<task-id>/context-plan.json`，不进入
@@ -376,6 +382,7 @@ tasks:
 | `worker.retain_task_files` | true | 任务结束是否保留 task/result/audit |
 | `worker.result_grace_seconds` | 15 | worker 退出后等待 result.json |
 | `worker.scoped_artifacts` | 由并发推导 | 工件按任务隔离 |
+| `worker.budget_reserve_calls` | 3 | M57b：intent 预算最后 N 次调用只允许写本任务产物目录，避免探测吃光预算后写不出被引用的总结文件；无预算或预算为 1 时不生效，且最多保留到「预算 − 1」。0 关闭。运行时热覆盖 |
 | `worker_selection.mode` | prompt | `prompt` / `stats` |
 | `worker_selection.min_runs` | 3 | 进入利用前的最少结束 run |
 | `worker_selection.epsilon` | 0.1 | 0–1 |
@@ -427,9 +434,14 @@ ARCHITECTURE 的 Host Bridge 一节。
 ### 策略触发 `strategist`
 
 `min_new_facts`、`min_new_hints`、`cooldown_seconds`、`failure_backoff_seconds`、
-`max_runs_per_hour`、`zero_output_threshold`、`stale_intent_seconds`、
-`fallback_interval_seconds` 为非负整数，`resource_pressure_ratio` 为 0–1。0 表示关闭对应
-的触发器或上限；initial 与“没有未结束意图”是 urgent 触发，不受冷却与小时上限限制。
+`schema_backoff_seconds`、`max_runs_per_hour`、`zero_output_threshold`、
+`stale_intent_seconds`、`fallback_interval_seconds` 为非负整数，`resource_pressure_ratio`
+为 0–1。0 表示关闭对应的触发器或上限；initial 与“没有未结束意图”是 urgent 触发，不受
+冷却与小时上限限制。
+
+`schema_backoff_seconds`（M57c，默认 15）只用于 `result_invalid`：结果 JSON 形状不合法属于
+确定性错误，下一次 reason 提示词会带上校验器原文，等待完整的执行退避只会浪费墙钟时间；
+其它失败码仍用 `failure_backoff_seconds`（默认 120）。
 
 `reason_abandon`（M37，`off` / `on`，默认 `off`）允许 reason 在结果里用 `abandon`
 每轮放弃至多一个已经失败过的 open 意图；操作员通过

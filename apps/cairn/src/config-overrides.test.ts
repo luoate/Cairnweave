@@ -325,6 +325,30 @@ describe("RuntimeConfigStore", () => {
     expect(config.tasks.toolResultSpill).toEqual({ enabled: true, maxInlineChars: 32_000 });
   });
 
+  test("toggles the model trace on the live config", () => {
+    const store = newStore();
+    expect(store.view().editable.tasks.model_trace).toEqual({
+      enabled: true,
+      preview_chars: 2000,
+      max_bytes: 8 * 1024 * 1024,
+    });
+
+    const view = store.apply({ tasks: { model_trace: { preview_chars: 400 } } });
+    expect(config.tasks.modelTrace).toEqual({ enabled: true, previewChars: 400, maxBytes: 8 * 1024 * 1024 });
+    expect(view.overrides).toEqual(["tasks.model_trace.preview_chars"]);
+
+    expect(() => store.apply({ tasks: { model_trace: { max_bytes: 1024 } } })).toThrow(
+      "tasks.model_trace.max_bytes must be an integer from 262144 to 67108864",
+    );
+    expect(config.tasks.modelTrace.maxBytes).toBe(8 * 1024 * 1024);
+
+    expect(store.reset().editable.tasks.model_trace).toEqual({
+      enabled: true,
+      preview_chars: 2000,
+      max_bytes: 8 * 1024 * 1024,
+    });
+  });
+
   test("replays stored overrides on a fresh config after restart", () => {
     newStore().apply({ retention: { session_keep_per_project: 7 } });
 

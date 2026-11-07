@@ -52,6 +52,7 @@ function bridge(
     protectedWriteRoots?: string[];
     artifactDir?: string;
     maxToolCalls?: number;
+    reserveToolCalls?: number;
   } = {},
 ): HostBridge {
   return new HostBridge({
@@ -69,6 +70,9 @@ function bridge(
     ...(overrides.maxToolCalls === undefined
       ? {}
       : { maxToolCalls: overrides.maxToolCalls }),
+    ...(overrides.reserveToolCalls === undefined
+      ? {}
+      : { reserveToolCalls: overrides.reserveToolCalls }),
     auditPath: overrides.auditPath ?? auditPath,
     now: () => new Date("2026-01-01T00:00:00.000Z"),
   });
@@ -104,6 +108,29 @@ describe("host bridge network policy", () => {
 
     const wrongNetwork = gate.checkToolCall("bash", { command: "nmap -p8080 10.0.0.5" });
     expect(wrongNetwork.allowed).toBe(false);
+  });
+
+  test("matches a schemeless host literal to the scope's default Web port", () => {
+    const gate = bridge(["http://target.example.test"]);
+    // `http://target.example.test` parses to port 80; a script that spells the host with
+    // no scheme and no port is the same destination.
+    expect(gate.checkToolCall("bash", { command: "curl -s target.example.test" }).allowed).toBe(
+      true,
+    );
+    // A non-default port is not implied by a bare hostname.
+    const explicit = bridge(["127.0.0.1:8080"]);
+    expect(explicit.checkToolCall("bash", { command: "curl -s 127.0.0.1" }).allowed).toBe(false);
+  });
+
+  test("treats a header value as carried data, not as a destination", () => {
+    const gate = bridge(["http://target.example.test"]);
+    const decision = gate.checkToolCall("bash", {
+      command: 'curl -s -H "X-Forwarded-For: 127.0.0.1" http://target.example.test/',
+    });
+    expect(decision.allowed).toBe(true);
+    const markers = auditLines().filter((line) => line["event"] === "ssrf_candidate");
+    expect(markers).toHaveLength(1);
+    expect(markers[0]!["targets"]).toEqual(["127.0.0.1"]);
   });
 
   test("supports wildcard host targets without matching the bare domain", () => {
@@ -401,6 +428,80 @@ describe("host bridge tool budget", () => {
     }
     expect(auditLines().every((line) => line["event"] === undefined)).toBe(true);
   });
+
+  test("reserves the last calls for task artifacts only", () => {
+    const gate = bridge(undefined, {
+      maxToolCalls: 4,
+      reserveToolCalls: 2,
+      artifactDir: "artifacts/task-1",
+    });
+
+    expect(gate.checkToolCall("read", { path: "notes.txt" }).allowed).toBe(true);
+    expect(gate.checkToolCall("read", { path: "notes.txt" }).allowed).toBe(true);
+
+    // Both calls left are in the reserve: probing is refused, the findings file is not.
+    const blocked = gate.checkToolCall("bash", { command: "ls" });
+    expect(blocked.allowed).toBe(false);
+    expect(blocked.event).toBe("tool_budget_reserve");
+    expect(blocked.reason).toContain("tool budget reserve (2 calls left)");
+
+    // A refused reserve call does not spend the reserve.
+    expect(gate.checkToolCall("read", { path: "notes.txt" }).allowed).toBe(false);
+
+    const findings = gate.checkToolCall("write", {
+      path: "artifacts/task-1/FINDINGS.md",
+      content: "x",
+    });
+    expect(findings.allowed).toBe(true);
+
+    // Another task's directory is not this task's final artifact.
+    const other = gate.checkToolCall("write", {
+      path: "artifacts/task-2/notes.txt",
+      content: "x",
+    });
+    expect(other.allowed).toBe(false);
+    expect(other.event).toBe("tool_budget_reserve");
+
+    expect(gate.checkToolCall("write", { path: "artifacts/task-1/b.md", content: "y" }).allowed).toBe(
+      true,
+    );
+
+    const exhausted = gate.checkToolCall("write", {
+      path: "artifacts/task-1/c.md",
+      content: "z",
+    });
+    expect(exhausted.event).toBe("tool_budget_exhausted");
+  });
+
+  test("warns once, one call before the reserve", () => {
+    // max 10, reserve 3 -> the reserve starts at call 7, so the warning lands on call 6.
+    const gate = bridge(undefined, { maxToolCalls: 10, reserveToolCalls: 3 });
+    const events: Array<string | undefined> = [];
+    for (let index = 0; index < 9; index += 1) {
+      events.push(gate.checkToolCall("read", { path: "notes.txt" }).event);
+    }
+    // Calls 1–7 are allowed (the 7th fills the pre-reserve budget), call 6 warns,
+    // calls 8 and 9 are refused by the reserve.
+    expect(events).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "tool_budget_warning",
+      undefined,
+      "tool_budget_reserve",
+      "tool_budget_reserve",
+    ]);
+    // One warning only; blocked reserve calls do not spend it.
+    expect(gate.checkToolCall("read", { path: "notes.txt" }).event).toBe(
+      "tool_budget_reserve",
+    );
+    // Without a scoped artifact directory any workspace write is a final artifact.
+    expect(
+      gate.checkToolCall("write", { path: "notes.txt", content: "x" }).allowed,
+    ).toBe(true);
+  });
 });
 
 describe("pi extension adapter", () => {
@@ -435,19 +536,52 @@ describe("pi extension adapter", () => {
     expect(blocked?.block).toBe(true);
     expect(blocked?.reason).toContain("outside the authorized scope");
   });
+
+  test("injects one hidden message when the tool budget reaches the warning point", async () => {
+    interface Registered {
+      handler: (event: { toolName?: unknown; input?: unknown }) => Promise<
+        { block: true; reason: string } | undefined
+      >;
+    }
+    let registered: Registered | null = null;
+    const messages: Array<{ customType?: string; deliverAs?: string }> = [];
+    const pi: PiApiLike = {
+      on(_event, handler) {
+        registered = { handler };
+        return undefined;
+      },
+      sendMessage(message, options) {
+        messages.push({ customType: message.customType, deliverAs: options?.deliverAs });
+        return undefined;
+      },
+    };
+
+    hostBridgeExtension(bridge(undefined, { maxToolCalls: 10, reserveToolCalls: 3 }))(pi);
+    const handler = (registered as unknown as Registered).handler;
+    for (let index = 0; index < 6; index += 1) {
+      await handler({ toolName: "read", input: { path: "notes.txt" } });
+    }
+    expect(messages).toEqual([
+      { customType: "cairn-tool-budget-warning", deliverAs: "nextTurn" },
+    ]);
+  });
 });
 
 describe("environment-driven bridge", () => {
   const key = "CAIRN_SCOPE_POLICY";
   const budgetKey = "CAIRN_TASK_MAX_TOOL_CALLS";
+  const reserveKey = "CAIRN_TASK_RESERVE_TOOL_CALLS";
   const previous = process.env[key];
   const previousBudget = process.env[budgetKey];
+  const previousReserve = process.env[reserveKey];
 
   afterEach(() => {
     if (previous === undefined) delete process.env[key];
     else process.env[key] = previous;
     if (previousBudget === undefined) delete process.env[budgetKey];
     else process.env[budgetKey] = previousBudget;
+    if (previousReserve === undefined) delete process.env[reserveKey];
+    else process.env[reserveKey] = previousReserve;
   });
 
   test("builds a gate from the worker policy", () => {
@@ -497,6 +631,27 @@ describe("environment-driven bridge", () => {
     process.env[budgetKey] = "abc";
     expect(() => createHostBridgeExtensionFromEnv()).toThrow("CAIRN_TASK_MAX_TOOL_CALLS");
     process.env[budgetKey] = "12";
+    expect(() => createHostBridgeExtensionFromEnv()).not.toThrow();
+  });
+
+  test("validates the artifact reserve from the environment", () => {
+    process.env[key] = JSON.stringify({
+      projectId: "proj-1",
+      taskId: "task-1",
+      workspace,
+      sessionDir,
+      targets: ["127.0.0.1:8080"],
+    });
+    process.env[budgetKey] = "12";
+    process.env[reserveKey] = "-1";
+    expect(() => createHostBridgeExtensionFromEnv()).toThrow("CAIRN_TASK_RESERVE_TOOL_CALLS");
+    process.env[reserveKey] = "abc";
+    expect(() => createHostBridgeExtensionFromEnv()).toThrow("CAIRN_TASK_RESERVE_TOOL_CALLS");
+    process.env[reserveKey] = "3";
+    expect(() => createHostBridgeExtensionFromEnv()).not.toThrow();
+    // A reserve without a ceiling has nothing to reserve from.
+    delete process.env[budgetKey];
+    process.env[reserveKey] = "2";
     expect(() => createHostBridgeExtensionFromEnv()).not.toThrow();
   });
 

@@ -64,6 +64,7 @@ function state(overrides: Partial<StrategistState> = {}): StrategistState {
     last_success_at: at(60),
     last_attempt_at: at(60),
     last_failure_at: null,
+    last_failure_code: null,
     last_trigger: "initial",
     last_run_id: "r1",
     last_fact_count: 2,
@@ -314,6 +315,37 @@ describe("Strategist trigger policy", () => {
         project: project({ facts: 3 }),
         state: state({ last_failure_at: at(200) }),
         policy: { failureBackoffSeconds: 120 },
+      }).trigger,
+    ).toBe("facts:2->3");
+  });
+
+  test("uses the short schema backoff after a rejected result payload", () => {
+    // result_invalid waits schemaBackoffSeconds (15s), not the full execution backoff.
+    expect(
+      evaluate({
+        state: state({ last_failure_at: at(20), last_failure_code: "result_invalid" }),
+        policy: { failureBackoffSeconds: 120, schemaBackoffSeconds: 15 },
+      }).trigger,
+    ).toBeNull();
+    expect(
+      evaluate({
+        state: state({ last_failure_at: at(10), last_failure_code: "result_invalid" }),
+        policy: { failureBackoffSeconds: 120, schemaBackoffSeconds: 15 },
+      }),
+    ).toMatchObject({ trigger: null, suppressed: "failure_backoff" });
+
+    // Any other code keeps the full backoff.
+    expect(
+      evaluate({
+        state: state({ last_failure_at: at(20), last_failure_code: "worker_failed" }),
+        policy: { failureBackoffSeconds: 120, schemaBackoffSeconds: 15 },
+      }),
+    ).toMatchObject({ trigger: null, suppressed: "failure_backoff" });
+    expect(
+      evaluate({
+        project: project({ facts: 3 }),
+        state: state({ last_failure_at: at(20), last_failure_code: "result_invalid" }),
+        policy: { failureBackoffSeconds: 120, schemaBackoffSeconds: 0 },
       }).trigger,
     ).toBe("facts:2->3");
   });

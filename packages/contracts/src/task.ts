@@ -65,6 +65,19 @@ export interface WorkerTask {
    */
   readonly maxToolCalls?: number;
   /**
+   * Tool calls held back at the end of `maxToolCalls` for final artifacts. Once only this
+   * many calls remain, the Host Bridge allows writes inside the task's artifact directory
+   * and blocks everything else, so a worker that spent its budget probing can still write
+   * the file it cites. Absent means no reserve.
+   */
+  readonly reserveToolCalls?: number;
+  /**
+   * M57c: when present, the solver session keeps only these tools (intersected with what
+   * the prompt already declares). The list can only narrow — it never adds a tool the
+   * prompt did not offer.
+   */
+  readonly tools?: readonly string[];
+  /**
    * Staffed dispatch profile selected by the scheduler (`worker_profiles[].id`). Present
    * only when stats-driven selection is enabled; recorded on the run for per-profile stats.
    */

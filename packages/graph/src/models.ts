@@ -346,6 +346,12 @@ export interface StrategistState {
   last_success_at: string | null;
   last_attempt_at: string | null;
   last_failure_at: string | null;
+  /**
+   * Failure code of the last failed reason turn (`result_invalid`, `evidence_invalid`,
+   * `worker_failed`, …). A deterministic payload-contract error gets a much shorter
+   * backoff than an execution failure (M57c); null on legacy rows and after success.
+   */
+  last_failure_code: string | null;
   last_trigger: string | null;
   last_run_id: string | null;
   last_fact_count: number;

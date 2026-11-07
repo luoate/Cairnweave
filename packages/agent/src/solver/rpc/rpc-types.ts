@@ -13,6 +13,8 @@ export interface SolverInitPayload {
     model?: string
     /** Per-task reasoning decision from the scheduler; overrides the model pref's setting. */
     reasoning?: "on" | "off"
+    /** M57c: narrow the prompt's tool list to these names. Never adds a tool. */
+    tools?: string[]
 }
 
 // ── RPC types (mirrored from pi-coding-agent rpc-types.ts) ──

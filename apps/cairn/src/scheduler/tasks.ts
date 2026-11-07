@@ -38,7 +38,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import type { DispatchConfig, ReasoningMode, ToolResultSpillConfig } from "../config";
+import type { DispatchConfig, ModelTraceConfig, ReasoningMode, ToolResultSpillConfig } from "../config";
 import { auditTaskContext, type ContextPlanOutcome } from "./context-plan";
 import { prepareContextPack } from "./prepare-context-pack";
 import type { ContextPackReport } from "./context-pack";
@@ -146,6 +146,12 @@ export interface PrepareTaskInput {
   intentMeta?: readonly IntentMeta[];
   /** Reason only: finished-run usage and the configured per-project limits. */
   projectBudget?: ProjectBudgetSnapshot;
+  /**
+   * Reason only: the previous failed reason turn that no success has superseded. Its
+   * detail is quoted back so a deterministic contract error is fixed on the second try
+   * instead of being rediscovered (M57c).
+   */
+  previousReasonFailure?: ReasonFailureSnapshot;
   /** Challenge files the operator uploaded, listed so the worker knows what to read. */
   attachments?: readonly ProjectAttachment[];
   /**
@@ -180,6 +186,13 @@ export interface ProjectBudgetSnapshot {
   usedCostUsd: number;
   maxTokens: number;
   maxCostUsd: number;
+}
+
+/** Detail of the last rejected reason turn, quoted into the next reason prompt. */
+export interface ReasonFailureSnapshot {
+  code: string;
+  detail: string | null;
+  finished_at: string | null;
 }
 
 export function resolveWorkspaceRoot(
@@ -269,11 +282,28 @@ export function prepareTask(input: PrepareTaskInput): PreparedTask {
       };
     }),
     ...(input.projectBudget === undefined ? {} : { projectBudget: input.projectBudget }),
+    ...(input.previousReasonFailure === undefined
+      ? {}
+      : { previousReasonFailure: input.previousReasonFailure }),
   }, concludeOf);
   const contextPrompt =
     input.agentContextYaml === undefined
       ? basePrompt
       : withAgentContextPolicy(basePrompt, workerAgentContextPath);
+  // An intent budget tightens the ceiling; reason has its own planning-turn ceiling so a
+  // planning round cannot turn into a second exploration (proj_047: 42 turns, 34 bash
+  // calls, then a result rejected on a schema detail).
+  const maxToolCalls =
+    input.budget?.max_tool_calls !== undefined
+      ? input.budget.max_tool_calls
+      : kind === "reason" && config.tasks.reason.maxToolCalls > 0
+        ? config.tasks.reason.maxToolCalls
+        : undefined;
+  // Reason is read-only, so an artifact reserve would only block its final reads.
+  const reserveToolCalls =
+    maxToolCalls === undefined || kind === "reason"
+      ? 0
+      : budgetReserve(maxToolCalls, config.worker.budgetReserveCalls);
   const decorate = (context: string): string => {
     const experiment = input.intent === undefined || (kind !== "explore" && !(kind === "conclude" && concludeOf === "explore"))
       ? undefined : intentMeta.get(input.intent.id)?.experiment;
@@ -281,8 +311,16 @@ export function prepareTask(input: PrepareTaskInput): PreparedTask {
     const guided = withOperatorGuidance(withExperimentContract(context, experiment, review), project.hints);
     const attachmentPrompt = input.attachments === undefined || input.attachments.length === 0
       ? guided : withAttachmentPolicy(guided, input.attachments);
+    const reserved = kind === "reason"
+      ? attachmentPrompt
+      : withToolBudgetPolicy(
+          attachmentPrompt,
+          maxToolCalls,
+          artifactDir,
+          config.worker.budgetReserveCalls,
+        );
     const completed = withCompletionPolicy(artifactDir === undefined
-      ? attachmentPrompt : withArtifactPolicy(attachmentPrompt, artifactDir));
+      ? reserved : withArtifactPolicy(reserved, artifactDir));
     return config.tasks.checkpoint.enabled ? completed + CHECKPOINT_INSTRUCTIONS : completed;
   };
   const prompt = decorate(contextPrompt);
@@ -325,9 +363,9 @@ export function prepareTask(input: PrepareTaskInput): PreparedTask {
     scope,
     ...(softDeadlineSeconds === undefined ? {} : { softDeadlineSeconds }),
     hardDeadlineSeconds,
-    ...(input.budget?.max_tool_calls === undefined
-      ? {}
-      : { maxToolCalls: input.budget.max_tool_calls }),
+    ...(maxToolCalls === undefined ? {} : { maxToolCalls }),
+    ...(reserveToolCalls === 0 ? {} : { reserveToolCalls }),
+    ...(kind === "reason" ? { tools: [...config.tasks.reason.tools] } : {}),
     ...(input.workerProfile === undefined
       ? {}
       : {
@@ -354,7 +392,7 @@ export function prepareTask(input: PrepareTaskInput): PreparedTask {
         /\{(context_pack_path|intent_id|max_intents)\}/g, (_token, key: string) => replacements[key]!,
       );
       return decorate((kind === "reason" ? withReasonOutputPolicy(compactBase, undefined,
-        config.tasks.reason.maxIntents, config.strategist.reasonAbandon === "on") : compactBase) +
+        config.tasks.reason.maxIntents, config.strategist.reasonAbandon === "on", reasonPolicyOptions(config, input)) : compactBase) +
         (input.contextSnapshot?.intents.some(item => item.exploration !== undefined) ? EXPLORATION_MONITOR_INSTRUCTIONS : ""));
     },
   });
@@ -618,6 +656,19 @@ export function toolSpillEnvironment(spill: ToolResultSpillConfig): Record<strin
   };
 }
 
+/**
+ * Environment contract for the worker-side model trace (`tasks.model_trace`). Same channel
+ * and same reasoning as the spill: the extension lives in `@cairn/agent`, so the values the
+ * operator changed in 「设置 → 运行与执行」 have to reach it as environment variables.
+ */
+export function modelTraceEnvironment(trace: ModelTraceConfig): Record<string, string> {
+  return {
+    CAIRN_MODEL_TRACE_ENABLED: trace.enabled ? "1" : "0",
+    CAIRN_MODEL_TRACE_PREVIEW_CHARS: String(trace.previewChars),
+    CAIRN_MODEL_TRACE_MAX_BYTES: String(trace.maxBytes),
+  };
+}
+
 function hardDeadline(
   config: DispatchConfig,
   kind: RunnableTaskKind,
@@ -659,6 +710,36 @@ interface PromptContext {
   onGraphReference?: () => void;
   openIntents: Record<string, unknown>[];
   projectBudget?: ProjectBudgetSnapshot;
+  previousReasonFailure?: ReasonFailureSnapshot;
+}
+
+/**
+ * Reserve as many of an intent budget's last calls as configured, but never all of them:
+ * a budget of 1 or 2 leaves the worker no room to probe at all if the reserve ate it.
+ */
+export function budgetReserve(maxToolCalls: number, configured: number): number {
+  if (configured <= 0 || maxToolCalls <= 1) return 0;
+  return Math.min(configured, maxToolCalls - 1);
+}
+
+function withToolBudgetPolicy(
+  prompt: string,
+  maxToolCalls: number | undefined,
+  artifactDir: string | undefined,
+  configuredReserve: number,
+): string {
+  if (maxToolCalls === undefined) return prompt;
+  const target = artifactDir === undefined ? "工作区" : `\`${artifactDir}/\``;
+  const reserve = budgetReserve(maxToolCalls, configuredReserve);
+  const reserveLine =
+    reserve > 0
+      ? `最后 ${reserve} 次调用属于保留段：只允许写 ${target} 目录下的文件，其它工具调用都会被拒绝。请在进入保留段之前就把结论与证据写进产物文件。`
+      : `预算用尽后所有工具调用都会被拒绝；请在剩余几次调用内把结论与证据写进 ${target}。`;
+  return `${prompt.trimEnd()}
+
+# 工具预算
+本任务最多 ${maxToolCalls} 次工具调用（每次 bash/read/write 等各计一次）。${reserveLine}
+`;
 }
 
 function withArtifactPolicy(prompt: string, artifactDir: string): string {
@@ -701,6 +782,7 @@ function withCompletionPolicy(prompt: string): string {
 声明 "complete" 只是一个主张，不是证明。控制面要先校验这个主张，才会把项目标记为完成；被驳回的主张会让项目继续保持活动。
 - 完成必须引用至少一条由此前任务产出的非种子事实（不能是 \`origin\` 或 \`goal\`）。种子事实只是前提，单凭它们永远不足以支撑完成；唯一来源是 \`origin\` 的主张会被驳回。
 - 每条用于支撑完成的事实，都必须来自一次已记录的 run，并至少有一条已记录的文件证据。把这些路径放进结果信封顶层的 \`evidence_refs\` 数组；只有描述文字不构成证据。
+- \`evidence_refs\` 里只写你确认存在且非空的文件（引用前先 \`ls -l\` 确认）。不存在的路径会被逐条丢弃并记录在这次运行里，不会作废其余结论；但完成声明是严格的：声明 complete 时只要有一个引用无效，整个完成声称就会被拒收。不要引用计划中要写但还没写的文件（例如 FINDINGS.md），也不要凭记忆猜路径；确实没留下文件时如实说明没有证据。
 - 还没有产出任何事实的 reason 回合应当提出 intents，而不是声明完成。让 explore 任务去产出有证据支撑的事实。
 - 绑定题目环境的项目按外部题目服务的 flag 计数判定。拿到 flag 后，把 flag 原文逐字写进事实描述，并写进一个证据文件供操作者查阅；绝不脱敏、打码或截短。${CREDENTIAL_RECORDING_RULE}${OPERATOR_SECRET_RULE}
 - 如果校验没有通过，请继续干活、补齐缺失的证据，而不是一遍遍重复同一个完成声明。
@@ -712,6 +794,11 @@ function withReasonOutputPolicy(
   budget: ProjectBudgetSnapshot | undefined,
   maxIntents: number,
   reasonAbandon: boolean,
+  options: {
+    tools?: readonly string[];
+    maxToolCalls?: number;
+    previousFailure?: ReasonFailureSnapshot;
+  } = {},
 ): string {
   const sections = [
     `# 策略师输出扩展
@@ -753,6 +840,26 @@ function withReasonOutputPolicy(
 - cost_usd: ${budget.usedCostUsd}${budget.maxCostUsd > 0 ? ` / 上限 ${budget.maxCostUsd}（${percent(budget.usedCostUsd, budget.maxCostUsd)}）` : " 已用；未配置成本上限"}
 接近上限时，把余下的预算用在价值最高的方向上，并在合适的地方为 intent 设置更紧的预算。`);
   }
+  if (options.tools !== undefined) {
+    const tools = options.tools;
+    const probing = tools.includes("bash");
+    sections.push(`# 规划回合的工具边界
+本回合是规划回合：可用工具只有 ${tools.join(" / ")}${probing ? "" : "，没有 bash、write 或 edit"}${options.maxToolCalls !== undefined && options.maxToolCalls > 0 ? `，最多 ${options.maxToolCalls} 次工具调用` : ""}。
+${probing ? "" : "不要试图在规划里直接运行侦察；"}你的产出是方向，不是结果：
+- 先用只读工具读图快照、调查状态和上一轮落在 artifacts/ 里的证据，再决定下一步；
+- 需要新的侦察、验证或利用，写成 intent 交给 explore 执行，并在 description 里写清要验证的具体问题；
+- 只有已经确认、且有文件证据的结论才写进事实；不要把猜测写成 hint。
+`);
+  }
+  if (options.previousFailure !== undefined) {
+    const failure = options.previousFailure;
+    const detail = (failure.detail ?? "").trim();
+    const excerpt = detail.length <= 800 ? detail : `${detail.slice(0, 800)}…`;
+    sections.push(`# 上次规划被拒收
+上一个 reason 回合没有写进图：failure code \`${failure.code}\`${failure.finished_at === null ? "" : `（${failure.finished_at}）`}。
+${excerpt === "" ? "那次运行没有附带原因说明。" : `控制面记录的原因：\n\`\`\`\n${excerpt}\n\`\`\`\n`}这次输出必须满足同一份 JSON 契约：实验计划恰好六个键、\`version\` 是数字 1；intent 的 \`from\` 必须引用有效事实；不确定的字段宁可省略。
+`);
+  }
   return `${prompt.trimEnd()}
 
 ${sections.join("\n\n")}
@@ -762,6 +869,26 @@ ${sections.join("\n\n")}
 function percent(used: number, limit: number): string {
   if (limit <= 0) return "0.0%";
   return `${((used / limit) * 100).toFixed(1)}%`;
+}
+
+/** Shared reason-policy options so the compact and legacy prompts cannot drift apart. */
+function reasonPolicyOptions(
+  config: DispatchConfig,
+  input: PrepareTaskInput,
+): {
+  tools: readonly string[];
+  maxToolCalls?: number;
+  previousFailure?: ReasonFailureSnapshot;
+} {
+  return {
+    tools: config.tasks.reason.tools,
+    ...(config.tasks.reason.maxToolCalls > 0
+      ? { maxToolCalls: config.tasks.reason.maxToolCalls }
+      : {}),
+    ...(input.previousReasonFailure === undefined
+      ? {}
+      : { previousFailure: input.previousReasonFailure }),
+  };
 }
 
 function renderTaskPrompt(
@@ -799,6 +926,15 @@ function renderTaskPrompt(
         context.projectBudget,
         config.tasks.reason.maxIntents,
         config.strategist.reasonAbandon === "on",
+        {
+          tools: config.tasks.reason.tools,
+          ...(config.tasks.reason.maxToolCalls > 0
+            ? { maxToolCalls: config.tasks.reason.maxToolCalls }
+            : {}),
+          ...(context.previousReasonFailure === undefined
+            ? {}
+            : { previousFailure: context.previousReasonFailure }),
+        },
       );
     }
     case "explore": {

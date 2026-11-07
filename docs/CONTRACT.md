@@ -35,12 +35,21 @@ worker 视角的绝对路径；本地模式就是宿主路径，容器模式是 
 | `softDeadlineSeconds` | 否 | 正数且小于 `hardDeadlineSeconds`；conclude 不设置 |
 | `hardDeadlineSeconds` | 是 | 正整数 |
 | `maxToolCalls` | 否 | 正整数；Host Bridge 的调用上限，超出后只拒绝工具、仍允许写结果 |
+| `reserveToolCalls` | 否 | 正整数，须小于 `maxToolCalls`；M57b 的末尾保留段，进入后只有本任务 `artifactDir`（未开启工件隔离时为工作区内）的写入被放行，其余调用以 `tool_budget_reserve` 拒绝且不消耗保留段 |
 | `workerProfile` | 否 | 命名的派发 profile id，≤64 字符且无控制字符 |
 | `model` | 否 | model-prefs 条目名，≤128 字符且无控制字符；覆盖 prompt frontmatter |
 | `reasoning` | 否 | `"on"` / `"off"`；调度器按 `worker.reasoning` 与任务类型写入，缺省时由模型配置决定 |
+| `tools` | 否 | M57c：工具白名单，与 prompt 已声明的工具取交集。只能收窄，不会新增；reason 默认只给 read/grep/find/ls |
 
 `scope.targets` 不是提示：Host Bridge 在每次工具调用前用它做硬校验，允许与拒绝都写入
 `audit.jsonl`。`artifactDir` 存在时，写其它任务的 artifacts 目录同样被拒绝。
+
+M57d 的端点识别规则（仍然 fail closed，只消除误报）：只有**命令位置**的工具才算网络调用
+（`which curl`、`ls curl` 不算，`sudo`/`timeout` 等包装命令会跳过）；写在脚本里的 heredoc
+正文不扫描（`python - <<EOF` 这类继承 stdin 的 heredoc 仍扫描，其 import 照样拒绝）；
+`-H/--header`、`-b/--cookie`、`-A/--user-agent`、`-e/--referer` 的值按 carried 处理，交给
+`scope.ssrf_markers` 策略而不是主目标校验；端点没有端口时，若 scope 目标是默认 Web 端口
+（80/443）则视为同一目标。
 
 `reasoning` 只影响生成参数，不改变工具权限或范围校验：`off` 时 worker 对整个会话关闭思考
 （OpenAI 兼容端点发 `reasoning_effort: "none"`，Anthropic 风格不发思考级别），旧 task 文件
@@ -59,6 +68,10 @@ worker 视角的绝对路径；本地模式就是宿主路径，容器模式是 
 - `true` 时 `data` 必须是对象；`data.description` 若出现必须是字符串。
 - `evidence_refs` 可选，元素必须是工作区相对路径的非空字符串；控制面只校验路径合法性与
   工作区包含关系，不证明文件内容支持该 Fact。
+- 无效引用（不存在、目录、符号链接、越界或小于 `tasks.evidence.min_bytes`）默认**逐条丢弃**：
+  合法子集照常记录，被丢弃的条目连同原因写进 `run.detail`（`invalid evidence refs dropped: …`）。
+  带 `complete` 声明的结果仍是严格的——任何一个无效引用都会让整次完成声称失败（M57a）。
+  `tasks.evidence.invalid_refs: fail` 恢复旧行为。
 - 结果文件是**唯一权威输出**。stdout/stderr 只作诊断，模型把 JSON 打到 stdout 不算结果。
 - 宽松 JSON 提取（整段、fence、前后散文）只作用于 Solver 文本；写进 `result.json` 的必须
   是严格 JSON。解析失败按“没有可用答案”处理。
@@ -200,9 +213,11 @@ Host Bridge 每做一次工具决策就追加一行 JSON：
 
 - 目录：`<workspace_root>/<project_id>/.cairn/sessions/<taskId>/`。
 - worker 写：`result.json`（临时文件 + `rename`）、`usage.json`、`audit.jsonl`、
-  `solver-session/**`；控制面写：`task.json`、`graph.yaml`、`agent-context.yaml`（M36，
-  `runtime.strategy_context: on` 时）、`stdout.log`、`stderr.log`。`agent-context.yaml`
-  只在提示词里被引用，不是 `task.json` 字段。
+  `solver-session/**`（含 M56 诊断旁路 `solver-session/model-trace.jsonl`）；控制面写：
+  `task.json`、`graph.yaml`、`agent-context.yaml`（M36，`runtime.strategy_context: on`
+  时）、`stdout.log`、`stderr.log`。`agent-context.yaml` 只在提示词里被引用，不是
+  `task.json` 字段；`model-trace.jsonl` 同样只是只读旁路，协议不加字段，控制面从不校验
+  或采用它的内容。
 - 控制面在 `worker.result_grace_seconds` 内轮询 `resultPath`；任务文件默认保留，
   `worker.retain_task_files: false` 可关闭。
 - worker 的**所有**输出都按不可信输入处理：JSON 必须过本文件的校验后才写图，路径必须在

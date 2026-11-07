@@ -697,6 +697,49 @@ describe("cross-process task claims", () => {
     await b.drain();
   });
 
+  test("a restart next to a just-killed boot reaps its claims without the hourly sweep", async () => {
+    const project = createProjectRow(false);
+    openIntent(project.project.id, "direction one");
+
+    const a = boot();
+    expect(a.loop.tick()).toBe(true);
+    const taskId = claimRows()[0]!.task_id;
+    const owner = claimRows()[0]!.instance_id;
+
+    // B starts inside the peer window: the dead boot still looks alive, so startup reconcile is
+    // skipped and the claim is left alone — but a recheck is armed instead of waiting an hour.
+    const b = boot();
+    b.loop.start();
+    try {
+      expect(b.logs.some((line) => line.includes("startup reconcile skipped"))).toBe(true);
+      expect(claimRows()[0]).toMatchObject({ released_at: null, instance_id: owner });
+      expect((b.loop as any).peerRecheckTimer).not.toBeNull();
+
+      // The peer window passes while the task lease still covers the work: wait, do not steal.
+      advance(PEER_TIMEOUT_SECONDS + 1);
+      setLease(taskId, PEER_TIMEOUT_SECONDS + 90);
+      (b.loop as any).armPeerRecheck(0);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(claimRows()[0]).toMatchObject({ released_at: null });
+      expect(b.logs.some((line) => line.includes("stale claim waiting"))).toBe(true);
+      // A live lease re-arms the recheck for its expiry rather than giving up on the claim.
+      expect((b.loop as any).peerRecheckTimer).not.toBeNull();
+
+      advance(PEER_TIMEOUT_SECONDS + 91);
+      (b.loop as any).armPeerRecheck(0);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(claimRows()[0]).toMatchObject({
+        released_at: stamp(PEER_TIMEOUT_SECONDS + 91),
+        release_reason: CLAIM_RELEASE_OWNER_EXPIRED,
+      });
+      expect(b.logs.some((line) => line.includes("stale claim released"))).toBe(true);
+      expect((b.loop as any).peerRecheckTimer).toBeNull();
+    } finally {
+      await a.drain();
+      await b.loop.stop();
+    }
+  });
+
   test("a live owner past its lease is left to its own renewal path", () => {
     const project = createProjectRow(false);
     openIntent(project.project.id, "direction one");

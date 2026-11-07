@@ -1091,6 +1091,8 @@
                   <span class="text-slate-400">任务</span>
                   <div class="font-mono text-slate-600 break-all" x-text="run.task_id"></div>
                 </div>
+                <button type="button" @click="openTrace(run.task_id, run.kind)" data-trace-open
+                  class="shrink-0 rounded-lg border border-slate-200 bg-white px-2 py-1 text-2xs text-slate-600 hover:bg-slate-50 transition">模型轨迹</button>
                 <button type="button" @click="openAuditForTask(run.task_id)"
                   class="shrink-0 rounded-lg border border-brand-200 px-2 py-1 text-2xs font-medium text-brand-600 hover:bg-brand-50 transition">
                   审计 →
@@ -1099,7 +1101,7 @@
               <template x-if="run.failure">
                 <div class="rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-2 text-2xs text-amber-900" data-run-failure>
                   <p class="font-semibold" x-text="run.failure.domain === 'infrastructure' ? '环境故障（非解题失败）' : '任务执行异常（非假设反证）'"></p>
-                  <p class="mt-1 break-words" x-text="run.failure.domain === 'infrastructure' ? infrastructureFaultLabel(run.failure.code) : run.failure.code"></p>
+                  <p class="mt-1 break-words" x-text="run.failure.domain === 'infrastructure' ? infrastructureFaultLabel(run.failure.code) : executionFailureLabel(run.failure.code)"></p>
                   <p class="mt-1">运行失败本身不能证明目标不可达、漏洞不存在或当前方向错误。</p>
                 </div>
               </template>
@@ -1172,6 +1174,11 @@
             </header>
             <div class="p-3 space-y-2.5">
               <div class="font-mono text-2xs text-slate-500 break-all" x-text="run.task_id"></div>
+              <button type="button" @click="openTrace(run.task_id, run.kind)" data-trace-open
+                class="mt-1.5 inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-2xs text-slate-600 hover:bg-slate-50 transition">
+                <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h13"/></svg>
+                模型请求与响应
+              </button>
               <div class="space-y-1">
                 <div class="flex items-center justify-between gap-2 text-2xs">
                   <span class="text-slate-500" x-text="`已运行 ${formatDurationMs(activityElapsedMs(run))} · 第 ${run.attempt} 次尝试`"></span>
@@ -3339,6 +3346,28 @@
                 <input type="checkbox" x-model="agentModelForm.reasoning"> 支持推理（reasoning）
               </label>
               <div class="col-span-2">
+                <label class="text-2xs text-slate-400 mb-1 block font-medium">协议兼容（compat）</label>
+                <div class="grid grid-cols-2 gap-3">
+                  <div>
+                    <label class="text-2xs text-slate-400 mb-1 block font-medium">developer 角色</label>
+                    <select x-model="agentModelForm.supportsDeveloperRole" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
+                      <option value="">不指定（按地址推断）</option>
+                      <option value="true">支持</option>
+                      <option value="false">不支持（改发 system）</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="text-2xs text-slate-400 mb-1 block font-medium">reasoning_effort</label>
+                    <select x-model="agentModelForm.supportsReasoningEffort" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
+                      <option value="">不指定（按地址推断）</option>
+                      <option value="true">支持</option>
+                      <option value="false">不支持</option>
+                    </select>
+                  </div>
+                </div>
+                <p class="mt-1 text-2xs text-slate-400">开启推理后 SDK 会把 system 消息改发成 OpenAI 的 developer 角色；网关只认 system 时测试会报 422 unknown variant，这里选「不支持」。</p>
+              </div>
+              <div class="col-span-2">
                 <label class="text-2xs text-slate-400 mb-1 block font-medium">输入模态</label>
                 <div class="flex gap-4 text-2xs text-slate-500">
                   <label class="inline-flex items-center gap-1.5"><input type="checkbox" x-model="agentModelForm.inputText"> 文本</label>
@@ -3536,6 +3565,159 @@
   </div>
 </div>
 
+<!-- Model Trace (read-only worker request/response log) -->
+<div x-show="showTrace" x-cloak data-modal="trace" role="dialog" aria-modal="true" aria-label="模型请求与响应"
+  x-effect="syncModal('trace', showTrace, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('trace')">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-4xl mx-4 border border-slate-200/60 overflow-hidden flex flex-col max-h-[85vh]" @click.stop>
+    <div class="px-5 py-4 border-b border-slate-200/80 flex items-start justify-between gap-4">
+      <div class="min-w-0">
+        <div class="flex flex-wrap items-center gap-2">
+          <h3 class="text-base font-semibold text-slate-700">模型请求与响应</h3>
+          <span x-show="traceView.kind" class="text-2xs px-1.5 py-0.5 rounded border border-slate-200 bg-slate-50 text-slate-500"
+            x-text="runKindLabel(traceView.kind)"></span>
+          <span x-show="traceView.follow" data-trace-live
+            class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border border-emerald-200 bg-emerald-50 text-2xs font-medium text-emerald-700">
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>实时跟随
+          </span>
+        </div>
+        <p class="mt-1 font-mono text-2xs text-slate-400 break-all" x-text="traceView.taskId"></p>
+        <p class="mt-1 text-2xs text-slate-500 break-words" data-trace-status x-text="traceViewStatusLabel()"></p>
+      </div>
+      <div class="flex shrink-0 items-center gap-2">
+        <button type="button" @click="toggleTraceFollow()" class="px-3 py-1.5 text-sm border rounded-xl transition"
+          :class="traceView.follow ? 'border-emerald-200 text-emerald-700 hover:bg-emerald-50' : 'border-slate-200 text-slate-500 hover:bg-slate-50'"
+          x-text="traceView.follow ? '暂停跟随' : '继续跟随'"></button>
+        <button type="button" @click="loadTrace()" :disabled="traceView.loading" title="立即刷新" aria-label="立即刷新"
+          class="h-8 w-8 inline-flex items-center justify-center rounded-xl border border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition disabled:opacity-40">
+          <svg class="w-3.5 h-3.5" :class="{ 'animate-spin': traceView.loading }" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5"/><path d="M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5"/></svg>
+        </button>
+        <button @click="dismissModal('trace')" data-autofocus class="px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">关闭</button>
+      </div>
+    </div>
+    <div class="flex-1 min-h-0 overflow-y-auto bg-slate-50/40 p-3 space-y-2" data-trace-scroll>
+      <template x-if="traceView.error">
+        <div class="rounded-xl border border-rose-200 bg-rose-50/80 px-3 py-2.5">
+          <p class="text-2xs text-rose-600 break-words" x-text="traceView.error"></p>
+          <button type="button" @click="loadTrace()" class="mt-1.5 text-2xs font-medium text-rose-600 hover:text-rose-700">重试</button>
+        </div>
+      </template>
+
+      <template x-if="!traceView.loading && !traceView.available && !traceView.error">
+        <div class="rounded-2xl border border-dashed border-slate-200 bg-white/80 px-4 py-10 text-center shadow-sm">
+          <p class="text-sm text-slate-400">这个任务还没有模型轨迹</p>
+          <p class="mt-1 text-xs text-slate-300">任务启动后 worker 才会写 model-trace.jsonl；也可以在「设置 → 模型轨迹」里关闭记录。</p>
+        </div>
+      </template>
+
+      <template x-if="traceView.loading && traceView.events.length === 0">
+        <div class="space-y-2 animate-pulse">
+          <div class="h-16 rounded-xl border border-slate-200 bg-white"></div>
+          <div class="h-16 rounded-xl border border-slate-200 bg-white"></div>
+        </div>
+      </template>
+
+      <template x-for="event in traceView.events" :key="event.seq">
+        <article class="rounded-xl border bg-white px-3 py-2 shadow-sm" :data-trace-type="event.type" :class="traceEventClass(event)">
+          <div class="flex items-center justify-between gap-2 text-2xs">
+            <span class="font-semibold" :class="traceEventTone(event)" x-text="traceEventLabel(event)"></span>
+            <span class="shrink-0 tabular-nums text-slate-400" x-text="formatTime(event.at)"></span>
+          </div>
+
+          <!-- request -->
+          <template x-if="event.type === 'request'">
+            <div class="mt-1 space-y-1">
+              <p class="text-2xs text-slate-500 break-words" x-text="traceRequestMeta(event)"></p>
+              <div x-show="event.params && Object.keys(event.params).length" class="flex flex-wrap gap-1">
+                <template x-for="key in Object.keys(event.params || {})" :key="key">
+                  <span class="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 font-mono text-2xs text-slate-500" x-text="`${key}=${event.params[key]}`"></span>
+                </template>
+              </div>
+              <p x-show="event.tools && event.tools.length" class="text-2xs text-slate-400 break-words" x-text="`工具：${(event.tools || []).join('、')}`"></p>
+              <details x-show="event.messages && event.messages.length" class="text-2xs">
+                <summary class="cursor-pointer text-slate-500 hover:text-slate-700" x-text="`消息 ${(event.messages || []).length} 条`"></summary>
+                <div class="mt-1 space-y-1">
+                  <template x-for="(message, index) in (event.messages || [])" :key="index">
+                    <div class="rounded-lg bg-slate-50 px-2 py-1.5">
+                      <div class="flex flex-wrap items-center gap-2 text-2xs text-slate-400">
+                        <span class="font-semibold text-slate-500" x-text="traceRoleLabel(message.role)"></span>
+                        <span x-text="`${message.chars} 字符`"></span>
+                        <span x-show="message.tool_error" class="text-rose-500">工具报错</span>
+                      </div>
+                      <pre x-show="message.preview" class="mt-0.5 max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono text-2xs text-slate-600" x-text="message.preview"></pre>
+                      <template x-if="message.tool_calls && message.tool_calls.length">
+                        <div class="mt-1 space-y-0.5">
+                          <template x-for="(call, callIndex) in message.tool_calls" :key="callIndex">
+                            <p class="font-mono text-2xs text-brand-600 break-words" x-text="`${call.name}(${call.args_preview})`"></p>
+                          </template>
+                        </div>
+                      </template>
+                    </div>
+                  </template>
+                </div>
+              </details>
+            </div>
+          </template>
+
+          <!-- response -->
+          <template x-if="event.type === 'response'">
+            <div class="mt-1 space-y-1">
+              <div class="flex flex-wrap gap-x-2 gap-y-0.5 text-2xs text-slate-500">
+                <span x-text="`stop ${event.stop_reason || '—'}`"></span>
+                <span x-show="event.latency_ms !== undefined && event.latency_ms !== null" x-text="`耗时 ${traceLatencyLabel(event.latency_ms)}`"></span>
+                <span x-show="event.usage" x-text="traceUsageLabel(event.usage)"></span>
+              </div>
+              <div x-show="event.error" class="rounded-lg border border-rose-200 bg-rose-50 px-2 py-1.5 text-2xs text-rose-700 break-words" x-text="event.error"></div>
+              <pre x-show="event.text" class="max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono text-2xs text-slate-700" x-text="event.text"></pre>
+              <details x-show="event.thinking" class="text-2xs">
+                <summary class="cursor-pointer text-slate-500 hover:text-slate-700" x-text="`思考过程 ${event.thinking_chars} 字符`"></summary>
+                <pre class="mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono text-2xs text-slate-500" x-text="event.thinking"></pre>
+              </details>
+              <template x-if="event.tool_calls && event.tool_calls.length">
+                <div class="space-y-0.5">
+                  <template x-for="(call, callIndex) in event.tool_calls" :key="callIndex">
+                    <p class="font-mono text-2xs text-brand-600 break-words" x-text="`${call.name}(${call.args_preview})`"></p>
+                  </template>
+                </div>
+              </template>
+            </div>
+          </template>
+
+          <!-- stream -->
+          <template x-if="event.type === 'stream'">
+            <div class="mt-1">
+              <p class="text-2xs text-slate-500" x-text="`已收到 ${event.chars} 字符（思考 ${event.thinking_chars}）`"></p>
+              <pre x-show="event.tail" class="mt-0.5 max-h-32 overflow-auto whitespace-pre-wrap break-words font-mono text-2xs text-slate-500" x-text="event.tail"></pre>
+            </div>
+          </template>
+
+          <!-- tools -->
+          <template x-if="event.type === 'tool_start'">
+            <div class="mt-1">
+              <p class="font-mono text-2xs text-slate-600 break-words" x-text="event.args_preview"></p>
+            </div>
+          </template>
+          <template x-if="event.type === 'tool_end'">
+            <div class="mt-1">
+              <p class="text-2xs" :class="event.is_error ? 'text-rose-600' : 'text-slate-500'"
+                x-text="event.is_error ? '工具执行失败' : `返回 ${event.result_chars} 字符`"></p>
+              <pre x-show="event.result_preview" class="mt-0.5 max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono text-2xs text-slate-500" x-text="event.result_preview"></pre>
+            </div>
+          </template>
+
+          <!-- truncation -->
+          <template x-if="event.type === 'truncated'">
+            <p class="mt-1 text-2xs text-amber-700" x-text="`轨迹达到 ${formatBytes(event.max_bytes)} 上限，之后的请求不再记录。`"></p>
+          </template>
+        </article>
+      </template>
+
+      <p x-show="traceView.available && !traceView.loading && traceView.events.length === 0" class="py-6 text-center text-xs text-slate-400">
+        轨迹文件已建立，还没有事件。worker 发出第一个模型请求后会显示在这里。
+      </p>
+    </div>
+  </div>
+</div>
+
 <!-- Export Preview -->
 <div x-show="showYamlModal" x-cloak data-modal="yaml" role="dialog" aria-modal="true" aria-label="项目快照" x-effect="syncModal('yaml', showYamlModal, $el)" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="dismissModal('yaml')">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-4xl mx-4 border border-slate-200/60 overflow-hidden" @click.stop>
@@ -3661,6 +3843,7 @@ function cairnApp() {
     exportProjectId: '',
     showDeleteModal: false,
     showSkillDetail: false,
+    showTrace: false,
 
     newProject: { title: '', origin: '', goal: '', bootstrap: true, targetsText: '', scopeNotes: '', hints: [{ content: '' }], verificationKind: 'auto', challengeCode: '', execution: '', files: [], clonedFrom: '' },
     verificationDefaults: { loading: false, error: '', policy: null, conditions: [], objective: false, manual_review: false, warning: '', completion: null },
@@ -3784,6 +3967,20 @@ function cairnApp() {
       error: '',
       loadedFor: '',
       highlight: '',
+    },
+    traceView: {
+      taskId: '',
+      kind: '',
+      loading: false,
+      error: '',
+      available: false,
+      truncated: false,
+      cursor: 0,
+      events: [],
+      follow: true,
+      dropped: false,
+      timer: null,
+      requestId: 0,
     },
     activityPanel: {
       data: null,
@@ -4577,6 +4774,7 @@ function cairnApp() {
           this.showSkillDetail = false;
           this.resetSkillDetail();
         },
+        trace: () => this.closeTrace(),
       };
     },
 
@@ -4677,6 +4875,8 @@ function cairnApp() {
 
     resetOpsPanels() {
       this._experimentRequest += 1;
+      // The trace belongs to one task in one project; a project switch must stop its poll.
+      if (this.showTrace) this.closeTrace();
       this.experimentPanel = { data: null, projectId: '', intentId: '', loading: false, error: '' };
       this.runsPanel = { items: [], loading: false, error: '', loadedFor: '', highlight: '' };
       this.activityPanel = {
@@ -4871,6 +5071,192 @@ function cairnApp() {
       } finally {
         if (this.activityPanel.requestId === requestId) this.activityPanel.loading = false;
       }
+    },
+
+    // Model trace: the worker appends one NDJSON line per request, response and tool call.
+    // The control plane only serves a bounded window, so the modal keeps a cursor and polls
+    // for events newer than the last one it has seen.
+    async openTrace(taskId, kind = '') {
+      if (!taskId) return;
+      this.stopTracePolling();
+      this.showTrace = true;
+      this.traceView = {
+        taskId,
+        kind: kind || '',
+        loading: true,
+        error: '',
+        available: false,
+        truncated: false,
+        cursor: 0,
+        events: [],
+        follow: true,
+        dropped: false,
+        timer: null,
+        requestId: this.traceView.requestId + 1,
+      };
+      await this.loadTrace();
+      this.scheduleTracePoll();
+    },
+
+    scheduleTracePoll() {
+      if (this.traceView.timer) clearTimeout(this.traceView.timer);
+      this.traceView.timer = null;
+      if (!this.showTrace || !this.traceView.follow) return;
+      this.traceView.timer = setTimeout(async () => {
+        await this.loadTrace({ quiet: true });
+        this.scheduleTracePoll();
+      }, 1500);
+    },
+
+    stopTracePolling() {
+      if (this.traceView.timer) clearTimeout(this.traceView.timer);
+      this.traceView.timer = null;
+    },
+
+    async loadTrace({ quiet = false } = {}) {
+      const { taskId } = this.traceView;
+      const projectId = this.selectedProjectId;
+      if (!this.showTrace || !taskId || !projectId) return;
+      const requestId = this.traceView.requestId + 1;
+      this.traceView.requestId = requestId;
+      if (!quiet) {
+        this.traceView.loading = true;
+        this.traceView.error = '';
+      }
+      try {
+        const query = this.traceView.cursor > 0 ? `?cursor=${this.traceView.cursor}` : '';
+        const view = await this.api(
+          'GET',
+          `/projects/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(taskId)}/trace${query}`,
+        );
+        if (this.traceView.requestId !== requestId || !this.showTrace || this.traceView.taskId !== taskId) return;
+        const events = view && Array.isArray(view.events) ? view.events : [];
+        const merged = quiet ? [...this.traceView.events, ...events] : events;
+        // The file itself is capped, but a long task can still produce more events than a
+        // modal can render smoothly; keep the newest ones and say so in the header.
+        if (merged.length > 800) {
+          this.traceView.events = merged.slice(merged.length - 800);
+          this.traceView.dropped = true;
+        } else {
+          this.traceView.events = merged;
+        }
+        this.traceView.available = Boolean(view && view.available);
+        this.traceView.truncated = Boolean(view && view.truncated);
+        if (view && Number.isInteger(view.cursor)) this.traceView.cursor = view.cursor;
+        this.traceView.error = '';
+        if (events.length > 0) this.scrollTraceToEnd();
+      } catch (e) {
+        if (this.traceView.requestId !== requestId) return;
+        // A quiet poll keeps what is already on screen; only the first load must explain itself.
+        if (!quiet || !this.traceView.available) this.traceView.error = this.errorText(e);
+      } finally {
+        if (this.traceView.requestId === requestId) this.traceView.loading = false;
+      }
+    },
+
+    scrollTraceToEnd() {
+      if (!this.traceView.follow) return;
+      setTimeout(() => {
+        if (typeof document === 'undefined') return;
+        const element = document.querySelector('[data-trace-scroll]');
+        if (element) element.scrollTop = element.scrollHeight;
+      }, 0);
+    },
+
+    async toggleTraceFollow() {
+      this.traceView.follow = !this.traceView.follow;
+      if (this.traceView.follow) {
+        await this.loadTrace({ quiet: true });
+        this.scheduleTracePoll();
+      } else {
+        this.stopTracePolling();
+      }
+    },
+
+    closeTrace() {
+      this.stopTracePolling();
+      this.showTrace = false;
+      // Bump the request id so a response still in flight cannot reopen a closed modal.
+      this.traceView.requestId += 1;
+    },
+
+    traceEventLabel(event) {
+      const type = event ? event.type : '';
+      if (type === 'request') return `请求 #${event.turn ?? '?'}`;
+      if (type === 'stream') return `流式 #${event.turn ?? '?'}`;
+      if (type === 'response') return `响应 #${event.turn ?? '?'}`;
+      if (type === 'tool_start') return `工具开始 · ${event.tool || '?'}`;
+      if (type === 'tool_end') return `工具结束 · ${event.tool || '?'}`;
+      if (type === 'truncated') return '轨迹已截断';
+      return type || '事件';
+    },
+
+    traceEventClass(event) {
+      const type = event ? event.type : '';
+      if (type === 'response') return event.error ? 'border-rose-200' : 'border-emerald-200';
+      if (type === 'truncated') return 'border-amber-300 bg-amber-50/60';
+      if (type === 'tool_end' && event.is_error) return 'border-rose-200';
+      return 'border-slate-200';
+    },
+
+    traceEventTone(event) {
+      const type = event ? event.type : '';
+      if (type === 'response') return event.error ? 'text-rose-600' : 'text-emerald-700';
+      if (type === 'request') return 'text-slate-600';
+      if (type === 'tool_start' || type === 'tool_end') return event.is_error ? 'text-rose-600' : 'text-sky-700';
+      if (type === 'truncated') return 'text-amber-700';
+      return 'text-slate-500';
+    },
+
+    traceRequestMeta(event) {
+      const parts = [];
+      if (event.model) parts.push(`模型 ${event.model}`);
+      if (Number.isFinite(event.bytes)) parts.push(`请求体 ${this.formatBytes(event.bytes)}`);
+      if (Number.isFinite(event.message_count)) parts.push(`${event.message_count} 条消息`);
+      return parts.join(' · ');
+    },
+
+    traceUsageLabel(usage) {
+      if (!usage) return '';
+      const parts = [];
+      const pair = (key, label) => {
+        if (Number.isFinite(usage[key]) && usage[key] > 0) parts.push(`${label} ${usage[key]}`);
+      };
+      pair('input', '输入');
+      pair('output', '输出');
+      pair('cache_read', '缓存读');
+      pair('cache_write', '缓存写');
+      if (Number.isFinite(usage.total)) parts.push(`总计 ${usage.total}`);
+      const cost = Number.isFinite(usage.cost_usd) && usage.cost_usd > 0 ? ` · $${usage.cost_usd.toFixed(6)}` : '';
+      return parts.length > 0 ? `token ${parts.join(' · ')}${cost}` : '';
+    },
+
+    traceLatencyLabel(ms) {
+      if (!Number.isFinite(ms)) return '—';
+      return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`;
+    },
+
+    traceRoleLabel(role) {
+      const labels = {
+        system: '系统',
+        developer: '开发者',
+        user: '用户',
+        assistant: '助手',
+        tool: '工具',
+        toolResult: '工具结果',
+      };
+      return labels[role] || role || '未知';
+    },
+
+    traceViewStatusLabel() {
+      if (this.traceView.error) return '读取轨迹失败，下面保留最后一次成功的内容';
+      if (this.traceView.loading && !this.traceView.available) return '正在读取模型轨迹…';
+      if (!this.traceView.available) return '该任务还没有模型轨迹：任务未启动，或在设置里关闭了 tasks.model_trace。';
+      const parts = [`已记录 ${this.traceView.events.length} 条事件`];
+      if (this.traceView.follow) parts.push('每 1.5 秒拉取新事件');
+      if (this.traceView.truncated) parts.push('服务端只返回了最新窗口，较早事件已省略');
+      if (this.traceView.dropped) parts.push('界面只保留最近 800 条');
+      return parts.join(' · ');
     },
 
     async loadFactTrace(factId) {
@@ -5557,6 +5943,24 @@ function cairnApp() {
         model_timeout: '模型请求超时', model_error: '模型服务异常',
         worker_spawn_failed: 'worker 启动失败', runtime_unavailable: '执行环境不可用' };
       return labels[code] || '环境故障';
+    },
+
+    // Execution-domain codes say what ran, not what went wrong for the operator. Name the
+    // actual cause instead of showing `result_invalid`; the run detail carries the
+    // validator's message when the model's JSON was the problem.
+    executionFailureLabel(code) {
+      const labels = {
+        worker_failed: 'worker 异常退出',
+        hard_deadline: '超出硬截止',
+        lease_lost: '任务租约被其它控制面接管',
+        result_missing: 'worker 没有产出结果文件',
+        result_invalid: '模型返回的结果不符合契约',
+        evidence_invalid: '证据引用无效（文件不存在、为空或越界）',
+        verification_error: '完成校验执行出错',
+        apply_failed: '写图失败（控制面内部错误）',
+        supervision_failed: '监督流程失败',
+      };
+      return labels[code] || code;
     },
 
     runOutcomeLabel(run) {
@@ -7650,7 +8054,12 @@ function cairnApp() {
 
     experimentRunLabel(run) {
       const failure = run.failure || run.memory?.control.failure;
-      if (failure) return `运行异常：${failure.domain} / ${failure.code}（不是路线反证）`;
+      if (failure) {
+        const label = failure.domain === 'infrastructure'
+          ? this.infrastructureFaultLabel(failure.code)
+          : this.executionFailureLabel(failure.code);
+        return `运行异常：${label}（不是路线反证）`;
+      }
       const status = run.memory?.experiment_result?.status;
       return status === 'observations_reported' ? '有观察报告，尚未验证'
         : status === 'operationally_incomplete' ? '运行不完整，不是路线反证' : '结果未知';
@@ -9048,6 +9457,21 @@ function cairnApp() {
           ],
         },
         {
+          title: '模型轨迹',
+          hint: 'worker 把每次模型请求与响应追加到任务的 model-trace.jsonl，只读地展示在调度日志里',
+          notes: [
+            '记录内容：模型与网关主机、请求参数（temperature、reasoning_effort 等）、消息条数与预览、响应文本与思考、停止原因、token 用量、工具调用与返回预览。',
+            '安全边界：只按白名单记录参数字段，不复制整个请求体，任何请求头、base URL 与密钥都不会写入；轨迹只是诊断旁路，写失败也不会影响任务。',
+            '体积控制：每个文本字段只保留预览字符数（保留开头与结尾），单个任务写满上限后追加一条 truncated 标记并停止；界面只拉取最新窗口。',
+            '适用范围：仅新启动的任务生效；关闭后已有轨迹仍可查看，重启服务也会保留该文件（它位于会话目录内，随会话清理一起删除）。',
+          ],
+          fields: [
+            bool('tasks.model_trace.enabled', '记录模型请求与响应'),
+            number('tasks.model_trace.preview_chars', '预览字符数', { min: 200, max: 20000, step: 100 }),
+            number('tasks.model_trace.max_bytes', '单任务上限（字节）', { min: 262144, max: 67108864, step: 262144 }),
+          ],
+        },
+        {
           title: 'SSRF 标记',
           hint: '授权请求里携带的其它主机字面量怎么处置',
           notes: [
@@ -9268,6 +9692,10 @@ function cairnApp() {
       if (model.name && model.name !== model.modelId) parts.push(model.name);
       if (model.thinkingLevel) parts.push(`thinking:${model.thinkingLevel}`);
       if (model.reasoning === true) parts.push('reasoning');
+      if (model.compat && typeof model.compat === 'object') {
+        if (model.compat.supportsDeveloperRole === false) parts.push('system-role-only');
+        if (model.compat.supportsReasoningEffort === false) parts.push('no-effort');
+      }
       if (Array.isArray(model.input) && model.input.length) parts.push(model.input.join('+'));
       if (model.contextWindow) parts.push(`ctx ${model.contextWindow}`);
       if (model.maxTokens) parts.push(`max ${model.maxTokens}`);
@@ -9676,6 +10104,7 @@ function cairnApp() {
       this.agentModelForm = {
         id: '', originalId: '', providerId: '', modelId: '', name: '', thinkingLevel: '',
         reasoning: false, inputText: true, inputImage: false,
+        supportsDeveloperRole: '', supportsReasoningEffort: '', compatOther: {},
         costInput: '', costOutput: '', costCacheRead: '', costCacheWrite: '',
         contextWindow: '', maxTokens: '', headersText: '',
       };
@@ -9685,6 +10114,15 @@ function cairnApp() {
     selectAgentModel(model) {
       const provider = this.agentConfig.providers.find(p => p.id === model.providerId)
         || this.agentConfig.providers.find(p => p.name === model.provider);
+      // `compat` is replaced wholesale on save, so keep the keys the form does not own
+      // (reasoningEffortMap and anything a hand-edited pref added) and only expose the two
+      // switches that change how the request is shaped.
+      const compat = model.compat && typeof model.compat === 'object' ? { ...model.compat } : {};
+      const triState = (value) => value === true ? 'true' : value === false ? 'false' : '';
+      const developerRole = triState(compat.supportsDeveloperRole);
+      const reasoningEffort = triState(compat.supportsReasoningEffort);
+      delete compat.supportsDeveloperRole;
+      delete compat.supportsReasoningEffort;
       this.agentModelForm = {
         id: model.id,
         originalId: model.id,
@@ -9693,6 +10131,9 @@ function cairnApp() {
         name: model.name || '',
         thinkingLevel: model.thinkingLevel || '',
         reasoning: model.reasoning === true,
+        supportsDeveloperRole: developerRole,
+        supportsReasoningEffort: reasoningEffort,
+        compatOther: compat,
         inputText: !Array.isArray(model.input) || model.input.includes('text'),
         inputImage: Array.isArray(model.input) && model.input.includes('image'),
         costInput: model.cost ? String(model.cost.input) : '',
@@ -9809,6 +10250,15 @@ function cairnApp() {
       if (String(form.maxTokens).trim()) body.maxTokens = Number(form.maxTokens);
       const parsedHeaders = this.agentHeadersFromText(form.headersText);
       if (Object.keys(parsedHeaders.headers).length > 0) body.headers = parsedHeaders.headers;
+      // null clears compat on an existing entry; an empty object would also do, but null is
+      // what the API treats as "remove".
+      const compat = { ...(form.compatOther || {}) };
+      if (form.supportsDeveloperRole === 'true') compat.supportsDeveloperRole = true;
+      else if (form.supportsDeveloperRole === 'false') compat.supportsDeveloperRole = false;
+      if (form.supportsReasoningEffort === 'true') compat.supportsReasoningEffort = true;
+      else if (form.supportsReasoningEffort === 'false') compat.supportsReasoningEffort = false;
+      if (Object.keys(compat).length > 0) body.compat = compat;
+      else if (editing) body.compat = null;
 
       this.agentModelError = '';
       this.isSavingAgentModel = true;

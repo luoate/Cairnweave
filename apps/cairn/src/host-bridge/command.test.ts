@@ -171,6 +171,122 @@ describe("analyzeCommand payload references", () => {
   });
 });
 
+describe("analyzeCommand command position", () => {
+  test("a network tool mentioned as an argument is not a network intent", () => {
+    expect(analyzeCommand("which curl python3").networkIntent).toBe(false);
+    expect(analyzeCommand("ls artifacts; command -v curl").networkIntent).toBe(false);
+    expect(analyzeCommand("grep -r curl .").networkIntent).toBe(false);
+  });
+
+  test("a wrapper still names the tool it runs", () => {
+    const analysis = analyzeCommand("timeout 60 nmap -p8080 10.0.0.9");
+    expect(analysis.networkIntent).toBe(true);
+    expect(hosts(analysis.endpoints)).toContain("10.0.0.9:8080");
+
+    const sudo = analyzeCommand("sudo -u root nmap -p8080 10.0.0.9");
+    expect(sudo.networkIntent).toBe(true);
+    expect(hosts(sudo.endpoints)).toContain("10.0.0.9:8080");
+  });
+
+  test("finds a command after shell grammar words", () => {
+    const loop = analyzeCommand(
+      "for p in a b; do curl -s http://target.example.test/$p; done",
+    );
+    expect(hosts(loop.endpoints)).toContain("target.example.test:80");
+
+    // A variable endpoint is still unverifiable, so the call fails closed.
+    const hidden = analyzeCommand('for p in a b; do curl -s "$B/$p"; done');
+    expect(hidden.networkIntent).toBe(true);
+    expect(hidden.unverifiable).toBe(true);
+  });
+
+  test("finds a command run by xargs or find -exec", () => {
+    const piped = analyzeCommand("printf '%s' http://target.example.test | xargs curl -s");
+    expect(piped.networkIntent).toBe(true);
+    expect(hosts(piped.endpoints)).toContain("target.example.test:80");
+
+    const exec = analyzeCommand("find . -name x -exec nmap -p8080 10.0.0.9 ;");
+    expect(hosts(exec.endpoints)).toContain("10.0.0.9:8080");
+  });
+
+  test("a bare hostname is a destination only for a network tool", () => {
+    expect(hosts(analyzeCommand("curl -s target.example.test").endpoints)).toEqual([
+      "target.example.test:",
+    ]);
+    expect(analyzeCommand("echo target.example.test").networkIntent).toBe(false);
+  });
+});
+
+describe("analyzeCommand heredocs", () => {
+  test("does not scan a script written to disk", () => {
+    const analysis = analyzeCommand(
+      [
+        "cat > fetch.py <<'EOF'",
+        "import http.client, urllib.parse",
+        'HOST = "93b5611157b1fe1b25ecf5c5.example.test"',
+        "for body in parts: print(body.split)",
+        "EOF",
+      ].join("\n"),
+    );
+    expect(analysis.networkIntent).toBe(false);
+    expect(analysis.endpoints).toEqual([]);
+    expect(analysis.carried).toEqual([]);
+  });
+
+  test("finds the writer after a preceding command on the same line", () => {
+    const analysis = analyzeCommand(
+      [
+        "cd artifacts && cat > ../fetch_git.sh <<'EOF'",
+        '#!/bin/bash',
+        'H="http://93b5611157b1fe1b25ecf5c5.example.test"',
+        "for body in parts; do echo $body.split; done",
+        "EOF",
+      ].join("\n"),
+    );
+    expect(analysis.networkIntent).toBe(false);
+    expect(analysis.endpoints).toEqual([]);
+  });
+
+  test("keeps a piped script visible so its imports still fail closed", () => {
+    const analysis = analyzeCommand(
+      ["python - <<'EOF'", "import socket", "s = socket.create_connection((h, p))", "EOF"].join(
+        "\n",
+      ),
+    );
+    expect(analysis.networkIntent).toBe(true);
+    expect(analysis.unverifiable).toBe(true);
+  });
+
+  test("still reads a URL from the command line next to a written script", () => {
+    const analysis = analyzeCommand(
+      [
+        "cat > probe.py <<'EOF'",
+        "import http.client",
+        "EOF",
+        "curl -s http://target.example.test/health",
+      ].join("\n"),
+    );
+    expect(hosts(analysis.endpoints)).toEqual(["target.example.test:80"]);
+  });
+});
+
+describe("analyzeCommand header data", () => {
+  test("treats header and cookie values as carried, not as destinations", () => {
+    const analysis = analyzeCommand(
+      'curl -s -H "X-Forwarded-For: 127.0.0.1" -A "agent/1.0" http://target.example.test/',
+    );
+    expect(hosts(analysis.endpoints)).toEqual(["target.example.test:80"]);
+    expect(hosts(analysis.carried)).toEqual(["127.0.0.1:"]);
+  });
+
+  test("records a target carried in a cookie value", () => {
+    const analysis = analyzeCommand(
+      "curl -s -b 'next=http://10.0.0.9/admin' http://target.example.test/",
+    );
+    expect(hosts(analysis.carried)).toEqual(["10.0.0.9:80"]);
+  });
+});
+
 describe("analyzeCommand unchanged classes", () => {
   test("treats help and version invocations as no network intent", () => {
     expect(analyzeCommand("curl --help").networkIntent).toBe(false);

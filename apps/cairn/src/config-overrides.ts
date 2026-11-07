@@ -46,15 +46,16 @@ export interface EditableRuntimeConfig {
   };
   tasks: {
     bootstrap: { timeout: number; conclude_timeout: number };
-    reason: { timeout: number; max_intents: number };
+    reason: { timeout: number; max_intents: number; tools: string[]; max_tool_calls: number };
     explore: { timeout: number; conclude_timeout: number };
     graph_slice: { enabled: boolean; max_facts: number; max_intents: number };
     tool_result_spill: { enabled: boolean; max_inline_chars: number };
+    model_trace: { enabled: boolean; preview_chars: number; max_bytes: number };
     context_plan: { mode: "off" | "audit"; max_initial_bytes: number };
     checkpoint: { enabled: boolean; interval_seconds: number };
     exploration_suppression: { enabled: boolean };
     context_pack: { mode: "off" | "shadow" | "apply"; shard_max_bytes: number };
-    evidence: { min_bytes: number };
+    evidence: { min_bytes: number; invalid_refs: "drop" | "fail" };
   };
   worker: {
     soft_deadline_ratio: number;
@@ -62,6 +63,7 @@ export interface EditableRuntimeConfig {
     result_grace_seconds: number;
     scoped_artifacts: boolean;
     reasoning: ReasoningMode;
+    budget_reserve_calls: number;
   };
   retention: {
     session_max_age_days: number;
@@ -91,6 +93,7 @@ export interface EditableRuntimeConfig {
     min_new_hints: number;
     cooldown_seconds: number;
     failure_backoff_seconds: number;
+    schema_backoff_seconds: number;
     max_runs_per_hour: number;
     zero_output_threshold: number;
     stale_intent_seconds: number;
@@ -353,6 +356,8 @@ function editableView(config: DispatchConfig): EditableRuntimeConfig {
       reason: {
         timeout: config.tasks.reason.timeout,
         max_intents: config.tasks.reason.maxIntents,
+        tools: [...config.tasks.reason.tools],
+        max_tool_calls: config.tasks.reason.maxToolCalls,
       },
       explore: {
         timeout: config.tasks.explore.timeout,
@@ -363,10 +368,18 @@ function editableView(config: DispatchConfig): EditableRuntimeConfig {
         max_facts: config.tasks.graphSlice.maxFacts,
         max_intents: config.tasks.graphSlice.maxIntents,
       },
-      evidence: { min_bytes: config.tasks.evidence.minBytes },
+      evidence: {
+        min_bytes: config.tasks.evidence.minBytes,
+        invalid_refs: config.tasks.evidence.invalidRefs,
+      },
       tool_result_spill: {
         enabled: config.tasks.toolResultSpill.enabled,
         max_inline_chars: config.tasks.toolResultSpill.maxInlineChars,
+      },
+      model_trace: {
+        enabled: config.tasks.modelTrace.enabled,
+        preview_chars: config.tasks.modelTrace.previewChars,
+        max_bytes: config.tasks.modelTrace.maxBytes,
       },
       exploration_suppression: { enabled: config.tasks.explorationSuppression.enabled },
       checkpoint: { enabled: config.tasks.checkpoint.enabled, interval_seconds: config.tasks.checkpoint.intervalSeconds },
@@ -382,6 +395,7 @@ function editableView(config: DispatchConfig): EditableRuntimeConfig {
       result_grace_seconds: config.worker.resultGraceSeconds,
       scoped_artifacts: config.worker.scopedArtifacts,
       reasoning: config.worker.reasoning,
+      budget_reserve_calls: config.worker.budgetReserveCalls,
     },
     retention: {
       session_max_age_days: config.retention.sessionMaxAgeDays,
@@ -411,6 +425,7 @@ function editableView(config: DispatchConfig): EditableRuntimeConfig {
       min_new_hints: config.strategist.minNewHints,
       cooldown_seconds: config.strategist.cooldownSeconds,
       failure_backoff_seconds: config.strategist.failureBackoffSeconds,
+      schema_backoff_seconds: config.strategist.schemaBackoffSeconds,
       max_runs_per_hour: config.strategist.maxRunsPerHour,
       zero_output_threshold: config.strategist.zeroOutputThreshold,
       stale_intent_seconds: config.strategist.staleIntentSeconds,

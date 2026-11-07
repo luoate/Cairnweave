@@ -19,6 +19,7 @@ interface StrategistStateRow {
   last_success_at: string | null;
   last_attempt_at: string | null;
   last_failure_at: string | null;
+  last_failure_code: string | null;
   last_trigger: string | null;
   last_run_id: string | null;
   last_fact_count: number;
@@ -54,6 +55,7 @@ export function getStrategistState(
     last_success_at: row.last_success_at,
     last_attempt_at: row.last_attempt_at,
     last_failure_at: row.last_failure_at,
+    last_failure_code: row.last_failure_code,
     last_trigger: row.last_trigger,
     last_run_id: row.last_run_id,
     last_fact_count: row.last_fact_count,
@@ -89,13 +91,15 @@ export function recordStrategistSuccess(
     conn,
     `
     INSERT INTO strategist_state
-        (project_id, last_success_at, last_attempt_at, last_failure_at, last_trigger,
-         last_run_id, last_fact_count, last_hint_count, last_open_intent_count, updated_at)
-    VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
+        (project_id, last_success_at, last_attempt_at, last_failure_at, last_failure_code,
+         last_trigger, last_run_id, last_fact_count, last_hint_count, last_open_intent_count,
+         updated_at)
+    VALUES (?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(project_id) DO UPDATE SET
         last_success_at = excluded.last_success_at,
         last_attempt_at = excluded.last_attempt_at,
         last_failure_at = NULL,
+        last_failure_code = NULL,
         last_trigger = excluded.last_trigger,
         last_run_id = excluded.last_run_id,
         last_fact_count = excluded.last_fact_count,
@@ -122,6 +126,8 @@ export interface RecordStrategistFailureInput {
   projectId: string;
   runId: string;
   trigger: string;
+  /** Execution failure code; `result_invalid` selects the shorter schema backoff. */
+  code?: string | null;
   at?: string;
 }
 
@@ -138,11 +144,13 @@ export function recordStrategistFailure(
     conn,
     `
     INSERT INTO strategist_state
-        (project_id, last_attempt_at, last_failure_at, last_trigger, last_run_id, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?)
+        (project_id, last_attempt_at, last_failure_at, last_failure_code, last_trigger,
+         last_run_id, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(project_id) DO UPDATE SET
         last_attempt_at = excluded.last_attempt_at,
         last_failure_at = excluded.last_failure_at,
+        last_failure_code = excluded.last_failure_code,
         last_trigger = excluded.last_trigger,
         last_run_id = excluded.last_run_id,
         replan_requested_at = NULL,
@@ -153,6 +161,7 @@ export function recordStrategistFailure(
     input.projectId,
     at,
     at,
+    input.code ?? null,
     input.trigger,
     input.runId,
     at,
@@ -239,6 +248,44 @@ export function listRecentStrategistRuns(
     finished_at: row.finished_at,
     produced_fact: Number(row.produced_fact) === 1,
   }));
+}
+
+/** The most recent reason failure that no later successful reason turn has superseded. */
+export interface ReasonFailureSummary {
+  run_id: string;
+  code: string;
+  detail: string | null;
+  finished_at: string | null;
+}
+
+/**
+ * M57c: the detail of the last failed reason turn, for the next reason prompt. A later
+ * successful reason turn supersedes it, so a stale contract error is not replayed forever.
+ */
+export function getLatestReasonFailure(
+  conn: Database,
+  projectId: string,
+): ReasonFailureSummary | null {
+  const row = get<ReasonFailureSummary>(
+    conn,
+    `
+    SELECT r.id AS run_id, f.code AS code, r.detail AS detail, r.finished_at AS finished_at
+    FROM runs r
+    JOIN run_failures f ON f.run_id = r.id
+    WHERE r.project_id = ? AND r.kind = 'reason'
+      AND NOT EXISTS (
+        SELECT 1 FROM runs s
+        WHERE s.project_id = r.project_id AND s.kind = 'reason'
+          AND s.outcome = 'success'
+          AND s.finished_at IS NOT NULL
+          AND s.finished_at >= r.finished_at
+      )
+    ORDER BY r.finished_at DESC, r.id DESC
+    LIMIT 1
+    `,
+    projectId,
+  );
+  return row;
 }
 
 /** Number of reason runs started since an ISO timestamp (inclusive). */

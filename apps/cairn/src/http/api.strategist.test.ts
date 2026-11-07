@@ -233,6 +233,7 @@ describe("GET /projects/{id}/strategist", () => {
       last_success_at: "2026-01-02T04:00:00Z",
       last_attempt_at: "2026-01-02T04:00:00Z",
       last_failure_at: null,
+      last_failure_code: null,
       last_trigger: "facts:1->2",
       last_run_id: "run_r2",
       last_fact_count: 2,

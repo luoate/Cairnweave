@@ -163,7 +163,12 @@ function hostMatches(target: ParsedTarget, host: string): boolean {
 
 function portAllowed(targetPort: number | undefined, endpointPort: number | undefined): boolean {
   if (targetPort === undefined) return true;
-  return endpointPort !== undefined && endpointPort === targetPort;
+  if (endpointPort !== undefined) return endpointPort === targetPort;
+  // A host literal with no scheme and no port means the default Web port. Scripts on this
+  // platform routinely write `HOST = "target.example"` while the authorized scope spells
+  // out `http://target.example`, which parses to port 80; refusing that pair produced a
+  // third of proj_047's blocked calls without adding a real boundary (M57d).
+  return targetPort === 80 || targetPort === 443;
 }
 
 function cidrContains(cidr: IPv4Cidr, ip: number): boolean {

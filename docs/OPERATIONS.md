@@ -89,6 +89,22 @@ container:
 - 项目 completed/stopped/deleted 后按 `completed_action` 删除或停止容器；控制面退出
   时停止仍在跟踪的容器。
 
+**改完 worker 代码要重建镜像，并清掉旧容器。** 镜像里是 `COPY . .` 的源码快照，重启
+控制面不会让容器换代码；更隐蔽的是 `ensureProject()` 对已停止的容器只做 `docker start`，
+不会用新镜像重建，所以旧代码会一直跑下去。重建后先删掉残留容器：
+
+```bash
+docker build -f Dockerfile.worker -t cairn-worker:latest .
+docker ps -a --filter "name=cairn-dispatch-" --format '{{.Names}}' \
+  | xargs -r docker rm -f
+# 确认镜像里有新代码（应打印文件路径）：
+docker run --rm --entrypoint sh cairn-worker:latest -c "grep -rl <新符号> /app"
+```
+
+同样地，`worker.reasoning` 这类**控制面**配置放 `dispatch.yaml` / `/settings/runtime` 就能
+生效，但真正按任务类型开关推理的 `applyReasoningMode()` 在 worker 里——不重建镜像，
+容器任务看起来就是“开关没生效”。
+
 ## Host Bridge 与审计
 
 worker 启动真实 Solver 前会把 `task.scope.targets` 与工作区/会话路径写入
@@ -99,6 +115,16 @@ worker 启动真实 Solver 前会把 `task.scope.targets` 与工作区/会话路
 - 网络：从 `bash` 命令中提取 URL、`/dev/tcp`、IPv4/IPv6、CIDR、`host:port`、`nc host port`
   等端点；主机名按字面匹配（不做 DNS），支持 `*.example.com` 与 IPv4 CIDR。识别为网络
   工具却提取不到端点时 **拒绝**。
+- **命令位置（M57d）**：只有简单命令的“命令词”是网络工具才算网络调用。`which curl`、
+  `ls curl`、`command -v curl` 都只是提到工具名；`sudo -u root nmap …`、`timeout 60 curl …`
+  会跳过包装命令取其后的命令词。位置参数里的裸主机名只有在该命令词是网络工具时才成为
+  主目标。
+- **heredoc 与请求头（M57d）**：`cat > file <<'EOF'` 写出的脚本正文不扫描（正文是数据），
+  `python - <<'EOF'` 这类继承 stdin 的 heredoc 仍扫描，其 `import socket` 照样 fail closed。
+  `-H/--header`、`-b/--cookie`、`-A/--user-agent`、`-e/--referer` 的值按“携带目标”处理，
+  默认 `observe` 只记录，不当作连接目的。
+- **默认端口（M57d）**：scope 写成 `http://host`（端口 80）时，脚本里不带 scheme、不带端口
+  的主机字面量视为同一目标；显式 `host:8080` 不会被裸主机名匹配。
 - 文件：读只能在工作区或 `file:` scope 目标内；写只能在项目工作区内；agent 配置目录
   （`/cairn/agent-config`、`~/.cairnweave`、旧版 `~/.tch-agent` 与 `CAIRN_AGENT_CONFIG_DIR`
   指定的目录）始终拒绝；按 realpath + 词法双重判断，阻止符号链接逃逸。
@@ -151,6 +177,49 @@ curl -s localhost:8000/projects/proj_001/artifacts
 ls "<workspace>/.tool-results" | tail          # 最近溢出的工具结果
 grep -l "flag{" "<workspace>/.tool-results"/*.md
 ```
+
+## 模型轨迹（M56）
+
+调度日志的「模型轨迹」按钮打开任务级的实时模型请求/响应流。它读 worker 写在会话目录里的
+`<workspace>/<project>/.cairn/sessions/<task>/solver-session/model-trace.jsonl`（NDJSON，一行一个事件），
+由 solver 会话注册的 `model-trace` 扩展在 `before_provider_request`、`message_end`、
+`tool_execution_start/end` 时追加：
+
+- `request`：模型名、请求体字节数、消息条数与预览、工具名、白名单参数
+  （`temperature`、`reasoning_effort` 等——可据此确认推理开关是否真的到了 provider）。
+- `stream`：节流后的流式尾预览；`response`：文本、思考、停止原因、token 用量、延迟和错误。
+- `tool_start` / `tool_end`：工具参数与返回预览；写满上限时最后一条是 `truncated`。
+
+边界：请求头、base URL 与 API key 从不写入（`before_provider_request` 拿到的是 provider 请求体本身，不含这些字段）；每个文本字段按
+`tasks.model_trace.preview_chars` 截断，整文件按 `tasks.model_trace.max_bytes` 封顶；
+写失败只会让文件缺失，不会让任务失败。控制面只读地经
+`GET /projects/{id}/runs/{task_id}/trace?cursor=&limit=` 提供最新窗口（默认 200 条、
+最多 500 条、单次最多读 4 MiB），UI 每 1.5 秒用 `cursor` 增量拉取。
+
+```bash
+curl -s 'localhost:8000/projects/proj_001/runs/explore-abc/trace?limit=50' | jq '.events[-3:]'
+tail -f "<workspace>/proj_001/.cairn/sessions/explore-abc/solver-session/model-trace.jsonl"
+```
+
+关闭 `tasks.model_trace.enabled` 后只影响新任务；已有文件仍可查看。轨迹不是
+`project_artifacts`，也不进 WorkerTask、prompt 或审计账本，随会话清理一起删除。
+
+## 任务失败码与处置（M56 补充）
+
+运行卡片的「执行异常」不是路线反证。按 `failure.code` 区分原因（UI 现在给的是中文标签，
+`GET /projects/{id}/runs` 里仍是原始码）：
+
+| code | 含义 | 典型处置 |
+| --- | --- | --- |
+| `result_invalid` | worker 的结果文件缺失，或 JSON 到了但不符合契约（如 `experiment` 缺 `version`、优先级/预算/dedupe_key 非法）。run 的 `detail` 会带上校验器原文；下一次 reason 的提示词也会引用这段话，并且只等 `strategist.schema_backoff_seconds`（默认 15 秒）就重试 | 看 detail 与模型轨迹的 `response`；契约问题通常换个模型或收紧提示词即可，不需要改图 |
+| `evidence_invalid` | `evidence_refs` 里存在不存在的路径、目录或 0 字节文件（`tasks.evidence.min_bytes`），且该结果携带完成声明或 `tasks.evidence.invalid_refs: fail` | 检查模型引用的实际路径（`ls artifacts/<task>/`）。默认 `drop` 模式下普通 explore/bootstrap 结果只会逐条丢弃并在 `detail` 记录 `invalid evidence refs dropped: …`，不再整轮失败 |
+| `tool_budget_reserve` / `tool_budget_exhausted`（audit 事件） | 调用进入预算末尾保留段却尝试探测，或预算已耗尽（M57b） | 前者说明 worker 没在保留段前写出结论；看 audit 的 `reason` 与 `run.detail`，必要时调大 `worker.budget_reserve_calls` 或 intent 预算 |
+| `verification_error` | 完成校验执行出错（不是校验未通过） | 检查题目服务与校验策略 |
+| `apply_failed` | 写图时控制面内部异常（数据库/事务），不是模型的问题 | 看控制面日志 `apply failed task=…` 的异常原文 |
+| `result_missing` / `worker_failed` / `hard_deadline` / `lease_lost` | worker 没产出结果、异常退出、超硬截止、租约被其它控制面接管 | 看 `<session>/stderr.log` 与调度日志 |
+
+排除法：`infrastructure` 域的失败（模型连接/认证/限流/超时、worker 启动、运行时不可用）会
+进入项目级背压与熔断，与本节的任务级失败分开记录；两者都不代表目标不可达。
 
 `/flag` 的兜底扫描会把这里算作取证来源（先于会话目录、共用字节与条目额度），所以开启溢出
 不会让 flag 从横幅里消失；M29 的 ≤10 s 缓存按工件指纹失效，新落盘的溢出文件要等 TTL 到期。

@@ -134,8 +134,7 @@ export interface CommandAnalysis {
 }
 
 /** Flags whose value is a request body sent to the primary destination. */
-const BODY_VALUE_FLAGS = new Set([
-  "-d",
+const BODY_VALUE_FLAGS = new Set([  "-d",
   "--data",
   "--data-ascii",
   "--data-binary",
@@ -151,6 +150,20 @@ const BODY_VALUE_FLAGS = new Set([
 
 /** Flags whose value names a local file whose contents are sent to the primary destination. */
 const FILE_VALUE_FLAGS = new Set(["-T", "--upload-file", "--post-file", "--body-file"]);
+/**
+ * Flags whose value travels inside the request as data rather than naming the destination:
+ * a header, cookie, user agent or referer. Judged by the SSRF-marker policy like a body.
+ */
+const HEADER_VALUE_FLAGS = new Set([
+  "-H",
+  "--header",
+  "-b",
+  "--cookie",
+  "-A",
+  "--user-agent",
+  "-e",
+  "--referer",
+]);
 const URL_RE = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'`<>]+/gi;
 const DEV_TCP_RE = /\/dev\/(?:tcp|udp)\/([^/\s]+)\/(\d{1,5})/gi;
 const CIDR_RE = /(?<![\w.])(\d{1,3}(?:\.\d{1,3}){3})\/(\d{1,2})(?![\w.])/g;
@@ -173,6 +186,8 @@ interface ShellToken {
   start: number;
   /** Exclusive end offset. */
   end: number;
+  /** True for a quoted token; operators inside quotes are data, not shell separators. */
+  quoted: boolean;
 }
 
 interface CarriedRegion {
@@ -181,59 +196,169 @@ interface CarriedRegion {
   text: string;
 }
 
+/** Shell operators that delimit simple commands (`&&`, `||`, `;`, `|`, background `&`). */
+const SEGMENT_SEPARATORS = new Set([";", "|", "||", "&&", "&", "\n"]);
+
+/**
+ * Commands that run another command, so the network tool is the next command word rather
+ * than the wrapper (`sudo nmap …`). Introspection commands (`which`, `command -v`) are
+ * deliberately absent: their arguments are never executed.
+ */
+const WRAPPER_COMMANDS = new Set([
+  "sudo",
+  "doas",
+  "env",
+  "nohup",
+  "time",
+  "timeout",
+  "nice",
+  "ionice",
+  "stdbuf",
+  "exec",
+  "busybox",
+  "xargs",
+  "watch",
+  "parallel",
+]);
+
+/**
+ * Shell grammar words that may precede a command (`if curl …`, `while …; do curl …`).
+ * They run what follows, so the command word is the next real word — without this,
+ * `for …; do curl "$B/x"; done` would look like no network call at all.
+ */
+const CONTROL_KEYWORDS = new Set([
+  "if",
+  "then",
+  "else",
+  "elif",
+  "while",
+  "until",
+  "do",
+  "done",
+  "fi",
+  "for",
+  "in",
+  "case",
+  "esac",
+  "!",
+  "{",
+  "}",
+]);
+
+/** Wrapper options whose value is the next token, so it is not mistaken for a command. */
+const WRAPPER_VALUE_FLAGS: Record<string, ReadonlySet<string>> = {
+  sudo: new Set(["-u", "-g", "-p", "-C", "-h", "-r", "-t", "-T", "--user", "--group", "--prompt"]),
+  doas: new Set(["-u", "-C"]),
+  env: new Set(["-u", "--unset", "-C", "--chdir", "-S", "--split-string"]),
+  timeout: new Set(["-s", "--signal", "-k", "--kill-after"]),
+  nice: new Set(["-n", "--adjustment"]),
+  ionice: new Set(["-c", "-n", "-p", "--class", "--classdata", "--pid"]),
+  stdbuf: new Set(["-i", "-o", "-e"]),
+  busybox: new Set(),
+  xargs: new Set([
+    "-a", "-d", "-E", "-I", "-J", "-L", "-n", "-P", "-s",
+    "--arg-file", "--delimiter", "--eof", "--replace", "--max-lines",
+    "--max-args", "--max-procs", "--max-chars",
+  ]),
+  watch: new Set(["-n", "--interval", "-q", "--equexit"]),
+  parallel: new Set(["-j", "--jobs", "-a", "--results", "--timeout"]),
+};
+
+/** `find … -exec cmd … \;` runs another command; its word counts as a command position. */
+const EXEC_FLAGS = new Set(["-exec", "-execdir", "-ok", "-okdir"]);
+
+const INTERPRETER_IMPORT_RE =
+  /\b(?:import|require\s*\()\s*(?:socket|urllib|urllib3|requests|http\.client|aiohttp|httpx)\b/i;
+const INTERPRETER_FROM_RE = /\bfrom\s+(?:socket|urllib|requests|http\.client)\s+import\b/i;
+const POWERSHELL_RE =
+  /\b(?:Invoke-WebRequest|Invoke-RestMethod|Test-NetConnection|New-Object\s+Net\.WebClient)\b/i;
+const DEV_TCP_ANY_RE = /\/dev\/(?:tcp|udp)\//i;
+const OPENSSL_CLIENT_RE = /\bopenssl\s+(?:s_client|s_server)\b/i;
+const HTTP_URL_RE = /\bhttps?:\/\//i;
+
+/** `<<EOF`, `<<'EOF'`, `<<-"EOF"`: a heredoc start with its delimiter. */
+const HEREDOC_START_RE = /<<(-?)\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\2/g;
+
 export function analyzeCommand(
   command: string,
   namedHosts: readonly string[] = [],
 ): CommandAnalysis {
   const positioned = scanTokens(command);
-  const tokens = positioned.map((token) => token.value);
-  const tools = new Set(
-    tokens.map((token) => basename(token)).filter((name) => NETWORK_TOOLS.has(name)),
-  );
-  const interpreterNetwork =
-    /\b(?:import|require\s*\()\s*(?:socket|urllib|urllib3|requests|http\.client|aiohttp|httpx)\b/i.test(
-      command,
-    ) ||
-    /\bfrom\s+(?:socket|urllib|requests|http\.client)\s+import\b/i.test(command);
-  const powerShell =
-    /\b(?:Invoke-WebRequest|Invoke-RestMethod|Test-NetConnection|New-Object\s+Net\.WebClient)\b/i.test(
-      command,
-    );
-  const devTcp = /\/dev\/(?:tcp|udp)\//i.test(command);
-  const opensslClient = /\bopenssl\s+(?:s_client|s_server)\b/i.test(command);
-  // A URL is network intent even when the command is hidden from the token scan (for
-  // example `bash -c "curl http://..."`, where the quoted token is not the tool name).
-  const httpUrl = /\bhttps?:\/\//i.test(command);
-  const networkIntent =
-    tools.size > 0 || interpreterNetwork || powerShell || devTcp || opensslClient || httpUrl;
-
-  if (!networkIntent) {
-    return { networkIntent: false, endpoints: [], carried: [], payloadRefs: [], unverifiable: false };
-  }
+  // A script written to disk is data, not a destination. Only file-writing heredocs are
+  // masked; `python - <<EOF` stays visible and keeps failing closed on its imports. The
+  // bodies are masked before anything else so their URLs and flags are not read as request
+  // data either.
+  const heredocMasks = heredocRegions(command);
 
   // Regions the command sends *to* its destination rather than connecting to. They are cut
   // out of the text the primary scan reads and handed to the carried scan instead.
-  const regions: CarriedRegion[] = [];
+  const carriedRegions: CarriedRegion[] = [];
   for (const url of command.matchAll(URL_RE)) {
+    if (isMasked(url.index!, heredocMasks)) continue;
     const raw = url[0]!.replace(/[),.;\]}]+$/, "");
     const cut = parameterStart(raw);
     if (cut < 0) continue;
-    regions.push({ start: url.index! + cut, end: url.index! + raw.length, text: raw.slice(cut) });
+    carriedRegions.push({
+      start: url.index! + cut,
+      end: url.index! + raw.length,
+      text: raw.slice(cut),
+    });
   }
 
   const payloadRefs: string[] = [];
   for (let index = 0; index < positioned.length; index += 1) {
+    if (isMasked(positioned[index]!.start, heredocMasks)) continue;
     const body = bodyFlagValue(positioned, index);
     if (body === null) continue;
     index = body.nextTokenIndex;
-    regions.push({ start: body.start, end: body.end, text: body.value });
+    carriedRegions.push({ start: body.start, end: body.end, text: body.value });
+    if (!body.isBody) continue;
     if (body.isFileFlag) pushPayloadRef(payloadRefs, body.value.replace(/^@/, ""));
     for (const match of body.value.matchAll(PAYLOAD_REF_RE)) {
       pushPayloadRef(payloadRefs, match[1]!);
     }
   }
 
-  const scanText = maskRegions(command, regions);
+  const masks = [...carriedRegions, ...heredocMasks];
+  const masked = (token: ShellToken): boolean => isMasked(token.start, masks);
+  const scanText = maskRegions(command, masks);
+
+  // Only a command *word* invokes a tool. `which curl` and `ls curl` mention one.
+  const segments = splitSegments(positioned, masked);
+  const networkSegments: Array<{ tokens: readonly ShellToken[]; command: number; name: string }> = [];
+  for (const tokens of segments) {
+    const index = commandIndexOf(tokens);
+    if (index !== null) {
+      const name = basename(tokens[index]!.value);
+      if (NETWORK_TOOLS.has(name)) networkSegments.push({ tokens, command: index, name });
+    }
+    // `find … -exec curl … \;` runs a second command inside the same segment.
+    for (let cursor = 0; cursor < tokens.length; cursor += 1) {
+      if (!EXEC_FLAGS.has(tokens[cursor]!.value)) continue;
+      const next = tokens[cursor + 1];
+      if (next === undefined || next.value.startsWith("-")) continue;
+      const name = basename(next.value);
+      if (NETWORK_TOOLS.has(name)) {
+        networkSegments.push({ tokens, command: cursor + 1, name });
+      }
+    }
+  }
+  const tools = new Set(networkSegments.map((segment) => segment.name));
+
+  const interpreterNetwork =
+    INTERPRETER_IMPORT_RE.test(scanText) || INTERPRETER_FROM_RE.test(scanText);
+  const powerShell = POWERSHELL_RE.test(scanText);
+  const devTcp = DEV_TCP_ANY_RE.test(scanText);
+  const opensslClient = OPENSSL_CLIENT_RE.test(scanText);
+  // A URL is network intent even when the command is hidden from the token scan (for
+  // example `bash -c "curl http://..."`, where the quoted token is not the tool name).
+  const httpUrl = HTTP_URL_RE.test(scanText);
+  const networkIntent =
+    tools.size > 0 || interpreterNetwork || powerShell || devTcp || opensslClient || httpUrl;
+
+  if (!networkIntent) {
+    return { networkIntent: false, endpoints: [], carried: [], payloadRefs: [], unverifiable: false };
+  }
 
   const endpoints: Endpoint[] = [];
   const seen = new Set<string>();
@@ -244,7 +369,11 @@ export function analyzeCommand(
     endpoints.push({ ...endpoint, role: "primary" });
   };
 
-  const portHints = collectPortHints(tokens, tools);
+  const networkTokens = networkSegments.flatMap((segment) => segment.tokens);
+  const portHints = collectPortHints(
+    networkTokens.map((token) => token.value),
+    tools,
+  );
 
   // URLs with an explicit scheme are always checked, even without a known tool. The
   // authority is what is contacted; parameter regions and request bodies were cut out above,
@@ -300,11 +429,16 @@ export function analyzeCommand(
     }
   }
 
-  // Positional hostnames / host:port tokens for recognized network tools. Tokens that are a
-  // request body are not destinations, whatever they mention.
-  if (tools.size > 0) {
-    for (const token of positioned) {
-      if (isMasked(token.start, regions)) continue;
+  // Positional hostnames / host:port tokens, but only inside a segment whose command word
+  // is a network tool. A hostname that merely appears as an argument to `which` or `ls` is
+  // not a destination.
+  for (const segment of networkSegments) {
+    const ports =
+      collectPortHints(
+        segment.tokens.map((token) => token.value),
+        new Set([segment.name]),
+      );
+    for (const token of segment.tokens.slice(segment.command + 1)) {
       if (token.value.startsWith("-")) continue;
       if (token.value.startsWith("[") && token.value.includes("]")) continue;
 
@@ -320,8 +454,8 @@ export function analyzeCommand(
 
       if (isIP(token.value) !== 0) continue; // covered above
       if (!looksLikeHostname(token.value)) continue;
-      const ports = portHints.length > 0 ? portHints : [undefined];
-      for (const port of ports) {
+      const hinted = ports.length > 0 ? ports : [undefined];
+      for (const port of hinted) {
         add({
           raw: token.value,
           host: normalizeHost(token.value),
@@ -332,14 +466,12 @@ export function analyzeCommand(
   }
 
   // nc/ncat host port (the port is positional, not a -p flag).
-  if (tools.has("nc") || tools.has("ncat") || tools.has("netcat")) {
-    const positional: string[] = [];
-    for (const token of positioned) {
-      if (isMasked(token.start, regions)) continue;
-      if (token.value.startsWith("-")) continue;
-      if (NETWORK_TOOLS.has(basename(token.value))) continue;
-      positional.push(token.value);
-    }
+  for (const segment of networkSegments) {
+    if (segment.name !== "nc" && segment.name !== "ncat" && segment.name !== "netcat") continue;
+    const positional = segment.tokens
+      .slice(segment.command + 1)
+      .map((token) => token.value)
+      .filter((value) => !value.startsWith("-") && !NETWORK_TOOLS.has(basename(value)));
     if (
       positional.length >= 2 &&
       (isIP(positional[0]!) !== 0 || looksLikeHostname(positional[0]!)) &&
@@ -353,12 +485,12 @@ export function analyzeCommand(
   }
 
   const carried = collectCarried(
-    regions.map((region) => region.text),
+    carriedRegions.map((region) => region.text),
     seen,
     namedHosts,
   );
 
-  if (endpoints.length === 0 && tokens.some((token) => HELP_FLAGS.has(token))) {
+  if (endpoints.length === 0 && positioned.some((token) => HELP_FLAGS.has(token.value))) {
     return {
       networkIntent: false,
       endpoints: [],
@@ -375,6 +507,131 @@ export function analyzeCommand(
     payloadRefs,
     unverifiable: endpoints.length === 0,
   };
+}
+
+/** Splits tokens into simple commands at unquoted shell operators. */
+function splitSegments(
+  tokens: readonly ShellToken[],
+  masked: (token: ShellToken) => boolean,
+): ShellToken[][] {
+  const segments: ShellToken[][] = [];
+  let current: ShellToken[] = [];
+  for (const token of tokens) {
+    if (masked(token)) continue;
+    if (!token.quoted && SEGMENT_SEPARATORS.has(token.value)) {
+      if (current.length > 0) segments.push(current);
+      current = [];
+      continue;
+    }
+    current.push(token);
+  }
+  if (current.length > 0) segments.push(current);
+  return segments;
+}
+
+/**
+ * Index of the command word in a simple command: skips assignments, leading options and
+ * wrapper commands (`sudo`, `timeout 60`, `env -u X`) so `timeout 60 curl …` still names
+ * `curl`, while `which curl` names `which` and therefore invokes no network tool.
+ */
+function commandIndexOf(tokens: readonly ShellToken[]): number | null {
+  let index = 0;
+  while (index < tokens.length) {
+    const value = tokens[index]!.value;
+    if (!tokens[index]!.quoted && CONTROL_KEYWORDS.has(value.toLowerCase())) {
+      index += 1;
+      continue;
+    }
+    if (value.startsWith("-")) {
+      index += 1;
+      continue;
+    }
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(value)) {
+      index += 1;
+      continue;
+    }
+    const name = basename(value);
+    if (!WRAPPER_COMMANDS.has(name)) return index;
+    index += 1;
+    const valueFlags = WRAPPER_VALUE_FLAGS[name] ?? new Set<string>();
+    while (index < tokens.length) {
+      const next = tokens[index]!.value;
+      if (next.startsWith("-")) {
+        index += valueFlags.has(next) ? 2 : 1;
+        continue;
+      }
+      if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(next)) {
+        index += 1;
+        continue;
+      }
+      if (/^\d+[smhd]?$/.test(next)) {
+        index += 1; // `timeout 60 cmd`, `nice 10 cmd`
+        continue;
+      }
+      break;
+    }
+  }
+  return null;
+}
+
+/**
+ * Heredoc bodies of commands that write a file. The body is data being saved, so a target
+ * URL or a variable name inside it is not a destination. Any other heredoc (`python -`)
+ * stays visible so its imports still fail closed.
+ */
+function heredocRegions(command: string): CarriedRegion[] {
+  const regions: CarriedRegion[] = [];
+  const bodies: Array<{ start: number; end: number }> = [];
+  for (const match of command.matchAll(HEREDOC_START_RE)) {
+    // A marker inside an already-consumed body is data, not a nested heredoc.
+    if (bodies.some((body) => match.index! >= body.start && match.index! < body.end)) {
+      continue;
+    }
+    const markerEnd = match.index! + match[0].length;
+    const lineEnd = command.indexOf("\n", markerEnd);
+    if (lineEnd < 0) break;
+    const lineStart = command.lastIndexOf("\n", match.index!) + 1;
+    const line = command.slice(lineStart, lineEnd);
+    const delimiter = match[3]!;
+    const allowTabs = match[1] === "-";
+
+    let cursor = lineEnd + 1;
+    let bodyEnd = command.length;
+    while (cursor <= command.length) {
+      const next = command.indexOf("\n", cursor);
+      const lineText = command.slice(cursor, next < 0 ? command.length : next);
+      const comparable = allowTabs ? lineText.replace(/^\t+/, "") : lineText;
+      if (comparable.trimEnd() === delimiter) {
+        bodyEnd = cursor;
+        break;
+      }
+      if (next < 0) break;
+      cursor = next + 1;
+    }
+
+    bodies.push({ start: lineEnd + 1, end: bodyEnd });
+    if (heredocWritesFile(line, match.index! - lineStart)) {
+      regions.push({ start: lineEnd + 1, end: bodyEnd, text: command.slice(lineEnd + 1, bodyEnd) });
+    }
+  }
+  return regions;
+}
+
+/** The command that owns a heredoc marker is the last simple command starting before it. */
+function heredocWritesFile(line: string, markerOffset: number): boolean {
+  const segments = splitSegments(scanTokens(line), () => false);
+  let owner: ShellToken[] | null = null;
+  for (const segment of segments) {
+    if (segment[0]!.start <= markerOffset) owner = segment;
+  }
+  if (owner === null) return false;
+  const index = commandIndexOf(owner);
+  if (index === null) return false;
+  const name = basename(owner[index]!.value);
+  if (name === "tee") return true;
+  if (name !== "cat") return false;
+  const tail = line.slice(owner[0]!.start);
+  return /(?:^|[^<>=])>>?/.test(tail);
 }
 
 /**
@@ -530,7 +787,14 @@ function isMasked(start: number, regions: readonly CarriedRegion[]): boolean {
 function bodyFlagValue(
   tokens: readonly ShellToken[],
   index: number,
-): { value: string; start: number; end: number; isFileFlag: boolean; nextTokenIndex: number } | null {
+): {
+  value: string;
+  start: number;
+  end: number;
+  isFileFlag: boolean;
+  isBody: boolean;
+  nextTokenIndex: number;
+} | null {
   const token = tokens[index]!;
   const equals = token.value.indexOf("=");
   const rawFlag = equals === -1 ? token.value : token.value.slice(0, equals);
@@ -538,13 +802,16 @@ function bodyFlagValue(
   // (form body) are different options and only the second carries request data.
   const flag = rawFlag.startsWith("--") ? rawFlag.toLowerCase() : rawFlag;
   const isFileFlag = FILE_VALUE_FLAGS.has(flag);
-  if (!isFileFlag && !BODY_VALUE_FLAGS.has(flag)) return null;
+  const isBody = isFileFlag || BODY_VALUE_FLAGS.has(flag);
+  const isHeader = HEADER_VALUE_FLAGS.has(flag);
+  if (!isBody && !isHeader) return null;
   if (equals > 0) {
     return {
       value: token.value.slice(equals + 1),
       start: token.start + equals + 1,
       end: token.end,
       isFileFlag,
+      isBody,
       nextTokenIndex: index,
     };
   }
@@ -555,6 +822,7 @@ function bodyFlagValue(
     start: next.start,
     end: next.end,
     isFileFlag,
+    isBody,
     nextTokenIndex: index + 1,
   };
 }
@@ -575,14 +843,19 @@ function decodeCarriedText(text: string): string {
 
 function scanTokens(command: string): ShellToken[] {
   const tokens: ShellToken[] = [];
-  const pattern = /"(?:\\.|[^"\\])*"|'[^']*'|[^\s;|&<>()]+/g;
+  const pattern = /"(?:\\.|[^"\\])*"|'[^']*'|[;|&\n]+|[^\s;|&<>()]+/g;
   for (const match of command.matchAll(pattern)) {
     const raw = match[0]!;
     const start = match.index!;
     if (raw.startsWith('"') || raw.startsWith("'")) {
-      tokens.push({ value: raw.slice(1, -1), start: start + 1, end: start + raw.length - 1 });
+      tokens.push({
+        value: raw.slice(1, -1),
+        start: start + 1,
+        end: start + raw.length - 1,
+        quoted: true,
+      });
     } else {
-      tokens.push({ value: raw, start, end: start + raw.length });
+      tokens.push({ value: raw, start, end: start + raw.length, quoted: false });
     }
   }
   return tokens;

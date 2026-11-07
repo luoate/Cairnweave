@@ -95,6 +95,12 @@ export interface HostBridgeOptions {
    * Subagent processes have their own bridge and counter.
    */
   maxToolCalls?: number;
+  /**
+   * Of `maxToolCalls`, how many of the last calls are reserved for final artifacts. In
+   * the reserve only writes inside the task artifact directory are allowed; everything
+   * else is blocked with `tool_budget_reserve`. Ignored without `maxToolCalls`.
+   */
+  reserveToolCalls?: number;
   /** How to treat carried targets. Defaults to `observe`. */
   ssrfMarkers?: SsrfMarkerPolicy;
   /**
@@ -114,8 +120,15 @@ export interface BridgeDecision {
   action: string;
   targets: string[];
   reason?: string;
-  /** Set for the budget refusal and for the SSRF marker observation line. */
-  event?: "tool_budget_exhausted" | "ssrf_candidate";
+  /**
+   * Set for budget refusals (`tool_budget_exhausted`, `tool_budget_reserve`), the
+   * one-shot `tool_budget_warning`, and the SSRF marker observation line.
+   */
+  event?:
+    | "tool_budget_exhausted"
+    | "tool_budget_reserve"
+    | "tool_budget_warning"
+    | "ssrf_candidate";
 }
 
 type Action =
@@ -182,11 +195,14 @@ export class HostBridge {
   private readonly now: () => Date;
   private readonly auditStream: AuditStreamSender | null;
   private readonly maxToolCalls: number | null;
+  private readonly reserveToolCalls: number;
   private readonly ssrfMarkers: SsrfMarkerPolicy;
   private readonly protectedHosts: string[];
   /** Infrastructure names the analyzer reports even when a body carries no port. */
   private readonly carriedHostNames: string[];
   private toolCallCount = 0;
+  /** The 80% warning is sent once; further calls must not repeat it. */
+  private budgetWarned = false;
 
   constructor(options: HostBridgeOptions) {
     this.projectId = options.projectId;
@@ -196,6 +212,7 @@ export class HostBridge {
       options.auditPath ?? resolve(options.sessionDir, "audit.jsonl");
     this.now = options.now ?? (() => new Date());
     this.maxToolCalls = options.maxToolCalls ?? null;
+    this.reserveToolCalls = Math.max(0, options.reserveToolCalls ?? 0);
     this.ssrfMarkers = options.ssrfMarkers ?? "observe";
     this.protectedHosts = (options.protectedHosts ?? []).map((host) =>
       host.trim().toLowerCase().replace(/\.$/, ""),
@@ -254,11 +271,29 @@ export class HostBridge {
         ),
         event: "tool_budget_exhausted",
       };
+    } else if (this.inReserve() && !this.isFinalArtifactWrite(classification)) {
+      // The reserve exists so the worker can still write the files it is about to cite.
+      // A refused call does not consume the reserve; the hard deadline still bounds a
+      // model that keeps retrying.
+      decision = {
+        ...this.decision(
+          false,
+          tool,
+          classification,
+          `tool budget reserve (${this.remainingCalls()} calls left); only writes under ${
+            this.artifactDir ?? "the workspace"
+          } are allowed — write your findings and evidence files now`,
+        ),
+        event: "tool_budget_reserve",
+      };
     } else {
       if (this.maxToolCalls !== null) this.toolCallCount += 1;
       const outcome = this.evaluateScoped(tool, classification);
       decision = outcome.decision;
       carried = outcome.carried;
+      if (decision.event === undefined && decision.allowed && this.takeBudgetWarning()) {
+        decision = { ...decision, event: "tool_budget_warning" };
+      }
     }
 
     const auditError = this.writeAudit(decision, classification.detail);
@@ -269,6 +304,61 @@ export class HostBridge {
         : this.auditUnavailable(tool, decision, markerError);
     }
     return auditError === null ? decision : this.auditUnavailable(tool, decision, auditError);
+  }
+
+  /** First call index of the artifact-only reserve, or null when none is configured. */
+  private reserveStart(): number | null {
+    if (this.maxToolCalls === null || this.reserveToolCalls <= 0) return null;
+    return Math.max(0, this.maxToolCalls - this.reserveToolCalls);
+  }
+
+  private inReserve(): boolean {
+    const start = this.reserveStart();
+    return start !== null && this.toolCallCount >= start;
+  }
+
+  private remainingCalls(): number {
+    if (this.maxToolCalls === null) return 0;
+    return Math.max(0, this.maxToolCalls - this.toolCallCount);
+  }
+
+  /**
+   * A write inside the task's artifact directory. With scoped artifacts off there is no
+   * per-task directory, so any write inside the workspace counts.
+   */
+  private isFinalArtifactWrite(classification: Classification): boolean {
+    if (classification.actions.length === 0) return false;
+    const root = this.taskArtifactsRoot ?? this.workspace;
+    return classification.actions.every(
+      (action) =>
+        action.kind === "file" &&
+        action.mode === "write" &&
+        isUnder(root, canonicalPath(resolve(this.workspace, action.path))),
+    );
+  }
+
+  /**
+   * True once, when usage first reaches 80% of the budget — or one call before the
+   * reserve starts when the reserve is large enough to reach 80% first, so the model
+   * always hears about it before probing is cut off.
+   */
+  private takeBudgetWarning(): boolean {
+    // Tiny budgets have no "early enough" moment to warn in; the reserve block itself
+    // carries the instruction.
+    if (this.maxToolCalls === null || this.maxToolCalls < 10 || this.budgetWarned) {
+      return false;
+    }
+    const start = this.reserveStart();
+    const warnAt = Math.max(
+      1,
+      Math.min(
+        Math.floor(this.maxToolCalls * 0.8),
+        start === null ? this.maxToolCalls : start - 1,
+      ),
+    );
+    if (this.toolCallCount < warnAt) return false;
+    this.budgetWarned = true;
+    return true;
   }
 
   private auditUnavailable(tool: string, decision: BridgeDecision, auditError: string) {

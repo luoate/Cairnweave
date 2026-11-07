@@ -11,6 +11,7 @@ import {
   createIntent,
   createProject,
   finishRun,
+  getLatestReasonFailure,
   getStrategistState,
   listRecentStrategistRuns,
   recordStrategistFailure,
@@ -126,6 +127,7 @@ describe("Strategist state", () => {
         projectId,
         runId: "run-reason-2",
         trigger: "facts:2->3",
+        code: "result_invalid",
         at: "2026-01-01T00:01:00Z",
       }),
     );
@@ -135,6 +137,7 @@ describe("Strategist state", () => {
       last_success_at: "2026-01-01T00:00:10Z",
       last_attempt_at: "2026-01-01T00:01:00Z",
       last_failure_at: "2026-01-01T00:01:00Z",
+      last_failure_code: "result_invalid",
       last_trigger: "facts:2->3",
       last_run_id: "run-reason-2",
       last_fact_count: 2,
@@ -142,11 +145,11 @@ describe("Strategist state", () => {
       last_open_intent_count: 3,
     });
 
-    // A later success clears the failure marker.
+    // A later success clears both failure markers.
     success("2026-01-01T00:02:00Z");
-    expect(
-      db.withConn((conn) => getStrategistState(conn, projectId))!.last_failure_at,
-    ).toBeNull();
+    const cleared = db.withConn((conn) => getStrategistState(conn, projectId))!;
+    expect(cleared.last_failure_at).toBeNull();
+    expect(cleared.last_failure_code).toBeNull();
   });
 
   test("failure on a fresh project creates a row without fake watermarks", () => {
@@ -173,6 +176,58 @@ describe("Strategist state", () => {
       conn.query("DELETE FROM projects WHERE id = ?").run(projectId),
     );
     expect(db.withConn((conn) => getStrategistState(conn, projectId))).toBeNull();
+  });
+});
+
+describe("latest reason failure", () => {
+  function reasonRun(
+    id: string,
+    outcome: "success" | "failed",
+    finishedAt: string,
+    detail?: string,
+  ): void {
+    db.withConn((conn) => {
+      startRun(conn, {
+        id,
+        projectId,
+        taskId: `task-${id}`,
+        kind: "reason",
+        worker: "tester",
+        startedAt: finishedAt,
+      });
+      finishRun(conn, id, {
+        outcome,
+        finishedAt,
+        durationMs: 1000,
+        detail: detail ?? null,
+        ...(outcome === "failed"
+          ? { failure: { domain: "execution", code: "result_invalid" } }
+          : {}),
+      });
+    });
+  }
+
+  test("returns the detail until a later successful reason turn supersedes it", () => {
+    reasonRun("run-r1", "failed", "2026-01-01T00:10:00Z", "invalid intent experiment at index 1");
+    expect(db.withConn((conn) => getLatestReasonFailure(conn, projectId))).toMatchObject({
+      run_id: "run-r1",
+      code: "result_invalid",
+      detail: "invalid intent experiment at index 1",
+      finished_at: "2026-01-01T00:10:00Z",
+    });
+
+    reasonRun("run-r2", "success", "2026-01-01T00:20:00Z");
+    expect(db.withConn((conn) => getLatestReasonFailure(conn, projectId))).toBeNull();
+
+    // A failure after the success is reported again.
+    reasonRun("run-r3", "failed", "2026-01-01T00:30:00Z", "different shape");
+    expect(db.withConn((conn) => getLatestReasonFailure(conn, projectId))?.run_id).toBe("run-r3");
+  });
+
+  test("ignores non-reason runs and rows without a failure record", () => {
+    addRun("run-e1", "explore", "failed", "2026-01-01T00:10:00Z");
+    reasonRun("run-r4", "failed", "2026-01-01T00:20:00Z", "quoted");
+    expect(db.withConn((conn) => getLatestReasonFailure(conn, projectId))?.run_id).toBe("run-r4");
   });
 });
 

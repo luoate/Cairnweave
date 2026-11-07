@@ -106,6 +106,7 @@ export class BreachWeaveSolver implements Solver {
           ...(resumeSessionFile === undefined ? {} : { resumeSessionFile }),
           ...(task.model === undefined ? {} : { model: task.model }),
           ...(task.reasoning === undefined ? {} : { reasoning: task.reasoning }),
+          ...(task.tools === undefined ? {} : { tools: [...task.tools] }),
         });
         session = created.session;
         observer = created.observer;
