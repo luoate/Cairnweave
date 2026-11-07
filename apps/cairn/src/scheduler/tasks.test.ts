@@ -6,7 +6,7 @@ import { join } from "node:path";
 import type { ProjectDetail } from "@cairn/graph";
 
 import { parseDispatchConfig } from "../config";
-import { observerEnvironment, prepareTask, toolSpillEnvironment } from "./tasks";
+import { observerEnvironment, prepareTask, reasoningForKind, toolSpillEnvironment } from "./tasks";
 
 const CONFIG = {
   server: "http://127.0.0.1:8000",
@@ -188,7 +188,9 @@ describe("intent budgets", () => {
     expect(prepared.task.prompt).toContain("# 完成校验");
     expect(prepared.task.prompt).toContain("evidence_refs");
     expect(prepared.task.prompt).toContain("把 flag 原文逐字写进事实描述");
-    expect(prepared.task.prompt).toContain("凭据、token 与其他机密");
+    expect(prepared.task.prompt).toContain("属于挑战材料");
+    expect(prepared.task.prompt).toContain("artifacts/<任务>/credentials.txt");
+    expect(prepared.task.prompt).toContain("操作员自己的机密");
     expect(prepared.task.prompt).toContain("绝不脱敏、打码或截短");
   });
 
@@ -341,6 +343,68 @@ describe("worker profile dispatch", () => {
 
     expect(prepared.task.workerProfile).toBeUndefined();
     expect(prepared.task.model).toBeUndefined();
+  });
+});
+
+describe("reasoning policy", () => {
+  test("resolves the per-kind decision from the configured mode", () => {
+    expect(reasoningForKind("off", "reason")).toBe("off");
+    expect(reasoningForKind("off", "explore")).toBe("off");
+    expect(reasoningForKind("all", "reason")).toBe("on");
+    expect(reasoningForKind("all", "explore")).toBe("on");
+    expect(reasoningForKind("reason", "reason")).toBe("on");
+    expect(reasoningForKind("reason", "bootstrap")).toBe("off");
+    expect(reasoningForKind("reason", "explore")).toBe("off");
+    expect(reasoningForKind("reason", "conclude")).toBe("off");
+  });
+
+  test("stamps the decision on task.json for every kind", () => {
+    const project = projectFixture();
+    const config = parseDispatchConfig({ ...CONFIG, worker: { ...CONFIG.worker, reasoning: "reason" } });
+    const base = {
+      config,
+      project,
+      exportYaml: "project: p1\n",
+      scope: { targets: ["127.0.0.1:8080"] },
+      workspaceRoot: directory,
+    };
+    const reason = prepareTask({
+      ...base,
+      kind: "reason",
+      reasoning: reasoningForKind(config.worker.reasoning, "reason"),
+    });
+    const explore = prepareTask({
+      ...base,
+      kind: "explore",
+      intent: project.intents[0]!,
+      reasoning: reasoningForKind(config.worker.reasoning, "explore"),
+    });
+    const bootstrap = prepareTask({
+      ...base,
+      kind: "bootstrap",
+      reasoning: reasoningForKind(config.worker.reasoning, "bootstrap"),
+    });
+
+    expect(reason.task.reasoning).toBe("on");
+    expect(explore.task.reasoning).toBe("off");
+    expect(bootstrap.task.reasoning).toBe("off");
+    const written = JSON.parse(readFileSync(reason.taskPath, "utf8")) as { reasoning?: string };
+    expect(written.reasoning).toBe("on");
+  });
+
+  test("omits the field when the scheduler passes no decision", () => {
+    const project = projectFixture();
+    const prepared = prepareTask({
+      config: parseDispatchConfig(CONFIG),
+      project,
+      exportYaml: "project: p1\n",
+      kind: "explore",
+      intent: project.intents[0]!,
+      scope: { targets: ["127.0.0.1:8080"] },
+      workspaceRoot: directory,
+    });
+
+    expect(prepared.task.reasoning).toBeUndefined();
   });
 });
 

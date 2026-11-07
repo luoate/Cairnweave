@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test"
 
-import { buildSolverStartupSnapshot, buildSubagentStartupSnapshot, readToolSpillFromEnv } from "./session"
+import { buildSolverStartupSnapshot, buildSubagentStartupSnapshot, applyReasoningMode, readToolSpillFromEnv } from "./session"
 
 const init = { solverId: "solver-1", promptName: "cairn-worker", task: "task" }
 const prompt = { name: "cairn-worker", meta: {}, content: "prompt" }
@@ -42,6 +42,77 @@ describe("solver startup snapshots", () => {
         expect(serialized).not.toContain("SECRET-VALUE")
         expect(serialized).not.toContain("SECOND-SECRET")
         expect(serialized).toContain("[REDACTED]")
+    })
+})
+
+describe("per-task reasoning mode", () => {
+    const openaiModel = {
+        id: "deepseek-flash",
+        provider: "gateway",
+        api: "openai-completions",
+    }
+
+    test("silences every thinking level for openai-compatible providers", () => {
+        const options = applyReasoningMode(
+            { model: openaiModel as never, thinkingLevel: "medium" },
+            "off",
+        )
+        expect(options.thinkingLevel).toBe("medium")
+        const model = options.model as unknown as {
+            reasoning: boolean
+            compat: { supportsReasoningEffort: boolean; reasoningEffortMap: Record<string, string> }
+        }
+        expect(model.reasoning).toBe(true)
+        expect(model.compat.supportsReasoningEffort).toBe(true)
+        expect(model.compat.reasoningEffortMap).toEqual({
+            minimal: "none",
+            low: "none",
+            medium: "none",
+            high: "none",
+            xhigh: "none",
+        })
+    })
+
+    test("strips a silencing map when reasoning is on", () => {
+        const options = applyReasoningMode(
+            {
+                model: {
+                    ...openaiModel,
+                    reasoning: true,
+                    compat: {
+                        supportsReasoningEffort: true,
+                        reasoningEffortMap: { minimal: "none", low: "none", high: "high" },
+                    },
+                } as never,
+                thinkingLevel: "medium",
+            },
+            "on",
+        )
+        const model = options.model as unknown as {
+            compat: { reasoningEffortMap: Record<string, string> }
+        }
+        expect(model.compat.reasoningEffortMap).toEqual({ high: "high" })
+    })
+
+    test("does not mutate the resolved options", () => {
+        const original = { model: openaiModel as never, thinkingLevel: "medium" as const }
+        applyReasoningMode(original, "off")
+        expect(original.model).toEqual(openaiModel as never)
+        expect((original.model as unknown as { compat?: unknown }).compat).toBeUndefined()
+    })
+
+    test("expresses off by dropping the level for token-budget providers", () => {
+        const anthropicModel = { id: "claude-test", provider: "anthropic", api: "anthropic-messages" }
+        const off = applyReasoningMode({ model: anthropicModel as never, thinkingLevel: "high" }, "off")
+        expect(off.thinkingLevel).toBeUndefined()
+        const on = applyReasoningMode({ model: anthropicModel as never, thinkingLevel: "high" }, "on")
+        expect(on.thinkingLevel).toBe("high")
+    })
+
+    test("leaves options untouched when no model is resolved yet", () => {
+        expect(applyReasoningMode({ thinkingLevel: "low" } as never, "off")).toEqual({
+            thinkingLevel: "low",
+        })
     })
 })
 

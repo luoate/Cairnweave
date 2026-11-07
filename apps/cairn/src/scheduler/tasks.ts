@@ -12,7 +12,13 @@ import {
   type TaskKind,
   type WorkerTask,
 } from "@cairn/contracts";
-import { selectOperatorGuidance, buildExperimentReviewBasis, type ExperimentReviewBasis } from "@cairn/graph";
+import {
+  CREDENTIAL_RECORDING_RULE,
+  OPERATOR_SECRET_RULE,
+  selectOperatorGuidance,
+  buildExperimentReviewBasis,
+  type ExperimentReviewBasis,
+} from "@cairn/graph";
 import { withOperatorGuidance } from "../prompts/operator-guidance";
 import { EXPERIMENT_PLAN_INSTRUCTIONS, EXPERIMENT_REVIEW_INSTRUCTIONS, withExperimentContract } from "../prompts/experiment";
 import { EXPLORATION_MONITOR_INSTRUCTIONS } from "../prompts/exploration";
@@ -32,7 +38,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import type { DispatchConfig, ToolResultSpillConfig } from "../config";
+import type { DispatchConfig, ReasoningMode, ToolResultSpillConfig } from "../config";
 import { auditTaskContext, type ContextPlanOutcome } from "./context-plan";
 import { prepareContextPack } from "./prepare-context-pack";
 import type { ContextPackReport } from "./context-pack";
@@ -48,6 +54,21 @@ import {
 
 export type RunnableTaskKind = TaskKind;
 export type ConcludeOf = "bootstrap" | "explore";
+
+/**
+ * Resolves `worker.reasoning` for one dispatch.
+ *
+ * `reason` is the interesting mode: choosing which direction to explore is a chain of
+ * deductions made before any tool output exists to correct it, so it keeps the budget;
+ * explore/bootstrap are corrected by their own results and only pay for the extra
+ * generation time. Conclude inherits the "no reasoning" side because it only wraps up
+ * findings the session already produced.
+ */
+export function reasoningForKind(mode: ReasoningMode, kind: RunnableTaskKind): "on" | "off" {
+  if (mode === "off") return "off";
+  if (mode === "all") return "on";
+  return kind === "reason" ? "on" : "off";
+}
 
 /** Candidate-file writer contract for the Observer sidecar. */
 export interface PreparedProposals {
@@ -140,6 +161,8 @@ export interface PrepareTaskInput {
   contextSnapshot?: TaskContextSnapshot;
   /** Profile selected for this dispatch; absent in prompt-mode deployments. */
   workerProfile?: PreparedWorkerProfile;
+  /** Resolved `worker.reasoning` decision for this kind; written into task.json. */
+  reasoning?: "on" | "off";
   /** Test hook; otherwise resolved from config.local/container.workspace_root or cwd. */
   workspaceRoot?: string;
   /** Host -> worker path mapper. Identity in local mode. */
@@ -311,6 +334,7 @@ export function prepareTask(input: PrepareTaskInput): PreparedTask {
           workerProfile: input.workerProfile.id,
           model: input.workerProfile.model,
         }),
+    ...(input.reasoning === undefined ? {} : { reasoning: input.reasoning }),
   };
 
   const legacyInitialBytes = Buffer.byteLength(task.prompt) +
@@ -678,7 +702,7 @@ function withCompletionPolicy(prompt: string): string {
 - 完成必须引用至少一条由此前任务产出的非种子事实（不能是 \`origin\` 或 \`goal\`）。种子事实只是前提，单凭它们永远不足以支撑完成；唯一来源是 \`origin\` 的主张会被驳回。
 - 每条用于支撑完成的事实，都必须来自一次已记录的 run，并至少有一条已记录的文件证据。把这些路径放进结果信封顶层的 \`evidence_refs\` 数组；只有描述文字不构成证据。
 - 还没有产出任何事实的 reason 回合应当提出 intents，而不是声明完成。让 explore 任务去产出有证据支撑的事实。
-- 绑定题目环境的项目按外部题目服务的 flag 计数判定。拿到 flag 后，把 flag 原文逐字写进事实描述，并写进一个证据文件供操作者查阅；绝不脱敏、打码或截短。凭据、token 与其他机密绝不允许出现在描述、证据文件、任务输出或日志里。
+- 绑定题目环境的项目按外部题目服务的 flag 计数判定。拿到 flag 后，把 flag 原文逐字写进事实描述，并写进一个证据文件供操作者查阅；绝不脱敏、打码或截短。${CREDENTIAL_RECORDING_RULE}${OPERATOR_SECRET_RULE}
 - 如果校验没有通过，请继续干活、补齐缺失的证据，而不是一遍遍重复同一个完成声明。
 `;
 }
@@ -708,7 +732,7 @@ function withReasonOutputPolicy(
 - \`budget\` 可以包含正整数 \`max_seconds\` 和（或）\`max_tool_calls\`。它只能收紧已配置的任务超时与工具调用上限，不能放宽。
 - \`dedupe_key\` 标识某个方向，是最多 128 个字符的稳定键。上面列出的开放 intent 已带出自己的 key；不要提出 key 已开放、或方向已被覆盖的 intent。
 - \`hints\` 是给后续工作器的简短策略备注。它们不是证据，也永远不足以支撑完成。不要重复图 YAML 里已有的 hint，最多返回 ${maxIntents} 条 hint。
-- 绝不把凭据、token 或其他机密写进 intent、hint 或描述里。已捕获的 flag 在这里不按机密处理：知道 flag 时，请逐字写出 flag 原文。
+- ${OPERATOR_SECRET_RULE}已捕获的 flag 与授权范围内目标的账号、口令、哈希、会话 cookie 都不按机密处理：知道时请逐字写出原文。
 - \`complete\` 不能与 intents 或 hints 同时出现。`,
   ];
   sections.push(EXPERIMENT_PLAN_INSTRUCTIONS, EXPERIMENT_REVIEW_INSTRUCTIONS);

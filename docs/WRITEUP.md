@@ -42,6 +42,7 @@ curl -s http://127.0.0.1:8787/projects/proj_001/writeup/archive -o writeup-proj_
 | 攻击路径（利用链） | 从 Flag 所在事实反向沿 `intent.from` 求出依赖闭包，按拓扑序逐步列出前置事实、产出的 Fact、worker / model / 结果、证据引用与复现脚本；终点步标出 Flag 事实。闭包外的已结束意图单列「旁支探索」，不混进链里，见 §1.4 |
 | 尚未完成的探索 | 仍开放的意图（有则出现） |
 | 关键发现 | 全部当前有效事实（排除 origin/goal 与被取代者），附证据引用 |
+| 凭据与访问材料 | worker 写在 `artifacts/<任务>/credentials.txt` 里的目标凭据，逐行逐字列出，见 §1.5 |
 | 载荷（Payload） | 工件索引里命中载荷/脚本特征的文件：文本逐字内联，二进制只登记路径，见 §1.1 |
 | 被取代的判断 | `fact_meta.supersedes` 推导的反向边 |
 | 提示 | Hint 按 `created_at, id` 排序 |
@@ -52,6 +53,14 @@ curl -s http://127.0.0.1:8787/projects/proj_001/writeup/archive -o writeup-proj_
 确定性：除 `generated_at` 外，排序与文案固定；测试通过
 `buildProjectWriteup(conn, id, {generatedAt})` 注入时钟。多行 Fact 描述会被折叠成单行，
 表格单元格里的 `|` 会被转义。
+
+转义 `<`：Markdown 渲染器会把 `<h2>…</h2>` 当成 HTML，而按角括号整段剥离的预览器会把
+`'<32位hex>'` 这类占位串吞掉，只留下空引号。草稿因此把**正文里的 `<` 写成 `&lt;`**（行内
+代码与代码围栏内原样保留），这样 `<h2>Welcome~ admin</h2>` 与 `maybe admin#password is
+'<32位hex>'` 在任何渲染器里都能读出来。`renderProjectWriteupMarkdown(snapshot,
+{escapeAngles: false})` 给出未转义版本，`renderProjectWriteupPrompt` 用的是这一份，避免模型
+把实体照抄进正文；UI 的 Writeup 页签在 `<pre>` 里显示时把 `&lt;` 解码回 `<`，复制与下载
+仍是转义后的 Markdown。
 
 Flag 由 `/flag` 同一个 `collectProjectFlag` 提供（artifacts 优先，未命中时限量回退扫描
 `solver-session` 的**工具输出**），所以横幅与 Writeup 不会给出不同的 Flag。按 M18g 的策略，
@@ -195,6 +204,29 @@ Flag」。草稿从图里已有的边还原这条链，不新增任何推断：
 
 载荷选择复用同一条链：终点步所属任务的脚本最先列出，其余按链上顺序；详见 §1.1。
 
+### 1.5 凭据与访问材料（M54）
+
+拿到 flag 之后最容易丢的是“怎么进来的”：口令、哈希、会话 cookie 只留在 worker 的推理
+里，写进草稿时早已被概括掉。因此凭据有两个落点，两者都按原文处理，不做任何脱敏：
+
+- **事实描述**：worker 把恢复到的值逐字写进产出 Fact 的描述，它会原样出现在「利用链」的
+  产出段与「关键发现」里。草稿渲染器不扫描、不过滤 Fact 文本，写进去就看得见。
+- **`artifacts/<任务>/credentials.txt`**：每行一个 `名称 = 值`，`#` 开头是注释。草稿把
+  这些行单独渲染成「凭据与访问材料」章节，值放在行内代码里，所以 `<`、反引号这类字符
+  既不会被 HTML 吃掉，也不会被 §1 的 `<` 转义改写（转义只作用于正文散文）。
+
+读取由 `apps/cairn/src/http/project-credentials.ts` 完成，复用附件包的
+`openArtifactRoot` + `readArtifactFile`（常规文件、非符号链接、在 `artifacts/` 内、单文件
+≤ 64 KiB），最多 5 个文件、60 行、8000 字符。超限只标「内容已截断」，不会把值截一半。
+没有被索引进 `project_artifacts` 的文件不会被读取；没有 `credentials.txt` 时章节写
+「没有单独记录目标凭据」，而不是留空。
+
+这条约定的边界很清楚：**从授权范围内目标取得的**账号、口令、哈希与 cookie 是挑战材料，
+为了复现必须记录；操作员自己的机密（模型 API key、operator token、agent 配置、私钥）
+仍然绝不能进入描述、证据文件、任务输出或日志。两类文案集中在
+`packages/graph/src/credentials.ts`，worker 提示词、solver 前置说明与模型撰写 prompt 引用的
+是同一组常量，不会各自漂移。
+
 ## 2. 模型撰写版
 
 `renderProjectWriteupPrompt` 把整份草稿作为唯一素材交给模型，硬性要求写在 prompt 里：
@@ -215,7 +247,9 @@ Flag」。草稿从图里已有的边还原这条链，不新增任何推断：
   改写成 `.sh`/`.py` 之类的“脚本”；
 - 草稿里写成否定结论的观察（未取得、不成立、不可用、失败）不得写成成功，也不要为了
   连贯而省略“上一步失败后改走哪条路”；
-- 不得写入凭据、token、cookie、API key 或内网敏感地址（草稿授权范围内的目标除外）；
+- 授权范围内目标的账号、口令、哈希与会话 cookie 属于挑战材料，必须逐字符照抄，不得脱敏、
+  打码或改写；操作员自己的机密（模型 API key、operator token、agent 配置、私钥）与内网
+  敏感地址不得写入；
 - 建议结构：题目概述 → 信息收集 → 利用链（按草稿依赖顺序，逐步可复现）→ 获取 Flag →
   复现清单（按顺序列出脚本与关键请求）→ 复盘与遗留问题；
 - 输出正文，篇幅约 2500 字以内；利用链要写全，信息收集与复盘可以压缩。

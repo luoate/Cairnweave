@@ -10,7 +10,7 @@
 
 import type { Database } from "bun:sqlite";
 
-import { all, run } from "./db";
+import { all, get, run } from "./db";
 import { utcnow } from "./services";
 
 export interface SchedulerInstanceRow {
@@ -39,6 +39,18 @@ export function registerSchedulerInstance(
     input.id,
     at,
     at,
+  );
+}
+
+/** One boot's liveness row; null when the id predates the ledger or was pruned. */
+export function getSchedulerInstance(
+  conn: Database,
+  instanceId: string,
+): SchedulerInstanceRow | null {
+  return get<SchedulerInstanceRow>(
+    conn,
+    "SELECT id, started_at, heartbeat_at, stopped_at FROM scheduler_instances WHERE id = ?",
+    instanceId,
   );
 }
 

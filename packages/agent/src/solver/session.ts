@@ -1,5 +1,6 @@
 import { createAgentSession, SessionManager } from "@mariozechner/pi-coding-agent"
 import type { AgentSession, CreateAgentSessionOptions, ExtensionFactory } from "@mariozechner/pi-coding-agent"
+import type { ThinkingLevel } from "@mariozechner/pi-ai"
 import { mkdir } from "node:fs/promises"
 import { ConfigManager } from "../config/index"
 import type { PromptFile } from "../config/prompts/index"
@@ -46,6 +47,52 @@ export interface SubagentStartupSnapshot {
     prompt: PromptFile
     paths: { subagentDir: string; sessionDir: string; workspaceDir: string }
     sessionOptions: SolverStartupDebugValue
+}
+
+/**
+ * OpenAI-compatible providers only receive `reasoning_effort` when the model carries
+ * `reasoning: true` and a non-off thinking level, both of which come from the model pref.
+ * A per-task decision therefore edits the resolved model: `off` aliases every level to the
+ * provider's "none", `on` drops those aliases so the pref's own level reaches the provider.
+ * Token-budget providers (Anthropic-style) express "off" by not sending a level at all.
+ */
+const REASONING_OFF_EFFORT: Record<string, string> = {
+    minimal: "none",
+    low: "none",
+    medium: "none",
+    high: "none",
+    xhigh: "none",
+}
+
+export function applyReasoningMode(
+    options: CreateAgentSessionOptions,
+    mode: "on" | "off",
+): CreateAgentSessionOptions {
+    const model = options.model
+    if (!model) return options
+    const thinkingLevel: ThinkingLevel = options.thinkingLevel ?? "minimal"
+    if (model.api !== "openai-completions") {
+        if (mode === "on") return { ...options, thinkingLevel }
+        const { thinkingLevel: _level, ...rest } = options
+        return rest
+    }
+    const compat = { ...((model.compat ?? {}) as Record<string, unknown>) }
+    compat.supportsReasoningEffort = true
+    const map = { ...((compat.reasoningEffortMap ?? {}) as Record<string, string>) }
+    if (mode === "on") {
+        // A pref configured to silence the provider must not drag a reasoning task with it.
+        for (const [level, effort] of Object.entries(map)) {
+            if (effort === "none") delete map[level]
+        }
+    } else {
+        Object.assign(map, REASONING_OFF_EFFORT)
+    }
+    compat.reasoningEffortMap = map
+    return {
+        ...options,
+        model: { ...model, reasoning: true, compat: compat as typeof model.compat },
+        thinkingLevel,
+    }
 }
 
 function readInjectedPath(name: string): string | undefined {
@@ -230,10 +277,13 @@ export async function createSolverSession(init: SolverInitPayload): Promise<Solv
         // rtkRewriteExtension(),
     ]
 
-    const sessionOpts = await config.resolvePromptSession(init.promptName, extensions, init.model)
-    if (!sessionOpts) {
+    const resolvedSessionOpts = await config.resolvePromptSession(init.promptName, extensions, init.model)
+    if (!resolvedSessionOpts) {
         throw new Error(`prompt not found: ${init.promptName}`)
     }
+    const sessionOpts = init.reasoning === undefined
+        ? resolvedSessionOpts
+        : applyReasoningMode(resolvedSessionOpts, init.reasoning)
     const startupSnapshot = buildSolverStartupSnapshot(init, prompt, sessionOpts, {
         solverDir: baseDir,
         sessionDir,

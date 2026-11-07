@@ -58,7 +58,7 @@ export interface CheckpointToolApi {
 export function registerCheckpointTool(pi: CheckpointToolApi): void {
   if (publisher === undefined || pi.registerTool === undefined) return;
   pi.registerTool({ name: "save_task_checkpoint", label: "保存任务检查点",
-    description: "保存累计的结构化进度（未验证声明）。json 包含 progress、attempts、unresolved、next_steps；每次完整替换。禁止写凭据。",
+    description: "保存累计的结构化进度（未验证声明）。json 包含 progress、attempts、unresolved、next_steps；每次完整替换。操作员自己的机密（模型 key、operator token、私钥）禁止写入。",
     parameters: { type: "object", properties: { json: { type: "string", maxLength: MAX_CHECKPOINT_BYTES } }, required: ["json"], additionalProperties: false },
     execute: async (_id, params) => {
       try {

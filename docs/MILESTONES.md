@@ -6,6 +6,7 @@
 ## 实现记录
 
 最新代码：**M50 已收束；M51a–d 与 M52a–d 已实现（0.77.0-m52），M52c 排序偏好默认关闭；
+M53 只读调度日志、M54 Writeup 目标凭据、M55 按任务类型推理开关已实现，版本保持 0.77.0-m52；
 Writeup 利用链增补已实现，见文末记录**。
 最终验收见文末对应记录；以下段落保留各历史阶段当时的状态，不代表当前版本止于 M40。
 
@@ -1691,6 +1692,112 @@ M19a/M20a 的「攻击路径」按 `created_at, id` 平铺全部已结束意图�
 `bun run check`（TypeScript + 全量测试）**1437 pass / 0 fail / 138 files / 7176 expects**。
 全部离线确定性夹具，0 真实模型调用，未重启服务、未恢复真实项目。边界见
 [WRITEUP §1.4 / §7](WRITEUP.md#14-利用链可复现的攻击路径)。
+
+### M53：调度日志——只读调度状态与实时事件（2026-11-07）
+
+图时间线回答“解出了什么”，但不回答“项目为什么还在跑”。本次新增只读调度活动视图，
+版本保持 `0.77.0-m52`，不新增数据库迁移、写路由或模型调用：
+
+- **派生，不落新表**：`packages/graph/src/activity.ts` 从既有 `runs`、`task_claims`、
+  `pending_concludes`、`scheduler_instances` 与 `intents.last_heartbeat_at` 重建
+  派发、结束、软截止与排队收尾事件；每个事件都有持久化行作为来源，不采信 worker
+  自述。排序按时间稳定，同一时刻保持 run 顺序；事件 `id` 跨轮询不变。
+- **实时运行态**：开放 run 返回已运行时间、按项目完整历史计算的尝试号、证据数、
+  任务租约剩余、调度进程心跳/停止状态。截止时间从该 run 的
+  `.cairn/sessions/<task_id>/task.json` 读取 `hardDeadlineSeconds` /
+  `softDeadlineSeconds`（成功读取才缓存）；文件缺失或字段非法时明确返回
+  `deadline: null`，不套用默认值。
+- **失败分类**：`hard_deadline` 归为「达到硬截止时间」，`evidence_invalid` 归为
+  「证据校验失败」并只把 `invalid evidence:` 前缀改写为「证据文件不可用：」，
+  基础设施故障标为环境中断；取消原因来自 scheduler 的 `cancel(reason)`，新增
+  `cancellationDetail()` 把 `project_inactive` / `shutdown` 写成可读中文。
+- **接口**：新增只读 `GET /projects/{id}/activity?limit=1..500`（默认 80）。旧运行被
+  `limit` 折叠时 `truncated=true`，但尝试号仍按完整历史计数；未知项目 404，只有 GET。
+- **前端**：侧栏新增「调度日志」页签（`opsTabs()` 内置），展示实时 run 卡片、
+  截止进度条与软截止标记、租约/心跳、排队收尾和事件流；事件可跳到「任务运行」并
+  高亮对应 run。项目页头新增运行中徽标，点击进入调度日志。当前项目在图形视图中
+  随 5 秒全局轮询刷新调度活动（即使停留在其他页签），使页头徽标在 run 结束后立即消失；
+  文本全部走 `x-text`，并沿用过期响应保护（`activityPanel.requestId`）与静默轮询错误保留。
+
+测试新增 `packages/graph/src/activity.test.ts`（8 项）与
+`apps/cairn/src/http/api.activity.test.ts`（5 项），覆盖事件顺序/尝试号折叠、
+失败分类、软截止只在真正越过时出现、实时截止相位/租约/心跳、排队收尾、缺失
+task.json 与 404；`api.ui.test.ts` 同步校验导航、只读加载器与新工具类的 CSS 产物。
+最终 `bun run check`（TypeScript + 全量测试）：**1450 pass / 0 fail / 140 files /
+7228 expects**。未重启实际服务、未运行真实模型/Docker gate，也未做浏览器视觉验收。
+
+### M54：Writeup 目标凭据与正文转义（2026-11-07）
+
+写 wp 时最关键的“怎么进来的”最先丢：worker 被提示词要求“绝不把凭据写进证据或输出”，
+口令只留在推理里，草稿只能写占位符；即使写进了 Fact，`<…>` 形态也会被 Markdown 渲染器
+当成 HTML 吞掉。本次把两类凭据分开，并让草稿渲染不再丢字符，版本保持 `0.77.0-m52`：
+
+- **两类凭据**：`packages/graph/src/credentials.ts` 定义 `CREDENTIAL_RECORDING_RULE`、
+  `OPERATOR_SECRET_RULE`、`CREDENTIAL_WRITEUP_RULE` 与 `CREDENTIAL_FILE_NAME`。授权范围内
+  目标的账号、口令、哈希、会话 cookie 是挑战材料，必须逐字记录；操作员自己的机密（模型
+  API key、operator token、agent 配置、私钥）仍然绝不能进入描述、证据文件、输出或日志。
+  worker 系统提示词、solver 前置说明、完成校验与策略师输出扩展、检查点/experiment
+  说明、模型撰写 prompt 全部引用同一组常量，避免各自漂移；solver 前置说明里与任务正文
+  冲突的“绝不把 flag 写进证据”一句随之移除。
+- **凭据落点**：worker 把值写进事实描述（进入「利用链」产出段与「关键发现」），并写进
+  `artifacts/<任务>/credentials.txt`（每行 `名称 = 值`）。草稿新增「凭据与访问材料」章节，
+  值放在行内代码里逐行列出；读取由 `apps/cairn/src/http/project-credentials.ts` 完成，
+  复用附件包的 `openArtifactRoot` + `readArtifactFile`，最多 5 个文件 / 60 行 / 8000 字符 /
+  单文件 64 KiB，超限标「内容已截断」。JSON 响应新增 `credentials` 字段。
+- **正文转义**：`renderProjectWriteupMarkdown` 默认把散文里的 `<` 写成 `&lt;`（行内代码与
+  代码围栏保持原样），`<h2>Welcome~ admin</h2>` 与 `'<32位hex>'` 不再被当成 HTML 消失；
+  `renderProjectWriteupPrompt` 取未转义版本，避免模型照抄实体。
+- **前端**：Writeup 页签的 `<pre>` 改用 `writeupPreview()`，只把 `&lt;` 解码回 `<`；复制与
+  下载仍是转义后的 Markdown。
+
+测试新增 `packages/graph/src/writeup.test.ts` 的「markdown prose escaping」与
+「credential section」两组，以及 `apps/cairn/src/http/api.writeup.test.ts` 的凭据读取
+两项（含未索引文件与去重）；`tasks.test.ts` 与撰写 prompt 断言同步更新。
+最终 `bun test`：**1456 pass / 0 fail / 140 files / 7258 expects**。未重新生成已有项目的
+数据：proj_039 的口令从未落盘，需要重跑对应任务才会出现在草稿里。
+
+### M55：按任务类型选择是否推理，图切片默认开启（2026-11-07）
+
+proj_043 每次都越过软截止，剖析 337 个会话后确认不是卡住：生成占墙钟 72–87%，reason 87%、
+bootstrap 74%、explore 72%，一次 explore 生成 41,864 字符约 77 秒（≈286 tok/s）。demo 的
+reason 120s / explore 180s 落在正常生成时间内，软截止（×0.8）几乎必然触发。关闭推理能直接
+缩短生成，但「下一步探索什么」的判断值得保留推理：reason 没有工具输出可以纠偏，一次误判会
+消耗整个 explore 任务；explore / bootstrap 会被自己的执行结果纠正，conclude 只汇总已知事实。
+本次把决策做成配置项而不是改死流程，版本保持 `0.77.0-m52`。同一批还翻转了图切片的默认值：
+explore 只用到意图的因果邻域，大图上每轮都在为用不到的 fact 付 prompt 字节，而 reason /
+bootstrap 仍需要全图。副作用是 ContextPack 与切片比较的是同一份 legacy 输入，切片后 legacy
+本来就小，pack 常按 `no_benefit` 回退（见 `context-pack.scheduler.test.ts`）。
+
+- **配置**：`worker.reasoning: off | reason | all`，默认 `reason`；`all` 是 M55 之前的旧行为，
+  需要显式配置。`EDITABLE_OVERRIDE_KEYS.worker` 收录
+  该键，`/settings/runtime` 可热覆盖，下一任务生效，不需要重启调度器。
+- **图切片默认开**：`tasks.graph_slice.enabled` 默认由 `false` 改为 `true`，explore 及其
+  conclude 只拿意图的因果邻域，reason/bootstrap 仍导出全图；`enabled: false` 回到全图，
+  `max_facts` / `max_intents` 两个软上限不变（80 / 60）。
+- **契约**：`task.json` 新增可选 `reasoning: "on" | "off"`，由 `reasoningForKind()` 按任务类型
+  解析后写入，便于审计某次运行为什么花了（或没花）推理 token；旧 task 文件缺省时仍由模型
+  配置决定，校验拒绝其它取值。
+- **worker**：`applyReasoningMode()` 改写解析后的会话选项。OpenAI 兼容端点：`off` 把
+  `minimal..xhigh` 全部映射到 `reasoning_effort: "none"`（网关实测只有 `none` 真正关闭，
+  `minimal`/`low` 仍会思考），`on` 删除这类映射并按 model-prefs 的 `thinkingLevel` 发送；
+  Anthropic 风格端点 `off` 直接不发送思考级别。函数不修改传入对象。
+- **前端**：设置弹窗「Worker 与选择」新增「推理（思考）」下拉（关闭 / 仅 reason / 全部任务）
+  与三条说明，沿用现有 `select` 字段与 `notes` 提示。
+- **本地配置**：`agent-config/model-prefs.json` 去掉把全部档位映射到 `none` 的临时
+  `reasoningEffortMap`，恢复 `thinkingLevel: "minimal"`，让开关成为唯一决定点；
+  `runs/demo/dispatch.yaml` 同时把 reason/explore 超时改为 300/600，并显式写出
+  `worker.reasoning: reason`、`graph_slice.enabled: true`。
+
+测试新增 `config.test.ts`（默认值、解析、非法值拒绝）、`config-overrides.test.ts`
+（可编辑、热改与 reset、非法值在合并后拒绝）、`scheduler/tasks.test.ts`
+（`reasoningForKind` 四种类型与 task.json 落盘、缺省不写）、`contracts.test.ts`
+（`on`/`off` 接受、其它值拒绝）与 `packages/agent/src/solver/session.test.ts`
+（关闭映射、开启剥离 `none`、不修改原对象、Anthropic 风格、无模型时原样返回）；
+`api.ui.test.ts` 的字段清单补上 `worker.reasoning`；`context-pack.scheduler.test.ts`
+新增一项，固定图切片开启后 explore 的 legacy 输入已小于 ContextPack 候选、按 `no_benefit`
+回退的行为（其余 M48 用例显式关闭切片，继续测 pack 本身）。最终 `bun run check`
+（TypeScript + 全量测试）：**1468 pass / 0 fail / 140 files / 7304 expects**。未重启实际服务、
+未运行真实模型 gate，也未做浏览器视觉验收。
 
 ## 与 Phase 0 的关系
 

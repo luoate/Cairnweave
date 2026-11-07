@@ -21,6 +21,7 @@ import type { Database } from "bun:sqlite";
 
 import { listProjectArtifacts, type ProjectArtifact } from "./artifacts";
 import { getProjectDetail, getProjectScope } from "./commands";
+import { CREDENTIAL_WRITEUP_RULE } from "./credentials";
 import { all, get, run } from "./db";
 import type { FactSupersession, Hint, Intent, VerificationKind } from "./models";
 import { buildProjectRunStats } from "./stats";
@@ -126,6 +127,16 @@ export interface WriteupPayloadContent {
   truncated: boolean;
 }
 
+/** One worker-written credential file whose bytes the HTTP layer already read and capped. */
+export interface WriteupCredentialFile {
+  /** Artifact-index-relative path, for example `explore-1a2b3c4d5e6f/credentials.txt`. */
+  path: string;
+  /** Non-blank lines in file order, already trimmed and de-duplicated. */
+  lines: string[];
+  /** True when the caller stopped at its line or character cap. */
+  truncated: boolean;
+}
+
 export interface BuildProjectWriteupOptions {
   /** Captured flag plus the file it was read from. */
   flag?: WriteupFlag | null;
@@ -133,6 +144,8 @@ export interface BuildProjectWriteupOptions {
   flagSuspects?: string[];
   /** Payload file contents keyed by artifact path; absent entries render as unread. */
   payloadContents?: readonly WriteupPayloadContent[];
+  /** Credential files the worker wrote, already read and capped by the HTTP layer. */
+  credentials?: readonly WriteupCredentialFile[];
   /** Injectable clock for deterministic rendering. */
   generatedAt?: string;
   /** Policy reported for legacy projects without a `project_verification` row. */
@@ -272,6 +285,11 @@ export interface ProjectWriteupSnapshot {
   };
   artifacts: WriteupArtifact[];
   artifacts_truncated: boolean;
+  /**
+   * Target credentials recorded by workers, one entry per `credentials.txt`. Empty when the
+   * worker kept the value only inside a fact description, which the findings section shows.
+   */
+  credentials: WriteupCredentialFile[];
   /** Worker-written payload and script files, capped to `MAX_WRITEUP_PAYLOADS`. */
   payloads: WriteupPayload[];
   /** Payload artifacts recognised in the index, including the ones the cap dropped. */
@@ -805,14 +823,30 @@ export function buildProjectWriteup(
         task_id: artifact.task_id,
       })),
     artifacts_truncated: artifacts.length > MAX_WRITEUP_ARTIFACTS,
+    credentials: (options.credentials ?? []).map((file) => ({
+      path: file.path,
+      lines: [...file.lines],
+      truncated: file.truncated,
+    })),
     payloads,
     payloads_total: orderedPayloads.length,
     payloads_truncated: orderedPayloads.length > MAX_WRITEUP_PAYLOADS,
   };
 }
 
+export interface RenderProjectWriteupOptions {
+  /**
+   * Escape `<` in prose so a Markdown reader cannot take recorded text for HTML.
+   * Defaults to true; the model prompt asks for the raw draft instead.
+   */
+  escapeAngles?: boolean;
+}
+
 /** Draft Chinese Markdown, used directly when no model-written writeup exists. */
-export function renderProjectWriteupMarkdown(snapshot: ProjectWriteupSnapshot): string {
+export function renderProjectWriteupMarkdown(
+  snapshot: ProjectWriteupSnapshot,
+  options: RenderProjectWriteupOptions = {},
+): string {
   const lines: string[] = [];
   const push = (...values: string[]): void => {
     lines.push(...values);
@@ -914,6 +948,20 @@ export function renderProjectWriteupMarkdown(snapshot: ProjectWriteupSnapshot): 
       ? ""
       : `（证据：${finding.evidence.map((ref) => `\`${ref}\``).join("、")}）`;
     push(`- \`${finding.id}\`：${inline(finding.description)}${evidence}`);
+  }
+
+  push("", "## 凭据与访问材料");
+  if (snapshot.credentials.length === 0) {
+    push("（没有单独记录目标凭据；口令类线索如果存在，只出现在上方的事实原文里）");
+  } else {
+    for (const file of snapshot.credentials) {
+      for (const line of file.lines) {
+        push(`- ${codeSpan(line)}（来源 \`${file.path}\`）`);
+      }
+      if (file.truncated) {
+        push(`- …\`${file.path}\` 内容已截断，完整文件见附件包。`);
+      }
+    }
   }
 
   push("", "## 载荷（Payload）");
@@ -1045,7 +1093,8 @@ export function renderProjectWriteupMarkdown(snapshot: ProjectWriteupSnapshot): 
   }
 
   push("", "_本 Writeup 由 Cairn 控制面依据图中数据生成；模型撰写版只重组事实，不新增未经核实的内容。_");
-  return `${lines.join("\n")}\n`;
+  const body = options.escapeAngles === false ? lines : escapeProse(lines);
+  return `${body.join("\n")}\n`;
 }
 
 /**
@@ -1075,14 +1124,14 @@ export function renderProjectWriteupPrompt(snapshot: ProjectWriteupSnapshot): st
       "改写成 .sh/.py 之类的“脚本”。",
     "- 草稿里写成否定结论的观察（未取得、不成立、不可用、失败）不得写成成功，也不要为了连贯而省略" +
       "“上一步失败后改走哪条路”。",
-    "- 不得写入任何凭据、token、cookie、API key 或内网敏感地址（草稿里授权范围内的目标地址除外）。",
+    `- ${CREDENTIAL_WRITEUP_RULE}`,
     "- 结构建议：题目概述 → 信息收集 → 利用链（按草稿依赖顺序，逐步可复现）→ 获取 Flag → " +
       "复现清单（按顺序列出脚本与关键请求）→ 复盘与遗留问题。",
     "- 允许使用 Markdown 标题、列表和代码块；输出正文，不要包裹在 JSON 或额外说明里。",
     "- 篇幅控制在 2500 字以内；利用链要写全，信息收集与复盘可以压缩。",
     "",
     "# 草稿",
-    renderProjectWriteupMarkdown(snapshot).trimEnd(),
+    renderProjectWriteupMarkdown(snapshot, { escapeAngles: false }).trimEnd(),
   ].join("\n");
 }
 
@@ -1304,6 +1353,19 @@ function codeFence(text: string): string {
   return "`".repeat(length);
 }
 
+/**
+ * An inline code span that survives backticks inside `value` and stays literal through
+ * `escapeProse`. Credentials must never be rewritten, so the value is quoted rather than
+ * escaped: a password containing `<` keeps its `<`.
+ */
+function codeSpan(value: string): string {
+  const text = inline(value);
+  let delimiter = "`";
+  while (text.includes(delimiter)) delimiter += "`";
+  const pad = text.startsWith("`") || text.endsWith("`") ? " " : "";
+  return `${delimiter}${pad}${text}${pad}${delimiter}`;
+}
+
 function table(headers: string[], rows: string[][]): string[] {
   if (rows.length === 0) return ["（无数据）"];
   const header = `| ${headers.join(" | ")} |`;
@@ -1313,6 +1375,61 @@ function table(headers: string[], rows: string[][]): string[] {
 
 function inline(value: string): string {
   return value.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Markdown readers take `<name …>` for raw HTML, so a recorded observation such as
+ * `home.php 显示 <h2>Welcome~ admin</h2>` loses its tags, and bracketed placeholders such as
+ * `<32位hex>` disappear in previewers that strip every angle-bracket segment. Escape `<` in
+ * prose so the recorded text survives publication; fenced payload code and inline code spans
+ * are already literal and stay byte-for-byte.
+ */
+function escapeProse(lines: readonly string[]): string[] {
+  let fence: string | null = null;
+  return lines.map((line) => {
+    const marker = /^\s{0,3}(`{3,}|~{3,})/.exec(line)?.[1];
+    if (marker !== undefined) {
+      if (fence === null) fence = marker;
+      else if (marker[0] === fence[0] && marker.length >= fence.length) fence = null;
+      return line;
+    }
+    return fence === null ? escapeAngles(line) : line;
+  });
+}
+
+/** `&lt;` outside inline code spans, so quoted payload text keeps its own brackets. */
+function escapeAngles(line: string): string {
+  if (!line.includes("<")) return line;
+  let out = "";
+  let index = 0;
+  while (index < line.length) {
+    if (line[index] === "`") {
+      const delimiter = /^`+/.exec(line.slice(index))?.[0] ?? "`";
+      const close = codeSpanClose(line, index + delimiter.length, delimiter);
+      if (close < 0) {
+        // An unpaired backtick is literal Markdown text; keep escaping after it.
+        out += delimiter;
+        index += delimiter.length;
+        continue;
+      }
+      out += line.slice(index, close + delimiter.length);
+      index = close + delimiter.length;
+      continue;
+    }
+    out += line[index] === "<" ? "&lt;" : line[index];
+    index += 1;
+  }
+  return out;
+}
+
+/** Index of a closing backtick run of exactly `delimiter.length` backticks. */
+function codeSpanClose(line: string, from: number, delimiter: string): number {
+  let index = line.indexOf(delimiter, from);
+  while (index >= 0) {
+    if (line[index - 1] !== "`" && line[index + delimiter.length] !== "`") return index;
+    index = line.indexOf(delimiter, index + 1);
+  }
+  return -1;
 }
 
 function cell(value: string): string {

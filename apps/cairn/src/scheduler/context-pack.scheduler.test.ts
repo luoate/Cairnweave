@@ -20,7 +20,7 @@ beforeEach(() => {
   });
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
-async function dispatch(mode: "off" | "shadow" | "apply", options: { maxBytes?: number; breakStore?: boolean; claim?: boolean; explore?: boolean } = {}) {
+async function dispatch(mode: "off" | "shadow" | "apply", options: { maxBytes?: number; breakStore?: boolean; claim?: boolean; explore?: boolean; graphSlice?: boolean } = {}) {
   if (options.explore) db.withConn((conn) => createIntent(conn, projectId, {
     from: ["f050"], description: "fresh focus", creator: "test", worker: null,
   }));
@@ -28,7 +28,11 @@ async function dispatch(mode: "off" | "shadow" | "apply", options: { maxBytes?: 
     runtime: { execution: "local", max_workers: 1, max_running_projects: 1, max_project_workers: 1, interval: 1,
       healthcheck_timeout: 5, worker_healthcheck: "disabled", prompt_group: "default" },
     tasks: { bootstrap: { timeout: 30, conclude_timeout: 10 }, reason: { timeout: 30 }, explore: { timeout: 30, conclude_timeout: 10 },
-      context_pack: { mode }, context_plan: { max_initial_bytes: options.maxBytes ?? 131072 } }, budget: { max_project_tokens: 10000 }, observer: { enabled: false } });
+      context_pack: { mode }, context_plan: { max_initial_bytes: options.maxBytes ?? 131072 },
+      // The pack exists to shrink the *full* legacy export; enable slicing explicitly in the
+      // test that checks how the two features interact.
+      graph_slice: { enabled: options.graphSlice ?? false } },
+    budget: { max_project_tokens: 10000 }, observer: { enabled: false } });
   const logs: string[] = [];
   const runtime = new LocalRuntime({ local: config.local, log: (line) => logs.push(line), workerArgv: (path) =>
     [process.execPath, join(import.meta.dir, "testdata", "context-pack-worker.ts"), path, ...(options.claim ? ["claim"] : [])] });
@@ -51,7 +55,8 @@ async function dispatch(mode: "off" | "shadow" | "apply", options: { maxBytes?: 
     const session = join(sessions, readdirSync(sessions).find((name) => name.startsWith(options.explore ? "explore-" : "reason-"))!);
     return { logs, pack: JSON.parse(readFileSync(join(session, "context-read-proof.json"), "utf8")).input === "compact"
       ? Bun.YAML.parse(readFileSync(join(session, "context-pack.yaml"), "utf8")) as any : null, proof: JSON.parse(readFileSync(join(session, "context-read-proof.json"), "utf8")),
-      plan: JSON.parse(readFileSync(join(session, "context-plan.json"), "utf8")) };
+      plan: JSON.parse(readFileSync(join(session, "context-plan.json"), "utf8")),
+      selection: JSON.parse(readFileSync(join(session, "context-selection.json"), "utf8")) };
   } finally { await scheduler.stop(); }
 }
 
@@ -84,5 +89,13 @@ describe("M48 actual scheduler/worker acceptance", () => {
     const { proof, logs } = await dispatch("apply", { claim: true });
     expect(proof.input).toBe("compact");
     expect(logs.some((line) => line.includes("context-pack applied"))).toBe(true);
+  });
+  test("sliced explore input already beats the pack, so it falls back to legacy", async () => {
+    const { proof, selection, logs } = await dispatch("apply", { explore: true, graphSlice: true });
+    expect(proof.input).toBe("legacy");
+    expect(selection.status).toBe("fallback");
+    expect(selection.fallback_reason).toBe("no_benefit");
+    expect(selection.legacy_initial_bytes).toBeLessThan(selection.candidate_initial_bytes);
+    expect(logs.some((line) => line.includes("context-pack fallback"))).toBe(true);
   });
 });

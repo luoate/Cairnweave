@@ -10,6 +10,13 @@ export {
 } from "./db";
 
 export {
+  CREDENTIAL_FILE_NAME,
+  CREDENTIAL_RECORDING_RULE,
+  CREDENTIAL_WRITEUP_RULE,
+  OPERATOR_SECRET_RULE,
+} from "./credentials";
+
+export {
   clearRuntimeConfigOverrides,
   getRuntimeConfigOverrides,
   setRuntimeConfigOverrides,
@@ -247,6 +254,26 @@ export {
 } from "./completion-reviews";
 
 export {
+  buildProjectActivity,
+  DEFAULT_ACTIVITY_RUN_LIMIT,
+  MAX_ACTIVITY_RUN_LIMIT,
+  type ActivityCategory,
+  type ActivityClaimView,
+  type ActivityDeadline,
+  type ActivityDeadlineView,
+  type ActivityEvent,
+  type ActivityEventKind,
+  type ActivityLevel,
+  type ActivityLivePhase,
+  type ActivityLiveRun,
+  type ActivityPendingConclude,
+  type ActivitySchedulerView,
+  type BuildProjectActivityOptions,
+  type ProjectActivity,
+} from "./activity";
+
+export {
+  getSchedulerInstance,
   heartbeatSchedulerInstance,
   listActiveSchedulerPeers,
   registerSchedulerInstance,
@@ -413,9 +440,11 @@ export {
   type BuildProjectWriteupOptions,
   type ProjectWriteupRecord,
   type ProjectWriteupSnapshot,
+  type RenderProjectWriteupOptions,
   type SelectWriteupPayloadOptions,
   type WriteupChain,
   type WriteupChainStep,
+  type WriteupCredentialFile,
   type WriteupFlag,
   type WriteupPayload,
   type WriteupPayloadContent,

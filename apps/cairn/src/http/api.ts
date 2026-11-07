@@ -2,11 +2,13 @@ import { DEFAULT_INTENT_PRIORITY } from "@cairn/contracts";
 import { getInfrastructureFault, resetInfrastructureFault, buildTaskContextSnapshot, projectIntentExperiment, buildExplorationSuppression } from "@cairn/graph";
 import { checkpointEvidenceStatus } from "../scheduler/checkpoint";
 import { attachRunDiagnostics, latestRunDiagnostic } from "./run-diagnostics";
+import { taskDeadlineReader } from "./project-activity";
 import {
   HttpError,
   RequestValidationError,
   all,
   appendTaskAudit,
+  buildProjectActivity,
   buildProjectCostReport,
   buildProjectReport,
   buildProjectRunStats,
@@ -888,6 +890,24 @@ function buildRoutes(
     db.withConn((conn) => json(attachRunDiagnostics(
       listProjectRuns(conn, params["project_id"]!), workspaceRoot(), params["project_id"]!,
     ))),
+  );
+
+  // Read-only scheduler timeline: dispatch, deadline, evidence, retry and cancellation
+  // states derived from the run/claim/pending sidecars. Deadlines come from the task
+  // contract each run was dispatched with, never from the current config.
+  route("GET", "/projects/{project_id}/activity", ({ params, url }) =>
+    db.withConn((conn) => {
+      const projectId = params["project_id"]!;
+      const requested = Number(url.searchParams.get("limit") ?? "");
+      const limit = Number.isInteger(requested) && requested >= 1 && requested <= 500
+        ? requested
+        : undefined;
+      return json(buildProjectActivity(conn, projectId, {
+        now: new Date(),
+        deadlineFor: taskDeadlineReader(workspaceRoot(), projectId),
+        ...(limit === undefined ? {} : { limit }),
+      }));
+    }),
   );
 
   // Read-only per-worker/model outcome and usage statistics (M14d).

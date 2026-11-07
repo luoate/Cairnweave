@@ -11,6 +11,8 @@ export interface SolverInitPayload {
     resumeSessionFile?: string
     /** model-prefs.json entry selected by the scheduler; overrides the prompt model. */
     model?: string
+    /** Per-task reasoning decision from the scheduler; overrides the model pref's setting. */
+    reasoning?: "on" | "off"
 }
 
 // ── RPC types (mirrored from pi-coding-agent rpc-types.ts) ──

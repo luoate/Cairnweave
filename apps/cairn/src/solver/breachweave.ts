@@ -1,5 +1,6 @@
 import { markWorkerCheckpoint } from "../checkpoint/worker";
 import type { WorkerTask } from "@cairn/contracts";
+import { CREDENTIAL_RECORDING_RULE, OPERATOR_SECRET_RULE } from "@cairn/graph";
 import type { AgentSession, SolverObserverHandle } from "@cairn/agent";
 import { chmodSync, cpSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -104,6 +105,7 @@ export class BreachWeaveSolver implements Solver {
           task: solverText(task),
           ...(resumeSessionFile === undefined ? {} : { resumeSessionFile }),
           ...(task.model === undefined ? {} : { model: task.model }),
+          ...(task.reasoning === undefined ? {} : { reasoning: task.reasoning }),
         });
         session = created.session;
         observer = created.observer;
@@ -204,7 +206,7 @@ function solverText(task: WorkerTask): string {
 在最终 JSON 信封的顶层放一个 "evidence_refs" 数组；每一项都是相对于工作区的路径（例如
 "artifacts/scan.log"），指向你自己创建的、能支撑该事实的文件。只能使用工作区内部的路径；控制面会拒绝
 绝对路径、上级目录穿越、符号链接以及不存在的文件。没有证据的事实不能作为完成的证明。
-绝不把 flag 的值或凭据写进证据文件或输出里。`;
+${CREDENTIAL_RECORDING_RULE}${OPERATOR_SECRET_RULE}`;
   return `${scope}\n\n${evidence}\n\n${task.prompt}`;
 }
 

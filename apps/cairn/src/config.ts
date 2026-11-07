@@ -118,8 +118,13 @@ export interface TasksConfig {
   explorationSuppression: { enabled: boolean };
 }
 
+/**
+ * Explore only needs its intent's causal neighbourhood, and reason/bootstrap still get the
+ * whole graph, so slicing is on by default: a large graph costs prompt bytes on every
+ * explore turn for facts the task cannot use. `enabled: false` restores the full export.
+ */
 export const DEFAULT_GRAPH_SLICE: GraphSliceConfig = {
-  enabled: false,
+  enabled: true,
   maxFacts: 80,
   maxIntents: 60,
 };
@@ -545,6 +550,27 @@ export interface LocalConfig {
   completedAction: LocalCompletedAction;
 }
 
+/**
+ * Which task kinds ask the model to reason before answering.
+ *
+ * `reason` is the default: choosing *what* to explore needs a chain of deductions and one
+ * bad call burns a whole explore task, while explore and bootstrap get corrected by their
+ * own tool output and conclude only wraps up findings the session already produced. `all`
+ * restores reasoning everywhere (the pre-M55 behaviour) and `off` silences it everywhere.
+ * The control plane writes the decision into each task file, so a change reaches the next
+ * dispatch without restarting.
+ */
+export type ReasoningMode = "off" | "reason" | "all";
+
+export const REASONING_MODES: readonly ReasoningMode[] = ["off", "reason", "all"];
+
+/**
+ * Generation is most of a task's wall clock, and reasoning inflates it, so only the one
+ * kind that cannot be corrected by tool output pays for it by default. Deployments that
+ * want the older "reason everywhere" behaviour set `worker.reasoning: all` explicitly.
+ */
+export const DEFAULT_REASONING_MODE: ReasoningMode = "reason";
+
 /** Runner-specific settings for the single merged worker implementation. */
 export interface WorkerRunnerConfig {
   /**
@@ -562,6 +588,8 @@ export interface WorkerRunnerConfig {
    * other's evidence; explicit `false` opts out.
    */
   scopedArtifacts: boolean;
+  /** Which kinds send a reasoning budget; written into task.json as `reasoning`. */
+  reasoning: ReasoningMode;
 }
 
 export interface DispatchConfig {
@@ -639,6 +667,7 @@ const EDITABLE_OVERRIDE_KEYS: Record<string, readonly string[]> = {
     "retain_task_files",
     "result_grace_seconds",
     "scoped_artifacts",
+    "reasoning",
   ],
   retention: [
     "session_max_age_days",
@@ -1361,6 +1390,9 @@ function parseWorker(value: unknown, scopedArtifactsDefault: boolean): WorkerRun
     scopedArtifacts: has(worker, "scoped_artifacts")
       ? booleanAt(worker["scoped_artifacts"], "worker.scoped_artifacts")
       : scopedArtifactsDefault,
+    reasoning: has(worker, "reasoning")
+      ? oneOf(worker["reasoning"], "worker.reasoning", REASONING_MODES)
+      : DEFAULT_REASONING_MODE,
   };
 }
 
@@ -1451,6 +1483,7 @@ export function parseDispatchConfig(value: unknown, options: ConfigOptions = {})
         retainTaskFiles: true,
         resultGraceSeconds: 15,
         scopedArtifacts: scopedArtifactsDefault,
+        reasoning: DEFAULT_REASONING_MODE,
       };
 
   const observer = has(root, "observer")

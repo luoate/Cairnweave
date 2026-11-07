@@ -28,6 +28,7 @@ import {
   type OffCompletionMode,
   type ProposalKindConfig,
   type ProposalMode,
+  type ReasoningMode,
   type RuntimeOverridePatch,
   type SsrfMarkerMode,
   type StrategyContextMode,
@@ -60,6 +61,7 @@ export interface EditableRuntimeConfig {
     retain_task_files: boolean;
     result_grace_seconds: number;
     scoped_artifacts: boolean;
+    reasoning: ReasoningMode;
   };
   retention: {
     session_max_age_days: number;
@@ -379,6 +381,7 @@ function editableView(config: DispatchConfig): EditableRuntimeConfig {
       retain_task_files: config.worker.retainTaskFiles,
       result_grace_seconds: config.worker.resultGraceSeconds,
       scoped_artifacts: config.worker.scopedArtifacts,
+      reasoning: config.worker.reasoning,
     },
     retention: {
       session_max_age_days: config.retention.sessionMaxAgeDays,

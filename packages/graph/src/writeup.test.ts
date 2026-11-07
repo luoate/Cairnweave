@@ -521,6 +521,83 @@ describe("exploitation chain", () => {
   });
 });
 
+describe("markdown prose escaping", () => {
+  test("escapes angle brackets in prose so recorded text survives a Markdown renderer", () => {
+    writeArtifact(`${TASK}/probe.py`, 'print("<h2>raw</h2>")\n');
+    indexArtifacts(TASK);
+    step(
+      "登录后 home.php 返回 <h2>Welcome~ admin</h2>，bio 形态为 'maybe admin#password is <32位hex>'，" +
+        "响应内 `<h3>head</h3>` 保持原样",
+    );
+
+    const result = snapshot({
+      payloadContents: [
+        {
+          path: `${TASK}/probe.py`,
+          binary: false,
+          text: 'print("<h2>raw</h2>")\n',
+          truncated: false,
+        },
+      ],
+    });
+    const markdown = renderProjectWriteupMarkdown(result);
+
+    // Prose recorded in the graph is escaped...
+    expect(markdown).toContain("&lt;h2>Welcome~ admin&lt;/h2>");
+    expect(markdown).toContain("&lt;32位hex>");
+    expect(markdown).not.toContain("<h2>Welcome~ admin</h2>");
+    // ...an inline code span is already literal Markdown...
+    expect(markdown).toContain("`<h3>head</h3>`");
+    expect(markdown).not.toContain("`&lt;h3>");
+    // ...and fenced payload bytes are never rewritten.
+    expect(markdown).toContain('print("<h2>raw</h2>")');
+
+    // The model prompt asks for the raw draft, so the writer does not copy entities.
+    const prompt = renderProjectWriteupPrompt(result);
+    expect(prompt).toContain("<h2>Welcome~ admin</h2>");
+    expect(prompt).not.toContain("&lt;h2>");
+  });
+});
+
+describe("credential section", () => {
+  test("keeps a recovered password in the fact description verbatim", () => {
+    const password = "9f2c1d7e4a6b8c0d1e3f5a7b9c2d4e6f";
+    step(`用 secret.bio 第 26..57 位恢复出的口令 ${password} 登录 admin`);
+    expect(renderProjectWriteupMarkdown(snapshot())).toContain(password);
+  });
+
+  test("renders recorded credentials as literal code spans, newest file last", () => {
+    const result = snapshot({
+      credentials: [
+        { path: `${TASK}/credentials.txt`, lines: ["admin = hunter2"], truncated: false },
+        {
+          path: "explore-2f2f2f2f2f2f/credentials.txt",
+          lines: ["shell#1 = a<b`c", "db = root:toor"],
+          truncated: true,
+        },
+      ],
+    });
+
+    const markdown = renderProjectWriteupMarkdown(result);
+    expect(markdown).toContain("## 凭据与访问材料");
+    // The value is quoted, not escaped, so a `<` inside a password survives verbatim.
+    expect(markdown).toContain(`- \`admin = hunter2\`（来源 \`${TASK}/credentials.txt\`）`);
+    expect(markdown).toContain("- ``shell#1 = a<b`c``（来源 `explore-2f2f2f2f2f2f/credentials.txt`）");
+    expect(markdown).toContain("- `db = root:toor`");
+    expect(markdown).toContain("内容已截断，完整文件见附件包");
+    expect(markdown).not.toContain("&lt;b`c");
+
+    // The model writer is told to copy these verbatim instead of dropping them.
+    const prompt = renderProjectWriteupPrompt(result);
+    expect(prompt).toContain("admin = hunter2");
+    expect(prompt).toContain("属于挑战材料：必须逐字符照抄");
+  });
+
+  test("says what is missing when no credential file was recorded", () => {
+    expect(renderProjectWriteupMarkdown(snapshot())).toContain("（没有单独记录目标凭据");
+  });
+});
+
 describe("isWriteupPayloadPath", () => {
   test("accepts scripts, delivery containers and attack keywords", () => {
     for (const path of [
@@ -745,7 +822,8 @@ describe("renderProjectWriteupPrompt", () => {
     expect(prompt).toContain("你是 CTF 复盘写手");
     expect(prompt).toContain("全程使用简体中文");
     expect(prompt).toContain("保留草稿里的 Flag 原文，逐字符照抄");
-    expect(prompt).toContain("不得写入任何凭据、token、cookie、API key");
+    expect(prompt).toContain("必须逐字符照抄，不得脱敏、打码或改写");
+    expect(prompt).toContain("操作员自己的机密");
     expect(prompt).toContain("逐字符照抄");
     expect(prompt).toContain("草稿的“载荷（Payload）”章节给出脚本与 payload 原文");
     expect(prompt).toContain("只能列出草稿里真实出现过的文件路径");

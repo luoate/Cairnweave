@@ -128,6 +128,23 @@ describe("runtime override patches", () => {
     ).toThrow("overrides.tasks.tool_result_spill has unsupported key: min_bytes");
   });
 
+  test("keeps the reasoning policy editable", () => {
+    // The store validates the merged document, so an unknown mode is refused there.
+    expect(() => parseRuntimeOverridePatch({ worker: { reasoning: "sometimes" } })).not.toThrow();
+    expect(() => newStore().apply({ worker: { reasoning: "sometimes" } })).toThrow(
+      "worker.reasoning",
+    );
+
+    const store = newStore();
+    const view = store.apply({ worker: { reasoning: "reason" } });
+    expect(config.worker.reasoning).toBe("reason");
+    expect(view.editable.worker.reasoning).toBe("reason");
+    expect(view.overrides).toEqual(["worker.reasoning"]);
+
+    expect(store.reset().editable.worker.reasoning).toBe("reason");
+    expect(config.worker.reasoning).toBe("reason");
+  });
+
   test("keeps the SSRF marker mode editable and the protected hosts fixed", () => {
     expect(() => parseRuntimeOverridePatch({ scope: { ssrf_markers: "block" } })).not.toThrow();
     // Deployment identity is not a dial: the protected list only comes from dispatch.yaml.

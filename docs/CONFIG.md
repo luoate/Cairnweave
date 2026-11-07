@@ -231,7 +231,7 @@ container:
 | `bootstrap.timeout` / `bootstrap.conclude_timeout` | 600 / 90 | 秒；M42 把示例从 300 提到 600（旧 demo 为 120），软截止按 0.8 为 480 |
 | `reason.timeout` / `reason.max_intents` | 300 / 2 | 秒；单次 reason 新增意图上限 |
 | `explore.timeout` / `explore.conclude_timeout` | 600 / 120 | 秒 |
-| `graph_slice.enabled` | false | explore 及其 conclude 是否拿切片 |
+| `graph_slice.enabled` | true | explore 及其 conclude 是否拿切片；`false` 回到全图导出 |
 | `graph_slice.max_facts` / `graph_slice.max_intents` | 80 / 60 | 软上限；`max_facts ≥ 2` |
 | `evidence.min_bytes` | 1 | 0 表示接受空证据 |
 | `tool_result_spill.enabled` / `.max_inline_chars` | true / 32000 | M43：工具结果序列化后超过 `max_inline_chars` 字符就落盘 `<workspace>/.tool-results/<毫秒>-<工具>-<调用id>.md`，上下文里换成「绝对路径 + 工作区相对路径 + 600 字符预览 + 先 grep 再分片读」的指针。`max_inline_chars` 必须为正整数（1 也合法，等于全部外置）；`enabled: false` 回到全量内联。solver 与 subagent 共用同一份开关和同一个工作区，指针因此总是绝对路径在前。溢出文件不进 `project_artifacts` 索引，但 `/flag` 的兜底扫描把它算作取证来源 |
@@ -271,6 +271,8 @@ apply 共享 `max_initial_bytes`，限制最终 task.prompt + 首次必读 Conte
 pack/store 在 session 中保留回收，不进入 WorkerTask 或证据账本；恢复资料是同次事务中的完整授权投影，
 原始日志/凭据/附件和证据正文不采集，旧 500 字符 detail 边界仍保留为 `control_plane_only`。
 bootstrap、conclude/已有会话及非 default 模板保持 legacy；`graph_slice` 仍控制兼容图/回退路径，不决定恢复库内容。
+图切片自 M55 起默认开启，explore 的 legacy 输入本来就只含意图邻域，pack 往往因「无净收益」回退——这是
+两套压缩在同一个预算下比较的结果，不是故障；需要 pack 生效时把 `graph_slice.enabled` 设为 `false` 再评估。
 Observer 输入不变。完整选择/分片/失败规则见 [DESIGN §17](DESIGN.md#17-m48contextpack-v1已实现)。
 
 ### TaskCheckpoint（M49）
@@ -369,6 +371,7 @@ tasks:
 
 | 键 | 默认 | 说明 |
 | --- | --- | --- |
+| `worker.reasoning` | reason | `off` / `reason` / `all`：哪些任务让模型先推理 |
 | `worker.soft_deadline_ratio` | 0.8 | 严格在 0 与 1 之间 |
 | `worker.retain_task_files` | true | 任务结束是否保留 task/result/audit |
 | `worker.result_grace_seconds` | 15 | worker 退出后等待 result.json |
@@ -380,6 +383,13 @@ tasks:
 | `worker_selection.epsilon_min` | 0.01 | 0–1，且 ≤ `epsilon` |
 
 `stats` 模式要求只读区里至少有一个 `worker_profiles` 条目。
+
+`worker.reasoning` 决定派发时写入 `task.json` 的 `reasoning: "on" | "off"`：默认的 `reason`
+只给决定「下一步探索什么」的 reason 任务开启，bootstrap / explore / conclude 关闭；`off`
+全部关闭，`all` 全部开启（M55 之前的旧行为，需显式配置）。关闭时 worker 对 OpenAI 兼容端点
+发 `reasoning_effort: none`，开启时按 model-prefs.json 的 `thinkingLevel`（未配置则
+`minimal`）；token 预算型端点（Anthropic 风格）关闭即不发送思考级别。该字段可由运行时配置
+热覆盖，下一个任务生效，不需要重启调度器。
 
 ### 保留 `retention`
 

@@ -32,6 +32,7 @@ describe("static operations UI", () => {
     const html = await index.text();
     expect(html).toContain("function cairnApp()");
     expect(html).toContain("selectSideTab('runs')");
+    expect(html).toContain("selectSideTab('activity')");
     expect(html).toContain("selectSideTab('strategist')");
     expect(html).toContain("selectSideTab('audit')");
     expect(html).toContain("selectSideTab('evidence')");
@@ -77,8 +78,8 @@ describe("static operations UI", () => {
     const html = readFileSync(INDEX_PATH, "utf8");
     expect(html).not.toMatch(/<span class="nav-glyph">/);
     const icons = html.match(/<svg class="nav-glyph" aria-hidden="true"/g) ?? [];
-    expect(icons).toHaveLength(14);
-    for (const tab of ["detail", "hints", "board", "strategist", "runs", "log", "evidence", "audit", "proposals", "attachments", "cost", "stats", "report", "writeup"]) {
+    expect(icons).toHaveLength(15);
+    for (const tab of ["detail", "hints", "board", "strategist", "runs", "activity", "log", "evidence", "audit", "proposals", "attachments", "cost", "stats", "report", "writeup"]) {
       expect(html).toContain(`selectSideTab('${tab}')`);
     }
     expect(html).toContain("<kbd>/</kbd> 搜索");
@@ -110,6 +111,7 @@ describe("static operations UI", () => {
     const appScript = html.match(/<script>\s*(function cairnApp\(\)[\s\S]*?)<\/script>/)![1]!;
     for (const method of [
       "loadRuns",
+      "loadActivity",
       "loadFactTrace",
       "loadStrategist",
       "loadAudit",
@@ -142,6 +144,7 @@ describe("static operations UI", () => {
 
     // The operations loaders call the existing read-only routes.
     expect(appScript).toContain("/runs`");
+    expect(appScript).toContain("/activity`");
     expect(appScript).toContain("/facts/");
     expect(appScript).toContain("/strategist?limit=20`");
     expect(appScript).toContain("/meta`");
@@ -283,7 +286,7 @@ describe("static operations UI", () => {
     expect(html).toContain("AI 撰写");
     expect(html).toContain("恢复草稿");
     expect(html).toContain("中文草稿");
-    expect(html).toContain("x-text=\"writeupMarkdown()\"");
+    expect(html).toContain("x-text=\"writeupPreview()\"");
     // Generation is disabled while in flight and reports failures inline.
     expect(html).toContain("writeupPanel.generating || !writeupPanel.loadedFor");
     expect(html).toContain("writeupPanel.error");
@@ -316,6 +319,19 @@ describe("static operations UI", () => {
     expect(app.writeupFileName()).toBe("writeup-proj_.._008.md");
     app.selectedProjectId = null;
     expect(app.writeupFileName()).toBe("writeup-project.md");
+
+    // The <pre> shows source, so it decodes the `<` the draft escapes for Markdown readers;
+    // copy and download keep the escaped form.
+    const preview = loadApp() as unknown as {
+      writeupPanel: { data: unknown };
+      writeupMarkdown(): string;
+      writeupPreview(): string;
+    };
+    preview.writeupPanel = {
+      data: { markdown: "home.php 显示 &lt;h2>Welcome~ admin&lt;/h2>" },
+    };
+    expect(preview.writeupMarkdown()).toBe("home.php 显示 &lt;h2>Welcome~ admin&lt;/h2>");
+    expect(preview.writeupPreview()).toBe("home.php 显示 <h2>Welcome~ admin</h2>");
   });
 
   test("offers the attachment bundle only when artifacts are indexed", () => {
@@ -1548,8 +1564,9 @@ describe("model and key settings", () => {
 
     let flagCalls = 0;
     const response = { found: true, flag: "CTF2{ui_fixture}" };
-    app.api = async () => {
-      flagCalls += 1;
+    app.api = async (_method: string, path: string) => {
+      // The poll also refreshes the scheduler feed; only /flag belongs to this assertion.
+      if (path.endsWith("/flag")) flagCalls += 1;
       return {
         found: response.found,
         flag: response.flag,
@@ -2224,6 +2241,7 @@ describe("runtime settings modal", () => {
         evidence: { min_bytes: 32 },
       },
       worker: {
+        reasoning: "reason",
         soft_deadline_ratio: 0.8,
         retain_task_files: true,
         result_grace_seconds: 15,

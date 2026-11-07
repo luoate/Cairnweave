@@ -53,6 +53,7 @@ describe("dispatcher config", () => {
     expect(config.container).toBeNull();
     expect(config.commonEnv).toEqual({});
     expect(config.worker).toEqual({
+      reasoning: "reason",
       softDeadlineRatio: 0.8,
       retainTaskFiles: true,
       resultGraceSeconds: 15,
@@ -408,22 +409,22 @@ describe("dispatcher config", () => {
     );
   });
 
-  test("defaults graph slicing off and parses overrides", () => {
+  test("defaults graph slicing on and parses overrides", () => {
     expect(parse(BASE).tasks.graphSlice).toEqual({
-      enabled: false,
+      enabled: true,
       maxFacts: 80,
       maxIntents: 60,
     });
     const config = parse(
       BASE +
         `  graph_slice:
-    enabled: true
+    enabled: false
     max_facts: 12
     max_intents: 5
 `,
     );
     expect(config.tasks.graphSlice).toEqual({
-      enabled: true,
+      enabled: false,
       maxFacts: 12,
       maxIntents: 5,
     });
@@ -573,6 +574,7 @@ describe("dispatcher config", () => {
     const config = parse(
       BASE +
         `worker:
+  reasoning: reason
   soft_deadline_ratio: 0.5
   retain_task_files: false
   result_grace_seconds: 0
@@ -582,6 +584,7 @@ common_env:
 `,
     );
     expect(config.worker).toEqual({
+      reasoning: "reason",
       softDeadlineRatio: 0.5,
       retainTaskFiles: false,
       resultGraceSeconds: 0,
@@ -591,6 +594,15 @@ common_env:
       HTTPS_PROXY: "http://127.0.0.1:7897",
       NO_COLOR: "",
     });
+  });
+
+  test("rejects an unknown worker.reasoning mode", () => {
+    expect(() => parse(BASE + "worker:\n  reasoning: minimal\n")).toThrow(
+      "worker.reasoning",
+    );
+    expect(() => parse(BASE + "worker:\n  reasoning: true\n")).toThrow(
+      "worker.reasoning",
+    );
   });
 
   test("parses worker profiles and stats selection", () => {

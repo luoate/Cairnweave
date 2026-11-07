@@ -37,9 +37,14 @@ worker 视角的绝对路径；本地模式就是宿主路径，容器模式是 
 | `maxToolCalls` | 否 | 正整数；Host Bridge 的调用上限，超出后只拒绝工具、仍允许写结果 |
 | `workerProfile` | 否 | 命名的派发 profile id，≤64 字符且无控制字符 |
 | `model` | 否 | model-prefs 条目名，≤128 字符且无控制字符；覆盖 prompt frontmatter |
+| `reasoning` | 否 | `"on"` / `"off"`；调度器按 `worker.reasoning` 与任务类型写入，缺省时由模型配置决定 |
 
 `scope.targets` 不是提示：Host Bridge 在每次工具调用前用它做硬校验，允许与拒绝都写入
 `audit.jsonl`。`artifactDir` 存在时，写其它任务的 artifacts 目录同样被拒绝。
+
+`reasoning` 只影响生成参数，不改变工具权限或范围校验：`off` 时 worker 对整个会话关闭思考
+（OpenAI 兼容端点发 `reasoning_effort: "none"`，Anthropic 风格不发思考级别），旧 task 文件
+没有该字段时行为与升级前一致。
 
 ## 3. result.json（worker → 控制面）
 

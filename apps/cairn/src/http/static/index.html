@@ -46,6 +46,7 @@
         <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'strategist' }" :aria-pressed="sideTab === 'strategist'" @click="selectSideTab('strategist')"><svg class="nav-glyph" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="9" y="3" width="6" height="5" rx="1"/><path d="M12 8v4M5 16v-4h14v4"/><rect x="2" y="16" width="6" height="5" rx="1"/><rect x="16" y="16" width="6" height="5" rx="1"/></svg><span>慢层决策</span></button>
         <div class="nav-section-label">执行与溯源</div>
         <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'runs' }" :aria-pressed="sideTab === 'runs'" @click="selectSideTab('runs')"><svg class="nav-glyph" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9"/><path d="m10 8 6 4-6 4Z"/></svg><span>任务运行</span></button>
+        <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'activity' }" :aria-pressed="sideTab === 'activity'" @click="selectSideTab('activity')"><svg class="nav-glyph" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 12h4l2-6 3 12 2.5-8 1.5 2h5"/></svg><span>调度日志</span></button>
         <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'log' }" :aria-pressed="sideTab === 'log'" @click="selectSideTab('log')"><svg class="nav-glyph" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg><span>事件日志</span></button>
         <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'evidence' }" :aria-pressed="sideTab === 'evidence'" @click="selectSideTab('evidence')"><svg class="nav-glyph" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 3H6v18h12V7ZM14 3v4h4M9 12h6M9 16h6"/></svg><span>证据文件</span></button>
         <button type="button" class="nav-item" :class="{ 'is-active': sideTab === 'audit' }" :aria-pressed="sideTab === 'audit'" @click="selectSideTab('audit')"><svg class="nav-glyph" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m12 3 8 3v6c0 4-4 7-8 9-4-2-8-5-8-9V6ZM8 12l3 3 5-6"/></svg><span>工具审计</span></button>
@@ -303,6 +304,12 @@
     <div class="project-metadata flex items-center gap-4 text-xs text-slate-400">
       <span x-text="`${project.facts.length} 个事实`"></span>
       <span x-text="`${project.intents.length} 个意图${intentLifecycleCount() ? `（${intentLifecycleCount()} 已放弃）` : ''}`"></span>
+      <button type="button" x-show="liveRunBadge()" @click="selectSideTab('activity')" data-live-run-badge
+        class="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-2xs font-medium text-emerald-700 hover:bg-emerald-100 transition"
+        :title="liveRunBadgeTitle()">
+        <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+        <span x-text="liveRunBadge()"></span>
+      </button>
       <span x-show="projectExecutionLabel()" data-project-execution
         class="px-2 py-0.5 rounded-full border text-2xs font-medium whitespace-nowrap"
         :class="projectExecutionBadgeClass()" :title="projectExecutionHint()"
@@ -569,7 +576,7 @@
         <div><p class="eyebrow">节点与证据</p><h2 tabindex="-1" x-text="workspacePanelTitle()"></h2></div>
         <select class="inspector-select" aria-label="切换详情面板" :value="sideTab" @change="selectSideTab($event.target.value)">
           <optgroup label="探索与决策"><option value="detail">项目详情</option><option value="hints">提示</option><option value="board">观察看板</option><option value="strategist">慢层决策</option></optgroup>
-          <optgroup label="执行与溯源"><option value="runs">任务运行</option><option value="log">事件日志</option><option value="evidence">证据文件</option><option value="audit">工具审计</option><option value="proposals">图提案</option><option value="attachments">题目附件</option></optgroup>
+          <optgroup label="执行与溯源"><option value="runs">任务运行</option><option value="activity">调度日志</option><option value="log">事件日志</option><option value="evidence">证据文件</option><option value="audit">工具审计</option><option value="proposals">图提案</option><option value="attachments">题目附件</option></optgroup>
           <optgroup label="分析与交付"><option value="cost">成本归因</option><option value="stats">运行统计</option><option value="report">项目报告</option><option value="writeup">Writeup</option></optgroup>
         </select>
       </div>
@@ -1051,7 +1058,8 @@
         </template>
 
         <template x-for="run in runsPanel.items" :key="run.id">
-          <article class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+          <article :id="`run-card-${run.id}`" class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden transition"
+            :class="{ 'ring-2 ring-brand-300 border-brand-300': runsPanel.highlight === run.id }">
             <div class="px-3 py-2.5 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between gap-2">
               <div class="min-w-0">
                 <div class="font-mono text-2xs text-slate-600 truncate" :title="run.id" x-text="run.id"></div>
@@ -1108,6 +1116,156 @@
               </template>
             </div>
           </article>
+        </template>
+      </div>
+
+      <!-- Activity (read-only scheduler timeline) -->
+      <div x-show="sideTab === 'activity'" class="flex-1 overflow-y-auto p-3 space-y-3 bg-slate-50/30">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <div class="flex items-center gap-1.5">
+              <span class="text-2xs font-semibold text-slate-400">调度</span>
+              <span class="px-1.5 py-0.5 rounded-full border border-slate-200 bg-white text-2xs font-medium text-slate-400">只读</span>
+              <span x-show="activityPanel.data && activityPanel.data.running.length > 0" data-activity-live
+                class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border border-emerald-200 bg-emerald-50 text-2xs font-medium text-emerald-700">
+                <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>实时
+              </span>
+            </div>
+            <p class="mt-1 text-xs text-slate-500"
+              x-text="activityPanel.loadedFor ? `最近 ${activityPanel.data.events.length} 条调度事件 · 跟随项目轮询刷新` : '派发、截止、证据、重试与取消状态'"></p>
+          </div>
+          <button type="button" @click="loadActivity()" :disabled="activityPanel.loading" title="刷新调度日志" aria-label="刷新调度日志"
+            class="h-7 w-7 shrink-0 rounded-lg border border-slate-200 bg-white text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition disabled:opacity-40 inline-flex items-center justify-center">
+            <svg class="w-3.5 h-3.5" :class="{ 'animate-spin': activityPanel.loading }" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5"/><path d="M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5"/></svg>
+          </button>
+        </div>
+
+        <template x-if="activityPanel.error">
+          <div class="rounded-xl border border-rose-200 bg-rose-50/80 px-3 py-2.5">
+            <p class="text-2xs text-rose-600 break-words" x-text="activityPanel.error"></p>
+            <button type="button" @click="loadActivity()" class="mt-1.5 text-2xs font-medium text-rose-600 hover:text-rose-700">重试</button>
+          </div>
+        </template>
+
+        <template x-if="activityPanel.loading && !activityPanel.data">
+          <div class="space-y-2 animate-pulse">
+            <div class="h-28 rounded-2xl border border-slate-200 bg-white"></div>
+            <div class="h-16 rounded-xl border border-slate-200 bg-white"></div>
+            <div class="h-16 rounded-xl border border-slate-200 bg-white"></div>
+          </div>
+        </template>
+
+        <!-- Live runs -->
+        <template x-for="run in (activityPanel.data ? activityPanel.data.running : [])" :key="run.run_id">
+          <section class="rounded-2xl border shadow-sm overflow-hidden bg-white" data-activity-run
+            :class="activityRunPhase(run) === 'hard_overdue' ? 'border-rose-300' : activityRunPhase(run) === 'soft_overdue' ? 'border-amber-300' : 'border-emerald-200'">
+            <header class="px-3 py-2.5 border-b flex items-center justify-between gap-2"
+              :class="activityRunPhase(run) === 'hard_overdue' ? 'border-rose-100 bg-rose-50/70' : activityRunPhase(run) === 'soft_overdue' ? 'border-amber-100 bg-amber-50/70' : 'border-emerald-100 bg-emerald-50/60'">
+              <div class="min-w-0 flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full shrink-0 animate-pulse"
+                  :class="activityRunPhase(run) === 'hard_overdue' ? 'bg-rose-500' : activityRunPhase(run) === 'soft_overdue' ? 'bg-amber-500' : 'bg-emerald-500'"></span>
+                <span class="text-sm font-semibold text-slate-700 truncate" x-text="runKindLabel(run.kind)"></span>
+                <span class="text-2xs text-slate-400 shrink-0" x-text="run.intent_id ? `意图 ${run.intent_id}` : '项目级任务'"></span>
+              </div>
+              <span class="shrink-0 rounded-full border px-2 py-0.5 text-2xs font-semibold"
+                :class="activityPhaseClass(run)" x-text="activityPhaseLabel(run)"></span>
+            </header>
+            <div class="p-3 space-y-2.5">
+              <div class="font-mono text-2xs text-slate-500 break-all" x-text="run.task_id"></div>
+              <div class="space-y-1">
+                <div class="flex items-center justify-between gap-2 text-2xs">
+                  <span class="text-slate-500" x-text="`已运行 ${formatDurationMs(activityElapsedMs(run))} · 第 ${run.attempt} 次尝试`"></span>
+                  <span class="tabular-nums font-medium" :class="activityRemainingClass(run)" x-text="activityDeadlineLabel(run)"></span>
+                </div>
+                <div class="relative h-2 rounded-full bg-slate-100 overflow-hidden">
+                  <div class="h-full rounded-full transition-all duration-500"
+                    :class="activityProgressClass(run)" :style="`width:${activityProgressPercent(run)}%`"></div>
+                  <template x-if="activitySoftMarkerPercent(run) !== null">
+                    <div class="absolute top-0 bottom-0 w-px bg-slate-500/50" :style="`left:${activitySoftMarkerPercent(run)}%`"></div>
+                  </template>
+                </div>
+                <div class="flex items-center justify-between gap-2 text-2xs text-slate-400">
+                  <span x-text="run.deadline ? (run.deadline.soft_at ? `软截止 ${formatTime(run.deadline.soft_at)} · 硬截止 ${formatTime(run.deadline.hard_at)}` : `硬截止 ${formatTime(run.deadline.hard_at)}`) : '未找到该任务的截止配置'"></span>
+                  <span x-text="`证据 ${run.evidence_count} 个`"></span>
+                </div>
+              </div>
+              <div class="grid grid-cols-2 gap-x-3 gap-y-1.5 text-2xs">
+                <div><span class="text-slate-400">Worker</span><div class="text-slate-600 break-words" x-text="run.worker"></div></div>
+                <div><span class="text-slate-400">Profile</span><div class="text-slate-600 break-words" x-text="run.worker_profile || '—'"></div></div>
+                <div class="col-span-2"><span class="text-slate-400">模型</span><div class="font-mono text-slate-600 break-all" x-text="run.model || '—'"></div></div>
+                <div><span class="text-slate-400">执行环境</span><div class="text-slate-600" x-text="run.execution === 'container' ? '容器' : run.execution === 'local' ? '本地' : '—'"></div></div>
+                <div><span class="text-slate-400">调度进程</span><div class="font-mono text-slate-600 break-all" x-text="run.scheduler ? run.scheduler.instance_id : '—'"></div></div>
+                <div x-show="run.claim"><span class="text-slate-400">任务租约</span><div class="text-slate-600" x-text="activityLeaseLabel(run)"></div></div>
+                <div><span class="text-slate-400">调度心跳</span><div class="text-slate-600" x-text="activityHeartbeatLabel(run)"></div></div>
+              </div>
+            </div>
+          </section>
+        </template>
+
+        <!-- Idle state -->
+        <template x-if="activityPanel.data && activityPanel.data.running.length === 0">
+          <div class="rounded-2xl border border-dashed border-slate-200 bg-white/80 px-4 py-8 text-center shadow-sm">
+            <p class="text-sm text-slate-400" x-text="activityIdleTitle()"></p>
+            <p class="mt-1 text-xs text-slate-300 leading-relaxed" x-text="activityIdleHint()"></p>
+          </div>
+        </template>
+
+        <!-- Queued concludes -->
+        <template x-if="activityPanel.data && activityPanel.data.pending_concludes.length > 0">
+          <section class="rounded-2xl border border-sky-200 bg-sky-50/60 px-3 py-2.5" data-activity-pending>
+            <p class="text-2xs font-semibold text-sky-700">排队等待结论收束</p>
+            <div class="mt-1.5 space-y-1">
+              <template x-for="pending in activityPanel.data.pending_concludes" :key="pending.intent_id">
+                <div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-2xs text-sky-800">
+                  <span class="font-mono" x-text="pending.intent_id"></span>
+                  <span x-text="`来源 ${runKindLabel(pending.phase)}`"></span>
+                  <span class="text-sky-600/80" x-text="formatDate(pending.created_at)"></span>
+                  <span x-show="pending.worker_profile" class="text-sky-600/80" x-text="pending.worker_profile"></span>
+                </div>
+              </template>
+            </div>
+            <p class="mt-1.5 text-2xs text-sky-700/80">收尾任务会在配额释放后派发；它复用失败任务的会话，不重新探索。</p>
+          </section>
+        </template>
+
+        <!-- Event feed -->
+        <div x-show="activityPanel.data && activityPanel.data.events.length > 0" class="pt-1">
+          <div class="flex items-center justify-between gap-2 px-0.5">
+            <span class="text-2xs font-semibold text-slate-400">调度事件（最新在上）</span>
+            <span x-show="activityPanel.data && activityPanel.data.truncated" class="text-2xs text-slate-400">较早的运行已折叠</span>
+          </div>
+        </div>
+        <template x-for="event in activityEvents()" :key="event.id">
+          <article class="rounded-xl border border-slate-200 bg-white px-3 py-2.5 shadow-sm" :data-activity-level="event.level">
+            <div class="flex items-start gap-2.5">
+              <span class="mt-1.5 w-2 h-2 rounded-full shrink-0" :class="activityLevelDotClass(event)"></span>
+              <div class="min-w-0 flex-1">
+                <div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-2xs">
+                  <span class="tabular-nums text-slate-400" x-text="formatTime(event.at)"></span>
+                  <span class="px-1.5 py-0.5 rounded-md font-semibold" :class="activityCategoryClass(event)" x-text="activityCategoryLabel(event)"></span>
+                  <span class="text-slate-300" x-text="formatTimelineDate(event.at)"></span>
+                  <template x-if="event.duration_ms !== null && event.duration_ms !== undefined">
+                    <span class="text-slate-400" x-text="`耗时 ${formatDurationMs(event.duration_ms)}`"></span>
+                  </template>
+                </div>
+                <p class="mt-1 text-sm text-slate-700 leading-relaxed break-words" x-text="event.title"></p>
+                <template x-if="event.detail">
+                  <p class="mt-1 rounded-lg bg-slate-50 px-2 py-1.5 text-2xs text-slate-600 whitespace-pre-wrap break-words" x-text="event.detail"></p>
+                </template>
+                <template x-if="event.task_id || event.meta.length > 0">
+                  <p class="mt-1 text-2xs text-slate-400 break-words"
+                    x-text="[...(event.task_id ? [event.task_id] : []), ...event.meta].join(' · ')"></p>
+                </template>
+                <template x-if="event.run_id">
+                  <button type="button" @click="openActivityRun(event.run_id)"
+                    class="mt-1 text-2xs font-medium text-brand-600 hover:text-brand-700">查看任务运行 →</button>
+                </template>
+              </div>
+            </div>
+          </article>
+        </template>
+        <template x-if="activityPanel.data && activityPanel.data.events.length === 0">
+          <p class="text-sm text-slate-300 text-center py-8">暂无调度事件</p>
         </template>
       </div>
 
@@ -2361,7 +2519,7 @@
               <div class="text-2xs font-semibold text-slate-600">正文</div>
               <div class="text-2xs text-slate-400 break-words" x-text="writeupMetaLabel()"></div>
             </div>
-            <pre class="px-3 py-2.5 text-2xs leading-relaxed text-slate-600 whitespace-pre-wrap break-words font-mono" x-text="writeupMarkdown()"></pre>
+            <pre class="px-3 py-2.5 text-2xs leading-relaxed text-slate-600 whitespace-pre-wrap break-words font-mono" x-text="writeupPreview()"></pre>
           </section>
         </template>
 
@@ -3625,6 +3783,14 @@ function cairnApp() {
       loading: false,
       error: '',
       loadedFor: '',
+      highlight: '',
+    },
+    activityPanel: {
+      data: null,
+      loading: false,
+      error: '',
+      loadedFor: '',
+      requestId: 0,
     },
     factTrace: {
       factId: '',
@@ -4512,7 +4678,14 @@ function cairnApp() {
     resetOpsPanels() {
       this._experimentRequest += 1;
       this.experimentPanel = { data: null, projectId: '', intentId: '', loading: false, error: '' };
-      this.runsPanel = { items: [], loading: false, error: '', loadedFor: '' };
+      this.runsPanel = { items: [], loading: false, error: '', loadedFor: '', highlight: '' };
+      this.activityPanel = {
+        data: null,
+        loading: false,
+        error: '',
+        loadedFor: '',
+        requestId: (this.activityPanel?.requestId || 0) + 1,
+      };
       this.factTrace = { factId: '', loading: false, error: '', meta: null, run: null };
       this.strategistPanel = {
         data: null,
@@ -4565,7 +4738,7 @@ function cairnApp() {
     },
 
     opsTabs() {
-      return ['runs', 'strategist', 'audit', 'evidence', 'proposals', 'board', 'cost', 'stats', 'report', 'writeup', 'attachments'];
+      return ['runs', 'activity', 'strategist', 'audit', 'evidence', 'proposals', 'board', 'cost', 'stats', 'report', 'writeup', 'attachments'];
     },
 
     isOpsTab(tab) {
@@ -4604,6 +4777,7 @@ function cairnApp() {
     workspacePanelTitle() {
       return {
         detail: '项目详情', hints: '提示', log: '事件日志', runs: '任务运行',
+        activity: '调度日志',
         strategist: '慢层决策', audit: '工具审计', evidence: '证据文件',
         proposals: '图提案', board: '观察看板', attachments: '题目附件',
         cost: '成本归因', stats: '运行统计', report: '项目报告', writeup: 'Writeup',
@@ -4641,6 +4815,7 @@ function cairnApp() {
 
     loadActiveOpsTab() {
       if (this.sideTab === 'runs') this.loadRuns();
+      else if (this.sideTab === 'activity') this.loadActivity();
       else if (this.sideTab === 'strategist') this.loadStrategist();
       else if (this.sideTab === 'audit') this.loadAudit();
       else if (this.sideTab === 'evidence') this.loadEvidence();
@@ -4667,6 +4842,34 @@ function cairnApp() {
         if (this.selectedProjectId === projectId) this.runsPanel.error = this.errorText(e);
       } finally {
         if (this.selectedProjectId === projectId) this.runsPanel.loading = false;
+      }
+    },
+
+    async loadActivity({ quiet = false } = {}) {
+      const projectId = this.selectedProjectId;
+      if (!projectId) return;
+      const requestId = this.activityPanel.requestId + 1;
+      this.activityPanel.requestId = requestId;
+      if (!quiet) {
+        this.activityPanel.loading = true;
+        this.activityPanel.error = '';
+      }
+      try {
+        const data = await this.api('GET', `/projects/${encodeURIComponent(projectId)}/activity`);
+        if (this.selectedProjectId !== projectId || this.activityPanel.requestId !== requestId) return;
+        const view = data && typeof data === 'object' ? data : null;
+        this.activityPanel.data = view;
+        this.activityPanel.loadedFor = view ? projectId : '';
+        this.activityPanel.error = '';
+      } catch (e) {
+        if (this.selectedProjectId !== projectId || this.activityPanel.requestId !== requestId) return;
+        // A quiet poll keeps the last good feed on screen; only surface the error when there is
+        // nothing to show or the user explicitly reloaded.
+        if (!quiet || this.activityPanel.loadedFor !== projectId) {
+          this.activityPanel.error = this.errorText(e);
+        }
+      } finally {
+        if (this.activityPanel.requestId === requestId) this.activityPanel.loading = false;
       }
     },
 
@@ -4889,6 +5092,15 @@ function cairnApp() {
     writeupMarkdown() {
       const data = this.writeupPanel.data;
       return data && typeof data.markdown === 'string' ? data.markdown : '';
+    },
+
+    /**
+     * The preview shows Markdown source in a <pre>, not rendered HTML. Decode the `<` the draft
+     * escapes so recorded text such as `<h2>Welcome~ admin</h2>` reads normally here while the
+     * copied/downloaded Markdown stays safe for any renderer.
+     */
+    writeupPreview() {
+      return this.writeupMarkdown().replace(/&lt;/g, '<');
     },
 
     writeupMarkdownHref() {
@@ -5382,6 +5594,175 @@ function cairnApp() {
     runExitLabel(run) {
       if (run?.exit_code !== null && run?.exit_code !== undefined) return String(run.exit_code);
       return run?.finished_at ? '—' : '等待中';
+    },
+
+    liveRunBadge() {
+      const data = this.activityPanel.loadedFor === this.selectedProjectId ? this.activityPanel.data : null;
+      const run = data && data.running.length > 0 ? data.running[0] : null;
+      if (!run) return '';
+      return `运行中 · ${this.runKindLabel(run.kind)} ${this.formatDurationMs(this.activityElapsedMs(run))}`;
+    },
+
+    liveRunBadgeTitle() {
+      const data = this.activityPanel.loadedFor === this.selectedProjectId ? this.activityPanel.data : null;
+      const run = data && data.running.length > 0 ? data.running[0] : null;
+      return run ? `${run.task_id} · 点击查看调度日志` : '';
+    },
+
+    activityElapsedMs(run) {
+      const started = Date.parse(run.started_at);
+      return Number.isFinite(started) ? Math.max(0, Date.now() - started) : (run.elapsed_ms || 0);
+    },
+
+    activityRunPhase(run) {
+      if (!run.deadline) return 'running';
+      const hardRemaining = Date.parse(run.deadline.hard_at) - Date.now();
+      if (Number.isFinite(hardRemaining) && hardRemaining <= 0) return 'hard_overdue';
+      if (run.deadline.soft_at) {
+        const softRemaining = Date.parse(run.deadline.soft_at) - Date.now();
+        if (Number.isFinite(softRemaining) && softRemaining <= 0) return 'soft_overdue';
+      }
+      return 'running';
+    },
+
+    activityPhaseLabel(run) {
+      const phase = this.activityRunPhase(run);
+      return phase === 'hard_overdue' ? '已过硬截止' : phase === 'soft_overdue' ? '已过软截止' : '执行中';
+    },
+
+    activityPhaseClass(run) {
+      const phase = this.activityRunPhase(run);
+      if (phase === 'hard_overdue') return 'border-rose-200 bg-rose-100 text-rose-700';
+      if (phase === 'soft_overdue') return 'border-amber-200 bg-amber-100 text-amber-700';
+      return 'border-emerald-200 bg-emerald-100 text-emerald-700';
+    },
+
+    activityDeadlineLabel(run) {
+      if (!run.deadline) return '截止未知';
+      const remaining = Date.parse(run.deadline.hard_at) - Date.now();
+      if (!Number.isFinite(remaining)) return '截止未知';
+      return remaining > 0
+        ? `硬截止剩余 ${this.formatDurationMs(remaining)}`
+        : `已超硬截止 ${this.formatDurationMs(-remaining)}`;
+    },
+
+    activityRemainingClass(run) {
+      const phase = this.activityRunPhase(run);
+      if (phase === 'hard_overdue') return 'text-rose-600';
+      if (phase === 'soft_overdue') return 'text-amber-600';
+      return 'text-slate-500';
+    },
+
+    activityProgressPercent(run) {
+      if (!run.deadline) return 100;
+      const total = run.deadline.hard_seconds * 1000;
+      if (!Number.isFinite(total) || total <= 0) return 0;
+      return Math.min(100, Math.max(0, Math.round((this.activityElapsedMs(run) / total) * 100)));
+    },
+
+    activityProgressClass(run) {
+      if (!run.deadline) return 'bg-slate-200 animate-pulse';
+      const phase = this.activityRunPhase(run);
+      if (phase === 'hard_overdue') return 'bg-rose-500';
+      if (phase === 'soft_overdue') return 'bg-amber-400';
+      return 'bg-emerald-400';
+    },
+
+    activitySoftMarkerPercent(run) {
+      const deadline = run.deadline;
+      if (!deadline || deadline.soft_seconds === null || deadline.soft_seconds === undefined) return null;
+      if (!deadline.hard_seconds) return null;
+      return Math.min(100, Math.max(0, Math.round((deadline.soft_seconds / deadline.hard_seconds) * 100)));
+    },
+
+    activityLeaseLabel(run) {
+      if (!run.claim) return '—';
+      const remaining = Date.parse(run.claim.lease_expires_at) - Date.now();
+      if (!Number.isFinite(remaining)) return '—';
+      return remaining > 0
+        ? `剩余 ${this.formatDurationMs(remaining)}`
+        : `已过期 ${this.formatDurationMs(-remaining)}`;
+    },
+
+    activityHeartbeatLabel(run) {
+      if (!run.scheduler) return '—';
+      if (run.scheduler.stopped_at) return '已停止';
+      const heartbeat = Date.parse(run.scheduler.heartbeat_at);
+      if (!Number.isFinite(heartbeat)) return '—';
+      const elapsed = Math.max(0, Date.now() - heartbeat);
+      if (elapsed > 60000) return `已 ${this.formatDurationMs(elapsed)}未心跳`;
+      return `${this.formatDurationMs(elapsed)}前`;
+    },
+
+    activityIdleTitle() {
+      const status = this.project?.project?.status;
+      if (status === 'stopped') return '项目已停止';
+      if (status === 'completed') return '项目已完成';
+      return '当前没有运行中的任务';
+    },
+
+    activityIdleHint() {
+      const status = this.project?.project?.status;
+      if (status === 'stopped') return '不会派发新任务；恢复后从记录的意图继续。';
+      if (status === 'completed') return '调度器不再派发任务；历史事件仍保留在下方。';
+      return '调度器在有可派发意图且配额允许时派发下一个任务；下方是最近的状态变化。';
+    },
+
+    activityEvents() {
+      const events = this.activityPanel.data?.events;
+      return Array.isArray(events) ? [...events].reverse() : [];
+    },
+
+    activityLevelDotClass(event) {
+      const level = event?.level;
+      if (level === 'success') return 'bg-teal-400';
+      if (level === 'warning') return 'bg-amber-400';
+      if (level === 'error') return 'bg-rose-400';
+      return 'bg-sky-400';
+    },
+
+    activityCategoryLabel(event) {
+      const labels = {
+        dispatch: '派发', success: '完成', failure: '失败', deadline: '截止',
+        evidence: '证据', rejected: '被拒', cancelled: '取消', inactive: '非活动',
+      };
+      return labels[event?.category] || event?.category || '事件';
+    },
+
+    activityCategoryClass(event) {
+      const category = event?.category;
+      if (category === 'success') return 'bg-teal-50 text-teal-700 border border-teal-200';
+      if (category === 'evidence' || category === 'failure' || category === 'rejected') {
+        return 'bg-rose-50 text-rose-700 border border-rose-200';
+      }
+      if (category === 'deadline') return 'bg-amber-50 text-amber-700 border border-amber-200';
+      if (category === 'cancelled' || category === 'inactive') {
+        return 'bg-slate-100 text-slate-600 border border-slate-200';
+      }
+      return 'bg-sky-50 text-sky-700 border border-sky-200';
+    },
+
+    openActivityRun(runId) {
+      if (!runId) return;
+      this.runsPanel.highlight = runId;
+      this.selectSideTab('runs');
+      const scrollToCard = () => {
+        const card = document.getElementById(`run-card-${runId}`);
+        if (card && typeof card.scrollIntoView === 'function') {
+          card.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        }
+      };
+      // Runs load asynchronously after the tab switch; retry once if the card was not there yet.
+      setTimeout(() => {
+        if (!document.getElementById(`run-card-${runId}`)) {
+          setTimeout(scrollToCard, 700);
+          return;
+        }
+        scrollToCard();
+      }, 350);
+      setTimeout(() => {
+        if (this.runsPanel.highlight === runId) this.runsPanel.highlight = '';
+      }, 2600);
     },
 
     formatNumber(value) {
@@ -6416,6 +6797,9 @@ function cairnApp() {
       if (this.view === 'graph' && this.selectedProjectId) {
         await this.loadProject(this.selectedProjectId, { quiet });
         if (this.sideTab === 'runs' && !this.runsPanel.loading) await this.loadRuns();
+        // Kept warm for the scheduler tab and the page-header live badge, which must clear as
+        // soon as the last run finishes even while another tab is open.
+        if (!this.activityPanel.loading) await this.loadActivity({ quiet: true });
         if (!this.projectFlag.loading &&
             (!this.projectFlag.found ||
              this.projectFlag.projectId !== this.selectedProjectId ||
@@ -8684,7 +9068,17 @@ function cairnApp() {
         {
           title: 'Worker 与选择',
           hint: '统计模式需要只读区里的 worker_profiles',
+          notes: [
+            '推理（思考）：打开后模型在回答前先花一段预算推理，时间与 token 都明显增加。',
+            '仅 reason（推荐）：只有决定「下一步探索什么」的 reason 任务带推理。它没有工具输出可以纠正判断，一次误判会消耗整个 explore 任务；explore / bootstrap 会被自己的执行结果纠偏，conclude 只汇总已知事实，都不需要。',
+            '这项设置覆盖模型配置里的思考级别：关闭时请求强制 reasoning_effort: none，打开时按模型配置的档位（未配置则用 minimal）。下一个任务生效，不需要重启。',
+          ],
           fields: [
+            select('worker.reasoning', '推理（思考）', [
+              { value: 'off', label: '关闭' },
+              { value: 'reason', label: '仅 reason（推荐）' },
+              { value: 'all', label: '全部任务' },
+            ]),
             number('worker.soft_deadline_ratio', '软截止比例', { min: 0.1, max: 0.99, step: 0.05 }),
             bool('worker.retain_task_files', '保留任务文件'),
             number('worker.result_grace_seconds', '结果宽限（秒）', { min: 0 }),

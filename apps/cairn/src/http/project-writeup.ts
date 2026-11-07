@@ -46,6 +46,7 @@ import {
 } from "./agent-config";
 import { collectProjectFlag } from "./project-flag";
 import { buildWriteupArchive } from "./project-archive";
+import { collectWriteupCredentials } from "./project-credentials";
 import { collectWriteupPayloads } from "./project-payload";
 
 /** `cairn-worker.md` binds the default worker to this model-prefs entry. */
@@ -206,6 +207,7 @@ function view(record: ProjectWriteupRecord | null, draft: Draft, archive: Archiv
     markdown: record?.markdown ?? draft.markdown,
     flag: draft.flag,
     flag_suspects: draft.snapshot.flag_suspects,
+    credentials: draft.snapshot.credentials,
     payloads: draft.payloads,
     archive,
     generated_at: draft.generated_at,
@@ -378,9 +380,12 @@ export function registerWriteupRoutes(
               flagSource: flagView?.source ?? null,
             }),
           });
+    const credentials =
+      workspace === null ? [] : collectWriteupCredentials({ workspace, artifacts });
     const snapshot = buildProjectWriteup(conn, projectId, {
       verificationFallback,
       payloadContents,
+      credentials,
       flagSuspects: suspects,
       ...(flagView === null
         ? {}

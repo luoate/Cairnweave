@@ -177,6 +177,59 @@ describe("GET /projects/{id}/writeup", () => {
   });
 });
 
+describe("GET /projects/{id}/writeup credentials", () => {
+  test("reads the worker credential file and renders it verbatim", async () => {
+    const taskId = "explore-cred00000001";
+    const dir = join(workspace, "artifacts", taskId);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "credentials.txt"),
+      [
+        "# 从 secret.bio 恢复",
+        "",
+        "admin = 9f2c1d7e4a6b8c0d1e3f5a7b9c2d4e6f",
+        "admin = 9f2c1d7e4a6b8c0d1e3f5a7b9c2d4e6f",
+        "shell#1 = a<b`c",
+      ].join("\n"),
+      "utf8",
+    );
+    db.withConn((conn) => recordProjectArtifacts(conn, { projectId, taskId, workspace }));
+
+    const body = (await (await get(`/projects/${projectId}/writeup`)).json()) as {
+      credentials: { path: string; lines: string[]; truncated: boolean }[];
+      markdown: string;
+    };
+    expect(body.credentials).toEqual([
+      {
+        path: `${taskId}/credentials.txt`,
+        lines: [
+          "admin = 9f2c1d7e4a6b8c0d1e3f5a7b9c2d4e6f",
+          "shell#1 = a<b`c",
+        ],
+        truncated: false,
+      },
+    ]);
+    // Values are quoted, not escaped: the `<` and the backtick survive as written.
+    expect(body.markdown).toContain("## 凭据与访问材料");
+    expect(body.markdown).toContain("`admin = 9f2c1d7e4a6b8c0d1e3f5a7b9c2d4e6f`");
+    expect(body.markdown).toContain("``shell#1 = a<b`c``");
+    expect(body.markdown).toContain(`（来源 \`${taskId}/credentials.txt\`）`);
+  });
+
+  test("ignores credential files that are not indexed and says nothing was recorded", async () => {
+    const dir = join(workspace, "artifacts", "explore-unindexed");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "credentials.txt"), "admin = orphan\n", "utf8");
+
+    const body = (await (await get(`/projects/${projectId}/writeup`)).json()) as {
+      credentials: unknown[];
+      markdown: string;
+    };
+    expect(body.credentials).toEqual([]);
+    expect(body.markdown).toContain("（没有单独记录目标凭据");
+  });
+});
+
 describe("GET /projects/{id}/writeup payloads", () => {
   test("inlines indexed payload files and reports their state", async () => {
     mkdirSync(join(workspace, "artifacts"), { recursive: true });

@@ -144,6 +144,7 @@ import {
   observerEnvironment,
   prepareTask,
   projectWorkspace,
+  reasoningForKind,
   resolveWorkspaceRoot,
   toolSpillEnvironment,
   type ConcludeOf,
@@ -298,6 +299,8 @@ interface RunningTask {
   terminationReason: CheckpointTermination;
   leaseLost: boolean;
   cancelled: boolean;
+  /** Why the control plane cancelled this task; persisted on the run row (M53). */
+  cancelReason?: string;
   startedAtMs: number;
   evidenceCount: number;
   exitCode: number | null;
@@ -1227,8 +1230,8 @@ export class Scheduler {
           heartbeatIntent(conn, projectId, intent.id, WORKER_NAME);
         }
         // Explore work only needs the causal neighbourhood of its intent; reason and
-        // bootstrap need the global graph to propose/complete directions. Slicing stays
-        // opt-in (tasks.graph_slice.enabled) so the default export matches Cairn.
+        // bootstrap need the global graph to propose/complete directions. Slicing is on by
+        // default and `tasks.graph_slice.enabled: false` restores the full export.
         const slice = this.config.tasks.graphSlice;
         const sliceFocus =
           slice.enabled &&
@@ -1327,6 +1330,7 @@ export class Scheduler {
           ...(contextSnapshot === undefined ? {} : { contextSnapshot }),
           ...(intent === undefined ? {} : { intent }),
           ...(profile === null ? {} : { workerProfile: profile }),
+          reasoning: reasoningForKind(this.config.worker.reasoning, kind),
           ...(pending === undefined
             ? {}
             : {
@@ -1609,7 +1613,7 @@ export class Scheduler {
     try {
       if (running.cancelled) {
         this.releaseOwnedLease(running);
-        this.finish(running, "cancelled", "cancelled");
+        this.finish(running, "cancelled", cancellationDetail(running.cancelReason));
         return;
       }
       if (running.leaseLost) {
@@ -2559,6 +2563,7 @@ export class Scheduler {
   private cancel(task: RunningTask, reason: string): void {
     if (task.cancelled) return;
     task.cancelled = true;
+    task.cancelReason = reason;
     task.terminationReason = "cancelled";
     this.recordCheckpoint(task);
     this.log(`cancelling task=${task.taskId} reason=${reason}`);
@@ -3253,4 +3258,12 @@ function preview(text: string, limit = 1200): string {
 
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** Run detail for a cancelled task, so the UI can show why it stopped without the log. */
+function cancellationDetail(reason: string | undefined): string {
+  if (reason === undefined) return "任务已取消";
+  if (reason === "project_inactive") return "任务已取消：项目已停止或删除";
+  if (reason === "shutdown") return "任务已取消：控制面正在关闭";
+  return `任务已取消：${reason}`;
 }

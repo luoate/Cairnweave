@@ -74,6 +74,13 @@ export interface WorkerTask {
    * frontmatter model; present only with a selected worker profile.
    */
   readonly model?: string;
+  /**
+   * Whether the solver should ask the model to reason before answering. The scheduler
+   * resolves `worker.reasoning` per kind and always writes the decision, so task.json
+   * shows why a run spent (or did not spend) reasoning tokens. Absent on older task
+   * files, where the model pref alone decides.
+   */
+  readonly reasoning?: "on" | "off";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -227,6 +234,11 @@ export function taskErrors(value: unknown): string[] {
     errors.push(
       `model must be a non-empty string of at most ${MAX_WORKER_MODEL_PREF_LENGTH} characters without control characters`,
     );
+  }
+
+  const reasoning = value["reasoning"];
+  if (reasoning !== undefined && reasoning !== "on" && reasoning !== "off") {
+    errors.push('reasoning must be "on" or "off" when present');
   }
 
   return errors;

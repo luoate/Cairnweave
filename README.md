@@ -50,12 +50,12 @@ worker 在项目沙箱里跑真实模型，每个任务启动一次进程，只�
 | 可验证完成 | 项目级目标条件列表（`challenge` / `flag_count` / `evidence`，有序 AND）与兼容别名 `evidence` / `challenge` / `off`；worker 的 “complete” 只是声明，oracle 不通过就不关项目；`flag_count` 只统计操作员已确认与挑战服务已确认的 flag，支持手动 `/verify`。自动完成至少需要一个客观条件：仅有 `evidence` 或 `off` 的完成声明默认进入人工确认（`completion_reviews`），`verification.evidence_completion: auto` 可保留旧的自动路径；创建弹窗显示 `auto` 实际解析出的策略并在需要人工复核时警告，项目页显示校验徽标；`bun run eval` 用同一组场景对比加固前后的完成率与错误完成率 |
 | Observer sidecar | 真实 Solver 旁的独立复盘会话，只维护项目级看板（ideas / memory），主 Solver 仅拿到只读工具；失败、超时都不影响任务结果 |
 | 图提案 | Observer 只能写候选文件，控制面是唯一审核者与写图者；默认 `dry_run`（完整校验、记录结果、不写图），改 `apply` 才落图 |
-| 中文 Writeup | 从图中数据确定性渲染中文 Markdown 草稿，可由模型重写；附带载荷（payload）章节、附件 zip 打包与「AI 撰写 / 恢复草稿」 |
+| 中文 Writeup | 从图中数据确定性渲染中文 Markdown 草稿，可由模型重写；附带载荷（payload）章节、「凭据与访问材料」、附件 zip 打包与「AI 撰写 / 恢复草稿」 |
 | 题目附件 | 操作员把题目给的二进制 / pcap / 源码包上传进项目工作区 `attachments/`（单文件 32 MiB、每项目 256 MiB），Worker 的任务提示直接列出文件清单，按只读输入读取；「附件」页签负责上传、下载与二次确认删除 |
 | Flag 与校验 | `/flag` 从已索引工件、`.tool-results` 溢出文件与会话工具输出中提取真实 flag，拒绝占位符与掩码；兜底遍历有目录/条目上界，结果按工作区短缓存；challenge 项目按外部计分校验 |
 | 人工 Flag 复核 | `verification.flag_review: manual`（默认）时，worker 写回的 flag 形状值会登记为后台复核，项目照常探索但不会在判定前结束，由操作员随时判定「真·还有更多 / 真·停止 / 假·继续」；判定写旁路表、驱动完成或提示，假 flag 不会二次入队、也不能成为结束项目的理由（引用它的完成声明会被拒绝，reason 继续跑）；设置里「运行与执行 → 图切片与校验」有「Flag 人工复核」开关（默认开），关闭即不再登记新复核 |
 | 成本与预算 | `runs` 记录模型 / Token / 成本；意图级 priority 与预算、单项目 token/成本配额、逐 Fact 与逐意图的成本归因与因果边 |
-| 只读运维视图 | 运行、慢层、审计、证据、提案、看板、成本、统计、报告、Writeup、附件十一个侧栏页签，除人工重规划与附件上传/删除外全部只发 GET |
+| 只读运维视图 | 运行、调度、慢层、审计、证据、提案、看板、成本、统计、报告、Writeup、附件十二个侧栏页签，除人工重规划与附件上传/删除外全部只发 GET；「调度」页签实时显示在跑任务、硬/软截止倒计时、租约/心跳、重试与结束事件 |
 | 运行期配置 | Observer、并发、超时、证据门、预算、策略阈值、提案参数等可在页头「设置 → 运行与执行」里热调，覆盖存 SQLite，重启不丢 |
 | 启动对账 | `runs` 行只在拥有它的进程里收尾，控制面重启会留下永远“运行中”的幽灵任务；每次 `start()` 先在 `scheduler_instances` 注册 boot 行并按心跳判断是否有活跃同伴，无同伴时把遗留的 `outcome IS NULL` 补成 `inactive`（detail 说明原因），统计、慢层视图与预算的 running 计数随之归零；不改派发路径、不释放租约 |
 | 任务 claim 账本 | 每个派发任务在 `task_claims` 里占一行（意图 / reason 槽各有一个部分唯一索引），配额、单项目并发与慢层抑制都改从这张表派生，`this.running` 退回成进程句柄表；误开第二个控制面时它看得见同一份账本，重复执行同一意图会在存储层被 409 挡回，崩溃那次的 claim 要等租约到期才被接管，优雅停止则立刻释放——图级租约照旧双写，删掉这张表就回到 M38 |
@@ -71,7 +71,7 @@ cairn serve（控制面，一个进程）
   ├─ HTTP API（兼容 Cairn）+ 静态 UI（Alpine.js 单文件，样式预编译入库）
   ├─ SQLite（唯一写者）
   ├─ scheduler：bootstrap / reason / explore / conclude（启动时注册实例心跳并对账遗留 run）
-  ├─ 渲染 prompt + 写 graph.yaml（默认全图；explore 可切片）
+  ├─ 渲染 prompt + 写 graph.yaml（explore 默认取意图邻域切片，reason/bootstrap 全图）
   └─ 为每个任务写 task.json，supervise worker 进程
         │
         ▼  项目工作区（每项目绑定到 /cairn/workspace）
@@ -173,6 +173,7 @@ proposals:                    # 默认开启，但只演练
 | GET | `/projects/{id}/export` | YAML 图导出 |
 | GET | `/projects/{id}/subgraph` | 以某个 Fact / Intent 为中心的按需子图（`around`、`depth`、`max_facts`、`max_intents`、`format=json\|yaml`） |
 | GET | `/projects/{id}/runs` | 逐任务 run（kind、worker、模型、outcome、Token、成本） |
+| GET | `/projects/{id}/activity` | 只读调度时间线：运行中任务、硬/软截止相位、任务租约与调度心跳、重试与结束事件（`limit=1..500`） |
 | GET | `/projects/{id}/facts/{fact_id}/meta` | Fact 溯源：产出 run、证据状态、取代关系 |
 | GET | `/projects/{id}/facts/{fact_id}/evidence` | 证据实时校验（`ok` / `modified` / `missing` …） |
 | GET | `/projects/{id}/artifacts` | 工件索引（路径、大小、SHA-256、来源任务） |
@@ -272,7 +273,9 @@ API key 只写不读（响应只回掩码），写入 `auth.json` 并按上游 S
 - **凭据边界**：模型凭据只在 agent 配置目录，且该目录被 Host Bridge 登记为拒绝根，worker
   工具读不到；仓库里的 `agent-config/` 只跟踪提示词、技能与 `settings.json`，`auth.json`
   一类文件不入库。任务文件、日志、审计账本与数据库不保存明文 key。challenge oracle 只读
-  计数，不读 flag 明文。
+  计数，不读 flag 明文。这条约束保护的是**操作员自己的**凭据；从授权范围内目标取得的账号、
+  口令、哈希与会话 cookie 是挑战材料，为可复现需要逐字写进事实描述与
+  `artifacts/<任务>/credentials.txt`，两者不要混为一谈。
 
 ## 测试与 CI
 

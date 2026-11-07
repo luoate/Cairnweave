@@ -64,6 +64,17 @@ describe("worker task contract", () => {
     );
   });
 
+  test("validates the optional reasoning decision", () => {
+    expect(taskErrors({ ...validTask(), reasoning: "on" })).toEqual([]);
+    expect(taskErrors({ ...validTask(), reasoning: "off" })).toEqual([]);
+    expect(messages({ ...validTask(), reasoning: "minimal" })).toContain(
+      'reasoning must be "on" or "off"',
+    );
+    expect(messages({ ...validTask(), reasoning: true })).toContain(
+      'reasoning must be "on" or "off"',
+    );
+  });
+
   test("requires a resumed session only on conclude tasks", () => {
     const { intentId: _intentId, ...rest } = validTask();
     expect(taskErrors({

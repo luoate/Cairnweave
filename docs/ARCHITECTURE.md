@@ -821,6 +821,21 @@ HTTP（除实时追加外均为只读，均在控制面进程内直接查库）�
   `model`、`worker_profile`（无记录时为 `null`）、`instance_id`（M39：派发该任务的
   scheduler boot，旧行为 `null`）与 `execution`（M39b：那次任务实际跑在 `local` 还是
   `container`，旧行与没有后端上下文的情况为 `null`）；未知项目 404。
+- `GET /projects/{id}/activity?limit=1..500`（只读，默认 80）→
+  `{project_id, generated_at, project, running, pending_concludes, events, truncated}`。
+  `running` 每项含 run 元数据、`elapsed_ms`、`attempt`、`evidence_count`、`deadline`、
+  `claim`、`scheduler` 与意图最后心跳。截止信息从该 run 的
+  `.cairn/sessions/<task_id>/task.json` 读取 `hardDeadlineSeconds` /
+  `softDeadlineSeconds` 并换算为 `hard_at` / `soft_at` / 剩余毫秒与
+  `running|soft_overdue|hard_overdue` 相位；文件缺失或字段非法时 `deadline: null`，
+  不猜测默认值。`claim` 来自 `task_claims` 的活跃租约，`scheduler` 来自
+  `scheduler_instances` 的心跳与 `stopped_at`。
+  `events` 按时间排序（同一时刻按 run 顺序稳定），由持久化的 `runs` 行派生派发/结束、
+  软截止警告与 `pending_concludes` 排队状态；事件 `id` 跨轮询稳定，`attempt` 按项目
+  完整 run 历史计数（即使旧运行被 `limit` 折叠也不重置）。结束事件按失败码分类：
+  `hard_deadline` → 截止、`evidence_invalid` → 证据（只把 `invalid evidence:` 前缀
+  改写为中文提示）、基础设施故障 → 环境中断，其余保留原 code；取消事件显示
+  `project_inactive` / `shutdown` 等取消原因。未知项目 404；只有 GET。
 - `GET /projects/{id}/stats`（M14d/M15a，只读）→
   `{project_id, totals, by_worker, by_model, by_profile}`。
   每组统计运行数、运行中/已结束、各 outcome 计数、`success_rate`（成功 ÷ 已结束，
@@ -1319,8 +1334,10 @@ Writeup 是面向人的中文复盘文本，分两层，全部逻辑在 `package
 - **模型撰写版（可选）**：`renderProjectWriteupPrompt` 把同一份草稿作为唯一素材交给
   `@cairn/agent` 的 `completeText`（`tools: []`、`SessionManager.inMemory()` 的单轮
   补全，不授予任何工具），system prompt 要求全程简体中文、只使用草稿中的事实/证据/
-  Flag、Flag 与载荷逐字符照抄（草稿只给路径时不得虚构内容）、如实标注未验证与未完成、
-  不得写入凭据或内网敏感地址。结果
+  Flag、Flag 与载荷逐字符照抄（草稿只给路径时不得虚构内容）、如实标注未验证与未完成；
+  授权范围内目标的账号、口令、哈希与会话 cookie 属于挑战材料，同样逐字符照抄，只有操作员
+  自己的机密（模型 API key、operator token、agent 配置、私钥）与内网敏感地址不得写入。
+  结果
   upsert 进 `project_writeups`（每项目一行），GET 随即服务存储版；DELETE 清除后回到
   草稿。生成失败或超时都不会覆盖已存正文。
 - **限额与守卫**：prompt ≤60000 字符、正文 ≤200000 字符、请求体 ≤4 KiB、model pref id
@@ -1513,12 +1530,19 @@ memory 在同次快照重新标注意图/项目状态、Scope 变化、事实替
 - 应用配置：移植 Cairn 的 `server` / `runtime` / `tasks` / `container` / `local` /
   `common_env` 段；删除 `workers` 和 `WORKER_ENV_KEYS`。并发仍由 `runtime.max_workers`
   与 `runtime.max_project_workers` 控制（保持旧配置兼容），新增单一的 `worker` 段：
-  `soft_deadline_ratio`、`retain_task_files`、`result_grace_seconds`、`scoped_artifacts`
+  `reasoning`、`soft_deadline_ratio`、`retain_task_files`、`result_grace_seconds`、`scoped_artifacts`
   （布尔；缺省时等于 `runtime.max_project_workers > 1`，显式 `false` 可以关闭任务级
   artifacts 命名空间）。
-- `tasks.graph_slice` 是新增的可选段：`enabled`（布尔，默认 `false`）、`max_facts`
-  （整数 ≥ 2，默认 80）、`max_intents`（正整数，默认 60）。缺省即保持全图行为；非法值
-  在启动时以 `ConfigError` 拒绝。
+- `worker.reasoning`（M55）：`off|reason|all`，默认 `reason`（只给 reason 任务开启；`all` 是
+  M55 之前的旧行为）。调度器按任务类型解析成
+  `task.json` 的 `reasoning: "on" | "off"`，worker 的
+  `applyReasoningMode` 据此改写解析后的会话选项：关闭时对 OpenAI 兼容端点把各思考级别映射到
+  `reasoning_effort: none`，开启时移除这类映射、保留 model-prefs 的 `thinkingLevel`；token
+  预算型端点（Anthropic 风格）关闭即不发送级别。设置弹窗「Worker 与选择」可直接切换，
+  通过运行配置覆盖热改，下一任务生效。
+- `tasks.graph_slice` 是新增的段：`enabled`（布尔，默认 `true`）、`max_facts`
+  （整数 ≥ 2，默认 80）、`max_intents`（正整数，默认 60）。只影响 explore 及其 conclude；
+  `enabled: false` 回到全图导出；非法值在启动时以 `ConfigError` 拒绝。
 - `tasks.evidence.min_bytes` 控制接受证据的最小字节数（非负整数，默认 `1`，`0` 关闭）。
   缺省拒绝 0 字节文件；非法值在启动时以 `ConfigError` 拒绝。
 - `tasks.tool_result_spill` 是新增的可选段（M43）：`enabled`（布尔，默认 `true`）、
