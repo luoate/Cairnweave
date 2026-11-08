@@ -78,6 +78,13 @@ export interface WorkerTask {
    */
   readonly tools?: readonly string[];
   /**
+   * M58: ceiling in seconds for one bash command. Every command runs under a timeout: the
+   * model's own value when it passes one, this ceiling otherwise, and always capped by the
+   * time left before `hardDeadlineSeconds`. Computed per task from
+   * `tasks.bash_timeout_seconds`, so a 60 s conclude never gets a 150 s command.
+   */
+  readonly bashTimeoutSeconds?: number;
+  /**
    * Staffed dispatch profile selected by the scheduler (`worker_profiles[].id`). Present
    * only when stats-driven selection is enabled; recorded on the run for per-profile stats.
    */

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { modelLabel, ssrfMarkerFields } from "./breachweave";
+import { modelLabel, ssrfMarkerFields, workerDeadlineEnvironment } from "./breachweave";
 
 describe("solver model label", () => {
   test("formats provider and model id", () => {
@@ -49,6 +49,31 @@ describe("worker SSRF marker fields", () => {
   test("passes an unrecognized mode through for the policy parser to refuse", () => {
     expect(ssrfMarkerFields({ CAIRN_SSRF_POLICY: "watch" })).toEqual({
       ssrfMarkers: "watch",
+    });
+  });
+});
+
+describe("worker deadline environment", () => {
+  test("exports absolute soft and hard deadlines and the bash ceiling", () => {
+    expect(
+      workerDeadlineEnvironment(
+        { hardDeadlineSeconds: 60, softDeadlineSeconds: 48, bashTimeoutSeconds: 45 },
+        1_000,
+      ),
+    ).toEqual({
+      CAIRN_TASK_HARD_DEADLINE_MS: "61000",
+      CAIRN_TASK_SOFT_DEADLINE_MS: "49000",
+      CAIRN_BASH_TIMEOUT_SECONDS: "45",
+    });
+  });
+
+  test("clears absent values so a previous task cannot leak them", () => {
+    // A null tells the caller to delete the variable: a prior task's deadline or ceiling
+    // must not survive into this one through the process environment.
+    expect(workerDeadlineEnvironment({ hardDeadlineSeconds: 30 }, 0)).toEqual({
+      CAIRN_TASK_HARD_DEADLINE_MS: "30000",
+      CAIRN_TASK_SOFT_DEADLINE_MS: null,
+      CAIRN_BASH_TIMEOUT_SECONDS: null,
     });
   });
 });

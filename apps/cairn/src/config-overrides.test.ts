@@ -299,6 +299,25 @@ describe("RuntimeConfigStore", () => {
     expect(store.reset().editable.tasks.context_plan).toEqual({ mode: "audit", max_initial_bytes: 131072 });
   });
 
+  test("edits the per-command bash timeout on the live config", () => {
+    const store = newStore();
+    expect(store.view().editable.tasks.bash_timeout_seconds).toBe(150);
+
+    const view = store.apply({ tasks: { bash_timeout_seconds: 90 } });
+    expect(config.tasks.bashTimeoutSeconds).toBe(90);
+    expect(view.overrides).toEqual(["tasks.bash_timeout_seconds"]);
+    expect(
+      JSON.parse(db.withConn((conn) => getRuntimeConfigOverrides(conn)).overrides),
+    ).toEqual({ tasks: { bash_timeout_seconds: 90 } });
+
+    // A command always runs under a timeout, so zero is rejected by the merged re-parse.
+    expect(() => store.apply({ tasks: { bash_timeout_seconds: 0 } })).toThrow(
+      "tasks.bash_timeout_seconds must be a positive integer",
+    );
+    expect(config.tasks.bashTimeoutSeconds).toBe(90);
+    expect(store.reset().editable.tasks.bash_timeout_seconds).toBe(150);
+  });
+
   test("toggles tool-result spilling on the live config", () => {
     const store = newStore();
     expect(store.view().editable.tasks.tool_result_spill).toEqual({

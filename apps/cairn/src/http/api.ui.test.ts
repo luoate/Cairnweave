@@ -2349,6 +2349,7 @@ describe("runtime settings modal", () => {
         explore: { timeout: 900, conclude_timeout: 120 },
         graph_slice: { enabled: true, max_facts: 80, max_intents: 60 },
         evidence: { min_bytes: 32 },
+        bash_timeout_seconds: 150,
         model_trace: { enabled: true, preview_chars: 2000, max_bytes: 8388608 },
       },
       worker: {

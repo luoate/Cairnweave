@@ -9449,6 +9449,7 @@ function cairnApp() {
             number('tasks.graph_slice.max_facts', '切片事实数', { min: 2 }),
             number('tasks.graph_slice.max_intents', '切片意图数', { min: 1 }),
             number('tasks.evidence.min_bytes', '证据最小字节', { min: 0 }),
+            number('tasks.bash_timeout_seconds', '单条命令超时（秒）', { min: 1 }),
             select('verification.evidence_enforcement', '完成校验', [
               { value: 'completion', label: '阻断完成' },
               { value: 'off', label: '关闭' },

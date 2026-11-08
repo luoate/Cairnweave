@@ -157,6 +157,8 @@ export interface TasksConfig {
   explore: ExploreTaskConfig;
   graphSlice: GraphSliceConfig;
   evidence: EvidenceConfig;
+  /** M58: default timeout for one bash command; see `WorkerTask.bashTimeoutSeconds`. */
+  bashTimeoutSeconds: number;
   toolResultSpill: ToolResultSpillConfig;
   modelTrace: ModelTraceConfig;
   contextPlan: ContextPlanConfig;
@@ -164,6 +166,15 @@ export interface TasksConfig {
   checkpoint: TaskCheckpointConfig;
   explorationSuppression: { enabled: boolean };
 }
+
+/**
+ * One bash command always runs under a timeout (M58). 150 s covers a directory walk, a
+ * scan or a slow HTTP probe, and is short enough that a runaway `find /` cannot eat a
+ * 600 s task: proj_050 lost 376 s to exactly that and was killed with no result.
+ */
+export const DEFAULT_BASH_TIMEOUT_SECONDS = 150;
+/** Floor for any single command, so a nearly expired task still gets one short attempt. */
+export const MIN_BASH_TIMEOUT_SECONDS = 5;
 
 /**
  * Explore only needs its intent's causal neighbourhood, and reason/bootstrap still get the
@@ -726,7 +737,7 @@ const EDITABLE_OVERRIDE_KEYS: Record<string, readonly string[]> = {
     "max_project_workers",
     "interval",
   ],
-  tasks: ["bootstrap", "reason", "explore", "graph_slice", "evidence", "tool_result_spill", "model_trace", "context_plan", "context_pack", "checkpoint", "exploration_suppression"],
+  tasks: ["bootstrap", "reason", "explore", "graph_slice", "evidence", "bash_timeout_seconds", "tool_result_spill", "model_trace", "context_plan", "context_pack", "checkpoint", "exploration_suppression"],
   worker: [
     "soft_deadline_ratio",
     "retain_task_files",
@@ -983,6 +994,9 @@ function parseTasks(value: unknown): TasksConfig {
     evidence: has(tasks, "evidence")
       ? parseEvidence(tasks["evidence"])
       : { ...DEFAULT_EVIDENCE },
+    bashTimeoutSeconds: has(tasks, "bash_timeout_seconds")
+      ? requiredPositiveInt(tasks, "bash_timeout_seconds", "tasks")
+      : DEFAULT_BASH_TIMEOUT_SECONDS,
     toolResultSpill: has(tasks, "tool_result_spill")
       ? parseToolResultSpill(tasks["tool_result_spill"])
       : { ...DEFAULT_TOOL_RESULT_SPILL },
@@ -1554,12 +1568,17 @@ export function parseRuntimeOverridePatch(value: unknown): RuntimeOverridePatch 
     checkOverrideKeys(sectionValue, allowed, `overrides.${section}`);
     if (section !== "tasks") continue;
     for (const kind of Object.keys(sectionValue)) {
-      const group = recordAt(sectionValue[kind], `overrides.tasks.${kind}`);
-      checkOverrideKeys(
-        group,
-        EDITABLE_TASK_KEYS[kind]!,
-        `overrides.tasks.${kind}`,
-      );
+      // `tasks` mixes per-kind groups with a few scalars (bash_timeout_seconds, M58);
+      // only the groups have their own key whitelist. Scalars are range-checked by the
+      // merged re-parse.
+      const raw = sectionValue[kind];
+      if (raw === null || typeof raw !== "object" || Array.isArray(raw)) continue;
+      const group = recordAt(raw, `overrides.tasks.${kind}`);
+      const kindKeys = EDITABLE_TASK_KEYS[kind];
+      if (kindKeys === undefined) {
+        throw new ConfigError(`overrides.tasks.${kind} is not an editable group`);
+      }
+      checkOverrideKeys(group, kindKeys, `overrides.tasks.${kind}`);
     }
   }
   return structuredClone(patch) as RuntimeOverridePatch;

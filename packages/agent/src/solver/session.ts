@@ -15,6 +15,7 @@ import { pentestCompactionExtension } from "./extension/pentest-compaction"
 import { scopeGuardExtension } from "./extension/scope-guard"
 import { largeToolResultExtension } from "./extension/large-tool-result"
 import { modelTraceExtension } from "./extension/model-trace"
+import { bashTimeoutExtension } from "./extension/bash-timeout"
 import { rtkRewriteExtension } from "./extension/rtk-rewrite"
 
 export interface SolverSession {
@@ -319,6 +320,9 @@ export async function createSolverSession(init: SolverInitPayload): Promise<Solv
         ...toolSpillExtensions(workspaceDir),
         // Pure observation: it appends to the session directory and never alters a message.
         ...modelTraceExtensions(sessionDir),
+        // M58b: bounds every bash command. It has to be an extension: the SDK rebuilds its
+        // tools from its own map, so a wrapped tool object would be discarded.
+        bashTimeoutExtension(),
         cairnObserver ? cairnObserver.extension : challengeObserverExtension({ observerEnabled, observerModel }),
         // rtkRewriteExtension(),
     ]
@@ -412,6 +416,8 @@ export async function createSubagentSession(promptName: string, task: string): P
         // Subagents inherit CAIRN_TOOL_SPILL_* through process.env and share the solver workspace,
         // so their spills land in the same scan root as the parent's.
         ...toolSpillExtensions(workspaceDir),
+        // M58b: a subagent's bash commands are bounded by the same task deadlines.
+        bashTimeoutExtension(),
         // rtkRewriteExtension(),
         // pentestCompactionExtension(),
         // scopeGuardExtension({ workspaceRoot: workspaceDir, agentRole: "subagent" }),

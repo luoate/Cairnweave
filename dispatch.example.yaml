@@ -71,12 +71,18 @@ tasks:
   # Reject evidence files smaller than this many bytes. Empty files are usually
   # placeholders, so the default is 1; set 0 to accept empty evidence.
   evidence:
-    min_bytes: 1
-    # M57a: drop | fail. `drop` discards only the invalid refs (missing, directory,
+    min_bytes: 1    # M57a: drop | fail. `drop` discards only the invalid refs (missing, directory,
     # too small) and keeps the valid subset, recording the reason in run.detail;
     # `fail` restores the all-or-nothing rejection. A `complete` claim stays strict
     # in both modes.
     invalid_refs: drop
+  # M58b: every bash command runs under a timeout, injected by a worker-side `tool_call`
+  # extension. This is the task ceiling; the value used is min(the model's own timeout,
+  # this ceiling, time left before the soft deadline - 5s, time left before the hard
+  # deadline - 10s), so no command outlives the wrap-up moment. After the soft deadline
+  # every command drops to 30s. The ceiling is also capped once at task preparation
+  # (hard deadline - 15s), so a 60s conclude ships 45s.
+  bash_timeout_seconds: 150
   # M43: tool results longer than max_inline_chars are written to
   # <workspace>/.tool-results/ and replaced in the context by the absolute path plus a
   # short preview, so a single 30k-char curl no longer stays in every later turn. The

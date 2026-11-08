@@ -50,6 +50,7 @@ describe("dispatcher config", () => {
     expect(config.tasks.reason.maxIntents).toBe(3);
     expect(config.tasks.reason.tools).toEqual(["read", "grep", "find", "ls"]);
     expect(config.tasks.reason.maxToolCalls).toBe(12);
+    expect(config.tasks.bashTimeoutSeconds).toBe(150);
     expect(config.tasks.evidence).toEqual({ minBytes: 1, invalidRefs: "drop" });
     expect(config.local).toEqual({ workspaceRoot: null, completedAction: "keep" });
     expect(config.container).toBeNull();
@@ -429,8 +430,19 @@ describe("dispatcher config", () => {
     );
   });
 
-  test("parses the reason planning tool allowlist and ceiling", () => {
-    const config = parse(
+  test("parses and validates the per-command bash timeout", () => {
+    expect(parse(BASE).tasks.bashTimeoutSeconds).toBe(150);
+    expect(parse(BASE + "  bash_timeout_seconds: 90\n").tasks.bashTimeoutSeconds).toBe(90);
+    // A command always runs under a timeout, so 0 or a negative value is a config error.
+    expect(() => parse(BASE + "  bash_timeout_seconds: 0\n")).toThrow(
+      "tasks.bash_timeout_seconds must be a positive integer",
+    );
+    expect(() => parse(BASE + '  bash_timeout_seconds: "90"\n')).toThrow(
+      "tasks.bash_timeout_seconds must be a positive integer",
+    );
+  });
+
+  test("parses the reason planning tool allowlist and ceiling", () => {    const config = parse(
       BASE.replace(
         "reason: {timeout: 300}",
         "reason: {timeout: 300, tools: [read, bash, read], max_tool_calls: 20}",

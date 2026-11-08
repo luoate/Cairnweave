@@ -218,6 +218,7 @@ export class ConfigManager {
 
 export function createSolverSession(init: SolverInitPayload): Promise<SolverSession>;
 
+
 export interface RunSolverOptions {
   promptName: string;
   task: string;

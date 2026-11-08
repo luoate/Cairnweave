@@ -26,6 +26,26 @@ const STEER_MESSAGE =
  * by the `model: "cairn-worker"` entry in the prompt frontmatter, which points at a
  * model-prefs.json record.
  */
+/**
+ * M58: the env contract the worker-side tools read. `CAIRN_TASK_HARD_DEADLINE_MS` is
+ * absolute so the bash wrapper can cap a command by the time actually left, not by the
+ * deadline the task started with.
+ */
+export function workerDeadlineEnvironment(
+  task: { hardDeadlineSeconds: number; softDeadlineSeconds?: number; bashTimeoutSeconds?: number },
+  now: number = Date.now(),
+): Record<string, string | null> {
+  return {
+    CAIRN_TASK_HARD_DEADLINE_MS: String(now + task.hardDeadlineSeconds * 1000),
+    CAIRN_TASK_SOFT_DEADLINE_MS:
+      task.softDeadlineSeconds === undefined
+        ? null
+        : String(now + task.softDeadlineSeconds * 1000),
+    CAIRN_BASH_TIMEOUT_SECONDS:
+      task.bashTimeoutSeconds === undefined ? null : String(task.bashTimeoutSeconds),
+  };
+}
+
 export class BreachWeaveSolver implements Solver {
   readonly name = PROMPT_NAME;
   private lastUsage: SolverUsage | null = null;
@@ -90,6 +110,14 @@ export class BreachWeaveSolver implements Solver {
         process.env["CAIRN_CHECKPOINT_MODULE"] = join(import.meta.dir, "..", "checkpoint", "worker.ts");
       }
 
+      // M58: every task gets a bash ceiling and an absolute hard deadline. The bash wrapper
+      // fills a timeout the model left out and never lets a command outlive the task; the
+      // soft-deadline interrupt below uses the same deadline.
+      for (const [key, value] of Object.entries(workerDeadlineEnvironment(task))) {
+        if (value === null) delete process.env[key];
+        else process.env[key] = value;
+      }
+
       // A conclude task appends one wrap-up turn to the failed task's session instead of
       // starting cold. The session file lives in the previous task's directory, which the
       // scheduler keeps alive until this task finishes.
@@ -121,6 +149,9 @@ export class BreachWeaveSolver implements Solver {
       if (task.softDeadlineSeconds !== undefined) {
         steerTimer = setTimeout(() => {
           markWorkerCheckpoint("soft_deadline");
+          // M58b: every bash command is already capped so it ends before this point
+          // (see `extension/bash-timeout.ts`), so the wrap-up instruction finds the
+          // solver idle instead of queued behind a hung process.
           session.steer(STEER_MESSAGE).catch(() => {
             // The session may already be finished; the hard deadline still applies.
           });

@@ -7,6 +7,8 @@ export type { SolverEventListener } from "./solver/cli"
 // Merged Cairn: the worker calls the solver session directly instead of RPC.
 export { createSolverSession } from "./solver/session"
 export type { SolverSession } from "./solver/session"
+// M58b: the bash timeout is injected from a `tool_call` extension, inside the SDK.
+export { bashTimeoutExtension } from "./solver/extension/bash-timeout"
 export { initBuiltinPrompts } from "./config/prompts/index"
 export { initBuiltinSkills } from "./config/skills/index"
 export { CAIRNWEAVE_HOME_DIR, DEFAULT_CONFIG_DIR, TCH_AGENT_HOME_DIR } from "./config/index"

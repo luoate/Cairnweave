@@ -39,6 +39,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { DispatchConfig, ModelTraceConfig, ReasoningMode, ToolResultSpillConfig } from "../config";
+import { MIN_BASH_TIMEOUT_SECONDS } from "../config";
 import { auditTaskContext, type ContextPlanOutcome } from "./context-plan";
 import { prepareContextPack } from "./prepare-context-pack";
 import type { ContextPackReport } from "./context-pack";
@@ -248,8 +249,9 @@ export function prepareTask(input: PrepareTaskInput): PreparedTask {
     hardDeadline(config, kind, concludeOf),
     input.budget?.max_seconds,
   );
-  const softDeadlineSeconds =
-    kind === "conclude" ? undefined : softDeadline(config, hardDeadlineSeconds);
+  // M58b: conclude gets a soft deadline too. Without one it has no wrap-up moment at all —
+  // proj_051's conclude was still probing when the 60 s hard deadline killed it.
+  const softDeadlineSeconds = softDeadline(config, hardDeadlineSeconds);
   const intentMeta = new Map(
     (input.intentMeta ?? []).map((entry) => [entry.intent_id, entry]),
   );
@@ -304,6 +306,11 @@ export function prepareTask(input: PrepareTaskInput): PreparedTask {
     maxToolCalls === undefined || kind === "reason"
       ? 0
       : budgetReserve(maxToolCalls, config.worker.budgetReserveCalls);
+  // M58: a command never outlives the task, and a short task gets a short ceiling.
+  const bashTimeoutSeconds = bashTimeoutForTask(
+    config.tasks.bashTimeoutSeconds,
+    hardDeadlineSeconds,
+  );
   const decorate = (context: string): string => {
     const experiment = input.intent === undefined || (kind !== "explore" && !(kind === "conclude" && concludeOf === "explore"))
       ? undefined : intentMeta.get(input.intent.id)?.experiment;
@@ -319,8 +326,12 @@ export function prepareTask(input: PrepareTaskInput): PreparedTask {
           artifactDir,
           config.worker.budgetReserveCalls,
         );
+    // M58: bash always runs under a timeout, so say so and steer away from `find /`.
+    // A read-only reason turn has no bash, and the notice would only be noise there.
+    const hasBash = kind !== "reason" || config.tasks.reason.tools.includes("bash");
+    const withBash = hasBash ? withBashTimeoutPolicy(reserved, bashTimeoutSeconds) : reserved;
     const completed = withCompletionPolicy(artifactDir === undefined
-      ? reserved : withArtifactPolicy(reserved, artifactDir));
+      ? withBash : withArtifactPolicy(withBash, artifactDir));
     return config.tasks.checkpoint.enabled ? completed + CHECKPOINT_INSTRUCTIONS : completed;
   };
   const prompt = decorate(contextPrompt);
@@ -366,6 +377,7 @@ export function prepareTask(input: PrepareTaskInput): PreparedTask {
     ...(maxToolCalls === undefined ? {} : { maxToolCalls }),
     ...(reserveToolCalls === 0 ? {} : { reserveToolCalls }),
     ...(kind === "reason" ? { tools: [...config.tasks.reason.tools] } : {}),
+    bashTimeoutSeconds,
     ...(input.workerProfile === undefined
       ? {}
       : {
@@ -739,6 +751,40 @@ function withToolBudgetPolicy(
 
 # 工具预算
 本任务最多 ${maxToolCalls} 次工具调用（每次 bash/read/write 等各计一次）。${reserveLine}
+`;
+}
+
+/**
+ * Per-task bash ceiling (M58). A task always ships a timeout, and a short task never gets
+ * one longer than its own budget: conclude's hard deadline is 60 s, so a 150 s command
+ * would guarantee the deadline wins and the worker dies without a result.
+ *
+ * The worker applies a further cap at call time (time left before the soft deadline, then
+ * before the hard deadline), so this number is an upper bound, not the value every command
+ * receives.
+ */
+export function bashTimeoutForTask(
+  configuredSeconds: number,
+  hardDeadlineSeconds: number,
+): number {
+  const remaining = hardDeadlineSeconds - BASH_DEADLINE_MARGIN_SECONDS;
+  return Math.max(MIN_BASH_TIMEOUT_SECONDS, Math.min(configuredSeconds, remaining));
+}
+
+/** Time kept back from the hard deadline so the worker can still write its JSON result. */
+export const BASH_DEADLINE_MARGIN_SECONDS = 15;
+
+function withBashTimeoutPolicy(prompt: string, timeoutSeconds: number): string {
+  return `${prompt.trimEnd()}
+
+# 命令超时
+每条 bash 命令都必须在上限内结束：默认 ${timeoutSeconds} 秒，并且不会晚于本任务的软截止
+（收尾时刻）；软截止之后每条命令再压到 30 秒，硬截止之前留出写结果的时间。
+终止后该次调用返回 “Command timed out”，你可以继续下一步，但不要再发同一条命令。
+需要更短的上限时自己传 \`timeout\`（秒）；\`find\` 一类命令必须限定目录（例如
+\`find .cairn artifacts\`），不要扫描 \`/\`，它在 git-bash 下会进入 \`/proc/registry\` 之类的
+虚拟目录，几乎必然超时。批量扫描要么分批并自行限时，要么交给能计时的脚本，避免一条命令
+吃掉整个任务预算。
 `;
 }
 

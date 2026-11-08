@@ -8,7 +8,8 @@
 最新代码：**M50 已收束；M51a–d 与 M52a–d 已实现（0.77.0-m52），M52c 排序偏好默认关闭；
 M53 只读调度日志、M54 Writeup 目标凭据、M55 按任务类型推理开关、M56 模型请求/响应轨迹、
 M57a 证据引用逐条降级、M57b 工具预算末尾保留段、M57c 规划回合收权与确定性失败分类、
-M57d scope 解析精度已实现，版本保持 0.77.0-m52；Writeup 利用链增补已实现，见文末记录**。
+M57d scope 解析精度、M58 命令超时与软截止（M58b 实现）已实现，版本保持 0.77.0-m52；
+Writeup 利用链增补已实现，见文末记录**。
 最终验收见文末对应记录；以下段落保留各历史阶段当时的状态，不代表当前版本止于 M40。
 
 状态：**M40（完成契约安全门：bootstrap 支持 fact-only；`verification: off` 的完成声明默认进入 `completion_reviews` 人工确认，不再自动关项目；执行模式按题选择记为 M39b）**；M0–M4、M5a–M5c、
@@ -2025,6 +2026,71 @@ proj_047 的 42 次阻断里至少 9 次是误报：脚本里的裸主机名（�
 stdin heredoc 仍 fail closed、heredoc 旁的命令行 URL 仍被读取、请求头/cookie 值进入
 carried）；`host-bridge/bridge.test.ts` 新增 2 项（默认端口匹配与显式端口不匹配、header 值
 记录为 SSRF 标记且放行）。`bun test`：**1536 pass / 0 fail / 144 files / 7579 expects**。
+
+### M58：命令超时与软截止（2026-11-07）
+
+proj_050 的 bootstrap 把 600 秒硬截止耗在一条命令上：模型想找一个 ffuf 字典，发了
+
+```bash
+which ffuf gobuster feroxbuster dirb wfuzz nuclei 2>/dev/null
+ls "…/agent-config/skills/" 2>/dev/null
+find / -maxdepth 6 -iname "common.txt" -path "*wordlist*" 2>/dev/null | head
+```
+
+这条命令从 13:33:48 一直没返回，13:40:04 进程被杀，375.99 秒零产出。两个原因叠加：
+
+- SDK 的 bash 工具把 `timeout` 定义成「可选、无默认值」，模型不填就一直跑。历史轨迹里
+  1114 次 bash 调用只有 14 次传了 `timeout`。
+- git-bash 的 `/` 下挂着 `/proc/registry{,32,64}`——整个 Windows 注册表映射成的目录树。
+  实测同样 `-maxdepth 6`：`/usr` 238 ms，`/proc`（排除注册表）264 ms，而注册表三棵树各
+  20 秒只走了约 1100 个条目。`| head` 也救不了：`-iname/-path` 一个都没匹配到，`find`
+  会跑到 EOF。
+
+排队抢救的 conclude 在 13:40:33 又发了 `find / -name conv_preview.txt`，60 秒预算同样耗尽。
+
+### M58a 的失败（记录在案）
+
+第一版把 SDK 的 bash 工具包装成 `bashToolWithTimeout` 放进 prompt 的工具表。**这条路走不通**：
+`createAgentSession` 只从 `options.tools` 里取**名字**（`sdk.js` 的
+`options.tools.map((t) => t.name).filter((n) => n in allTools)`），然后从自己的 `allTools`
+重建工具，包装对象被静默丢弃；SDK 内部的 `baseToolsOverride` 也没有被 `createAgentSession`
+透传。proj_051 因此完全没有超时保护：整个项目 0 次 `Command timed out`，一条
+`fixscan.py 20000`（20000 次对象探测、每批 5 个 curl）从 21:48:02 一直跑到硬截止，
+397 秒无人打断；配套的软截止 abort 也从未触发过（`soft deadline aborted` 一行都没有）。
+
+### M58b：`tool_call` 扩展注入（最终实现）
+
+SDK 支持的注入点是 `tool_call` 扩展钩子：它收到的 `event.input` 就是随后传给工具执行的
+那个参数对象（`agent-loop.js` 里 `beforeToolCall` 收到 `args: validatedArgs`，之后
+`execute(prepared.toolCall.id, prepared.args, …)`），**原地修改即可**。
+
+- **扩展**：新增 `packages/agent/src/solver/extension/bash-timeout.ts`，在
+  `createSolverSession` 与 `createSubagentSession` 的扩展列表里注册。它对每条 bash 调用写入
+  `input.timeout`，取值依次取小：模型自己的 `timeout`（更短时）、任务上限
+  `tasks.bash_timeout_seconds`（默认 150）、**距软截止剩余 − 5 秒**、距硬截止剩余 − 10 秒，
+  下限 5 秒。软截止之后固定压到 30 秒，让收尾窗口留给写结果。因此**任何命令都会在软截止前
+  结束**，不再需要 abort 正在运行的工具调用。
+- **任务上限**：`tasks.bash_timeout_seconds`（默认 150）经 `bashTimeoutForTask()` 变成
+  `min(配置值, hardDeadlineSeconds − 15)` 写进 `WorkerTask.bashTimeoutSeconds`。worker 用
+  `workerDeadlineEnvironment()` 导出 `CAIRN_BASH_TIMEOUT_SECONDS`、
+  `CAIRN_TASK_SOFT_DEADLINE_MS` 与 `CAIRN_TASK_HARD_DEADLINE_MS`（都是绝对时间），扩展在每次
+  调用时读取——worker 先 import 包、后写 env，所以不能在模块加载时读。
+- **conclude 的软截止**：`prepareTask` 不再对 conclude 跳过 `softDeadlineSeconds`。没有软
+  截止时 conclude 连一次收尾机会都没有：proj_051 的 conclude 在 60 秒用尽时还在正常探测，
+  直接被硬截止杀掉。现在 60 秒硬截止对应 48 秒软截止，命令上限也随之压到 43 秒。
+- **提示词**：新增「# 命令超时」段，写明上限来源、超时后的返回形态，要求 `find` 限定目录、
+  不要扫 `/`，并提醒批量扫描要分批限时（reason 没有 bash 时不加这段）。
+- **删除**：`config/tools/bash-timeout.ts`（被丢弃的包装器）与 `solver/tool-interrupt.ts`
+  （依赖包装器才存在的 abort 注册表）一并移除，避免留下一条永远不执行的路径。
+
+测试：`solver/extension/bash-timeout.test.ts` 17 项（默认值、模型值取小、非法值忽略、
+软截止前收紧、软截止后 30 秒、硬截止夹紧、60 秒 conclude 全程、超长任务收尾、env 解析、
+注入到 bash、其它工具不受影响、异常事件不抛错、每次调用重读 env）；`scheduler/tasks.test.ts`
+5 项（长任务 150、conclude 45/48、intent 预算联动、配置更小时取配置、reason 不加该段）；
+`config.test.ts` 2 项与 `config-overrides.test.ts` 1 项；`breachweave.test.ts` 2 项（软+硬
+截止与上限的 env 契约、缺省值清空）。真实工具冒烟：4 秒软截止下注入 5 秒，`sleep 30` 在
+5.4 秒返回 `Command timed out after 5 seconds`。
+`bun test`：**1562 pass / 0 fail / 145 files / 7639 expects**。
 
 ## 与 Phase 0 的关系
 

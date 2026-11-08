@@ -49,6 +49,7 @@ export interface EditableRuntimeConfig {
     reason: { timeout: number; max_intents: number; tools: string[]; max_tool_calls: number };
     explore: { timeout: number; conclude_timeout: number };
     graph_slice: { enabled: boolean; max_facts: number; max_intents: number };
+    bash_timeout_seconds: number;
     tool_result_spill: { enabled: boolean; max_inline_chars: number };
     model_trace: { enabled: boolean; preview_chars: number; max_bytes: number };
     context_plan: { mode: "off" | "audit"; max_initial_bytes: number };
@@ -372,6 +373,7 @@ function editableView(config: DispatchConfig): EditableRuntimeConfig {
         min_bytes: config.tasks.evidence.minBytes,
         invalid_refs: config.tasks.evidence.invalidRefs,
       },
+      bash_timeout_seconds: config.tasks.bashTimeoutSeconds,
       tool_result_spill: {
         enabled: config.tasks.toolResultSpill.enabled,
         max_inline_chars: config.tasks.toolResultSpill.maxInlineChars,

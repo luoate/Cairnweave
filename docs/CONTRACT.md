@@ -32,7 +32,7 @@ worker 视角的绝对路径；本地模式就是宿主路径，容器模式是 
 | `artifactDir` | 否 | `artifacts/<task-id>`，只能位于 `artifacts/` 下的相对路径；开启同项目并发时出现 |
 | `scope.targets` | 是 | 已授权的 host / host:port / URL / CIDR，**不得为空**（fail closed） |
 | `scope.notes` | 否 | 字符串 |
-| `softDeadlineSeconds` | 否 | 正数且小于 `hardDeadlineSeconds`；conclude 不设置 |
+| `softDeadlineSeconds` | 否 | 正数且小于 `hardDeadlineSeconds`；所有任务类型都设置（M58b 起 conclude 也有，默认 `worker.soft_deadline_ratio` 0.8，60 秒硬截止 → 48 秒） |
 | `hardDeadlineSeconds` | 是 | 正整数 |
 | `maxToolCalls` | 否 | 正整数；Host Bridge 的调用上限，超出后只拒绝工具、仍允许写结果 |
 | `reserveToolCalls` | 否 | 正整数，须小于 `maxToolCalls`；M57b 的末尾保留段，进入后只有本任务 `artifactDir`（未开启工件隔离时为工作区内）的写入被放行，其余调用以 `tool_budget_reserve` 拒绝且不消耗保留段 |
@@ -40,6 +40,7 @@ worker 视角的绝对路径；本地模式就是宿主路径，容器模式是 
 | `model` | 否 | model-prefs 条目名，≤128 字符且无控制字符；覆盖 prompt frontmatter |
 | `reasoning` | 否 | `"on"` / `"off"`；调度器按 `worker.reasoning` 与任务类型写入，缺省时由模型配置决定 |
 | `tools` | 否 | M57c：工具白名单，与 prompt 已声明的工具取交集。只能收窄，不会新增；reason 默认只给 read/grep/find/ls |
+| `bashTimeoutSeconds` | 否 | M58：本任务单条 bash 命令的上限（秒）。控制面写入 `min(tasks.bash_timeout_seconds, hardDeadlineSeconds − 15)`，worker 再按实际剩余时间收紧；任务总会带一个值，命令不可能无超时运行 |
 
 `scope.targets` 不是提示：Host Bridge 在每次工具调用前用它做硬校验，允许与拒绝都写入
 `audit.jsonl`。`artifactDir` 存在时，写其它任务的 artifacts 目录同样被拒绝。

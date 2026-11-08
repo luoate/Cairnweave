@@ -154,6 +154,77 @@ describe("operator guidance delivery", () => {
   });
 });
 
+describe("bash timeout policy", () => {
+  // Realistic deadlines: the fixture's 30 s timeouts would cap every command at 15 s and
+  // hide what these tests are about.
+  const TASKS = {
+    bootstrap: { timeout: 600, conclude_timeout: 90 },
+    reason: { timeout: 300, max_intents: 3 },
+    explore: { timeout: 600, conclude_timeout: 60 },
+  };
+
+  const base = (
+    kind: "bootstrap" | "explore" | "conclude" | "reason",
+    tasks: Record<string, unknown> = TASKS,
+    budget?: { max_seconds?: number; max_tool_calls?: number },
+  ) => {
+    const project = projectFixture();
+    return prepareTask({
+      config: parseDispatchConfig({ ...CONFIG, tasks }),
+      project,
+      exportYaml: "project: p1\n",
+      kind,
+      intent: project.intents[0]!,
+      ...(budget === undefined ? {} : { budget }),
+      ...(kind === "conclude"
+        ? {
+            concludeOf: "explore" as const,
+            resumeFromHostSessionDir: join(directory, "workspace", "p1", ".cairn", "sessions", "explore-1"),
+          }
+        : {}),
+      scope: { targets: ["127.0.0.1:8080"] },
+      workspaceRoot: directory,
+    });
+  };
+
+  test("a long task gets the configured ceiling and says so in the prompt", () => {
+    const prepared = base("bootstrap");
+    expect(prepared.task.bashTimeoutSeconds).toBe(150);
+    expect(prepared.task.prompt).toContain("# 命令超时");
+    expect(prepared.task.prompt).toContain("默认 150 秒");
+    expect(prepared.task.prompt).toContain("软截止之后每条命令再压到 30 秒");
+    expect(prepared.task.prompt).toContain("find .cairn artifacts");
+  });
+
+  test("a conclude never gets a command longer than its own deadline", () => {
+    // 60 s hard deadline minus the 15 s margin for writing the result.
+    const prepared = base("conclude");
+    expect(prepared.task.hardDeadlineSeconds).toBe(60);
+    expect(prepared.task.bashTimeoutSeconds).toBe(45);
+    // M58b: without a soft deadline the worker never gets a wrap-up moment; proj_051's
+    // conclude was still probing when the 60 s hard deadline killed it.
+    expect(prepared.task.softDeadlineSeconds).toBe(48);
+  });
+
+  test("an intent budget shortens the ceiling with the deadline", () => {
+    const prepared = base("explore", TASKS, { max_seconds: 40, max_tool_calls: 20 });
+    expect(prepared.task.hardDeadlineSeconds).toBe(40);
+    expect(prepared.task.bashTimeoutSeconds).toBe(25);
+  });
+
+  test("the configured value wins when it is the shorter one", () => {
+    const prepared = base("explore", { ...TASKS, bash_timeout_seconds: 30 });
+    expect(prepared.task.bashTimeoutSeconds).toBe(30);
+  });
+
+  test("a read-only reason turn is not told about bash", () => {
+    const prepared = base("reason");
+    expect(prepared.task.prompt).not.toContain("# 命令超时");
+    // Reason still carries a ceiling for the case where bash is allowed back in.
+    expect(prepared.task.bashTimeoutSeconds).toBe(150);
+  });
+});
+
 describe("intent budgets", () => {
   test("tightens the deadline and carries the tool-call ceiling", () => {
     const project = projectFixture();

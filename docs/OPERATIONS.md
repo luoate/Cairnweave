@@ -125,6 +125,12 @@ worker 启动真实 Solver 前会把 `task.scope.targets` 与工作区/会话路
   默认 `observe` 只记录，不当作连接目的。
 - **默认端口（M57d）**：scope 写成 `http://host`（端口 80）时，脚本里不带 scheme、不带端口
   的主机字面量视为同一目标；显式 `host:8080` 不会被裸主机名匹配。
+- **命令超时（M58b）**：每条 bash 命令都带超时，由 worker 侧 `tool_call` 扩展在调用前写入
+  （不能包装工具对象——SDK 只取工具名后用自己的实现重建）。实际值取
+  `min(模型值, tasks.bash_timeout_seconds, 距软截止剩余 − 5 秒, 距硬截止剩余 − 10 秒)`，
+  最小 5 秒；软截止之后固定 30 秒。所以不会有命令跨过软截止还活着，收尾时刻一定拿得到。
+  `find /` 在这台机器上会进入 `/proc/registry*` 虚拟目录，几百秒都走不完；超时会让它带着
+  “Command timed out” 返回，模型还能继续。
 - 文件：读只能在工作区或 `file:` scope 目标内；写只能在项目工作区内；agent 配置目录
   （`/cairn/agent-config`、`~/.cairnweave`、旧版 `~/.tch-agent` 与 `CAIRN_AGENT_CONFIG_DIR`
   指定的目录）始终拒绝；按 realpath + 词法双重判断，阻止符号链接逃逸。
@@ -216,7 +222,7 @@ tail -f "<workspace>/proj_001/.cairn/sessions/explore-abc/solver-session/model-t
 | `tool_budget_reserve` / `tool_budget_exhausted`（audit 事件） | 调用进入预算末尾保留段却尝试探测，或预算已耗尽（M57b） | 前者说明 worker 没在保留段前写出结论；看 audit 的 `reason` 与 `run.detail`，必要时调大 `worker.budget_reserve_calls` 或 intent 预算 |
 | `verification_error` | 完成校验执行出错（不是校验未通过） | 检查题目服务与校验策略 |
 | `apply_failed` | 写图时控制面内部异常（数据库/事务），不是模型的问题 | 看控制面日志 `apply failed task=…` 的异常原文 |
-| `result_missing` / `worker_failed` / `hard_deadline` / `lease_lost` | worker 没产出结果、异常退出、超硬截止、租约被其它控制面接管 | 看 `<session>/stderr.log` 与调度日志 |
+| `result_missing` / `worker_failed` / `hard_deadline` / `lease_lost` | worker 没产出结果、异常退出、超硬截止、租约被其它控制面接管 | 看 `<session>/stderr.log` 与调度日志。M58b 起命令不会跨过软截止还活着；如果仍然 `hard_deadline`，先看模型轨迹里最后几条 `tool_start` 的 `timeout` 与耗时——命令之外的模型往返或结果写入也可能超时 |
 
 排除法：`infrastructure` 域的失败（模型连接/认证/限流/超时、worker 启动、运行时不可用）会
 进入项目级背压与熔断，与本节的任务级失败分开记录；两者都不代表目标不可达。
