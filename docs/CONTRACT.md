@@ -40,7 +40,7 @@ worker 视角的绝对路径；本地模式就是宿主路径，容器模式是 
 | `model` | 否 | model-prefs 条目名，≤128 字符且无控制字符；覆盖 prompt frontmatter |
 | `reasoning` | 否 | `"on"` / `"off"`；调度器按 `worker.reasoning` 与任务类型写入，缺省时由模型配置决定 |
 | `tools` | 否 | M57c：工具白名单，与 prompt 已声明的工具取交集。只能收窄，不会新增；reason 默认只给 read/grep/find/ls |
-| `bashTimeoutSeconds` | 否 | M58：本任务单条 bash 命令的上限（秒）。控制面写入 `min(tasks.bash_timeout_seconds, hardDeadlineSeconds − 15)`，worker 再按实际剩余时间收紧；任务总会带一个值，命令不可能无超时运行 |
+| `bashTimeoutSeconds` | 否 | M58：本任务单条 bash 命令的上限（秒）。控制面写入 `min(tasks.bash_timeout_seconds, hardDeadlineSeconds − 15)`，worker 再按实际剩余时间收紧；任务总会带一个值，命令不可能无超时运行。M59：worker 另从进程环境导出 `CAIRN_TASK_STARTED_MS`（绝对时间），连同软/硬截止一起用于把剩余时间回显到工具结果；这些都不是 task.json 字段 |
 
 `scope.targets` 不是提示：Host Bridge 在每次工具调用前用它做硬校验，允许与拒绝都写入
 `audit.jsonl`。`artifactDir` 存在时，写其它任务的 artifacts 目录同样被拒绝。

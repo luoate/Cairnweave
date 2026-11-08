@@ -82,6 +82,10 @@ tasks:
   # deadline - 10s), so no command outlives the wrap-up moment. After the soft deadline
   # every command drops to 30s. The ceiling is also capped once at task preparation
   # (hard deadline - 15s), so a 60s conclude ships 45s.
+  # M59: each bash result ends with a "[时间]" line naming the limit it got and why
+  # (model value / task ceiling / remaining time / wrap-up / hard deadline) plus elapsed and
+  # remaining seconds; a command cut off at its limit reports the same as a message, because
+  # the SDK does not let a failed result's content be rewritten.
   bash_timeout_seconds: 150
   # M43: tool results longer than max_inline_chars are written to
   # <workspace>/.tool-results/ and replaced in the context by the absolute path plus a

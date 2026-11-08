@@ -777,14 +777,29 @@ export const BASH_DEADLINE_MARGIN_SECONDS = 15;
 function withBashTimeoutPolicy(prompt: string, timeoutSeconds: number): string {
   return `${prompt.trimEnd()}
 
-# 命令超时
+# 命令超时与时间预算
 每条 bash 命令都必须在上限内结束：默认 ${timeoutSeconds} 秒，并且不会晚于本任务的软截止
 （收尾时刻）；软截止之后每条命令再压到 30 秒，硬截止之前留出写结果的时间。
 终止后该次调用返回 “Command timed out”，你可以继续下一步，但不要再发同一条命令。
-需要更短的上限时自己传 \`timeout\`（秒）；\`find\` 一类命令必须限定目录（例如
-\`find .cairn artifacts\`），不要扫描 \`/\`，它在 git-bash 下会进入 \`/proc/registry\` 之类的
-虚拟目录，几乎必然超时。批量扫描要么分批并自行限时，要么交给能计时的脚本，避免一条命令
-吃掉整个任务预算。
+
+**每条 bash 结果的末尾都有一行 \`[时间]\`**，写明已经用掉多少秒、距软截止和硬截止各剩多少、
+以及这条命令实际拿到多少上限。不要凭感觉估算剩余时间，读这一行；想自己算也可以，进程环境里有
+\`CAIRN_TASK_STARTED_MS\`、\`CAIRN_TASK_SOFT_DEADLINE_MS\`、\`CAIRN_TASK_HARD_DEADLINE_MS\`
+（都是 epoch 毫秒）和 \`CAIRN_BASH_TIMEOUT_SECONDS\`。
+
+当上限被压到默认值以下时，说明是**任务的剩余时间**不够，而不是命令慢：结果会直接说明这一点。
+这种情况下不要原样重跑同一条命令（重跑只会再吃一次同样的时间），而是缩小范围、分批执行，
+或者先把脚本写进产物目录再用更小的参数跑一次。
+
+要避免"一条命令吃掉整个预算"，遵守三条：
+- 可能超过 20 秒的命令，先写成脚本文件（例如产物目录下的 \`scan.py\`）再执行，这样下一轮
+  可以直接改参数复用，而不是整段重打一遍；
+- 批量扫描要分批，每批自己限时（例如 \`timeout 40\`），并在每批之间输出进度，让被截断时也留
+  下部分结果到文件；
+- 输出写到文件，命令只回显摘要；不要在一条命令里既跑全量又要求结果出现在 stdout。
+
+\`find\` 一类命令必须限定目录（例如 \`find .cairn artifacts\`），不要扫描 \`/\`，它在 git-bash
+下会进入 \`/proc/registry\` 之类的虚拟目录，几乎必然超时。
 `;
 }
 

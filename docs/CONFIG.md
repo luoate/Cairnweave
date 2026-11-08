@@ -237,7 +237,7 @@ container:
 | `graph_slice.max_facts` / `graph_slice.max_intents` | 80 / 60 | 软上限；`max_facts ≥ 2` |
 | `evidence.min_bytes` | 1 | 0 表示接受空证据 |
 | `evidence.invalid_refs` | drop | M57a：`drop` / `fail`。`drop` 逐条丢弃不存在、为目录或小于最小字节的 `evidence_refs` 并把原因写进 run detail，其余引用照常记录；`fail` 恢复旧的全有或全无（一个坏路径作废整轮）。携带 `complete` 声明的结果在两种模式下都保持严格。运行时热覆盖 |
-| `bash_timeout_seconds` | 150 | M58b：单条 bash 命令的上限，必须是正整数（0 不允许）。worker 在每次 `tool_call` 里算出实际值：`min(模型传入的 timeout, 这个上限, 距软截止剩余 − 5 秒, 距硬截止剩余 − 10 秒)`，最小值 5 秒；软截止之后固定压到 30 秒。因此任何命令都会在软截止之前结束，收尾时刻不会被一条长命令挡住。控制面写入 task.json 的 `bashTimeoutSeconds` 是先按「硬截止 − 15 秒」夹过一次的上限（conclude 的 60 秒硬截止 → 45 秒）。运行时热覆盖 |
+| `bash_timeout_seconds` | 150 | M58b：单条 bash 命令的上限，必须是正整数（0 不允许）。worker 在每次 `tool_call` 里算出实际值：`min(模型传入的 timeout, 这个上限, 距软截止剩余 − 5 秒, 距硬截止剩余 − 10 秒)`，最小值 5 秒；软截止之后固定压到 30 秒。因此任何命令都会在软截止之前结束，收尾时刻不会被一条长命令挡住。控制面写入 task.json 的 `bashTimeoutSeconds` 是先按「硬截止 − 15 秒」夹过一次的上限（conclude 的 60 秒硬截止 → 45 秒）。M59：实际值与来源（模型值/任务上限/剩余时间/收尾期/硬截止）连同已用时间和距两侧截止的剩余，会以 `[时间]` 行写回每条 bash 结果；被截断的调用改发一条消息，见 [`OPERATIONS.md`](./OPERATIONS.md)。运行时热覆盖 |
 | `tool_result_spill.enabled` / `.max_inline_chars` | true / 32000 | M43：工具结果序列化后超过 `max_inline_chars` 字符就落盘 `<workspace>/.tool-results/<毫秒>-<工具>-<调用id>.md`，上下文里换成「绝对路径 + 工作区相对路径 + 600 字符预览 + 先 grep 再分片读」的指针。`max_inline_chars` 必须为正整数（1 也合法，等于全部外置）；`enabled: false` 回到全量内联。solver 与 subagent 共用同一份开关和同一个工作区，指针因此总是绝对路径在前。溢出文件不进 `project_artifacts` 索引，但 `/flag` 的兜底扫描把它算作取证来源 |
 | `context_plan.mode` | audit | M47：`off` / `audit`；生成任务级 `context-plan.json`。审计不改变输入、不阻断派发；没有 `enforce` 模式 |
 | `context_plan.max_initial_bytes` | 131072 | 正整数；Solver 提示词 + 必读文件的 UTF-8 字节审计阈值，严格大于才告警；不是项目 token 配额或模型窗口 |

@@ -61,6 +61,7 @@ describe("worker deadline environment", () => {
         1_000,
       ),
     ).toEqual({
+      CAIRN_TASK_STARTED_MS: "1000",
       CAIRN_TASK_HARD_DEADLINE_MS: "61000",
       CAIRN_TASK_SOFT_DEADLINE_MS: "49000",
       CAIRN_BASH_TIMEOUT_SECONDS: "45",
@@ -71,6 +72,7 @@ describe("worker deadline environment", () => {
     // A null tells the caller to delete the variable: a prior task's deadline or ceiling
     // must not survive into this one through the process environment.
     expect(workerDeadlineEnvironment({ hardDeadlineSeconds: 30 }, 0)).toEqual({
+      CAIRN_TASK_STARTED_MS: "0",
       CAIRN_TASK_HARD_DEADLINE_MS: "30000",
       CAIRN_TASK_SOFT_DEADLINE_MS: null,
       CAIRN_BASH_TIMEOUT_SECONDS: null,

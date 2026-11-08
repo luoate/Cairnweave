@@ -36,6 +36,7 @@ export function workerDeadlineEnvironment(
   now: number = Date.now(),
 ): Record<string, string | null> {
   return {
+    CAIRN_TASK_STARTED_MS: String(now),
     CAIRN_TASK_HARD_DEADLINE_MS: String(now + task.hardDeadlineSeconds * 1000),
     CAIRN_TASK_SOFT_DEADLINE_MS:
       task.softDeadlineSeconds === undefined
